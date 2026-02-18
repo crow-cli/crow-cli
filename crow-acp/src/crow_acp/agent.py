@@ -53,7 +53,7 @@ from json_schema_to_pydantic import create_model
 from crow_acp.config import Config, get_default_config
 from crow_acp.llm import configure_llm
 from crow_acp.mcp_client import create_mcp_client_from_acp, get_tools
-from crow_acp.session import Session
+from crow_acp.session import Session, ensure_database
 
 logger = logging.getLogger(__name__)
 
@@ -129,6 +129,9 @@ class AcpAgent(Agent):
         self._tools: dict[str, list[dict]] = {}  # session_id -> tools
         self._llm = configure_llm(debug=False)
 
+        # Ensure DB tables exist and crow-v1 prompt is seeded
+        ensure_database(self._db_path)
+
     def on_connect(self, conn: Client) -> None:
         """Store connection for sending updates"""
         self._conn = conn
@@ -180,7 +183,7 @@ class AcpAgent(Agent):
 
         # Create MCP client (builtin if no servers provided)
         mcp_client = await create_mcp_client_from_acp(
-            mcp_servers, fallback_config=fallback_config
+            mcp_servers, cwd, fallback_config=fallback_config
         )
 
         # CRITICAL: Use AsyncExitStack for lifecycle management
@@ -227,10 +230,10 @@ class AcpAgent(Agent):
             fallback_config = self._config.get_builtin_mcp_config()
             if fallback_config:
                 mcp_client = await create_mcp_client_from_acp(
-                    mcp_servers, fallback_config=fallback_config
+                    mcp_servers, cwd, fallback_config=fallback_config
                 )
             else:
-                mcp_client = await create_mcp_client_from_acp(mcp_servers)
+                mcp_client = await create_mcp_client_from_acp(mcp_servers, cwd)
 
             # CRITICAL: Use AsyncExitStack for lifecycle management
             mcp_client = await self._exit_stack.enter_async_context(mcp_client)
@@ -377,7 +380,8 @@ class AcpAgent(Agent):
         tools = self._tools[session_id]
 
         return self._llm.chat.completions.create(
-            model="glm-5",
+            # model="glm-5",
+            model="claude-opus-4-6",
             messages=session.messages,
             tools=tools,
             stream=True,

@@ -97,6 +97,7 @@ def acp_to_fastmcp_config(
 
 async def create_mcp_client_from_acp(
     mcp_servers: list[HttpMcpServer | SseMcpServer | McpServerStdio],
+    cwd: str,
     fallback_config: dict[str, Any] | None = None,
 ) -> MCPClient:
     """
@@ -140,6 +141,10 @@ async def create_mcp_client_from_acp(
     logger.info(f"config: {config}")
     config["mcpServers"].update(**fallback_config["mcpServers"])
     # Convert ACP format to FastMCP config dict
+    #
+    # for mcp_server_name, mcp_config in config["mcpServers"].items():
+    #     mcp_config[]
+
     logger.info(f"Creating FastMCP client from {len(mcp_servers)} ACP servers")
 
     # Create FastMCP client from config

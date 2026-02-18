@@ -9,6 +9,8 @@ Encapsulates:
 
 import hashlib
 import json
+import logging
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import create_engine
@@ -17,6 +19,46 @@ from sqlalchemy.orm import Session as SQLAlchemySession
 from .db import Base, Event, Prompt
 from .db import Session as SessionModel
 from .prompt import render_template
+
+logger = logging.getLogger(__name__)
+
+# Path to the system prompt template
+_PROMPTS_DIR = Path(__file__).parent / "prompts"
+
+
+def ensure_database(db_path: str = "sqlite:///mcp_testing.db") -> None:
+    """
+    Ensure database tables exist and the crow-v1 prompt is seeded.
+
+    Safe to call on every startup — idempotent.
+    """
+    engine = create_engine(db_path)
+    Base.metadata.create_all(engine)
+
+    db = SQLAlchemySession(engine)
+    try:
+        # Load the real template from disk
+        template_path = _PROMPTS_DIR / "system_prompt.jinja2"
+        template_content = template_path.read_text()
+
+        existing = db.query(Prompt).filter_by(id="crow-v1").first()
+        if existing:
+            # Update template if it changed on disk
+            if existing.template != template_content:
+                existing.template = template_content
+                db.commit()
+                logger.info("Updated crow-v1 prompt template from disk")
+        else:
+            prompt = Prompt(
+                id="crow-v1",
+                name="Crow Default Prompt",
+                template=template_content,
+            )
+            db.add(prompt)
+            db.commit()
+            logger.info("Seeded crow-v1 prompt into database")
+    finally:
+        db.close()
 
 
 def lookup_or_create_prompt(
