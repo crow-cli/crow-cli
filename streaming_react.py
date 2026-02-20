@@ -9,8 +9,6 @@ from openai import OpenAI
 
 load_dotenv()
 
-MODEL = "qwen3-coder-plus"
-
 
 def configure_provider():
     return OpenAI(api_key=os.getenv("ZAI_API_KEY"), base_url=os.getenv("ZAI_BASE_URL"))
@@ -195,7 +193,7 @@ async def main():
     ]
     async with mcp_client:
         tools = await get_tools(mcp_client)
-        messages = await react_loop(message, mcp_client, lm, MODEL, tools)
+        messages = await react_loop(message, mcp_client, lm, "glm-5", tools)
     return messages
 
 

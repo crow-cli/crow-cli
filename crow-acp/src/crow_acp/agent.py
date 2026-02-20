@@ -51,6 +51,7 @@ from fastmcp import Client as MCPClient
 from json_schema_to_pydantic import create_model
 
 from crow_acp.config import Config, get_default_config
+from crow_acp.context import context_fetcher
 from crow_acp.llm import configure_llm
 from crow_acp.mcp_client import create_mcp_client_from_acp, get_tools
 from crow_acp.session import Session, ensure_database
@@ -106,6 +107,7 @@ class AcpAgent(Agent):
     """
 
     _conn: Client
+    _cancel_events: dict[str, asyncio.Event] = {}  # session_id -> cancel_event
 
     def __init__(self, config: Config | None = None) -> None:
         """
@@ -183,7 +185,9 @@ class AcpAgent(Agent):
 
         # Create MCP client (builtin if no servers provided)
         mcp_client = await create_mcp_client_from_acp(
-            mcp_servers, cwd, fallback_config=fallback_config
+            mcp_servers,
+            cwd,
+            fallback_config=fallback_config,
         )
 
         # CRITICAL: Use AsyncExitStack for lifecycle management
@@ -196,7 +200,7 @@ class AcpAgent(Agent):
             prompt_id="crow-v1",
             prompt_args={"workspace": cwd},
             tool_definitions=tools,
-            request_params={"temperature": 0.7},
+            request_params={"temperature": 0.2},
             model_identifier=self._config.llm.default_model,
             db_path=self._db_path,
         )
@@ -230,7 +234,9 @@ class AcpAgent(Agent):
             fallback_config = self._config.get_builtin_mcp_config()
             if fallback_config:
                 mcp_client = await create_mcp_client_from_acp(
-                    mcp_servers, cwd, fallback_config=fallback_config
+                    mcp_servers,
+                    cwd,
+                    fallback_config=fallback_config,
                 )
             else:
                 mcp_client = await create_mcp_client_from_acp(mcp_servers, cwd)
@@ -288,17 +294,32 @@ class AcpAgent(Agent):
             return PromptResponse(stop_reason="cancelled")
 
         # Extract text from prompt blocks
-        user_text = []
+        text_list = []
         for block in prompt:
-            if isinstance(block, dict):
-                text = block.get("text", "")
-            else:
-                text = getattr(block, "text", "")
-            if text:
-                user_text.append(text)
+            _type = (
+                block.get("type", "")
+                if isinstance(block, dict)
+                else getattr(block, "type", "")
+            )
+            if _type == "text":
+                text = (
+                    block.get("text", "")
+                    if isinstance(block, dict)
+                    else getattr(block, "text", "")
+                )
+                text_list.append(text)
+            elif _type == "resource_link":
+                logging.info(f"block type: {type(block)}")
+                uri = (
+                    block.get("uri", "")
+                    if isinstance(block, dict)
+                    else getattr(block, "uri", "")
+                )
+
+                text_list.append(context_fetcher(uri))
 
         # Add user message to session
-        session.add_message("user", " ".join(user_text))
+        session.add_message("user", " ".join(text_list))
 
         # Run agent loop and stream updates
         try:

@@ -6,4 +6,5 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "agent-client-protocol>=0.8.0",
+    "ipython>=9.10.0",
 ]
