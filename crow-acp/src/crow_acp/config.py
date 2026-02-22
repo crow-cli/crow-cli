@@ -90,7 +90,7 @@ class Config:
     FETCH_TOOL: str = field(default="crow-mcp_web_fetch", init=False)
 
     # Logging constant
-    LOG_PATH: str = field(default=f"{get_config_dir() / 'crow-acp.log'}")
+    LOG_PATH: str = field(default=f"{get_config_dir() / '/logs/crow-acp.log'}")
 
     def get_builtin_mcp_config(self) -> dict[str, Any]:
         """Get the default MCP server configuration."""

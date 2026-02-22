@@ -175,9 +175,9 @@ packages = ["package_name"]  # NOT ["."] or ["*"]
 ### 2. ALWAYS Use `uv --project` (Terminal Sessions Are NOT Persistent)
 ```bash
 # ✅ CORRECT
-uv --project /home/thomas/src/projects/mcp-testing run python src/crow/acp_agent.py
-uv --project /home/thomas/src/projects/mcp-testing run pytest tests/
-uv --project /home/thomas/src/projects/mcp-testing run python -m pytest tests/
+uv --project /home/thomas/src/projects/mcp-testing/crow-acp run python src/crow/acp_agent.py
+uv --project /home/thomas/src/projects/mcp-testing/crow-acp run pytest tests/
+uv --project /home/thomas/src/projects/mcp-testing/crow-acp run python -m pytest tests/
 
 # ❌ WRONG - Terminal sessions are NOT persistent
 source .venv/bin/activate  # This does NOT persist across tool calls!
@@ -191,9 +191,9 @@ uv run pytest tests/       # May use wrong environment
 - ✅ No dependency on previous state
 - ✅ Reproducible behavior
 
-### 4. **ALWAYS TEST YOUR FUCKING CODE BEFORE CLAIMING IT WORKS**
+### 4. **ALWAYS TEST YOUR CODE BEFORE CLAIMING IT WORKS**
 ```
-⛔️ NEVER JUST POND SCUM YOUR WAY THROUGH CLAIMING CODE WORKS ⛔️
+⛔️ NEVER JUST CLAIM CODE WORKS ⛔️
 
 THE PATHOLOGICAL ANTHROPIC BULLSHIT PATTERN:
 1. Generate code

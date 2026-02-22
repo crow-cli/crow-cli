@@ -53,13 +53,13 @@ from acp.schema import (
     Implementation,
     McpServerStdio,
     ResourceContentBlock,
+    SessionConfigOption,
+    SetSessionConfigOptionResponse,
     SseMcpServer,
     TerminalToolCallContent,
     TextContentBlock,
     ToolCallProgress,
     ToolCallStart,
-    SessionConfigOption,
-    SetSessionConfigOptionResponse,
 )
 from fastmcp import Client as MCPClient
 from json_schema_to_pydantic import create_model
@@ -128,31 +128,41 @@ class AcpAgent(Agent):
             str, str
         ] = {}  # session_id -> persistent terminal_id for stateful terminals
         self._prompt_tasks: dict[str, asyncio.Task] = {}
-        self._config_values: dict[str, dict[str, str]] = {}  # session_id -> {config_id: value}
+        self._config_values: dict[
+            str, dict[str, str]
+        ] = {}  # session_id -> {config_id: value}
 
     def _get_config_options(self, session_id: str) -> list[SessionConfigOption]:
         """Generate the config options for a session based on current values."""
         options_list = []
         for model in self._config.llm.models:
-            options_list.append(dict(
-                value=f"{model.provider}:{model.model}",
-                name=f"{model.provider}/{model.model}",
-                description=f"Model {model.model} from {model.provider}"
-            ))
+            options_list.append(
+                dict(
+                    value=f"{model.provider}:{model.model}",
+                    name=f"{model.provider}/{model.model}",
+                    description=f"Model {model.model} from {model.provider}",
+                )
+            )
 
         current_vals = self._config_values.get(session_id, {})
-        default_model = f"{self._config.llm.models[0].provider}:{self._config.llm.models[0].model}" if self._config.llm.models else ""
+        default_model = (
+            f"{self._config.llm.models[0].provider}:{self._config.llm.models[0].model}"
+            if self._config.llm.models
+            else ""
+        )
         current_model = current_vals.get("model", default_model)
 
         return [
-            SessionConfigOption(dict(
-                id="model",
-                name="Model",
-                category="model",
-                type="select",
-                currentValue=current_model,
-                options=options_list
-            ))
+            SessionConfigOption(
+                dict(
+                    id="model",
+                    name="Model",
+                    category="model",
+                    type="select",
+                    currentValue=current_model,
+                    options=options_list,
+                )
+            )
         ]
 
     def on_connect(self, conn: Client) -> None:
@@ -201,7 +211,7 @@ class AcpAgent(Agent):
     async def new_session(
         self,
         cwd: str,
-        mcp_servers: list[HttpMcpServer | SseMcpServer | McpServerStdio],
+        mcp_servers: list[HttpMcpServer | SseMcpServer | McpServerStdio] | None = None,
         **kwargs: Any,
     ) -> NewSessionResponse:
         """
@@ -266,13 +276,19 @@ class AcpAgent(Agent):
         self._cancel_events[session.session_id] = asyncio.Event()
 
         # Set default values for new session config
-        default_model = f"{self._config.llm.models[0].provider}:{self._config.llm.models[0].model}" if self._config.llm.models else ""
+        default_model = (
+            f"{self._config.llm.models[0].provider}:{self._config.llm.models[0].model}"
+            if self._config.llm.models
+            else ""
+        )
         self._config_values[session.session_id] = {"model": default_model}
 
         logger.info("Created session: %s with %d tools", session.session_id, len(tools))
-        
+
         config_options = self._get_config_options(session.session_id)
-        return NewSessionResponse(session_id=session.session_id, config_options=config_options)
+        return NewSessionResponse(
+            session_id=session.session_id, config_options=config_options
+        )
 
     async def load_session(
         self,
@@ -316,8 +332,14 @@ class AcpAgent(Agent):
 
             # Initialize session config if not present
             if session_id not in self._config_values:
-                default_model = f"{self._config.llm.models[0].provider}:{self._config.llm.models[0].model}" if self._config.llm.models else ""
-                self._config_values[session_id] = {"model": session.model_identifier or default_model}
+                default_model = (
+                    f"{self._config.llm.models[0].provider}:{self._config.llm.models[0].model}"
+                    if self._config.llm.models
+                    else ""
+                )
+                self._config_values[session_id] = {
+                    "model": session.model_identifier or default_model
+                }
 
             # TODO: Replay conversation history to client
 
@@ -338,14 +360,16 @@ class AcpAgent(Agent):
         self, config_id: str, session_id: str, value: str, **kwargs: Any
     ) -> SetSessionConfigOptionResponse | None:
         """Handle config option changes"""
-        logger.info("Set session %s config option %s -> %s", session_id, config_id, value)
-        
+        logger.info(
+            "Set session %s config option %s -> %s", session_id, config_id, value
+        )
+
         # Initialize if not set
         if session_id not in self._config_values:
             self._config_values[session_id] = {}
-            
+
         self._config_values[session_id][config_id] = value
-        
+
         # Update session model if the config changed was the model
         if config_id == "model" and session_id in self._sessions:
             session = self._sessions[session_id]
@@ -355,7 +379,7 @@ class AcpAgent(Agent):
                 session.model_identifier = model_name
             else:
                 session.model_identifier = value
-                
+
         config_options = self._get_config_options(session_id)
         return SetSessionConfigOptionResponse(config_options=config_options)
 
@@ -433,19 +457,27 @@ class AcpAgent(Agent):
             # Stream chunks directly from react_loop - no queue, no latency
             try:
                 current_config = self._config_values.get(session_id, {})
-                default_model = f"{self._config.llm.models[0].provider}:{self._config.llm.models[0].model}" if self._config.llm.models else "glm-5"
+                default_model = (
+                    f"{self._config.llm.models[0].provider}:{self._config.llm.models[0].model}"
+                    if self._config.llm.models
+                    else "glm-5"
+                )
                 current_model_value = current_config.get("model", default_model)
                 if ":" in current_model_value:
                     provider_name, model_name = current_model_value.split(":", 1)
                 else:
-                    provider_name = self._config.llm.models[0].provider if self._config.llm.models else ""
+                    provider_name = (
+                        self._config.llm.models[0].provider
+                        if self._config.llm.models
+                        else ""
+                    )
                     model_name = current_model_value
 
                 provider = self._config.llm.providers.get(provider_name)
                 # Fallback to the first provider if requested one is not found
                 if not provider and self._config.llm.providers:
                     provider = next(iter(self._config.llm.providers.values()))
-                
+
                 llm = configure_llm(provider=provider, debug=False)
 
                 async for chunk in react_loop(

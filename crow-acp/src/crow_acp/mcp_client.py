@@ -28,22 +28,6 @@ def acp_to_fastmcp_config(
 
     Returns:
         FastMCP configuration dict with "mcpServers" key
-
-    Example:
-        >>> from acp.schema import McpServerStdio, EnvVariable
-        >>> servers = [
-        ...     McpServerStdio(
-        ...         name="crow-builtin",
-        ...         command="uv",
-        ...         args=["--project", ".", "run", "server.py"],
-        ...         env=[EnvVariable(name="DEBUG", value="true")]
-        ...     )
-        ... ]
-        >>> config = acp_to_fastmcp_config(servers)
-        >>> config["mcpServers"]["crow-builtin"]["command"]
-        'uv'
-        >>> config["mcpServers"]["crow-builtin"]["env"]["DEBUG"]
-        'true'
     """
     config: dict[str, Any] = {"mcpServers": {}}
 
@@ -109,20 +93,6 @@ async def create_mcp_client_from_acp(
 
     Returns:
         FastMCP Client instance
-
-    Example:
-        >>> from acp.schema import McpServerStdio
-        >>> servers = [
-        ...     McpServerStdio(
-        ...         name="crow-builtin",
-        ...         command="uv",
-        ...         args=["--project", ".", "run", "server.py"],
-        ...         env=[]
-        ...     )
-        ... ]
-        >>> client = await create_mcp_client_from_acp(servers)
-        >>> async with client:
-        ...     tools = await client.list_tools()
     """
     if not mcp_servers:
         if fallback_config is None:
@@ -160,19 +130,6 @@ def create_mcp_client_from_config(config: dict[str, Any]) -> MCPClient:
 
     Returns:
         FastMCP Client instance (must be used with async with)
-
-    Example:
-        >>> config = {
-        ...     "mcpServers": {
-        ...         "crow-builtin": {
-        ...             "command": "uv",
-        ...             "args": ["--project", "crow-mcp-server", "run", "."],
-        ...         }
-        ...     }
-        ... }
-        >>> client = create_mcp_client_from_config(config)
-        >>> async with client:
-        ...     tools = await client.list_tools()
     """
     return MCPClient(config)
 
