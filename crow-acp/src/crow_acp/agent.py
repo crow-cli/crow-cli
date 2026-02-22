@@ -128,7 +128,6 @@ class AcpAgent(Agent):
             str, str
         ] = {}  # session_id -> persistent terminal_id for stateful terminals
         self._prompt_tasks: dict[str, asyncio.Task] = {}
-        self._llm = configure_llm(debug=False)
         self._config_values: dict[str, dict[str, str]] = {}  # session_id -> {config_id: value}
 
     def _get_config_options(self, session_id: str) -> list[SessionConfigOption]:
@@ -439,9 +438,17 @@ class AcpAgent(Agent):
                 default_model = f"{self._config.llm.models[0].provider}:{self._config.llm.models[0].model}" if self._config.llm.models else "glm-5"
                 current_model_value = current_config.get("model", default_model)
                 if ":" in current_model_value:
-                    _, model_name = current_model_value.split(":", 1)
+                    provider_name, model_name = current_model_value.split(":", 1)
                 else:
+                    provider_name = self._config.llm.models[0].provider if self._config.llm.models else ""
                     model_name = current_model_value
+
+                provider = self._config.llm.providers.get(provider_name)
+                # Fallback to the first provider if requested one is not found
+                if not provider and self._config.llm.providers:
+                    provider = next(iter(self._config.llm.providers.values()))
+                
+                llm = configure_llm(provider=provider, debug=False)
 
                 async for chunk in react_loop(
                     conn=self._conn,
@@ -449,7 +456,7 @@ class AcpAgent(Agent):
                     client_capabilities=self._client_capabilities,
                     turn_id=turn_id,
                     mcp_clients=self._mcp_clients,
-                    llm=self._llm,
+                    llm=llm,
                     model=model_name,
                     tools=tools,
                     sessions=self._sessions,
