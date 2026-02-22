@@ -1,6 +1,5 @@
 import asyncio
 from contextlib import suppress
-from contextvars import ContextVar
 from typing import Any
 
 from acp import (
@@ -82,7 +81,7 @@ def get_tool_kind(tool_name: str) -> ToolKind:
 async def execute_acp_terminal(
     conn: Client,
     sessions: dict[str, Session],
-    current_turn_id: ContextVar[str | None],
+    turn_id: str,
     session_id: str,
     tool_call_id: str,
     args: dict[str, Any],
@@ -97,6 +96,7 @@ async def execute_acp_terminal(
     - reset: Not needed (ACP terminal is fresh each call)
 
     Args:
+        turn_id: Turn ID for ACP tool call IDs
         session_id: ACP session ID
         tool_call_id: LLM tool call ID
         args: Tool arguments from LLM
@@ -108,8 +108,7 @@ async def execute_acp_terminal(
     timeout_seconds = float(args.get("timeout") or 30.0)
 
     # Build ACP tool call ID from turn_id + llm tool call id
-    turn_id = current_turn_id.get()
-    acp_tool_call_id = f"{turn_id}/{tool_call_id}" if turn_id else tool_call_id
+    acp_tool_call_id = f"{turn_id}/{tool_call_id}"
 
     # Get session state for cwd
     session = sessions.get(session_id)
@@ -229,7 +228,7 @@ async def execute_acp_terminal(
 
 async def execute_acp_write(
     conn: Client,
-    current_turn_id: ContextVar[str | None],
+    turn_id: str,
     session_id: str,
     tool_call_id: str,
     args: dict[str, Any],
@@ -238,6 +237,7 @@ async def execute_acp_write(
     Write file via ACP client filesystem.
 
     Args:
+        turn_id: Turn ID for ACP tool call IDs
         session_id: ACP session ID
         tool_call_id: LLM tool call ID
         args: Tool arguments from LLM (file_path, content)
@@ -249,8 +249,7 @@ async def execute_acp_write(
     content = args.get("content", "")
 
     # Build ACP tool call ID from turn_id + llm tool call id
-    turn_id = current_turn_id.get()
-    acp_tool_call_id = f"{turn_id}/{tool_call_id}" if turn_id else tool_call_id
+    acp_tool_call_id = f"{turn_id}/{tool_call_id}"
 
     try:
         # 1. Send tool call start
@@ -303,7 +302,7 @@ async def execute_acp_write(
 
 async def execute_acp_read(
     conn: Client,
-    current_turn_id: ContextVar[str | None],
+    turn_id: str,
     session_id: str,
     tool_call_id: str,
     args: dict[str, Any],
@@ -312,6 +311,7 @@ async def execute_acp_read(
     Read file via ACP client filesystem.
 
     Args:
+        turn_id: Turn ID for ACP tool call IDs
         session_id: ACP session ID
         tool_call_id: LLM tool call ID
         args: Tool arguments from LLM (file_path, offset, limit)
@@ -324,8 +324,7 @@ async def execute_acp_read(
     limit = args.get("limit", 4000)
 
     # Build ACP tool call ID from turn_id + llm tool call id
-    turn_id = current_turn_id.get()
-    acp_tool_call_id = f"{turn_id}/{tool_call_id}" if turn_id else tool_call_id
+    acp_tool_call_id = f"{turn_id}/{tool_call_id}"
 
     try:
         # 1. Send tool call start
@@ -379,7 +378,7 @@ async def execute_acp_read(
 
 async def execute_acp_edit(
     conn: Client,
-    current_turn_id: ContextVar[str | None],
+    turn_id: str,
     mcp_clients: dict[str, MCPClient],
     config: Config,
     session_id: str,
@@ -393,6 +392,7 @@ async def execute_acp_edit(
     sends proper diff content for the client to display.
 
     Args:
+        turn_id: Turn ID for ACP tool call IDs
         session_id: ACP session ID
         tool_call_id: LLM tool call ID
         args: Tool arguments from LLM (file_path, old_string, new_string, replace_all)
@@ -405,8 +405,7 @@ async def execute_acp_edit(
     new_text = args.get("new_string", "")
 
     # Build ACP tool call ID from turn_id + llm tool call id
-    turn_id = current_turn_id.get()
-    acp_tool_call_id = f"{turn_id}/{tool_call_id}" if turn_id else tool_call_id
+    acp_tool_call_id = f"{turn_id}/{tool_call_id}"
 
     try:
         # 1. Send tool call start
@@ -461,7 +460,7 @@ async def execute_acp_edit(
 
 async def execute_acp_tool(
     conn: Client,
-    current_turn_id: ContextVar[str | None],
+    turn_id: str,
     mcp_clients: dict[str, MCPClient],
     session_id: str,
     tool_call_id: str,
@@ -475,6 +474,7 @@ async def execute_acp_tool(
     to display to the user.
 
     Args:
+        turn_id: Turn ID for ACP tool call IDs
         session_id: ACP session ID
         tool_call_id: LLM tool call ID
         tool_name: Name of the MCP tool to call
@@ -485,8 +485,7 @@ async def execute_acp_tool(
         Result string from the tool
     """
     # Build ACP tool call ID from turn_id + llm tool call id
-    turn_id = current_turn_id.get()
-    acp_tool_call_id = f"{turn_id}/{tool_call_id}" if turn_id else tool_call_id
+    acp_tool_call_id = f"{turn_id}/{tool_call_id}"
     kind: ToolKind = get_tool_kind(tool_name)
     try:
         # 1. Send tool call start

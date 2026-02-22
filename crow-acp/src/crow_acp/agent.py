@@ -13,7 +13,7 @@ import asyncio
 import os
 import uuid
 from contextlib import AsyncExitStack, suppress
-from contextvars import ContextVar
+
 from datetime import datetime
 from pathlib import Path
 from threading import ExceptHookArgs
@@ -64,8 +64,7 @@ from sqlalchemy.engine.cursor import ResultProxy
 
 from crow_acp import mcp_client
 
-# Context vars for turn/tool call tracking
-_current_turn_id: ContextVar[str | None] = ContextVar("current_turn_id", default=None)
+
 import os
 
 from fastmcp import Client as MCPClient
@@ -327,13 +326,11 @@ class AcpAgent(Agent):
 
         # Generate turn ID for this prompt (used for ACP tool call IDs)
         turn_id = str(uuid.uuid4())
-        turn_token = _current_turn_id.set(turn_id)
 
         # Get session
         session = self._sessions.get(session_id)
         if not session:
             logger.error("Session not found: %s", session_id)
-            _current_turn_id.reset(turn_token)
             return PromptResponse(stop_reason="cancelled")
 
         # Extract text from prompt blocks
@@ -392,7 +389,7 @@ class AcpAgent(Agent):
                     conn=self._conn,
                     config=self._config,
                     client_capabilities=self._client_capabilities,
-                    current_turn_id=_current_turn_id,
+                    turn_id=turn_id,
                     mcp_clients=self._mcp_clients,
                     llm=self._llm,
                     model="glm-5",
@@ -470,8 +467,6 @@ class AcpAgent(Agent):
         finally:
             # Clean up task reference
             self._streaming_tasks.pop(session_id, None)
-            # Reset turn ID context var
-            _current_turn_id.reset(turn_token)
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
         """Handle cancellation by cancelling the streaming task."""

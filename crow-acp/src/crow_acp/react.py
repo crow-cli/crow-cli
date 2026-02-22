@@ -1,6 +1,5 @@
 import asyncio
 from asyncio import Event
-from contextvars import ContextVar
 from typing import Any
 
 from acp.interfaces import Client
@@ -189,7 +188,7 @@ async def process_response(response, state_accumulator: dict):
 async def execute_tool_calls(
     conn: Client,
     client_capabilities: ClientCapabilities,
-    current_turn_id: ContextVar[str | None],
+    turn_id: str,
     config: Config,
     mcp_clients: dict[str, MCPClient],
     sessions: dict[str, Session],
@@ -200,6 +199,7 @@ async def execute_tool_calls(
     Execute tool calls via MCP or ACP client terminal.
 
     Args:
+        turn_id: Turn ID for ACP tool call IDs
         session_id: Session ID to get MCP client
         tool_call_inputs: List of tool calls to execute
 
@@ -213,7 +213,6 @@ async def execute_tool_calls(
     fs_caps = getattr(client_capabilities, "fs", None) if client_capabilities else None
     use_acp_write = fs_caps and getattr(fs_caps, "write_text_file", False)
     use_acp_read = fs_caps and getattr(fs_caps, "read_text_file", False)
-    turn_id = current_turn_id.get()
     for tool_call in tool_call_inputs:
         tool_name = tool_call["function"]["name"]
         tool_args = tool_call["function"]["arguments"]
@@ -228,7 +227,7 @@ async def execute_tool_calls(
                 result_content = await execute_acp_terminal(
                     conn=conn,
                     sessions=sessions,
-                    current_turn_id=current_turn_id,
+                    turn_id=turn_id,
                     session_id=session_id,
                     tool_call_id=llm_tool_call_id,
                     args=arg_dict,
@@ -236,7 +235,7 @@ async def execute_tool_calls(
             elif tool_name == config.WRITE_TOOL and use_acp_write:
                 result_content = await execute_acp_write(
                     conn=conn,
-                    current_turn_id=current_turn_id,
+                    turn_id=turn_id,
                     session_id=session_id,
                     tool_call_id=llm_tool_call_id,
                     args=arg_dict,
@@ -244,7 +243,7 @@ async def execute_tool_calls(
             elif tool_name == config.READ_TOOL and use_acp_read:
                 result_content = await execute_acp_read(
                     conn=conn,
-                    current_turn_id=current_turn_id,
+                    turn_id=turn_id,
                     session_id=session_id,
                     tool_call_id=llm_tool_call_id,
                     args=arg_dict,
@@ -252,7 +251,7 @@ async def execute_tool_calls(
             elif tool_name == config.EDIT_TOOL:
                 result_content = await execute_acp_edit(
                     conn=conn,
-                    current_turn_id=current_turn_id,
+                    turn_id=turn_id,
                     mcp_clients=mcp_clients,
                     config=config,
                     session_id=session_id,
@@ -262,7 +261,7 @@ async def execute_tool_calls(
             else:
                 result_content = await execute_acp_tool(
                     conn=conn,
-                    current_turn_id=current_turn_id,
+                    turn_id=turn_id,
                     mcp_clients=mcp_clients,
                     session_id=session_id,
                     tool_call_id=llm_tool_call_id,
@@ -300,7 +299,7 @@ async def react_loop(
     conn: Client,
     config: Config,
     client_capabilities: ClientCapabilities,
-    current_turn_id: ContextVar[str | None],
+    turn_id: str,
     mcp_clients: dict[str, MCPClient],
     llm: AsyncOpenAI,
     model: str,
@@ -364,7 +363,7 @@ async def react_loop(
         tool_results = await execute_tool_calls(
             conn=conn,
             client_capabilities=client_capabilities,
-            current_turn_id=current_turn_id,
+            turn_id=turn_id,
             config=config,
             mcp_clients=mcp_clients,
             sessions=sessions,
