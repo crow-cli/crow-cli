@@ -351,10 +351,8 @@ class AcpAgent(Agent):
             session = self._sessions[session_id]
             # Optionally split back from provider:model
             if ":" in value:
-                provider, model = value.split(":", 1)
-                # Keep provider info if needed, or just set model identifier
-                # In Session we typically save model_identifier. If we want it to be provider:model then this is fine
-                session.model_identifier = value
+                _, model_name = value.split(":", 1)
+                session.model_identifier = model_name
             else:
                 session.model_identifier = value
                 

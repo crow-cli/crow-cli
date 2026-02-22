@@ -121,7 +121,6 @@ def load_toml_config() -> Config:
         # Fallback to default if no TOML exists (keeps your lower-level lib from crashing)
         print(config_file)
         return get_default_config()
-    print("Loading TOML config...")
     with open(config_file, "rb") as f:
         # tomllib requires reading the file in binary mode ("rb")
         toml_data = tomllib.load(f)
