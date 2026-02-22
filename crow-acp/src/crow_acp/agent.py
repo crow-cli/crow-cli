@@ -125,9 +125,6 @@ class AcpAgent(Agent):
         self._mcp_clients: dict[str, MCPClient] = {}  # session_id -> mcp_client
         self._tools: dict[str, list[dict]] = {}  # session_id -> tools
         self._cancel_events: dict[str, asyncio.Event] = {}  # session_id -> cancel_event
-        self._streaming_tasks: dict[
-            str, asyncio.Task
-        ] = {}  # session_id -> streaming_task
         self._state_accumulators: dict[
             str, dict
         ] = {}  # session_id -> partial state for cancellation
@@ -319,8 +316,8 @@ class AcpAgent(Agent):
         """
         Handle prompt request - main entry point for user messages.
 
-        This is where we run the react loop and stream updates back.
-        Uses Task-based cancellation for immediate interruption.
+        Directly iterates over react_loop without intermediate buffering.
+        Cancellation is handled via try/except - state is persisted by react_loop.
         """
         logger.info("Prompt request for session: %s", session_id)
 
@@ -355,7 +352,6 @@ class AcpAgent(Agent):
                     if isinstance(block, dict)
                     else getattr(block, "uri", "")
                 )
-
                 text_list.append(context_fetcher(uri))
 
         # Add user message to session
@@ -373,57 +369,24 @@ class AcpAgent(Agent):
             "tool_call_inputs": [],
         }
 
-        # Create a queue for streaming chunks
-        chunk_queue: asyncio.Queue = asyncio.Queue()
-
-        # Flag to signal completion
-        completed = asyncio.Event()
-        stop_reason = "end_turn"
         tools = self._tools[session_id]
 
-        async def streaming_worker():
-            """Worker that runs the react loop and puts chunks in queue."""
-            nonlocal stop_reason
-            try:
-                async for chunk in react_loop(
-                    conn=self._conn,
-                    config=self._config,
-                    client_capabilities=self._client_capabilities,
-                    turn_id=turn_id,
-                    mcp_clients=self._mcp_clients,
-                    llm=self._llm,
-                    model="glm-5",
-                    tools=tools,
-                    sessions=self._sessions,
-                    cancel_event=self._cancel_events[session_id],
-                    session_id=session_id,
-                    state_accumulators=self._state_accumulators,
-                ):
-                    await chunk_queue.put(chunk)
-                stop_reason = "end_turn"
-            except asyncio.CancelledError:
-                logger.info("Streaming worker cancelled")
-                stop_reason = "cancelled"
-                raise
-            except Exception as e:
-                logger.error("Error in streaming worker: %s", e, exc_info=True)
-                stop_reason = "end_turn"
-            finally:
-                completed.set()
-
-        # Create and store the streaming task
-        streaming_task = asyncio.create_task(streaming_worker())
-        self._streaming_tasks[session_id] = streaming_task
-
-        # Stream chunks back to client
+        # Stream chunks directly from react_loop - no queue, no latency
         try:
-            while not completed.is_set() or not chunk_queue.empty():
-                try:
-                    # Use wait_for to allow checking completion
-                    chunk = await asyncio.wait_for(chunk_queue.get(), timeout=0.1)
-                except asyncio.TimeoutError:
-                    continue
-
+            async for chunk in react_loop(
+                conn=self._conn,
+                config=self._config,
+                client_capabilities=self._client_capabilities,
+                turn_id=turn_id,
+                mcp_clients=self._mcp_clients,
+                llm=self._llm,
+                model="glm-5",
+                tools=tools,
+                sessions=self._sessions,
+                cancel_event=self._cancel_events[session_id],
+                session_id=session_id,
+                state_accumulators=self._state_accumulators,
+            ):
                 chunk_type = chunk.get("type")
 
                 if chunk_type == "content":
@@ -448,40 +411,25 @@ class AcpAgent(Agent):
                 elif chunk_type == "final_history":
                     break
 
-            return PromptResponse(stop_reason=stop_reason)
+            return PromptResponse(stop_reason="end_turn")
 
         except asyncio.CancelledError:
             logger.info("Prompt cancelled")
-            # Persist partial state before returning
-            state = self._state_accumulators.get(session_id)
-            if state:
-                session.add_assistant_response(
-                    state["thinking"], state["content"], state["tool_call_inputs"], []
-                )
+            # State is already persisted by react_loop's cancellation handler
             return PromptResponse(stop_reason="cancelled")
 
         except Exception as e:
             logger.error("Error in prompt handling: %s", e, exc_info=True)
             return PromptResponse(stop_reason="end_turn")
 
-        finally:
-            # Clean up task reference
-            self._streaming_tasks.pop(session_id, None)
-
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
-        """Handle cancellation by cancelling the streaming task."""
+        """Handle cancellation by setting the cancel event."""
         logger.info("Cancel request for session: %s", session_id)
 
-        # Cancel the streaming task if it exists
-        streaming_task = self._streaming_tasks.get(session_id)
-        if streaming_task and not streaming_task.done():
-            logger.info("Cancelling streaming task for session: %s", session_id)
-            streaming_task.cancel()
-
-            # Also set the cancel event for the react loop to check
-            cancel_event = self._cancel_events.get(session_id)
-            if cancel_event:
-                cancel_event.set()
+        # Set the cancel event - react_loop checks this at each turn boundary
+        cancel_event = self._cancel_events.get(session_id)
+        if cancel_event:
+            cancel_event.set()
 
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         """Handle extension methods"""
