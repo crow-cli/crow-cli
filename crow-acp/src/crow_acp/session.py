@@ -356,7 +356,7 @@ class Session:
                 role = msg.get("role")
                 if role == "system":
                     continue  # skip system messages
-                
+
                 if role == "user":
                     session.add_message(role="user", content=msg.get("content"))
                 elif role == "assistant":
@@ -372,11 +372,42 @@ class Session:
                             {"role": "assistant", "tool_calls": msg["tool_calls"]}
                         )
                     else:
-                        session.add_message(
-                            role="assistant",
-                            content=msg.get("content"),
-                            reasoning_content=msg.get("reasoning_content"),
-                        )
+                        if (
+                            "content" in msg
+                            and msg["content"]
+                            and "reasoning_content" in msg
+                            and msg["reasoning_content"]
+                        ):
+                            session.messages.append(
+                                {
+                                    "role": "assistant",
+                                    "content": msg["content"],
+                                    "reasoning_content": msg["reasoning_content"],
+                                }
+                            )
+                            session._save_event(
+                                role="assistant",
+                                content=msg["content"],
+                                reasoning_content=msg["reasoning_content"],
+                            )
+                        elif "content" in msg and msg["content"]:
+                            session.messages.append(
+                                {"role": "assistant", "content": msg["content"]}
+                            )
+                            session._save_event(
+                                role="assistant", content=msg["content"]
+                            )
+                        elif "reasoning_content" in msg and msg["reasoning_content"]:
+                            session.messages.append(
+                                {
+                                    "role": "assistant",
+                                    "reasoning_content": msg["reasoning_content"],
+                                }
+                            )
+                            session._save_event(
+                                role="assistant",
+                                reasoning_content=msg["reasoning_content"],
+                            )
                 elif role == "tool":
                     session.add_message(
                         role="tool",
@@ -385,6 +416,103 @@ class Session:
                     )
 
         return session
+
+    @classmethod
+    def swap_session_id(
+        cls,
+        old_session_id: str,
+        new_session_id: str,
+        db_path: str = "sqlite:///mcp_testing.db",
+    ) -> str:
+        """
+        Atomically swap session IDs for compaction.
+
+        This is used when compacting a session:
+        - old_session_id: The ID the ACP client knows (will be archived)
+        - new_session_id: The compacted session ID (will take over old_session_id)
+
+        The swap is:
+        1. old_session_id -> archive_id (preserves full history)
+        2. new_session_id -> old_session_id (compacted session takes over)
+
+        Args:
+            old_session_id: The session ID the client knows
+            new_session_id: The new compacted session ID
+            db_path: Database connection string
+
+        Returns:
+            The archive ID where the old session data was moved
+        """
+        archive_id = f"sess_archive_{uuid4().hex}"
+
+        db = SQLAlchemySession(create_engine(db_path))
+        try:
+            # Step 1: Move old session to archive ID
+            old_session = (
+                db.query(SessionModel).filter_by(session_id=old_session_id).first()
+            )
+            if not old_session:
+                raise ValueError(f"Session '{old_session_id}' not found")
+
+            old_session.session_id = archive_id
+
+            # Update all events for old session to archive ID
+            db.query(Event).filter_by(session_id=old_session_id).update(
+                {"session_id": archive_id}
+            )
+
+            # Step 2: Move new session to old_session_id
+            new_session = (
+                db.query(SessionModel).filter_by(session_id=new_session_id).first()
+            )
+            if not new_session:
+                raise ValueError(f"Session '{new_session_id}' not found")
+
+            new_session.session_id = old_session_id
+
+            # Update all events for new session to old_session_id
+            db.query(Event).filter_by(session_id=new_session_id).update(
+                {"session_id": old_session_id}
+            )
+
+            db.commit()
+
+            return archive_id
+        except Exception as e:
+            db.rollback()
+            raise e
+        finally:
+            db.close()
+
+    def update_from(self, other: "Session") -> None:
+        """
+        Update this session's state from another session in-place.
+
+        This is used during compaction to swap session contents without
+        changing the memory address of the session object. This ensures
+        that all references to this session (local variables in other
+        functions) see the updated state.
+
+        Args:
+            other: The session to copy state from
+        """
+        # Copy all state from the other session
+        self.session_id = other.session_id
+        self.db_path = other.db_path
+        self.cwd = other.cwd
+        self.messages = other.messages
+        self.conv_index = other.conv_index
+        self.model_identifier = other.model_identifier
+        self.tools = other.tools
+        self.request_params = other.request_params
+        self.prompt_id = other.prompt_id
+        self.prompt_args = other.prompt_args
+
+        # Reset DB connections to force re-fetch from new session ID
+        if self._db is not None:
+            self._db.close()
+        self._db = None
+        self._model = None
 
     @classmethod
     def load(

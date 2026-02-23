@@ -92,6 +92,9 @@ class Config:
     # Logging constant
     LOG_PATH: str = field(default=f"{get_config_dir() / 'logs/crow-acp.log'}")
 
+    # Compaction parameter
+    MAX_COMPACT_TOKENS: int = field(default=12000, init=False)
+
     def get_builtin_mcp_config(self) -> dict[str, Any]:
         """Get the default MCP server configuration."""
         if not self.mcp_servers:

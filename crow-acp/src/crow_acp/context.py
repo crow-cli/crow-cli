@@ -98,5 +98,5 @@ def find_line_numbers(uri: str) -> dict[str, Any]:
 def get_directory_tree(cwd: str) -> str:
     """Returns a string representation of the directory tree rooted at cwd."""
     ignores = ["node_modules", "*.egg_info", "__pycache__", ".venv", "refs"]
-    tree = DisplayTree(stringRep=True, dirPath=cwd, ignoreList=ignores, maxDepth=5.0)
+    tree = DisplayTree(stringRep=True, dirPath=cwd, ignoreList=ignores, maxDepth=3.0)
     return tree

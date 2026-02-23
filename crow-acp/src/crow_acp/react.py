@@ -23,6 +23,7 @@ from acp.schema import (
 from fastmcp import Client as MCPClient
 from openai import AsyncOpenAI
 
+from crow_acp.compact import compact
 from crow_acp.config import Config
 from crow_acp.context import maximal_deserialize
 from crow_acp.logger import logger
@@ -323,6 +324,7 @@ async def react_loop(
         Dictionary with 'type' and 'token' or 'messages' keys
     """
     session = sessions.get(session_id)
+    cwd = session.cwd
     for turn in range(max_turns):
         if cancel_event and cancel_event.is_set():
             logger.info(f"Cancelled at start of turn {turn}")
@@ -360,6 +362,32 @@ async def react_loop(
             session.add_assistant_response(
                 thinking, content, tool_call_inputs, [], usage
             )
+
+        ################################################
+        # okay the llm has responded let's check usage
+        #
+        ################################################
+        #####################################
+        # This is a great place to check
+        # if the context has gone over limi
+        # and to compact it
+        #####################################
+        logger.info(f"Pre-Tool ExecutionUsage: {usage}")
+
+        # 1. Check your token threshold
+        if usage and usage["total_tokens"] > config.MAX_COMPACT_TOKENS:
+            logger.info("Token threshold crossed. Initiating compaction...")
+
+            # Compact updates the session in-place, so all references
+            # (including the dictionary and local variables) automatically
+            # see the new compacted state - no manual reference updates needed!
+            await compact(
+                session=session,
+                llm=llm,
+                cwd=session.cwd,
+            )
+
+            logger.info("Compaction complete - session updated in-place.")
 
         # This ends the react loop
         if not tool_call_inputs:
@@ -400,5 +428,3 @@ async def react_loop(
         session.add_assistant_response(
             thinking, content, tool_call_inputs, tool_results, usage
         )
-
-        #### Fuck it check at the very end afer the tool's already been called and added if it's there
