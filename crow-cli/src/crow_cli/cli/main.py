@@ -12,10 +12,10 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from crow_cli.agent.agent import main as agent_main
+from crow_cli.agent.main import main as agent_main
 
 # from crow_cli.agent.config import settings
-from crow_cli.client.client import CrowClient, connect_client
+from crow_cli.client.main import CrowClient, connect_client
 
 app = typer.Typer(
     name="crow-cli",
@@ -315,11 +315,11 @@ async def _run_async(
 
         # Run
         if interactive:
-            await interactive_loop(conn, actual_session_id)
+            await client.interactive_loop(conn, actual_session_id)
         else:
-            await send_prompt(conn, actual_session_id, prompt)
+            await client.send_prompt(conn, actual_session_id, prompt)
             client._console.print(f"\n[dim]Session: {actual_session_id}[/dim]")
-            client._client._console.print(
+            client._console.print(
                 f'[dim]Use crow-cli run -s {actual_session_id} "<your—message>" to continue this conversation[/dim]'
             )
 

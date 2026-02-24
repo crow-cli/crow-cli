@@ -46,14 +46,15 @@ from acp.schema import (
     SseMcpServer,
     TextContentBlock,
 )
-from crow_cli.agent.config import Config, settings
+from fastmcp import Client as MCPClient
+
+from crow_cli.agent.config import Config, load_toml_config
 from crow_cli.agent.context import context_fetcher, get_directory_tree
 from crow_cli.agent.llm import configure_llm
-from crow_cli.agent.logger import logger
+from crow_cli.agent.logger import setup_logger
 from crow_cli.agent.mcp_client import create_mcp_client_from_acp, get_tools
 from crow_cli.agent.react import react_loop
 from crow_cli.agent.session import Session, lookup_or_create_prompt
-from fastmcp import Client as MCPClient
 
 
 class AcpAgent(Agent):
@@ -86,7 +87,8 @@ class AcpAgent(Agent):
         - In-memory dictionaries for sessions and MCP clients
         - LLM client from configuration
         """
-        self._config = config or settings
+        self._config = config or load_toml_config(Path(os.getenv("HOME")) / ".crow")
+        self._logger = setup_logger(self._config.config_dir / "crow-cli.log")
         self._db_path = self._config.database_path
         self._exit_stack = AsyncExitStack()
         self._sessions: dict[str, Session] = {}
@@ -151,17 +153,21 @@ class AcpAgent(Agent):
         **kwargs: Any,
     ) -> InitializeResponse:
         """Handle ACP initialization"""
-        logger.info("Initializing Agent")
-        logger.info(f"Client capabilities: {client_capabilities}")
-        logger.info(f"Client info: {client_info}")
+        self._logger.info("Initializing Agent")
+        self._logger.info(f"Client capabilities: {client_capabilities}")
+        self._logger.info(f"Client info: {client_info}")
 
         self._client_capabilities = client_capabilities
-        logger.info(f"Client capabilities: {client_capabilities}")
+        self._logger.info(f"Client capabilities: {client_capabilities}")
         # Check if client supports terminals
         if client_capabilities and getattr(client_capabilities, "terminal", False):
-            logger.info("Client supports ACP terminals - will use client-side terminal")
+            self._logger.info(
+                "Client supports ACP terminals - will use client-side terminal"
+            )
         else:
-            logger.info("Client does NOT support ACP terminals - will use MCP terminal")
+            self._logger.info(
+                "Client does NOT support ACP terminals - will use MCP terminal"
+            )
 
         return InitializeResponse(
             protocol_version=PROTOCOL_VERSION,
@@ -179,7 +185,7 @@ class AcpAgent(Agent):
         self, method_id: str, **kwargs: Any
     ) -> AuthenticateResponse | None:
         """Handle authentication (no-op for now)"""
-        logger.info("Authentication request: %s", method_id)
+        self._logger.info("Authentication request: %s", method_id)
         return AuthenticateResponse()
 
     async def new_session(
@@ -194,7 +200,7 @@ class AcpAgent(Agent):
         Uses AsyncExitStack to ensure MCP clients are cleaned up properly.
         Uses MCP servers from config, or builtin server as default.
         """
-        logger.info("Creating new session in cwd: %s", cwd)
+        self._logger.info("Creating new session in cwd: %s", cwd)
 
         ########################################
         #  system prompt initialization
@@ -272,7 +278,9 @@ class AcpAgent(Agent):
         )
         self._config_values[session.session_id] = {"model": default_model}
 
-        logger.info("Created session: %s with %d tools", session.session_id, len(tools))
+        self._logger.info(
+            "Created session: %s with %d tools", session.session_id, len(tools)
+        )
 
         config_options = self._get_config_options(session.session_id)
 
@@ -288,7 +296,7 @@ class AcpAgent(Agent):
         **kwargs: Any,
     ) -> LoadSessionResponse | None:
         """Load an existing session with proper resource management."""
-        logger.info("Loading session: %s", session_id)
+        self._logger.info("Loading session: %s", session_id)
 
         try:
             # Load session from database
@@ -336,21 +344,21 @@ class AcpAgent(Agent):
             config_options = self._get_config_options(session_id)
             return LoadSessionResponse(config_options=config_options)
         except Exception as e:
-            logger.error("Failed to load session %s: %s", session_id, e)
+            self._logger.error("Failed to load session %s: %s", session_id, e)
             return None
 
     async def set_session_mode(
         self, mode_id: str, session_id: str, **kwargs: Any
     ) -> SetSessionModeResponse | None:
         """Handle session mode changes (not implemented yet)"""
-        logger.info("Set session mode: %s -> %s", session_id, mode_id)
+        self._logger.info("Set session mode: %s -> %s", session_id, mode_id)
         return SetSessionModeResponse()
 
     async def set_config_option(
         self, config_id: str, session_id: str, value: str, **kwargs: Any
     ) -> SetSessionConfigOptionResponse | None:
         """Handle config option changes"""
-        logger.info(
+        self._logger.info(
             "Set session %s config option %s -> %s", session_id, config_id, value
         )
 
@@ -391,7 +399,7 @@ class AcpAgent(Agent):
         Directly iterates over react_loop without intermediate buffering.
         Cancellation is handled via try/except - state is persisted by react_loop.
         """
-        logger.info("Prompt request for session: %s", session_id)
+        self._logger.info("Prompt request for session: %s", session_id)
 
         async def _execute_turn() -> PromptResponse:
             # Generate turn ID for this prompt (used for ACP tool call IDs)
@@ -400,7 +408,7 @@ class AcpAgent(Agent):
             # Get session
             session = self._sessions.get(session_id)
             if not session:
-                logger.error("Session not found: %s", session_id)
+                self._logger.error("Session not found: %s", session_id)
                 return PromptResponse(stop_reason="cancelled")
 
             # Extract text from prompt blocks
@@ -419,7 +427,7 @@ class AcpAgent(Agent):
                     )
                     text_list.append(text)
                 elif _type == "resource_link":
-                    logger.info(f"block type: {type(block)}")
+                    self._logger.info(f"block type: {type(block)}")
                     uri = (
                         block.get("uri", "")
                         if isinstance(block, dict)
@@ -487,6 +495,7 @@ class AcpAgent(Agent):
                     session_id=session_id,
                     state_accumulators=self._state_accumulators,
                     on_compact=on_compact,
+                    logger=self._logger,
                 ):
                     chunk_type = chunk.get("type")
 
@@ -504,10 +513,10 @@ class AcpAgent(Agent):
 
                     elif chunk_type == "tool_call":
                         name, first_arg = chunk["token"]
-                        logger.debug("Tool call: %s(%s", name, first_arg)
+                        self._logger.debug("Tool call: %s(%s", name, first_arg)
 
                     elif chunk_type == "tool_args":
-                        logger.debug("Tool args: %s", chunk["token"])
+                        self._logger.debug("Tool args: %s", chunk["token"])
 
                     elif chunk_type == "final_history":
                         break
@@ -515,7 +524,7 @@ class AcpAgent(Agent):
                 return PromptResponse(stop_reason="end_turn")
 
             except asyncio.CancelledError:
-                logger.info("Prompt cancelled")
+                self._logger.info("Prompt cancelled")
                 # State is already persisted by react_loop's cancellation handler
                 raise
 
@@ -526,10 +535,10 @@ class AcpAgent(Agent):
         try:
             return await task
         except asyncio.CancelledError:
-            logger.info("Prompt gracefully stopped due to client cancellation")
+            self._logger.info("Prompt gracefully stopped due to client cancellation")
             return PromptResponse(stop_reason="cancelled")
         except Exception as e:
-            logger.error("Error in prompt handling: %s", e, exc_info=True)
+            self._logger.error("Error in prompt handling: %s", e, exc_info=True)
             return PromptResponse(stop_reason="end_turn")
         finally:
             # 4. Cleanup the task reference when done
@@ -537,7 +546,7 @@ class AcpAgent(Agent):
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
         """Handle cancellation by immediately cancelling the underlying Task."""
-        logger.info("Cancel request for session: %s", session_id)
+        self._logger.info("Cancel request for session: %s", session_id)
 
         task = self._prompt_tasks.get(session_id)
         if task and not task.done():
@@ -545,12 +554,12 @@ class AcpAgent(Agent):
 
     async def ext_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         """Handle extension methods"""
-        logger.info("Extension method: %s", method)
+        self._logger.info("Extension method: %s", method)
         return {}
 
     async def ext_notification(self, method: str, params: dict[str, Any]) -> None:
         """Handle extension notifications"""
-        logger.info("Extension notification: %s", method)
+        self._logger.info("Extension notification: %s", method)
 
     async def cleanup(self) -> None:
         """
@@ -559,9 +568,9 @@ class AcpAgent(Agent):
         The AsyncExitStack ensures all resources are cleaned up in reverse order
         of their creation, even if exceptions occur during cleanup.
         """
-        logger.info("Cleaning up Agent resources")
+        self._logger.info("Cleaning up Agent resources")
         await self._exit_stack.aclose()
-        logger.info("Cleanup complete")
+        self._logger.info("Cleanup complete")
 
 
 async def agent_run() -> None:

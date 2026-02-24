@@ -70,7 +70,7 @@ async def web_search(queries: list[str], limit: int = 10) -> str:
     **Example use:**
     result: str = search(query="How to make key lime pie")
     """
-    searxng_url = os.getenv("SEARXNG_URL", "http://localhost:8082")
+    searxng_url = os.getenv("SEARXNG_URL", "http://localhost:2946")
     client = AsyncClient(base_url=searxng_url)
     results = []
     for query in queries:

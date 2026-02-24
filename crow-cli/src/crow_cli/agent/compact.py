@@ -3,10 +3,10 @@ file:           compact.py
 description:    compact the middle over the conversation
 """
 
-from crow_cli.agent.logger import logger
+from openai import AsyncOpenAI
+
 from crow_cli.agent.prompt import render_template
 from crow_cli.agent.session import Session
-from openai import AsyncOpenAI
 
 MAX_OUTPUT_TOKENS = 8192
 
@@ -35,7 +35,7 @@ async def non_streaming_request(
     tools: list[dict],
     request_params: dict,
     llm: AsyncOpenAI,
-) -> str:
+) -> dict:
     response = await llm.chat.completions.create(
         model=model,
         messages=messages,
@@ -44,8 +44,7 @@ async def non_streaming_request(
         **request_params,
     )
     usage = response.usage
-    logger.info(f"Compact usage: {usage}")
-    return response.choices[0].message.content
+    return dict(content=response.choices[0].message.content, usage=usage)
 
 
 def construct_compact_prompt(messages: list[dict]) -> tuple[list[dict], int]:
@@ -66,7 +65,7 @@ def construct_compact_prompt(messages: list[dict]) -> tuple[list[dict], int]:
 async def get_middle_message(
     session: Session,
     llm: AsyncOpenAI,
-) -> tuple[str, int]:
+) -> tuple[str, dict, int]:
     messages = session.messages
     model: str = session.model_identifier
     messages: list[dict] = session.messages
@@ -75,14 +74,14 @@ async def get_middle_message(
     # Always step on the request param's max_completion_tokens
     request_params["max_completion_tokens"] = MAX_OUTPUT_TOKENS
     compact_prompt, last_usr_msg_idx = construct_compact_prompt(messages)
-    middle_message = await non_streaming_request(
+    middle_message, usage = await non_streaming_request(
         model=model,
         messages=compact_prompt,
         tools=tools,
         request_params=request_params,
         llm=llm,
     )
-    return middle_message, last_usr_msg_idx
+    return middle_message, usage, last_usr_msg_idx
 
 
 async def compact(
@@ -90,6 +89,7 @@ async def compact(
     llm: AsyncOpenAI,
     cwd: str,
     on_compact: callable = None,
+    logger: Logger = None,
 ) -> Session:
     """
     Compact the conversation in-place.
@@ -116,7 +116,9 @@ async def compact(
     """
     # Summarize the conversation's middle
     logger.info("Compacting conversation...")
-    middle_message, last_usr_msg_idx = await get_middle_message(session, llm)
+    middle_message, usage, last_usr_msg_idx = await get_middle_message(session, llm)
+    logger.info(f"Compact usage: {usage}")
+
     logger.info("Summary generated, shuffling data")
     orig_messages = session.messages
     compacted_messages = (

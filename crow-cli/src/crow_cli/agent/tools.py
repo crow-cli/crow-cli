@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import suppress
+from logging import Logger
 from typing import Any
 
 from acp import (
@@ -44,10 +45,10 @@ from acp.schema import (
     ToolCallStart,
     ToolKind,
 )
-from crow_cli.agent.config import Config
-from crow_cli.agent.logger import logger
-from crow_cli.agent.session import Session
 from fastmcp import Client as MCPClient
+
+from crow_cli.agent.config import Config
+from crow_cli.agent.session import Session
 
 
 def tool_match(tool_name: str, terms: tuple[str]) -> bool:
@@ -84,6 +85,7 @@ async def execute_acp_terminal(
     session_id: str,
     tool_call_id: str,
     args: dict[str, Any],
+    logger: Logger,
 ) -> str:
     """
     Execute terminal command via ACP client terminal.
@@ -231,6 +233,7 @@ async def execute_acp_write(
     session_id: str,
     tool_call_id: str,
     args: dict[str, Any],
+    logger: Logger,
 ) -> str:
     """
     Write file via ACP client filesystem.
@@ -305,6 +308,7 @@ async def execute_acp_read(
     session_id: str,
     tool_call_id: str,
     args: dict[str, Any],
+    logger: Logger,
 ) -> str:
     """
     Read file via ACP client filesystem.
@@ -383,6 +387,7 @@ async def execute_acp_edit(
     session_id: str,
     tool_call_id: str,
     args: dict[str, Any],
+    logger: Logger,
 ) -> str:
     """
     Edit file with fuzzy matching, sending diff content to ACP client.

@@ -150,7 +150,3 @@ def load_toml_config(config_dir: Path) -> Config:
         )
 
     return Config(config_dir=config_dir, llm=llm_config)
-
-
-config_dir = get_config_dir()
-settings = load_toml_config(config_dir)

@@ -184,7 +184,7 @@ class CrowClient(Client):
         proc = await asyncio.create_subprocess_exec(
             sys.executable,
             "-m",
-            "crow_cli.agent.agent",
+            "crow_cli.agent.main",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             cwd=cwd,

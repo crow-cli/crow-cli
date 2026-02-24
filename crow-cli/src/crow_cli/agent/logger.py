@@ -1,10 +1,9 @@
 import logging
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 
-from crow_cli.agent.config import settings
 
-
-def setup_logger(name="crow_logger", log_file=settings.LOG_PATH, max_mb=5, max_files=3):
+def setup_logger(log_file: Path, name="crow_logger", max_mb=5, max_files=3):
     """
     Sets up a rotating file logger.
 
@@ -35,11 +34,3 @@ def setup_logger(name="crow_logger", log_file=settings.LOG_PATH, max_mb=5, max_f
         logger.addHandler(file_handler)
 
     return logger
-
-
-# Initialize and test
-logger = setup_logger()
-logger.info("Rotating logger initialized successfully!")
-logger.error("This is an example error message.")
-
-logger = setup_logger()

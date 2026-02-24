@@ -10,6 +10,8 @@ mcpServers:
       - run
       - crow-mcp
 
+db_uri: postgresql://postgres:${POSTGRES_PASSWORD}@localhost:${POSTGRES_PORT}/postgres
+
 ###
 providers:
   zai:

@@ -20,10 +20,12 @@ from acp.schema import (
     ToolCallProgress,
     ToolCallStart,
 )
+from fastmcp import Client as MCPClient
+from openai import AsyncOpenAI
+
 from crow_cli.agent.compact import compact
 from crow_cli.agent.config import Config
 from crow_cli.agent.context import maximal_deserialize
-from crow_cli.agent.logger import logger
 from crow_cli.agent.session import Session
 from crow_cli.agent.tools import (
     execute_acp_edit,
@@ -32,8 +34,6 @@ from crow_cli.agent.tools import (
     execute_acp_tool,
     execute_acp_write,
 )
-from fastmcp import Client as MCPClient
-from openai import AsyncOpenAI
 
 
 async def send_request(
@@ -52,8 +52,6 @@ async def send_request(
     Returns:
         Streaming response from LLM
     """
-    logger.info(f"model: {session.model_identifier}")
-
     return await llm.chat.completions.create(
         model=session.model_identifier,
         messages=session.messages,
@@ -197,6 +195,7 @@ async def execute_tool_calls(
     sessions: dict[str, Session],
     session_id: str,
     tool_call_inputs: list[dict],
+    logger: Logger,
 ) -> list[dict]:
     """
     Execute tool calls via MCP or ACP client terminal.
@@ -234,6 +233,7 @@ async def execute_tool_calls(
                     session_id=session_id,
                     tool_call_id=llm_tool_call_id,
                     args=arg_dict,
+                    logger=logger,
                 )
             elif tool_name == config.WRITE_TOOL and use_acp_write:
                 result_content = await execute_acp_write(
@@ -242,6 +242,7 @@ async def execute_tool_calls(
                     session_id=session_id,
                     tool_call_id=llm_tool_call_id,
                     args=arg_dict,
+                    logger=logger,
                 )
             elif tool_name == config.READ_TOOL and use_acp_read:
                 result_content = await execute_acp_read(
@@ -250,6 +251,7 @@ async def execute_tool_calls(
                     session_id=session_id,
                     tool_call_id=llm_tool_call_id,
                     args=arg_dict,
+                    logger=logger,
                 )
             elif tool_name == config.EDIT_TOOL:
                 result_content = await execute_acp_edit(
@@ -260,6 +262,7 @@ async def execute_tool_calls(
                     session_id=session_id,
                     tool_call_id=llm_tool_call_id,
                     args=arg_dict,
+                    logger=logger,
                 )
             else:
                 result_content = await execute_acp_tool(
@@ -270,6 +273,7 @@ async def execute_tool_calls(
                     tool_call_id=llm_tool_call_id,
                     tool_name=tool_name,
                     args=arg_dict,
+                    logger=logger,
                 )
             tool_results.append(
                 {
@@ -312,6 +316,7 @@ async def react_loop(
     state_accumulators: dict[str, dict],
     max_turns: int = 50000,
     on_compact: callable = None,
+    logger: Logger = None,
 ):
     """
     Main ReAct loop with cancellation support.
@@ -416,6 +421,7 @@ async def react_loop(
             sessions=sessions,
             session_id=session_id,
             tool_call_inputs=tool_call_inputs,
+            logger=logger,
         )
         if cancel_event and cancel_event.is_set():
             logger.info("Cancelled after tool execution")
