@@ -1,0 +1,37 @@
+# config.yaml for the spec at
+# ../src/crow_acp/agent/config.py
+mcpServers:
+  crow-mcp:
+    transport: stdio
+    command: uv
+    args:
+      - --project
+      - /home/thomas/src/nid/crow-mcp
+      - run
+      - crow-mcp
+
+db_uri: postgresql://postgres:${POSTGRES_PASSWORD}@localhost:${POSTGRES_PORT}/postgres
+
+###
+providers:
+  zai:
+    api_key: ${ZAI_API_KEY}
+    base_url: https://api.z.ai/api/coding/paas/v4
+  llamacpp:
+    api_key: ${LLAMACPP_API_KEY}
+    base_url: http://coast-after-3:1234/v1
+  openrouter:
+    api_key: ${OPENROUTER_API_KEY}
+    base_url: https://openrouter.ai/api/v1
+
+###
+models:
+  glm-5:
+    provider: zai
+    model: glm-5
+  qwen3-coder-next:
+    provider: llamacpp
+    model: qwen3-coder-next
+  gemini-3.1-pro:
+    provider: openrouter
+    model: google/gemini-3.1-pro-preview

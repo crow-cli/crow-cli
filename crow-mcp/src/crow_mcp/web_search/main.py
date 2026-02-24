@@ -15,10 +15,8 @@ import os
 from httpx import AsyncClient
 from pydantic import BaseModel
 
+from crow_mcp.server.logger import logger
 from crow_mcp.server.main import mcp
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Create the combined MCP server
 # mcp = FastMCP(name="crow-builtin")
@@ -72,7 +70,7 @@ async def web_search(queries: list[str], limit: int = 10) -> str:
     **Example use:**
     result: str = search(query="How to make key lime pie")
     """
-    searxng_url = os.getenv("SEARXNG_URL", "http://localhost:8082")
+    searxng_url = os.getenv("SEARXNG_URL", "http://localhost:2946")
     client = AsyncClient(base_url=searxng_url)
     results = []
     for query in queries:

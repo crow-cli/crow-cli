@@ -9,16 +9,12 @@ Combines all builtin tools into one MCP server:
 This is the default MCP server for crow agents.
 """
 
-import logging
-
 import markdownify
 import readabilipy.simple_json
 from httpx import AsyncClient
 
+from crow_mcp.server.logger import logger
 from crow_mcp.server.main import mcp
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Create the combined MCP server
 # mcp = FastMCP(name="crow-builtin")

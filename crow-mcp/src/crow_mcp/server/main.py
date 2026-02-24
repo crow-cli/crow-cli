@@ -31,10 +31,11 @@ import crow_mcp.terminal.main  # noqa: F401
 import crow_mcp.web_fetch.main  # noqa: F401
 import crow_mcp.web_search.main  # noqa: F401
 import crow_mcp.write.main  # noqa: F401
+from crow_mcp.server.logger import logger
 
 
 def main():
-    mcp.run()
+    mcp.run(show_banner=False)
 
 
 if __name__ == "__main__":
