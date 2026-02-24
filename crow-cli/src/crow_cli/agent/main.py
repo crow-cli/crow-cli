@@ -91,7 +91,7 @@ class AcpAgent(Agent):
             config_dir: Path = get_default_config_dir()
             config: Config = Config.load(config_dir=config_dir)
         self._config = config
-        self._logger = setup_logger(self._config.config_dir / "crow-cli.log")
+        self._logger = setup_logger(self._config.config_dir / "logs" / "crow-cli.log")
         self._db_uri = self._config.db_uri
         self._exit_stack = AsyncExitStack()
         self._sessions: dict[str, Session] = {}

@@ -11,7 +11,7 @@ mcpServers:
       - crow-mcp
 
 # db_uri: postgresql://postgres:${POSTGRES_PASSWORD}@localhost:${POSTGRES_PORT}/postgres
-db_uri: sqlite:///Users/thomas.wood/.crow/crow.db
+db_uri: sqlite:///${HOME}/.crow/crow.db
 ###
 providers:
   braintrust:
@@ -34,3 +34,6 @@ FETCH_TOOL: web_fetch
 # Compaction parameters
 MAX_COMPACT_TOKENS: 120000
 N_STEPS_BACK_COMPACT: 8
+
+max_steps_per_turn: 100
+max_retries_per_step: 3

@@ -72,16 +72,16 @@ class Config:
     max_retries_per_step: int = 3
 
     # Tool Constants
-    TERMINAL_TOOL: str = field(default="crow-mcp_terminal", init=False)
-    WRITE_TOOL: str = field(default="crow-mcp_write", init=False)
-    READ_TOOL: str = field(default="crow-mcp_read", init=False)
-    EDIT_TOOL: str = field(default="crow-mcp_edit", init=False)
-    SEARCH_TOOL: str = field(default="crow-mcp_web_search", init=False)
-    FETCH_TOOL: str = field(default="crow-mcp_web_fetch", init=False)
+    TERMINAL_TOOL: str = "terminal"
+    WRITE_TOOL: str = "write"
+    READ_TOOL: str = "read"
+    EDIT_TOOL: str = "edit"
+    SEARCH_TOOL: str = "web_search"
+    FETCH_TOOL: str = "web_fetch"
 
     # Compaction parameters
-    MAX_COMPACT_TOKENS: int = field(default=120000, init=False)
-    N_STEPS_BACK_COMPACT: int = field(default=8, init=False)
+    MAX_COMPACT_TOKENS: int = 120000
+    N_STEPS_BACK_COMPACT: int = 8
 
     @property
     def log_path(self) -> str:
@@ -113,7 +113,6 @@ class Config:
                             args[idx + 1] = str(local_path)
 
         return {"mcpServers": mcp_servers}
-
 
     @classmethod
     def load(cls, config_dir: str | Path | None = None) -> "Config":
@@ -179,12 +178,36 @@ class Config:
         if db_uri.startswith("sqlite:///") and not db_uri.startswith("sqlite:////"):
             path = db_uri[len("sqlite:///") :]
             root = path.split("/", 1)[0]
-            if path and not path.startswith("/") and root in {"Users", "var", "home", "tmp", "opt"}:
+            if (
+                path
+                and not path.startswith("/")
+                and root in {"Users", "var", "home", "tmp", "opt"}
+            ):
                 db_uri = "sqlite:////" + path
+
+        # Collect overrides for fields that have defaults on the dataclass.
+        # Any key in the YAML that matches a Config field name wins.
+        _OVERRIDABLE = {
+            "max_steps_per_turn": int,
+            "max_retries_per_step": int,
+            "TERMINAL_TOOL": str,
+            "WRITE_TOOL": str,
+            "READ_TOOL": str,
+            "EDIT_TOOL": str,
+            "SEARCH_TOOL": str,
+            "FETCH_TOOL": str,
+            "MAX_COMPACT_TOKENS": int,
+            "N_STEPS_BACK_COMPACT": int,
+        }
+        overrides = {}
+        for key, typ in _OVERRIDABLE.items():
+            if key in parsed_config:
+                overrides[key] = typ(parsed_config[key])
 
         return cls(
             config_dir=target_dir,
             llm=llm_config,
             mcp_servers=parsed_config.get("mcpServers", {}),
             db_uri=db_uri,
+            **overrides,
         )
