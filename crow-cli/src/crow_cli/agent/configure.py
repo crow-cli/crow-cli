@@ -12,7 +12,7 @@ ENV_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
 
 def get_default_config_dir() -> Path:
-    return Path(os.path.join(os.getenv("HOME"), ".crow"))
+    return Path.home() / ".crow"
 
 
 def resolve_env_vars(value: Any) -> Any:
@@ -88,6 +88,33 @@ class Config:
         """Dynamic property so log_path updates if config_dir changes."""
         return str(self.config_dir / "logs" / "crow-acp.log")
 
+    def get_builtin_mcp_config(self) -> dict[str, Any]:
+        """Return MCP config dict in FastMCP format.
+
+        FastMCP expects: {"mcpServers": {<name>: {...}}}
+        """
+        mcp_servers: dict[str, Any] = dict(self.mcp_servers or {})
+
+        # If the config references a non-existent local path, auto-correct.
+        crow_mcp = mcp_servers.get("crow-mcp")
+        if isinstance(crow_mcp, dict):
+            args = crow_mcp.get("args")
+            if isinstance(args, list) and "--project" in args:
+                try:
+                    idx = args.index("--project")
+                except ValueError:
+                    idx = -1
+                if idx >= 0 and idx + 1 < len(args):
+                    candidate = Path(args[idx + 1])
+                    if not candidate.exists():
+                        repo_root = Path(__file__).resolve().parents[4]
+                        local_path = repo_root / "crow-mcp"
+                        if local_path.exists():
+                            args[idx + 1] = str(local_path)
+
+        return {"mcpServers": mcp_servers}
+
+
     @classmethod
     def load(cls, config_dir: str | Path | None = None) -> "Config":
         """
@@ -147,6 +174,13 @@ class Config:
         db_uri = parsed_config.get("db_uri") or os.getenv(
             "DATABASE_PATH", f"sqlite:///{target_dir / 'crow.db'}"
         )
+
+        # Handle common misconfig: sqlite:///Users/... (missing leading slash)
+        if db_uri.startswith("sqlite:///") and not db_uri.startswith("sqlite:////"):
+            path = db_uri[len("sqlite:///") :]
+            root = path.split("/", 1)[0]
+            if path and not path.startswith("/") and root in {"Users", "var", "home", "tmp", "opt"}:
+                db_uri = "sqlite:////" + path
 
         return cls(
             config_dir=target_dir,

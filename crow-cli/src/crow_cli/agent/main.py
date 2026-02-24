@@ -87,7 +87,10 @@ class AcpAgent(Agent):
         - In-memory dictionaries for sessions and MCP clients
         - LLM client from configuration
         """
-        self._config = config or Config(config_dir=get_default_config_dir())
+        if not config:
+            config_dir: Path = get_default_config_dir()
+            config: Config = Config.load(config_dir=config_dir)
+        self._config = config
         self._logger = setup_logger(self._config.config_dir / "crow-cli.log")
         self._db_uri = self._config.db_uri
         self._exit_stack = AsyncExitStack()
@@ -108,24 +111,30 @@ class AcpAgent(Agent):
             str, dict[str, str]
         ] = {}  # session_id -> {config_id: value}
 
+    def _default_model_value(self) -> str:
+        model = next(iter(self._config.llm.models.values()), None)
+        if not model:
+            return ""
+        return f"{model.provider_name}:{model.model_id}"
+
+    def _default_model_identifier(self) -> str:
+        model = next(iter(self._config.llm.models.values()), None)
+        return model.model_id if model else ""
+
     def _get_config_options(self, session_id: str) -> list[SessionConfigOption]:
         """Generate the config options for a session based on current values."""
-        options_list = []
-        for model in self._config.llm.models:
+        options_list: list[dict[str, str]] = []
+        for model in self._config.llm.models.values():
             options_list.append(
                 dict(
-                    value=f"{model.provider}:{model.model}",
-                    name=f"{model.provider}/{model.model}",
-                    description=f"Model {model.model} from {model.provider}",
+                    value=f"{model.provider_name}:{model.model_id}",
+                    name=model.name,
+                    description=model.model_id,
                 )
             )
 
         current_vals = self._config_values.get(session_id, {})
-        default_model = (
-            f"{self._config.llm.models[0].provider}:{self._config.llm.models[0].model}"
-            if self._config.llm.models
-            else ""
-        )
+        default_model = self._default_model_value()
         current_model = current_vals.get("model", default_model)
 
         return [
@@ -260,7 +269,7 @@ class AcpAgent(Agent):
             },
             tool_definitions=tools,
             request_params={"temperature": 0.2},
-            model_identifier=self._config.llm.models[0].model,
+            model_identifier=self._default_model_identifier(),
             db_uri=self._db_uri,
             cwd=cwd,
         )
@@ -274,11 +283,7 @@ class AcpAgent(Agent):
         self._cancel_events[session.session_id] = asyncio.Event()
 
         # Set default values for new session config
-        default_model = (
-            f"{self._config.llm.models[0].provider}:{self._config.llm.models[0].model}"
-            if self._config.llm.models
-            else ""
-        )
+        default_model = self._default_model_value()
         self._config_values[session.session_id] = {"model": default_model}
 
         self._logger.info(
@@ -333,11 +338,7 @@ class AcpAgent(Agent):
 
             # Initialize session config if not present
             if session_id not in self._config_values:
-                default_model = (
-                    f"{self._config.llm.models[0].provider}:{self._config.llm.models[0].model}"
-                    if self._config.llm.models
-                    else ""
-                )
+                default_model = self._default_model_value()
                 self._config_values[session_id] = {
                     "model": session.model_identifier or default_model
                 }
@@ -458,26 +459,22 @@ class AcpAgent(Agent):
             # Stream chunks directly from react_loop - no queue, no latency
             try:
                 current_config = self._config_values.get(session_id, {})
-                default_model = (
-                    f"{self._config.llm.models[0].provider}:{self._config.llm.models[0].model}"
-                    if self._config.llm.models
-                    else "glm-5"
+                current_model_value = (
+                    current_config.get("model") or self._default_model_value()
                 )
-                current_model_value = current_config.get("model", default_model)
-                if ":" in current_model_value:
-                    provider_name, model_name = current_model_value.split(":", 1)
-                else:
-                    provider_name = (
-                        self._config.llm.models[0].provider
-                        if self._config.llm.models
-                        else ""
-                    )
-                    model_name = current_model_value
+                provider_name = (
+                    current_model_value.split(":", 1)[0]
+                    if ":" in current_model_value
+                    else ""
+                )
 
                 provider = self._config.llm.providers.get(provider_name)
-                # Fallback to the first provider if requested one is not found
                 if not provider and self._config.llm.providers:
                     provider = next(iter(self._config.llm.providers.values()))
+                if not provider:
+                    raise RuntimeError(
+                        "No LLM providers configured. Check ~/.crow/config.yaml."
+                    )
 
                 llm = configure_llm(provider=provider, debug=False)
 

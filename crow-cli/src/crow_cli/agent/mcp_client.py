@@ -109,7 +109,7 @@ async def create_mcp_client_from_acp(
     # Let's try to use the fallback_config
     config = acp_to_fastmcp_config(mcp_servers)
     logger.info(f"config: {config}")
-    config["mcpServers"].update(**fallback_config["mcpServers"])
+    config["mcpServers"].update((fallback_config or {}).get("mcpServers", {}))
     for server_name, server_config in config["mcpServers"].items():
         server_config.update(dict(cwd=cwd))
     # Convert ACP format to FastMCP config dict
