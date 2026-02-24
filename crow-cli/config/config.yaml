@@ -23,3 +23,14 @@ models:
   claude-opus-4.6:
     provider: zai
     model: arn:aws:bedrock:us-east-1:166979434163:inference-profile/us.anthropic.claude-opus-4-6-v1
+
+TERMINAL_TOOL: terminal
+WRITE_TOOL: write
+READ_TOOL: read
+EDIT_TOOL: edit
+SEARCH_TOOL: web_search
+FETCH_TOOL: web_fetch
+
+# Compaction parameters
+MAX_COMPACT_TOKENS: 120000
+N_STEPS_BACK_COMPACT: 8

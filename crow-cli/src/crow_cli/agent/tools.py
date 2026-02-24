@@ -470,6 +470,7 @@ async def execute_acp_tool(
     tool_call_id: str,
     tool_name: str,
     args: dict[str, Any],
+    logger: Logger,
 ) -> str:
     """
     Execute a generic tool via MCP and report with content.
