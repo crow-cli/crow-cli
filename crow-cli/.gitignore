@@ -1,2 +1,3 @@
 .pytest_cache
 config/logs/*.log
+config-done

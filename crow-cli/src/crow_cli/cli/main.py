@@ -13,6 +13,7 @@ from rich.table import Table
 from rich.text import Text
 
 from crow_cli.agent.main import main as agent_main
+from crow_cli.cli.init_cmd import init_command
 
 # from crow_cli.agent.config import settings
 from crow_cli.client.main import CrowClient, connect_client
@@ -56,6 +57,12 @@ STATUS_ICONS = {
 def run_agentmain():
     """Main entry point for the crow-cli agent."""
     agent_main()
+
+
+@app.command("init")
+def run_init():
+    """Initialize Crow configuration interactively."""
+    init_command()
 
 
 # ============================================================================

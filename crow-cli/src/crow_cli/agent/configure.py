@@ -10,9 +10,11 @@ from dotenv import load_dotenv
 # Regex to find ${VAR_NAME} in strings
 ENV_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
+CROW_DIR = ".crow-test"
+
 
 def get_default_config_dir() -> Path:
-    return Path.home() / ".crow"
+    return Path.home() / CROW_DIR
 
 
 def resolve_env_vars(value: Any) -> Any:
@@ -124,7 +126,7 @@ class Config:
         4. Maps the YAML data to dataclasses.
         """
         if config_dir is None:
-            target_dir = Path.home() / ".crow"
+            target_dir = get_default_config_dir()
         else:
             target_dir = Path(config_dir)
 

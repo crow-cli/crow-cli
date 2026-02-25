@@ -221,12 +221,14 @@ class AcpAgent(Agent):
 
         # Use default MCP config if no servers provided
         fallback_config = self._config.get_builtin_mcp_config()
+        self._logger.info("fallback_config: %s", fallback_config)
 
         # Create MCP client (builtin if no servers provided)
-        mcp_client = await create_mcp_client_from_acp(
-            mcp_servers,
-            cwd,
+        mcp_client = create_mcp_client_from_acp(
+            mcp_servers=mcp_servers,
+            cwd=cwd,
             fallback_config=fallback_config,
+            logger=self._logger,
         )
 
         # CRITICAL: Use AsyncExitStack for lifecycle management
@@ -314,13 +316,19 @@ class AcpAgent(Agent):
             # Use default config if no servers provided
             fallback_config = self._config.get_builtin_mcp_config()
             if fallback_config:
-                mcp_client = await create_mcp_client_from_acp(
-                    mcp_servers,
-                    cwd,
+                mcp_client = create_mcp_client_from_acp(
+                    mcp_servers=mcp_servers,
+                    cwd=cwd,
                     fallback_config=fallback_config,
+                    logger=self._logger,
                 )
             else:
-                mcp_client = await create_mcp_client_from_acp(mcp_servers, cwd)
+                mcp_client = create_mcp_client_from_acp(
+                    mcp_servers=mcp_servers,
+                    cwd=cwd,
+                    fallback_config=[],
+                    logger=self._logger,
+                )
 
             # CRITICAL: Use AsyncExitStack for lifecycle management
             mcp_client = await self._exit_stack.enter_async_context(mcp_client)

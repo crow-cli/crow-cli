@@ -15,15 +15,15 @@ db_uri: postgresql://postgres:${POSTGRES_PASSWORD}@localhost:${POSTGRES_PORT}/po
 
 ###
 providers:
-  braintrust:
-    api_key: ${BRAINTRUST_API_KEY}
-    base_url: https://d3jp9my702tbm7.cloudfront.net/v1/proxy
+  placeholder-provider:
+    api_key: ${PLACEHOLDER_API_KEY}
+    base_url: https://example.com/v1
 
 ###
 models:
-  claude-opus-4.6:
-    provider: zai
-    model: arn:aws:bedrock:us-east-1:166979434163:inference-profile/us.anthropic.claude-opus-4-6-v1
+  placeholder-model:
+    provider: placeholder-provider
+    model: gpt-3.5-turbo
 
 TERMINAL_TOOL: terminal
 WRITE_TOOL: write
