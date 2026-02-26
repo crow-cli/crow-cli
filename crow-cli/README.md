@@ -9,7 +9,7 @@
 cd /home/thomas/src/nid
 uv venv
 # Install dependencies using uv
-uv --project /home/thomas/src/nid/crow-cli sync
+uv --project /path/to/crow/crow-cli sync
 ```
 
 ## Quick Start
@@ -19,7 +19,7 @@ uv --project /home/thomas/src/nid/crow-cli sync
 ```bash
 # Activate the virtual environment (if not using --project)
 # Run the agent
-uv --project crow-cli crow-cli --help
+uv --project . crow-cli --help
 ```
 
 ### Run Programmatically

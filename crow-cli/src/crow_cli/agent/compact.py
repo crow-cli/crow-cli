@@ -72,7 +72,9 @@ async def get_middle_message(
     tools: list[dict] = session.tools
     request_params: dict = session.request_params
     # Always step on the request param's max_completion_tokens
-    request_params["max_completion_tokens"] = MAX_OUTPUT_TOKENS
+    # HAVING TO RENAME BECAUSE THERE IS NO STANDARD AND PROXY
+    # IS STEPPING ON THE MAX_COMPLETION_TOKENS INPUT REQUESTS
+    request_params["max_tokens"] = MAX_OUTPUT_TOKENS
     compact_prompt, last_usr_msg_idx = construct_compact_prompt(messages)
     middle_message, usage = await non_streaming_request(
         model=model,
