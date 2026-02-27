@@ -96,7 +96,7 @@ def inspect_db(
             client._console.print(f"[red]Database not found at {db_uri}[/red]")
         raise SystemExit(1)
 
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_uri)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
