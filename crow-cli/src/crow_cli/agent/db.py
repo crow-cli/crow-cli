@@ -59,6 +59,14 @@ class Session(Base):
     )
 
 
+# TODO!
+# this needs to give the message the appropriate structure
+# and not just the simplified {role, content} either
+# The actual schema. tool calls for assistant will be json
+# we will save images to disk at
+#  ~/.crow/images/{session-id}-{image-session-counter}.png
+# and reference them in such a way session.load re-renders
+# faithful to original format
 class Message(Base):
     """
     One row = One message.
