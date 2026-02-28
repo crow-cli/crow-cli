@@ -504,7 +504,6 @@ class AcpAgent(Agent):
                     llm=llm,
                     tools=tools,
                     sessions=self._sessions,
-                    cancel_event=self._cancel_events[session_id],
                     session_id=session_id,
                     state_accumulators=self._state_accumulators,
                     on_compact=on_compact,

@@ -403,7 +403,6 @@ async def react_loop(
     llm: AsyncOpenAI,
     tools: list[dict],
     sessions: dict[str, Session],
-    cancel_event: Event,
     session_id: str,
     state_accumulators: dict[str, dict],
     max_turns: int = 50000,
@@ -423,10 +422,6 @@ async def react_loop(
     session = sessions.get(session_id)
     cwd = session.cwd
     for turn in range(max_turns):
-        if cancel_event and cancel_event.is_set():
-            logger.info(f"Cancelled at start of turn {turn}")
-            return
-
         response = await send_request(
             llm,
             session,
@@ -454,18 +449,6 @@ async def react_loop(
                 usage,
             )
             raise
-
-        # we have just finished processing the response from the language model and it is time to execute the tool call
-        if cancel_event and cancel_event.is_set():
-            logger.info("Cancelled before tool execution")
-            session.add_assistant_response(
-                thinking,
-                content,
-                tool_call_inputs,
-                logger,
-                usage,
-            )
-            return
 
         ################################################
         # okay the llm has responded let's check usage
@@ -526,20 +509,6 @@ async def react_loop(
                 tool_call_inputs=tool_call_inputs,
                 logger=logger,
             )
-            # CANCEL SIGNAL
-            if cancel_event and cancel_event.is_set():
-                logger.info("Cancelled after tool execution")
-                if len(tool_results) > 0:
-                    session.add_assistant_response(
-                        thinking,
-                        content,
-                        tool_call_inputs,
-                        usage,
-                        logger,
-                    )
-
-                    session.add_tool_response(tool_results, logger)
-                return
 
             session.add_assistant_response(
                 thinking,
