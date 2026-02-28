@@ -2,29 +2,29 @@
 
 
 # NEW FEATURES
-- compaction, compaction, compaction <- IN PROGRESS
-- skills, skills, skills <- TO DO
 - agent-client orchestration <- IN PROGRESS
-- doom loop detection
+- slash commands <- TODO
+- compaction, compaction, compaction <- IN VALIDATION
+- skills, skills, skills <- TO DO
+
+# CODE IMPROVEMENTS
+- unit testing <- IN PROGRESS
+- integration testing <- TODO
+- end to end testing <- DONE
+- evaluate cancel task vs cancel event to determine which we want to keep and which one we should remove, though tbh it works extremely well right now, I'm not certain this is necessarily suboptimal. maybe overengineered
+- remove dead code
 
 # BUG FIXES
+- adding a folder causes ACP to crash
 - ~~when we cancel a session we do NOT want to include any crap in the messages might yield things like this so we need to revisit cancellation handling and think about letting that last token trickle in after all~~
 
 - ~~apparently zed uses resource instead of resource_link now, which is fine by me lol. implemented. still having trouble doing for when there are multiple types of resource in the message~~
 
 # BACKLOG
-- Add callbacks points to agent
-- create contracts for requests and responses from callbacks extension SDK so other packages that import crow-acp can interact with the code without inheritance, self injection, or circular imports by
-  1.  exposing get/set methods on session data
-  2. expose `session/new` and `session/initialize` methods so extension can create new session with new data
-  3. expose `session/prompt` with method so extensions/callbacks can use agent's warm kv cache for fast summarization during compaction
+- doom loop detection
 - Fix intermittent error in terminal tool since upgrade The key insight is that synchronous blocking code (like `time.sleep()` in the terminal polling loop) inside an `async def` function will block the entire event loop - which could cause hangs if the MCP transport needs to do I/O simultaneously. The fix would be `asyncio.to_thread()` or making the polling truly async. 
 
 
-
-
-# IDEA 
-~~Just sit down with [agentclientprotocol.com](https://agentclientprotocol.com) and go through the whole thing once just to read, then again with a piece of paper taking notes, then again slower actually implementing in crow-acp.~~
 
 
 
