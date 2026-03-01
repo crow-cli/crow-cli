@@ -6,7 +6,7 @@
 
 ```bash
 # Ensure you're in the correct project directory
-git clone https://github.com/odellus/crow-cli.git
+git clone https://github.com/crow-cli/crow-cli.git
 uv venv
 # Install dependencies using uv
 uv --project /path/to/crow/crow-cli sync
