@@ -3,11 +3,8 @@
 mcpServers:
   crow-mcp:
     transport: stdio
-    command: uv
+    command: uvx
     args:
-      - --project
-      - /home/thomas/src/nid/crow-mcp
-      - run
       - crow-mcp
 
 ###########################################################

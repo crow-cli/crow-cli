@@ -90,7 +90,7 @@ class Config:
     @property
     def log_path(self) -> str:
         """Dynamic property so log_path updates if config_dir changes."""
-        return str(self.config_dir / "logs" / "crow-acp.log")
+        return str(self.config_dir / "logs" / "crow-cli.log")
 
     def get_builtin_mcp_config(self) -> dict[str, Any]:
         """Return MCP config dict in FastMCP format.

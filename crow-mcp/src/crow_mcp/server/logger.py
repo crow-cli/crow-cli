@@ -5,8 +5,10 @@ from pathlib import Path
 
 
 def get_log_path():
-    root = Path(__file__).parent.parent.parent.parent
-    return root / "logs" / "crow-mcp.log"
+    root = Path().home() / ".crow"
+
+    log_path = root / "logs" / "crow-mcp.log"
+    log_path.mkdir(parents=True, exist_ok=True)
 
 
 logging_path = get_log_path()

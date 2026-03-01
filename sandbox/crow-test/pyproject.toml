@@ -1,0 +1,10 @@
+[project]
+name = "crow-test"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "crow-mcp>=0.1.0",
+    "ipython>=9.10.0",
+]
