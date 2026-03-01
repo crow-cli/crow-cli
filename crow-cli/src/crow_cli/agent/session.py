@@ -24,7 +24,7 @@ def get_session_by_cwd(cwd, db_uri):
     engine = create_engine(db_uri)
     session_qry = "select * from sessions;"
     dfs = pd.read_sql(session_qry, engine)
-    dfs["cwd"] = df.prompt_args.apply(lambda ex: json.loads(ex).get("workspace"))
+    dfs["cwd"] = dfs.prompt_args.apply(lambda ex: json.loads(ex).get("workspace"))
     session_ids = dfs[dfs.cwd == cwd]
     created_ats = session_ids.created_at.tolist()
     session_ids = session_ids.session_id.tolist()
