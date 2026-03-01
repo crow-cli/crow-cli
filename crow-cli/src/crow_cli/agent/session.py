@@ -10,7 +10,6 @@ from logging import Logger
 from typing import Any
 from uuid import uuid4
 
-import pandas as pd
 from coolname import generate_slug
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session as SQLAlchemySession
@@ -21,33 +20,51 @@ from crow_cli.agent.prompt import render_template
 
 
 def get_session_by_cwd(cwd, db_uri):
-    engine = create_engine(db_uri)
-    session_qry = "select * from sessions;"
-    dfs = pd.read_sql(session_qry, engine)
-    dfs["cwd"] = dfs.prompt_args.apply(lambda ex: json.loads(ex).get("workspace"))
-    session_ids = dfs[dfs.cwd == cwd]
-    created_ats = session_ids.created_at.tolist()
-    session_ids = session_ids.session_id.tolist()
-    sess2created = {sid: cr8d for (sid, cr8d) in zip(session_ids, created_ats)}
-    sess_info = []
-    for sid, cr8d in sess2created.items():
-        print(sid)
-        print(cr8d)
-        msgs_qry = f"select * from messages where session_id='{sid}';"
-        dfm = pd.read_sql(msgs_qry, engine)
-        if len(dfm) > 2:
-            title = json.loads(dfm.iloc[1].data).get("content")[:50]
-        else:
-            title = "Untitled Chat"
-        sess_info.append(
-            dict(
-                cwd=cwd,
-                session_id=sid,
-                title=title,
-                updated_at=pd.to_datetime(cr8d).isoformat(),
-            )
-        )
-    return sess_info
+    """
+    Lookup sessions by working directory.
+    
+    Returns list of session info dicts with session_id, title, updated_at.
+    """
+    db = SQLAlchemySession(create_engine(db_uri))
+    try:
+        sessions = db.query(SessionModel).all()
+        result = []
+        for session in sessions:
+            # Parse prompt_args from JSON string to dict
+            prompt_args = session.prompt_args
+            if isinstance(prompt_args, str):
+                try:
+                    prompt_args = json.loads(prompt_args)
+                except (json.JSONDecodeError, TypeError):
+                    prompt_args = {}
+            
+            # Check if workspace matches
+            if not prompt_args or prompt_args.get("workspace") != cwd:
+                continue
+            
+            # Get message count and title
+            msgs = db.query(Message).filter_by(session_id=session.session_id).order_by(Message.id).all()
+            if len(msgs) > 2:
+                # Get content from second message (index 1, after system message)
+                try:
+                    data = msgs[1].data
+                    if isinstance(data, str):
+                        data = json.loads(data)
+                    title = data.get("content", "")[:50] if data else "Untitled Chat"
+                except (json.JSONDecodeError, AttributeError, TypeError):
+                    title = "Untitled Chat"
+            else:
+                title = "Untitled Chat"
+            
+            result.append({
+                "cwd": cwd,
+                "session_id": session.session_id,
+                "title": title,
+                "updated_at": session.created_at.isoformat(),
+            })
+        return result
+    finally:
+        db.close()
 
 
 def get_coolname() -> str:
