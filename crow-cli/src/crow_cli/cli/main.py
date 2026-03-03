@@ -65,6 +65,26 @@ def run_init():
     init_command()
 
 
+@app.command("auth")
+def run_auth():
+    """
+    Declare authentication support for ACP Registry compliance.
+
+    This agent supports authentication and is registered in the ACP Registry.
+    No actual authentication is required for FOSS deployments.
+    """
+    console.print(
+        Panel(
+            "[green]✓ Authentication Support Declared[/green]\n\n"
+            "This agent declares authentication support for ACP Registry compliance.\n"
+            "No actual authentication is required for FOSS deployments.\n\n"
+            "[dim]Agent is ready for use.[/dim]",
+            title="[magenta]🪶 Crow[/magenta]",
+            border_style="green",
+        )
+    )
+
+
 # ============================================================================
 # Database Inspection
 # ============================================================================

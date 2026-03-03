@@ -37,6 +37,7 @@ from acp.interfaces import Client
 from acp.schema import (
     AgentCapabilities,
     AudioContentBlock,
+    AuthMethod,
     ClientCapabilities,
     EmbeddedResourceContentBlock,
     HttpMcpServer,
@@ -193,12 +194,21 @@ class AcpAgent(Agent):
             protocol_version=PROTOCOL_VERSION,
             agent_capabilities=AgentCapabilities(
                 load_session=True,  # We support session loading
+                list_sessions=True,  # We support listing sessions
                 prompt_capabilities=PromptCapabilities(
                     image=True,  # We support image content blocks for vision models
                     audio=False,  # Not yet implemented
                     embedded_context=True,  # We support embedded resources
                 ),
             ),
+            auth_methods=[
+                AuthMethod(
+                    id="fake",
+                    name="No Authentication Required",
+                    description="This agent does not require authentication for FOSS deployments.",
+                    type="terminal",
+                ),
+            ],
             agent_info=Implementation(
                 name="crow-cli",
                 title="crow-cli",
