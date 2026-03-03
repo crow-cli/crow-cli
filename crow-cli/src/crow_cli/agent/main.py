@@ -12,6 +12,7 @@ import asyncio
 import base64
 import mimetypes
 import os
+import sys
 import uuid
 from contextlib import AsyncExitStack
 from pathlib import Path
@@ -190,6 +191,22 @@ class AcpAgent(Agent):
                 "Client does NOT support ACP terminals - will use MCP terminal"
             )
 
+        # Get command and args of current process for terminal-auth
+        command = sys.argv[0]
+        if command.endswith("crow-cli"):
+            args = []
+        else:
+            # Find "crow-cli" in argv and get args before it
+            try:
+                idx = sys.argv.index("crow-cli")
+                args = sys.argv[1:idx + 1]
+            except ValueError:
+                # crow-cli not in argv, just use empty args
+                args = []
+
+        # Build terminal auth args
+        terminal_args = args + ["auth"]
+
         return InitializeResponse(
             protocol_version=PROTOCOL_VERSION,
             agent_capabilities=AgentCapabilities(
@@ -203,10 +220,18 @@ class AcpAgent(Agent):
             ),
             auth_methods=[
                 AuthMethod(
-                    id="fake",
+                    id="none",
                     name="No Authentication Required",
                     description="This agent does not require authentication for FOSS deployments.",
-                    type="terminal",
+                    field_meta={
+                        "terminal-auth": {
+                            "command": command,
+                            "args": terminal_args,
+                            "label": "Crow Auth",
+                            "env": {},
+                            "type": "terminal",
+                        }
+                    },
                 ),
             ],
             agent_info=Implementation(
