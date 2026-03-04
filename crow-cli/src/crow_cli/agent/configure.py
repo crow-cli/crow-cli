@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -14,7 +15,15 @@ CROW_DIR = ".crow"
 
 
 def get_default_config_dir() -> Path:
-    return Path.home() / CROW_DIR
+    config_dir = Path.home() / CROW_DIR
+    config_src = Path(__file__).parents[3]
+    if not os.path.exists(config_dir):
+        shutil.copytree(config_src, config_dir)
+        log_dir = config_dir / "logs"
+        log_dir.mkdir(exist_ok=True, parents=True)
+        log_file = log_dir / "crow-cli.log"
+        log_file.touch()
+    return config_dir
 
 
 def resolve_env_vars(value: Any) -> Any:

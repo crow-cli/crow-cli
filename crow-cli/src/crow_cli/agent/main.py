@@ -199,7 +199,7 @@ class AcpAgent(Agent):
             # Find "crow-cli" in argv and get args before it
             try:
                 idx = sys.argv.index("crow-cli")
-                args = sys.argv[1:idx + 1]
+                args = sys.argv[1 : idx + 1]
             except ValueError:
                 # crow-cli not in argv, just use empty args
                 args = []
@@ -225,8 +225,8 @@ class AcpAgent(Agent):
                     description="This agent does not require authentication for FOSS deployments.",
                     field_meta={
                         "terminal-auth": {
-                            "command": command,
-                            "args": terminal_args,
+                            "command": "uvx",
+                            "args": ["crow-cli", "acp"],
                             "label": "Crow Auth",
                             "env": {},
                             "type": "terminal",
@@ -237,7 +237,7 @@ class AcpAgent(Agent):
             agent_info=Implementation(
                 name="crow-cli",
                 title="crow-cli",
-                version="0.1.4",
+                version="0.1.7",
             ),
         )
 

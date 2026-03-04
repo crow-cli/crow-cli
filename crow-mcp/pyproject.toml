@@ -1,6 +1,6 @@
 [project]
 name = "crow-mcp"
-version = "0.1.6"
+version = "0.1.7"
 description = "Crow builtin MCP server"
 readme = "README.md"
 requires-python = ">=3.14"

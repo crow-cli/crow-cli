@@ -27,17 +27,17 @@ db_uri: sqlite:///${HOME}/.crow/crow.db
 
 # This you're basically just filling out yourself with
 # the little tool I give
-providers:
-  placeholder-provider:
-    api_key: ${PLACEHOLDER_API_KEY}
-    base_url: https://example.com/v1
+# providers:
+#   placeholder-provider:
+#     api_key: ${PLACEHOLDER_API_KEY}
+#     base_url: https://example.com/v1
 
 # Filling these parts out is actually useful
 # let crow-cli init do it's thing
-models:
-  placeholder-model:
-    provider: placeholder-provider
-    model: gpt-3.5-turbo
+# models:
+#   placeholder-model:
+#     provider: placeholder-provider
+#     model: gpt-3.5-turbo
 
 # If you're on mac and your UI looks like shit
 # CHANGE THESE IN ~/.crow/config.yaml

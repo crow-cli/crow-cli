@@ -267,14 +267,14 @@ async def connect_client(
             client_info=Implementation(
                 name="crow-client",
                 title="Crow Client",
-                version="0.1.0",
+                version="0.1.7",
             ),
         )
         return conn
     except Exception as e:
         # If connection fails, try to read stderr to show the actual error
         try:
-            if hasattr(proc, '_stderr_reader') and not proc._stderr_reader.done():
+            if hasattr(proc, "_stderr_reader") and not proc._stderr_reader.done():
                 # Wait a moment for stderr to be available
                 await asyncio.sleep(0.1)
                 stderr_output = await proc._stderr_reader
