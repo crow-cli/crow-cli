@@ -237,7 +237,7 @@ class AcpAgent(Agent):
             agent_info=Implementation(
                 name="crow-cli",
                 title="crow-cli",
-                version="0.1.9",
+                version="0.1.12",
             ),
         )
 

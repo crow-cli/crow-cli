@@ -267,7 +267,7 @@ async def connect_client(
             client_info=Implementation(
                 name="crow-client",
                 title="Crow Client",
-                version="0.1.9",
+                version="0.1.12",
             ),
         )
         return conn
