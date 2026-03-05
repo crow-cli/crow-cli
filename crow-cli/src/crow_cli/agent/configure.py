@@ -2,6 +2,7 @@ import os
 import re
 import shutil
 from dataclasses import dataclass, field
+from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Any
 
@@ -16,17 +17,17 @@ CROW_DIR = ".crow"
 
 def get_default_config_dir() -> Path:
     config_dir = Path.home() / CROW_DIR
-    config_src = Path(__file__).parents[3] / "config"
 
     # 1. Base directory creation
     if not config_dir.exists():
-        if config_src.exists():
-            try:
-                shutil.copytree(config_src, config_dir)
-            except Exception:
-                config_dir.mkdir(parents=True, exist_ok=True)
-        else:
-            config_dir.mkdir(parents=True, exist_ok=True)
+        config_dir.mkdir(parents=True, exist_ok=True)
+
+        # Grab the resource as a Traversable object
+        config_src = files("crow_cli.agent.default")
+
+        # as_file guarantees src_path is a real directory on disk
+        with as_file(config_src) as src_path:
+            shutil.copytree(src_path, config_dir, dirs_exist_ok=True)
 
     # 2. THE CRITICAL PART: Always ensure logs exist.
     # This is what stops the uvx crash.
