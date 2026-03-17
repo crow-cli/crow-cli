@@ -27,16 +27,27 @@ from acp import (
 )
 from acp.interfaces import Client
 from acp.schema import (
+    AgentMessageChunk,
+    AgentPlanUpdate,
+    AgentThoughtChunk,
     AudioContentBlock,
+    AvailableCommandsUpdate,
     ClientCapabilities,
+    ConfigOptionUpdate,
+    CurrentModeUpdate,
     EmbeddedResourceContentBlock,
     HttpMcpServer,
     ImageContentBlock,
     Implementation,
     McpServerStdio,
     ResourceContentBlock,
+    SessionInfoUpdate,
     SseMcpServer,
     TextContentBlock,
+    ToolCallProgress,
+    ToolCallStart,
+    UsageUpdate,
+    UserMessageChunk,
 )
 
 # Log to file, NOT stdio (stdio is for ACP protocol!)
@@ -221,11 +232,7 @@ class AgentClient(Agent):
             str(stdio_to_ws),
             "--port",
             str(self._ws_port),
-            "uv",
-            "--project",
-            "/home/thomas/src/backup/nid-backup/crow-cli",
-            "run",
-            "crow-cli",
+            "/home/thomas/src/backup/nid-backup/crow-cli/dist/crow-cli",
             "acp",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
@@ -263,28 +270,50 @@ class AgentClient(Agent):
                     raise RuntimeError(f"Failed to connect to bridge: {e}")
 
     async def _handle_updates(self):
-        """Handle incoming WebSocket messages (session/update notifications)."""
+        """Handle incoming WebSocket messages (all messages from child agent)."""
         try:
             async for message in self._ws:
                 data = json.loads(message)
 
-                # Check if this is a response to a request
+                # Check if this is a JSON-RPC message with an ID
                 if "id" in data:
                     request_id = data["id"]
+                    
+                    # Check if this is a response to OUR request
                     if request_id in self._pending_requests:
-                        # This is a response to our request
                         future = self._pending_requests.pop(request_id)
                         future.set_result(data)
+                    
+                    # Otherwise, this is a request FROM the child agent that we need to execute
+                    elif "method" in data:
+                        await self._handle_downstream_request(data)
 
-                # Check if this is a notification from child agent
-                elif "method" in data and data["method"] == "session/update":
-                    # Forward to upstream client
-                    logger.info("Forwarding session/update to upstream")
+                # Check if this is a notification from child agent (no "id" field)
+                elif "method" in data:
+                    method = data["method"]
                     params = data.get("params", {})
-                    await self._conn.session_update(
-                        session_id=params.get("sessionId"),
-                        update=params.get("update"),
-                    )
+                    
+                    # Forward session/update notifications to upstream
+                    if method == "session/update":
+                        logger.debug(f"Forwarding session/update to upstream: {params}")
+                        session_id = params.get("sessionId")
+                        update_data = params.get("update", {})
+                        
+                        # Deserialize the update into the correct Pydantic model
+                        update = self._deserialize_update(update_data)
+                        
+                        await self._conn.session_update(
+                            session_id=session_id,
+                            update=update,
+                        )
+                        logger.debug(
+                            f"Forwarded session/update: {update_data.get('sessionUpdate')}"
+                        )
+                    
+                    # Forward other notifications via ext_notification
+                    else:
+                        logger.debug(f"Forwarding notification to upstream: {method}")
+                        await self._conn.ext_notification(method, params)
 
                 else:
                     logger.warning(f"Unknown message type: {data}")
@@ -293,6 +322,137 @@ class AgentClient(Agent):
             logger.info("WebSocket connection closed")
         except Exception as e:
             logger.error(f"Error handling updates: {e}", exc_info=True)
+
+    async def _handle_downstream_request(self, data: dict):
+        """
+        Handle a JSON-RPC request from the downstream agent.
+        
+        The downstream agent is calling a client method (like create_terminal,
+        read_text_file, etc.) and expects a response. We need to execute this
+        against the upstream client and send the response back.
+        
+        Args:
+            data: JSON-RPC request dict with id, method, params
+        """
+        request_id = data["id"]
+        method = data["method"]
+        params = data.get("params", {})
+        
+        logger.info(f"Downstream request: {method} (id={request_id})")
+        
+        try:
+            # Execute the method against the upstream client
+            result = await self._execute_client_method(method, params)
+            
+            # Send successful response back to downstream
+            response = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": result,
+            }
+            await self._ws.send(json.dumps(response))
+            logger.info(f"Sent response to downstream (id={request_id})")
+            
+        except Exception as e:
+            logger.error(f"Error executing {method}: {e}", exc_info=True)
+            
+            # Send error response back to downstream
+            response = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {
+                    "code": -32000,
+                    "message": str(e),
+                },
+            }
+            await self._ws.send(json.dumps(response))
+
+    async def _execute_client_method(self, method: str, params: dict) -> dict:
+        """
+        Execute a client method against the upstream client.
+        
+        Args:
+            method: Method name (e.g., "create_terminal", "read_text_file")
+            params: Method parameters
+            
+        Returns:
+            Result dict from the upstream client
+        """
+        # Map method names to client methods
+        if method == "create_terminal":
+            response = await self._conn.create_terminal(
+                command=params.get("command"),
+                session_id=params.get("sessionId"),
+                args=params.get("args"),
+                cwd=params.get("cwd"),
+                env=params.get("env"),
+                output_byte_limit=params.get("outputByteLimit"),
+            )
+            return {"terminalId": response.terminal_id}
+            
+        elif method == "terminal_output":
+            response = await self._conn.terminal_output(
+                session_id=params.get("sessionId"),
+                terminal_id=params.get("terminalId"),
+            )
+            return {
+                "output": response.output,
+                "truncated": response.truncated,
+            }
+            
+        elif method == "wait_for_terminal_exit":
+            response = await self._conn.wait_for_terminal_exit(
+                session_id=params.get("sessionId"),
+                terminal_id=params.get("terminalId"),
+            )
+            return {
+                "exitCode": response.exit_code,
+                "signal": response.signal,
+            }
+            
+        elif method == "release_terminal":
+            response = await self._conn.release_terminal(
+                session_id=params.get("sessionId"),
+                terminal_id=params.get("terminalId"),
+            )
+            return response or {}
+            
+        elif method == "kill_terminal":
+            response = await self._conn.kill_terminal(
+                session_id=params.get("sessionId"),
+                terminal_id=params.get("terminalId"),
+            )
+            return response or {}
+            
+        elif method == "read_text_file":
+            response = await self._conn.read_text_file(
+                path=params.get("path"),
+                session_id=params.get("sessionId"),
+                limit=params.get("limit"),
+                line=params.get("line"),
+            )
+            return {"content": response.content}
+            
+        elif method == "write_text_file":
+            response = await self._conn.write_text_file(
+                content=params.get("content"),
+                path=params.get("path"),
+                session_id=params.get("sessionId"),
+            )
+            return response or {}
+            
+        elif method == "request_permission":
+            response = await self._conn.request_permission(
+                options=params.get("options"),
+                session_id=params.get("sessionId"),
+                tool_call=params.get("toolCall"),
+            )
+            return response or {}
+            
+        else:
+            # Try ext_method for unknown methods
+            logger.warning(f"Unknown client method: {method}, trying ext_method")
+            return await self._conn.ext_method(method, params)
 
     async def _send_request(self, method: str, params: dict) -> dict:
         """Send JSON-RPC request to child agent and wait for response."""
@@ -341,6 +501,89 @@ class AgentClient(Agent):
             # Primitive value (str, int, float, bool, None)
             return value
 
+    def _deserialize_update(self, update_data: dict) -> Any:
+        """
+        Deserialize a session update dict into the correct Pydantic model.
+
+        The update_data dict should have a 'sessionUpdate' field that indicates
+        the type of update (e.g., "agent_message_chunk", "tool_call", etc.).
+
+        Args:
+            update_data: Raw dict from JSON-RPC notification
+
+        Returns:
+            Pydantic model instance of the appropriate type
+        """
+        session_update_type = update_data.get("sessionUpdate")
+
+        if not session_update_type:
+            logger.warning(f"Missing sessionUpdate field in update: {update_data}")
+            # Return as-is if no type specified
+            return update_data
+
+        # Map sessionUpdate type to Pydantic model class
+        type_to_model = {
+            "agent_message_chunk": AgentMessageChunk,
+            "agent_thought_chunk": AgentThoughtChunk,
+            "tool_call": ToolCallStart,
+            "tool_call_update": ToolCallProgress,
+            "plan": AgentPlanUpdate,
+            "available_commands_update": AvailableCommandsUpdate,
+            "current_mode_update": CurrentModeUpdate,
+            "config_option_update": ConfigOptionUpdate,
+            "session_info_update": SessionInfoUpdate,
+            "usage_update": UsageUpdate,
+            "user_message_chunk": UserMessageChunk,
+        }
+
+        model_class = type_to_model.get(session_update_type)
+
+        if not model_class:
+            logger.warning(f"Unknown sessionUpdate type: {session_update_type}")
+            return update_data
+
+        try:
+            # Convert snake_case keys to camelCase if needed
+            converted_data = self._convert_keys_to_camel(update_data)
+            return model_class(**converted_data)
+        except Exception as e:
+            logger.error(f"Failed to deserialize {session_update_type}: {e}")
+            logger.debug(f"Data: {update_data}")
+            # Return raw dict as fallback
+            return update_data
+
+    def _convert_keys_to_camel(self, data: dict) -> dict:
+        """
+        Convert snake_case keys to camelCase for Pydantic model compatibility.
+
+        Some ACP models expect camelCase keys (e.g., toolCallId, sessionUpdate).
+        """
+        if not isinstance(data, dict):
+            return data
+
+        result = {}
+        for key, value in data.items():
+            # Convert snake_case to camelCase
+            camel_key = key
+            if "_" in key:
+                parts = key.split("_")
+                camel_key = parts[0] + "".join(part.capitalize() for part in parts[1:])
+
+            # Recursively convert nested dicts
+            if isinstance(value, dict):
+                value = self._convert_keys_to_camel(value)
+            elif isinstance(value, list):
+                value = [
+                    self._convert_keys_to_camel(item)
+                    if isinstance(item, dict)
+                    else item
+                    for item in value
+                ]
+
+            result[camel_key] = value
+
+        return result
+
     async def _send_notification(self, method: str, params: dict) -> None:
         """Send JSON-RPC notification to child agent (no response expected)."""
         # Serialize params recursively
@@ -359,7 +602,7 @@ class AgentClient(Agent):
         """Clean up child processes and resources."""
         if self._cleanup_done:
             return
-        
+
         self._cleanup_done = True
         logger.info("Cleaning up child processes...")
 
@@ -400,7 +643,7 @@ async def main() -> None:
     """Run the agent-client."""
     logger.info("Starting AgentClient")
     agent = AgentClient()
-    
+
     try:
         await run_agent(agent)
     finally:

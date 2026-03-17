@@ -20,3 +20,5 @@ docs/_build/
 _site/
 
 sandbox/crow-editor/frontend/node_modules
+
+*.log
