@@ -16,7 +16,9 @@
 - No multiagent swarms, single sequences of verifiable steps to mimic how software is developed and deployed in production environments
 - The swarms of agents are going to be doing validation from telemetry of the environments lmfao (but not really we'll figure something out you get it)
 - But yeah the time to kill zed is now. Kill zed. Take the reigns and make your editor end to end. You have the technology. You're about to have the time hahahaha.
+- So I need to take control of my actual IDE and that means using vscodium and code-server pipelines.
 
+Also I'm using code-server though code.advanced-eschatonics.com and honestly I just need to get the monoextension/theme working and plug this into the exact same slot it's using now and I'll be in business. Make a bunch of k8s files and figure out how to make the whole thing distributed in the cloud for different users and put out my shingle for a place for people to host their projects AND work on them. Get into being an LLM provider on top of building crow-cli. This is why the VCs are reaching out to me.
 
 ## `crow-cli` updates
 - dig into [`fast-agent`](https://github.com/evalstate/fast-agent) and replicate with extreme prejudice some of that functionality through the agent-client system
@@ -70,12 +72,12 @@
 - compaction, compaction, compaction <- IN VALIDATION
 - skills, skills, skills <- TO DO
 - LOOKS LIKE HOOKS ARE BACK ON THE MENU BOYS!!
+  - We really do need some kind of hooks where you can say "okay you can't use git" or "looks like you inserted a secret/PHI/whatever into a file there, can't do that" type of hooks/callbacks. At least at the end of a message right?
 
-
+It's the 17th! Today's the day! I've got my affairs in order. Ready to go!
 
 
 # CODE IMPROVEMENTS
-- refactor configuration copy over at startup to use crow-cli/src/crow_cli/agent/default
 - unit testing <- IN PROGRESS
 - integration testing <- TODO
 - end to end testing <- DONE
@@ -85,6 +87,68 @@
 - work on playwright integration <- this is an extremely high priority
 
 # BUG FIXES
+- **CRITICAL: KV cache corruption with images - Qwen3.5 hybrid model incompatibility**
+  - **SYMPTOM**: llama.cpp logs `find_slot: non-consecutive token position X after X for sequence 3`
+  - **EVIDENCE**: Reproducible bug where image token positions are off by 1 token
+    - Text ends at position 44684, image should start at 44685
+    - llama.cpp sees gaps: `find_slot: non-consecutive token position 44685 after 44684`
+    - Checkpoint validation fails when restoring checkpoints near image position
+    - Bug only triggers when checkpoint restoration position ≈ image position
+  
+  - **ROOT CAUSE**: SQLite persistence + images = fundamental mismatch
+    - Images serialized to SQLite as base64 in JSON blobs
+    - When reconstructing prompts from persisted data, token counting is off by 1
+    - Qwen3.5's hybrid architecture (SWA + SSM) requires continuous token sequences for KV cache checkpoints
+    - One-token gap breaks the checkpoint system, causing full prompt re-processing
+  
+  - **WHY IT MATTERS**: 
+    - Hybrid models (Qwen3.5, etc.) use sliding window attention + recurrent memory
+    - llama.cpp's checkpoint system expects exact token position tracking
+    - SQLite base64 encoding/decoding introduces subtle token count discrepancies
+    - Every multimodal conversation will eventually hit this bug
+  
+  - **REPRODUCIBILITY**: 100% - happens every time image is in conversation history
+    - Bug triggers when: prompt with image + subsequent turn tries to restore checkpoint near image
+    - Bug doesn't trigger with: text-only conversations, or when checkpoint is far from image
+  
+  - **FIX PLAN**: Refactor from SQLite to LanceDB for session persistence
+    - **CURRENT ARCHITECTURE**:
+      ```
+      Session messages → SQLite (JSON blobs with base64 images)
+      Load session → deserialize JSON → build prompt → llama.cpp → token offset → KV cache break
+      ```
+    
+    - **NEW ARCHITECTURE**:
+      ```
+      Session messages → LanceDB (JSON blobs WITHOUT images)
+      Images → ~/.crow/sessions/{session_id}/images/{image_id}.{jpg|png}
+      Load session → fetch image from filesystem → build prompt with correct token positions → llama.cpp
+      ```
+    
+    - **IMPLEMENTATION STEPS**:
+      1. Create `~/.crow/sessions/{session_id}/images/` directory structure
+      2. Store images as files, not in SQLite/LanceDB JSON blobs
+      3. Update `Session.add_message()` to save image files separately
+      4. Update `Session.load()` to reconstruct image references from filesystem
+      5. Ensure token counting uses actual file-based images, not serialized base64
+      6. Update `prompt.py` to load images from filesystem instead of deserializing base64
+    
+    - **WHY LANCEDB**:
+      - Better JSON blob handling than SQLite (native JSON support)
+      - Vector search for future context retrieval
+      - More efficient for large JSON blobs
+      - Better than SQLite for "conversation as JSON" pattern
+    
+    - **MIGRATION STRATEGY**:
+      - Keep SQLite for backward compatibility during transition
+      - New sessions use LanceDB
+      - Gradual migration of existing sessions
+    
+  - **SHORT-TERM WORKAROUND** (until LanceDB refactor):
+    - Clear KV cache before sending prompts with images
+    - Don't persist image data through SQLite (store separately)
+    - Force fresh prompt construction for multimodal turns
+    
 - adding a folder causes ACP to crash
 - ~~when we cancel a session we do NOT want to include any crap in the messages might yield things like this so we need to revisit cancellation handling and think about letting that last token trickle in after all~~
 
@@ -101,6 +165,7 @@
 # DONE
 - ~~refactor react~~ <- DONE
 - ~~Fix system prompt to actually include AGENTS.md, render workspace info, add datetime~~
+- ~~refactor configuration copy over at startup to use crow-cli/src/crow_cli/agent/default~~
 - ~~Fix prompt_id being hard coded, actually use hash of unrendered~~
 - ~~Include @-ed files in the context through /files or whatever~~
 - ~~Add tool calls and executions token emission~~
