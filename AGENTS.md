@@ -81,3 +81,8 @@ If the agent can search the web and run terminal commands, it doesn't need pre-p
 The --project flag is REQUIRED for both running scripts AND installing dependencies.
 Missing this flag is a critical error.
 NEVER IMPORT ANYWHERE BUT THE TOP OF THE FILE
+NEVER rm -rf ~/.crow that will destroy all of your configs NEVER FUCKING DO THAT
+ALL YOUR CONFIGS LIVE IN ~/.crow 
+
+DO NOT FUCKING DELETE I CANNOT BELIEVE I HAVE TO SAY THIS BUT I DO BECAUSE OH MY FUCKING GOD
+TREAT ANY ~/.SOMETHING DIRECTORY AS VALUABLE DATA

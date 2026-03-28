@@ -1079,3 +1079,34 @@ cmake --build build --config RelWithDebInfo -- -j$(nproc)
 ## User
 
 call date with terminal
+
+
+So I wasn't able to load the large model after updating /etc/default/grub to allocate 120GB of system ram to the GPU and I was getting super pissed off at the LLM but it ended up being the solution because it said 
+
+```bash
+ssh thomas-wood@coast-after-3 "uname -r" 
+# result
+6.17.0-19-generic
+```
+
+and it needs to be
+
+```bash
+ssh thomas-wood@coast-after-3 "uname -r" 
+# result
+6.14.0-1018-oem
+```
+
+
+Here's how to fix
+```
+thomas-wood@coast-after-3:~/src/self-host/rocm/llama.cpp$ sudo grub-reboot "Advanced options for Ubuntu>Ubuntu, with Linux 6.14.0-1018-oem"
+[sudo] password for thomas-wood:
+thomas-wood@coast-after-3:~/src/self-host/rocm/llama.cpp$ sudo reboot
+```
+
+or 
+```bash
+sudo grub-reboot "Advanced options for Ubuntu>Ubuntu, with Linux 6.14.0-1018-oem"
+sudo reboot
+```

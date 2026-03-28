@@ -86,6 +86,31 @@ It's the 17th! Today's the day! I've got my affairs in order. Ready to go!
 - put a conversation history tool in the crow-mcp toolkit
 - work on playwright integration <- this is an extremely high priority
 
+
+# MCP TOOL NAME RESOLUTION
+Updating the config.yaml in ~/.crow is not having the intended effect for the crow-cli-dist that we built with pyinstaller. Need to get to the bottom of why that is and work on playwright integration. Make the client side tools more robut so we can change names of tools needed for client-side execution easily without having to change ~/.crow/config.yaml, which isn't working right now. 
+
+So we want to switch over officially to using the built distributable and fix the error which was keeping the windows version from being built in the github workflow. Right now this stuff is all over the place. Moving the the agent-client is going to require robust mapping of crow-mcp tools to the builtin, which isn't working right now. I don't think the pyinstalled package is even looking in ~/.crow/config.yaml? It doesn't appear to be anyway
+
+
+yeah I can change the names in ~/.crow/config.yaml and it still isn't showing up as a client-side tool for crow-debug, which is bad. Going to have to do some serious reworking of that and if we are we might as well do for client-agent or agent-client
+
+Mostly I think we need to do this without relying on hand modifying configs in ~/.crow. 
+
+1. Check if there are other MCP servers loaded
+2. If there are use the crow-mcp_* tool names
+3. If there are not use terminal, edit, write, etc as tool names
+4. Either way this is very very deterministic. When other MCP servers are added we load crow-mcp in a way that still maps to client capabilities and what we know are the names of crow-mcp
+
+So yeah when we load crow-mcp inside the agent nothing has the crow-mcp_{tool_name} prefix, but whenever the client is exposing mcp tools we know it does
+
+YEAH THE DIST VERSION BUILD WITH PYINSTALLER IS NOT LOADING IN CONFIG.YAML OVERRIDES!!! THIS IS NOW THE CENTRAL BUG.
+
+# TOKEN STREAMING BUG
+- First token not being received correctly - hiccup between thinking/reasoning content and normal content
+
+
+
 # BUG FIXES
 - **CRITICAL: KV cache corruption with images - Qwen3.5 hybrid model incompatibility**
   - **SYMPTOM**: llama.cpp logs `find_slot: non-consecutive token position X after X for sequence 3`

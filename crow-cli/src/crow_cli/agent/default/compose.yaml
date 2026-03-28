@@ -29,6 +29,17 @@ services:
       timeout: 5s
       retries: 5
 
+    litellm:
+      image: ghcr.io/berriai/litellm:main-v1.82.6-nightly
+      restart: always
+      ports:
+        - "4000:4000" # Default LiteLLM port; adjust if needed
+      environment:
+        - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+      volumes:
+        - ./litellm/config.yaml:/app/config.yaml
+      command: ["--config", "/app/config.yaml"]
+
 volumes:
   database_data:
     driver: local

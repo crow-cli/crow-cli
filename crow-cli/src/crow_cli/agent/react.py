@@ -141,21 +141,20 @@ def process_chunk(
     # Final chunk may have usage but no choices
     if not chunk.choices or len(chunk.choices) == 0:
         return thinking, content, tool_calls, (None, None)
-    
+
     delta = chunk.choices[0].delta
     new_token = (None, None)
 
     if not delta.tool_calls:
-        if not hasattr(delta, "reasoning_content"):
+        reasoning_chunk = getattr(delta, "reasoning_content", None)
+        if reasoning_chunk:
+            thinking.append(reasoning_chunk)
+            new_token = ("thinking", reasoning_chunk)
+        else:
             verbal_chunk = delta.content
             if verbal_chunk:
                 content.append(verbal_chunk)
                 new_token = ("content", verbal_chunk)
-        else:
-            reasoning_chunk = delta.reasoning_content
-            if reasoning_chunk:
-                thinking.append(reasoning_chunk)
-                new_token = ("thinking", reasoning_chunk)
     else:
         for call in delta.tool_calls:
             index = call.index
@@ -200,28 +199,32 @@ def process_tool_call_inputs(tool_calls: dict) -> tuple[list[dict], list[bool]]:
     for index, tool_call in sorted(tool_calls.items()):
         arguments_str = "".join(tool_call["arguments"])
         was_repaired = False
-        
+
         # Validate and repair JSON if needed
         # This is critical because some models (like qwen3.5-plus) may produce
         # malformed JSON that will cause API errors when sent back
         try:
             json.loads(arguments_str)
-        except (json.JSONDecodeError, TypeError, ValueError):
+        except json.JSONDecodeError, TypeError, ValueError:
             # JSON is invalid, try to repair common issues
             # or default to empty object
             was_repaired = True
             try:
                 # Try adding closing braces/brackets if missing
-                if arguments_str.count('{') > arguments_str.count('}'):
-                    arguments_str = arguments_str + '}' * (arguments_str.count('{') - arguments_str.count('}'))
-                if arguments_str.count('[') > arguments_str.count(']'):
-                    arguments_str = arguments_str + ']' * (arguments_str.count('[') - arguments_str.count(']'))
+                if arguments_str.count("{") > arguments_str.count("}"):
+                    arguments_str = arguments_str + "}" * (
+                        arguments_str.count("{") - arguments_str.count("}")
+                    )
+                if arguments_str.count("[") > arguments_str.count("]"):
+                    arguments_str = arguments_str + "]" * (
+                        arguments_str.count("[") - arguments_str.count("]")
+                    )
                 # Validate again after repair attempt
                 json.loads(arguments_str)
-            except (json.JSONDecodeError, TypeError, ValueError):
+            except json.JSONDecodeError, TypeError, ValueError:
                 # Still invalid, use empty object as fallback
                 arguments_str = "{}"
-        
+
         tool_call_inputs.append(
             dict(
                 id=tool_call["id"],
@@ -268,7 +271,7 @@ async def process_response(response, state_accumulator: dict):
                 "completion_tokens": getattr(chunk.usage, "completion_tokens", None),
                 "total_tokens": getattr(chunk.usage, "total_tokens", None),
             }
-        
+
         thinking, content, tool_calls, new_token = process_chunk(
             chunk, thinking, content, tool_calls
         )
@@ -280,7 +283,11 @@ async def process_response(response, state_accumulator: dict):
             yield msg_type, token
 
     # Yield final result as a special chunk
-    thinking, content, tool_calls = state_accumulator["thinking"], state_accumulator["content"], state_accumulator["tool_calls"]
+    thinking, content, tool_calls = (
+        state_accumulator["thinking"],
+        state_accumulator["content"],
+        state_accumulator["tool_calls"],
+    )
     tool_call_inputs, _ = process_tool_call_inputs(tool_calls)
     yield "final", (thinking, content, tool_call_inputs, final_usage)
 
@@ -476,12 +483,12 @@ async def react_loop(
             # Whether tool calls are complete or incomplete, we MUST NOT persist them because:
             # 1. We're about to raise without executing the tools
             # 2. This means no tool responses will be added to history
-            # 3. Next API call will fail: "An assistant message with tool_calls must be 
+            # 3. Next API call will fail: "An assistant message with tool_calls must be
             #    followed by tool messages responding to each tool_call_id"
             #
             # Even if the LLM finished streaming complete tool calls with valid JSON,
             # we cannot persist them because we never executed the tools.
-            
+
             logger.info(
                 "Cancellation occurred - not persisting tool calls to history "
                 "to avoid breaking conversation (no tool responses would exist)"
