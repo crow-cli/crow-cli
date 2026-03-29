@@ -175,6 +175,35 @@ YEAH THE DIST VERSION BUILD WITH PYINSTALLER IS NOT LOADING IN CONFIG.YAML OVERR
     - Force fresh prompt construction for multimodal turns
     
 - adding a folder causes ACP to crash
+- **CRITICAL: Image content handling in tools.py - `.text` attribute error**
+  - **SYMPTOM**: `AttributeError: 'ImageContent' object has no attribute 'text'` when calling `read_image_file` or other tools returning images
+  - **ROOT CAUSE**: `crow-cli/src/crow_cli/agent/tools.py` assumes all tool results have `.text` attribute:
+    ```python
+    result = await mcp_client.call_tool(tool_name, args)
+    result_content = result.content[0].text  # ❌ FAILS for images!
+    ```
+  - **AFFECTED FUNCTIONS**:
+    - `execute_acp_tool()` (line ~493) - generic tools
+    - `execute_acp_read()` (line ~420) - file reads
+    - `execute_acp_edit()` (line ~418) - file edits
+  - **WHY IT FAILS**:
+    - `TextContent(type='text', text='hello')` → has `.text` ✅
+    - `ImageContent(type='image', data='base64...', mimeType='image/png')` → has `.data`, NOT `.text` ❌
+  - **FIX REQUIRED**:
+    1. Check content type before accessing attributes:
+       ```python
+       content_item = result.content[0]
+       if content_item.type == "text":
+           result_content = content_item.text
+       elif content_item.type == "image":
+           # Handle as ImageContentBlock for ACP
+           ...
+       ```
+    2. Send images to ACP client using `ImageContentBlock`, not `text_block()`
+    3. Update all tool execution functions to handle multimodal content
+  - **FILES TO UPDATE**:
+    - `crow-cli/src/crow_cli/agent/tools.py` - all `execute_acp_*` functions
+    - May need updates to `crow-cli/src/crow_cli/agent/main.py` prompt handling
 - ~~when we cancel a session we do NOT want to include any crap in the messages might yield things like this so we need to revisit cancellation handling and think about letting that last token trickle in after all~~
 
 - ~~apparently zed uses resource instead of resource_link now, which is fine by me lol. implemented. still having trouble doing for when there are multiple types of resource in the message~~
