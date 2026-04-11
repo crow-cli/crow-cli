@@ -3,7 +3,7 @@ name: Build Binaries
 on:
   push:
     tags:
-      - 'v*'  # Trigger on version tags like v0.1.13
+      - "v*" # Trigger on version tags like v0.1.13
 
 jobs:
   build:

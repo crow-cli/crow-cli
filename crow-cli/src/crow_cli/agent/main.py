@@ -63,8 +63,8 @@ from acp import (
 from acp.interfaces import Client
 from acp.schema import (
     AgentCapabilities,
+    AuthMethodAgent,
     AudioContentBlock,
-    AuthMethod,
     AvailableCommand,
     AvailableCommandsUpdate,
     ClientCapabilities,
@@ -76,7 +76,8 @@ from acp.schema import (
     McpServerStdio,
     PromptCapabilities,
     ResourceContentBlock,
-    SessionConfigOption,
+    SessionConfigOptionSelect,
+    SessionConfigSelectOption,
     SessionInfo,
     SetSessionConfigOptionResponse,
     SetSessionModeResponse,
@@ -166,12 +167,12 @@ class AcpAgent(Agent):
         model = next(iter(self._config.llm.models.values()), None)
         return model.model_id if model else ""
 
-    def _get_config_options(self, session_id: str) -> list[SessionConfigOption]:
+    def _get_config_options(self, session_id: str) -> list[SessionConfigOptionSelect]:
         """Generate the config options for a session based on current values."""
-        options_list: list[dict[str, str]] = []
+        options_list: list[SessionConfigSelectOption] = []
         for model in self._config.llm.models.values():
             options_list.append(
-                dict(
+                SessionConfigSelectOption(
                     value=f"{model.provider_name}:{model.model_id}",
                     name=model.name,
                     description=model.model_id,
@@ -183,15 +184,13 @@ class AcpAgent(Agent):
         current_model = current_vals.get("model", default_model)
 
         return [
-            SessionConfigOption(
-                dict(
-                    id="model",
-                    name="Model",
-                    category="model",
-                    type="select",
-                    currentValue=current_model,
-                    options=options_list,
-                )
+            SessionConfigOptionSelect(
+                type="select",
+                id="model",
+                name="Model",
+                category="model",
+                current_value=current_model,
+                options=options_list,
             )
         ]
 
@@ -254,7 +253,7 @@ class AcpAgent(Agent):
                 ),
             ),
             auth_methods=[
-                AuthMethod(
+                AuthMethodAgent(
                     id="none",
                     name="No Authentication Required",
                     description="This agent does not require authentication for FOSS deployments.",

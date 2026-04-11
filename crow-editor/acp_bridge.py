@@ -14,7 +14,7 @@ from typing import List, Optional
 
 import websockets
 
-from crow.editor.db import SessionStore, get_store
+from db import SessionStore, get_store
 
 logger = logging.getLogger(__name__)
 

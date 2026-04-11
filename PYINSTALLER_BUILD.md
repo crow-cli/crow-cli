@@ -5,10 +5,9 @@
 ### 1. GitHub Workflow: `.github/workflows/build-binaries.yml`
 
 Builds crow-cli binaries for:
-- **Linux x86_64** (ubuntu-latest)
+- **Linux x86_64** (ubuntu-22.04)
 - **macOS x86_64** (macos-13)
 - **macOS ARM64** (macos-latest - Apple Silicon)
-- **Windows x86_64** (windows-latest)
 
 **Trigger:** Push version tags (e.g., `v0.1.13`)
 
@@ -16,7 +15,6 @@ Builds crow-cli binaries for:
 - `crow-cli-linux-x86_64.tar.gz`
 - `crow-cli-darwin-x86_64.tar.gz`
 - `crow-cli-darwin-aarch64.tar.gz`
-- `crow-cli-windows-x86_64.zip`
 
 ### 2. PyInstaller Spec File: `crow-cli/crow-cli.spec`
 
@@ -75,8 +73,7 @@ After binaries are built, update `crow-cli/agent.json`:
         "args": ["acp"]
       },
       "darwin-x86_64": {...},
-      "linux-x86_64": {...},
-      "windows-x86_64": {...}
+      "linux-x86_64": {...}
     }
   }
 }
@@ -112,5 +109,4 @@ Current Linux build: ~80MB (compressed with UPX)
 
 - The spec file handles all metadata copying, so no command-line flags needed
 - macOS builds use different runners for Intel (macos-13) vs Apple Silicon (macos-latest)
-- Windows builds use 7z for ZIP creation (available by default on Windows runners)
 - Artifacts are retained for 30 days, but releases are permanent

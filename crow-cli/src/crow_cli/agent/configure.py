@@ -96,7 +96,7 @@ class Config:
     FETCH_TOOL: str = "web_fetch"
 
     # Compaction parameters
-    MAX_COMPACT_TOKENS: int = 120000
+    MAX_COMPACT_TOKENS: int = 190000
     N_STEPS_BACK_COMPACT: int = 8
 
     MAX_TOKENS: int = 38192

@@ -14,16 +14,16 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket
 
-from crow.editor.acp_bridge import ACPBridge, ACPWebSocketProxy
-from crow.editor.api.files import (
+from acp_bridge import ACPBridge, ACPWebSocketProxy
+from api.files import (
     create_file_sync,
     delete_file_sync,
     file_details_sync,
     list_files_sync,
     update_file_sync,
 )
-from crow.editor.api.terminal import TerminalHandler
-from crow.editor.db import get_store
+from api.terminal import TerminalHandler
+from db import get_store
 
 
 async def health(request: Request) -> JSONResponse:
@@ -254,7 +254,7 @@ def _get_frontend_dir() -> Path:
     """Get the frontend directory, handling both installed and source scenarios."""
     # First, try to find it as package data (installed wheel)
     try:
-        with importlib.resources.files("crow.editor") as editor_dir:
+        with importlib.resources.files("crow-editor") as editor_dir:
             frontend_path = editor_dir / "frontend" / "dist"
             if frontend_path.is_dir():
                 return Path(str(frontend_path))

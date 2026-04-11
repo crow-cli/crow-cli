@@ -14,7 +14,7 @@ mcp = FastMCP(
             Edit files with fuzzy string matching.
 
             - terminal
-            Execute bash commands in a persistent shell session.
+            Execute bash commands in a shell session.
 
             - web_fetch
             Fetch and parse web pages.
