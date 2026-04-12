@@ -9,11 +9,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
-        ('src/crow_cli/agent/default/config.yaml', 'crow_cli/agent/default/config.yaml'),
-        ('src/crow_cli/agent/default/compose.yaml', 'crow_cli/agent/default/compose.yaml'),
-        ('src/crow_cli/agent/default/.env.example', 'crow_cli/agent/default/.env.example'),
-        ('src/crow_cli/agent/default/prompts/system_prompt.jinja2', 'crow_cli/agent/default/prompts/system_prompt.jinja2'),
-        ('src/crow_cli/agent/default/searxng/settings.yml', 'crow_cli/agent/default/searxng/settings.yml'),
+        ('src/crow_cli/agent/default', 'crow_cli/agent/default'),
     ] + copy_metadata('fastmcp')
       + copy_metadata('agent-client-protocol')
       + copy_metadata('typer')

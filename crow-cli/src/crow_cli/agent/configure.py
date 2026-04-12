@@ -1,6 +1,7 @@
 import os
 import re
 import shutil
+import sys
 from dataclasses import dataclass, field
 from importlib.resources import as_file, files
 from pathlib import Path
@@ -14,26 +15,55 @@ ENV_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
 CROW_DIR = ".crow"
 
+# Files that get copied from bundled defaults to ~/.crow on first run
+_DEFAULT_FILES = {
+    "config.yaml": "config.yaml",
+    "compose.yaml": "compose.yaml",
+    ".env.example": ".env.example",
+    "prompts/system_prompt.jinja2": "prompts/system_prompt.jinja2",
+    "searxng/settings.yml": "searxng/settings.yml",
+}
+
+
+def _get_default_source_dir() -> Path:
+    """Return the path to the bundled default config directory."""
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / "crow_cli" / "agent" / "default"
+    # Unfrozen: use importlib.resources
+    config_src = files("crow_cli.agent.default")
+    with as_file(config_src) as src_path:
+        return Path(src_path)
+
+
+def _copy_default_config(config_dir: Path):
+    """Copy bundled default config files to config_dir, creating subdirs as needed.
+    
+    PyInstaller --onefile extracts individual 'datas' entries as directories
+    containing a file of the same name (e.g. config.yaml/config.yaml).
+    Handle this by descending one level when the source is a directory.
+    """
+    src = _get_default_source_dir()
+    for rel_path, dest_rel in _DEFAULT_FILES.items():
+        src_file = src / rel_path
+        # PyInstaller quirk: individual datas entries become dir/dir/filename
+        if src_file.is_dir():
+            src_file = src_file / src_file.name
+        dst_file = config_dir / dest_rel
+        dst_file.parent.mkdir(parents=True, exist_ok=True)
+        if src_file.is_file():
+            dst_file.write_bytes(src_file.read_bytes())
+
 
 def get_default_config_dir() -> Path:
     config_dir = Path.home() / CROW_DIR
 
-    # 1. Base directory creation
     if not config_dir.exists():
         config_dir.mkdir(parents=True, exist_ok=True)
+        _copy_default_config(config_dir)
 
-        # Grab the resource as a Traversable object
-        config_src = files("crow_cli.agent.default")
-
-        # as_file guarantees src_path is a real directory on disk
-        with as_file(config_src) as src_path:
-            shutil.copytree(src_path, config_dir, dirs_exist_ok=True)
-
-    # 2. THE CRITICAL PART: Always ensure logs exist.
-    # This is what stops the uvx crash.
+    # Always ensure logs exist
     log_dir = config_dir / "logs"
     log_dir.mkdir(exist_ok=True, parents=True)
-
     log_file = log_dir / "crow-cli.log"
     if not log_file.exists():
         log_file.touch()
