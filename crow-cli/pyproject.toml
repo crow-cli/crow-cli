@@ -1,11 +1,11 @@
 [project]
 name = "crow-cli"
-version = "0.1.14"
+version = "0.1.16"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "agent-client-protocol>=0.8.1",
+    "agent-client-protocol>=0.9.0",
     "coolname>=2.2.0",
     "directory-tree>=1.0.0",
     "fastmcp>=2.14.5",
