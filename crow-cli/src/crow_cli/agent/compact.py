@@ -8,7 +8,7 @@ from openai import AsyncOpenAI
 from crow_cli.agent.prompt import normalize_blocks, render_template
 from crow_cli.agent.session import Session
 
-MAX_OUTPUT_TOKENS = 8192
+MAX_OUTPUT_TOKENS = 30000
 
 
 COMPACTION_PROMPT = """Please summarize everything in the conversation that happened AFTER the user's first message and before the current react turn began.
@@ -182,10 +182,14 @@ async def compact(
 
     # NOW THE KEY PART: Update the original session object in-place
     # This ensures all references (local variables in other functions) see the new state
-    logger.info(f"Before update_from: session.messages has {len(session.messages)} messages")
+    logger.info(
+        f"Before update_from: session.messages has {len(session.messages)} messages"
+    )
     logger.info(f"new_session.messages has {len(new_session.messages)} messages")
     session.update_from(new_session)
-    logger.info(f"After update_from: session.messages has {len(session.messages)} messages")
+    logger.info(
+        f"After update_from: session.messages has {len(session.messages)} messages"
+    )
     for i, msg in enumerate(session.messages):
         logger.info(f"  [{i}] {msg.get('role')}: {str(msg.get('content', ''))[:50]}...")
     logger.info(f"Session updated in-place - all references now see compacted state")
