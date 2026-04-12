@@ -18,7 +18,6 @@ jobs:
             macos-latest,
             windows-latest,
             ubuntu-24.04-arm,
-            windows-11-arm64,
           ]
         include:
           - os: ubuntu-22.04
