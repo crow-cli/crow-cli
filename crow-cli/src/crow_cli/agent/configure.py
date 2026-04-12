@@ -20,6 +20,7 @@ _DEFAULT_FILES = {
     "config.yaml": "config.yaml",
     "compose.yaml": "compose.yaml",
     ".env.example": ".env.example",
+    "litellm/config.yaml": "litellm/config.yaml",
     "prompts/system_prompt.jinja2": "prompts/system_prompt.jinja2",
     "searxng/settings.yml": "searxng/settings.yml",
 }
@@ -37,7 +38,7 @@ def _get_default_source_dir() -> Path:
 
 def _copy_default_config(config_dir: Path):
     """Copy bundled default config files to config_dir, creating subdirs as needed.
-    
+
     PyInstaller --onefile extracts individual 'datas' entries as directories
     containing a file of the same name (e.g. config.yaml/config.yaml).
     Handle this by descending one level when the source is a directory.
