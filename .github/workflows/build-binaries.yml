@@ -11,7 +11,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-22.04, macos-15-intel, macos-latest, windows-latest]
+        os: [ubuntu-22.04, macos-15-intel, macos-latest, windows-latest, ubuntu-24.04-arm, windows-11-arm64]
         include:
           - os: ubuntu-22.04
             target: linux-x86_64
@@ -25,6 +25,12 @@ jobs:
           - os: windows-latest
             target: windows-x86_64
             archive_name: crow-cli-windows-x86_64.zip
+          - os: ubuntu-24.04-arm
+            target: linux-aarch64
+            archive_name: crow-cli-linux-aarch64.tar.gz
+          - os: windows-11-arm64
+            target: windows-aarch64
+            archive_name: crow-cli-windows-aarch64.zip
 
     steps:
       - name: Checkout
