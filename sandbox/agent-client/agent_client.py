@@ -36,6 +36,7 @@ from acp.schema import (
     ConfigOptionUpdate,
     CurrentModeUpdate,
     EmbeddedResourceContentBlock,
+    FileSystemCapability,
     HttpMcpServer,
     ImageContentBlock,
     Implementation,
@@ -71,6 +72,7 @@ class AgentClient(Agent):
     def __init__(self):
         """Initialize the agent-client."""
         self._conn: Client | None = None  # Upstream connection (Zed)
+        self._upstream_capabilities: ClientCapabilities | None = None  # What upstream supports
         self._ws: websockets.WebSocketClientProtocol | None = None
         self._ws_port: int = 8765
         self._request_id: int = 0
@@ -99,19 +101,54 @@ class AgentClient(Agent):
             logger.info(f"  client_capabilities: {client_capabilities}")
             logger.info(f"  client_info: {client_info}")
 
+            # Store upstream capabilities so we know what we can forward
+            self._upstream_capabilities = client_capabilities
+
+            # Determine what capabilities we can advertise downstream
+            # (only what the upstream client actually supports)
+            upstream_terminal = bool(
+                client_capabilities and getattr(client_capabilities, "terminal", False)
+            )
+            upstream_fs = (
+                getattr(client_capabilities, "fs", None)
+                if client_capabilities
+                else None
+            )
+            upstream_read = bool(
+                upstream_fs and getattr(upstream_fs, "read_text_file", False)
+            )
+            upstream_write = bool(
+                upstream_fs and getattr(upstream_fs, "write_text_file", False)
+            )
+
+            logger.info(
+                f"Upstream capabilities: terminal={upstream_terminal}, "
+                f"read_text_file={upstream_read}, write_text_file={upstream_write}"
+            )
+
+            # Build ClientCapabilities to advertise downstream
+            downstream_caps = ClientCapabilities(
+                terminal=upstream_terminal,
+                fs=FileSystemCapability(
+                    read_text_file=upstream_read,
+                    write_text_file=upstream_write,
+                ),
+            )
+
             # Spawn child agent + bridge
             await self._spawn_child()
 
             # Connect to bridge via WebSocket
             await self._connect_to_bridge()
 
-            # Forward initialize to child agent
+            # Forward initialize to child agent with proper client capabilities
             logger.info("Forwarding initialize to child agent...")
+            logger.info(f"  downstream_capabilities: {downstream_caps}")
             response = await self._send_request(
                 "initialize",
                 {
                     "protocolVersion": protocol_version,
-                    "clientCapabilities": client_capabilities or {},
+                    "clientCapabilities": downstream_caps,
                     "clientInfo": client_info,
                 },
             )
@@ -218,12 +255,14 @@ class AgentClient(Agent):
 
         here = Path(__file__).parent
         stdio_to_ws = here / "stdio_to_ws.py"
-        echo_agent = here / "echo_agent.py"
+
+        # Downstream agent: crow-cli via uvx
+        child_cmd = ["uvx", "crow-cli", "acp"]
 
         logger.info(f"  bridge: {stdio_to_ws}")
-        logger.info(f"  child: {echo_agent}")
+        logger.info(f"  child cmd: {' '.join(child_cmd)}")
 
-        # Spawn bridge (which spawns child agent)
+        # Spawn bridge (which spawns child agent via stdio)
         self._bridge_process = await asyncio.create_subprocess_exec(
             "uv",
             "--project",
@@ -232,8 +271,7 @@ class AgentClient(Agent):
             str(stdio_to_ws),
             "--port",
             str(self._ws_port),
-            "/home/thomas/src/backup/nid-backup/crow-cli/dist/crow-cli",
-            "acp",
+            *child_cmd,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -372,14 +410,14 @@ class AgentClient(Agent):
         Execute a client method against the upstream client.
         
         Args:
-            method: Method name (e.g., "create_terminal", "read_text_file")
+            method: JSON-RPC method name (e.g., "terminal/create", "fs/read_text_file")
             params: Method parameters
             
         Returns:
             Result dict from the upstream client
         """
-        # Map method names to client methods
-        if method == "create_terminal":
+        # Map JSON-RPC method names to upstream client methods
+        if method == "terminal/create":
             response = await self._conn.create_terminal(
                 command=params.get("command"),
                 session_id=params.get("sessionId"),
@@ -390,7 +428,7 @@ class AgentClient(Agent):
             )
             return {"terminalId": response.terminal_id}
             
-        elif method == "terminal_output":
+        elif method == "terminal/output":
             response = await self._conn.terminal_output(
                 session_id=params.get("sessionId"),
                 terminal_id=params.get("terminalId"),
@@ -400,7 +438,7 @@ class AgentClient(Agent):
                 "truncated": response.truncated,
             }
             
-        elif method == "wait_for_terminal_exit":
+        elif method == "terminal/wait_for_exit":
             response = await self._conn.wait_for_terminal_exit(
                 session_id=params.get("sessionId"),
                 terminal_id=params.get("terminalId"),
@@ -410,21 +448,21 @@ class AgentClient(Agent):
                 "signal": response.signal,
             }
             
-        elif method == "release_terminal":
+        elif method == "terminal/release":
             response = await self._conn.release_terminal(
                 session_id=params.get("sessionId"),
                 terminal_id=params.get("terminalId"),
             )
             return response or {}
             
-        elif method == "kill_terminal":
+        elif method == "terminal/kill":
             response = await self._conn.kill_terminal(
                 session_id=params.get("sessionId"),
                 terminal_id=params.get("terminalId"),
             )
             return response or {}
             
-        elif method == "read_text_file":
+        elif method == "fs/read_text_file":
             response = await self._conn.read_text_file(
                 path=params.get("path"),
                 session_id=params.get("sessionId"),
@@ -433,7 +471,7 @@ class AgentClient(Agent):
             )
             return {"content": response.content}
             
-        elif method == "write_text_file":
+        elif method == "fs/write_text_file":
             response = await self._conn.write_text_file(
                 content=params.get("content"),
                 path=params.get("path"),
@@ -441,7 +479,7 @@ class AgentClient(Agent):
             )
             return response or {}
             
-        elif method == "request_permission":
+        elif method == "session/request_permission":
             response = await self._conn.request_permission(
                 options=params.get("options"),
                 session_id=params.get("sessionId"),
