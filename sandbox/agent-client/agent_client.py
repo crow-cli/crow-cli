@@ -356,10 +356,24 @@ class AgentClient(Agent):
                 else:
                     logger.warning(f"Unknown message type: {data}")
 
-        except websockets.exceptions.ConnectionClosed:
-            logger.info("WebSocket connection closed")
+        except websockets.exceptions.ConnectionClosed as e:
+            logger.info(f"WebSocket connection closed: {e}")
+            # Fail all pending requests so callers don't hang forever
+            for req_id, future in self._pending_requests.items():
+                if not future.done():
+                    future.set_exception(
+                        RuntimeError(f"WebSocket closed: {e}")
+                    )
+            self._pending_requests.clear()
         except Exception as e:
             logger.error(f"Error handling updates: {e}", exc_info=True)
+            # Fail all pending requests
+            for req_id, future in self._pending_requests.items():
+                if not future.done():
+                    future.set_exception(
+                        RuntimeError(f"Update handler error: {e}")
+                    )
+            self._pending_requests.clear()
 
     async def _handle_downstream_request(self, data: dict):
         """
@@ -453,14 +467,14 @@ class AgentClient(Agent):
                 session_id=params.get("sessionId"),
                 terminal_id=params.get("terminalId"),
             )
-            return response or {}
+            return self._serialize_value(response) if response else {}
             
         elif method == "terminal/kill":
             response = await self._conn.kill_terminal(
                 session_id=params.get("sessionId"),
                 terminal_id=params.get("terminalId"),
             )
-            return response or {}
+            return self._serialize_value(response) if response else {}
             
         elif method == "fs/read_text_file":
             response = await self._conn.read_text_file(
@@ -477,7 +491,8 @@ class AgentClient(Agent):
                 path=params.get("path"),
                 session_id=params.get("sessionId"),
             )
-            return response or {}
+            # WriteTextFileResponse is a Pydantic model — serialize to dict
+            return self._serialize_value(response) if response else {}
             
         elif method == "session/request_permission":
             response = await self._conn.request_permission(
@@ -485,7 +500,7 @@ class AgentClient(Agent):
                 session_id=params.get("sessionId"),
                 tool_call=params.get("toolCall"),
             )
-            return response or {}
+            return self._serialize_value(response) if response else {}
             
         else:
             # Try ext_method for unknown methods

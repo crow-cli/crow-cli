@@ -4,6 +4,7 @@ from logging import Logger
 from typing import Any
 
 from acp import (
+    image_block,
     text_block,
 )
 from acp.helpers import (
@@ -12,6 +13,10 @@ from acp.helpers import (
     tool_content,
     tool_diff_content,
     update_tool_call,
+)
+from mcp.types import (
+    ImageContent,
+    TextContent,
 )
 from acp.interfaces import Client
 from acp.schema import (
@@ -51,6 +56,84 @@ def get_tool_kind(tool_name: str) -> ToolKind:
         return "execute"
     else:
         return "other"
+
+
+def mcp_content_to_acp_blocks(
+    mcp_content: list[TextContent | ImageContent],
+) -> list:
+    """
+    Convert MCP content blocks to ACP content blocks.
+
+    Handles TextContent and ImageContent from MCP protocol
+    and converts them to appropriate ACP content blocks.
+
+    Args:
+        mcp_content: List of content blocks from MCP CallToolResult
+
+    Returns:
+        List of ACP tool content blocks wrapped with tool_content()
+    """
+    acp_blocks = []
+    for item in mcp_content:
+        if isinstance(item, TextContent):
+            acp_blocks.append(tool_content(text_block(item.text)))
+        elif isinstance(item, ImageContent):
+            # MCP uses mimeType (camelCase), ACP uses mime_type (snake_case)
+            acp_blocks.append(
+                tool_content(
+                    image_block(data=item.data, mime_type=item.mimeType)
+                )
+            )
+        else:
+            # Fallback: try to extract text if possible
+            if hasattr(item, "text"):
+                acp_blocks.append(tool_content(text_block(str(item.text))))
+            elif hasattr(item, "data"):
+                # Binary data as string representation
+                acp_blocks.append(tool_content(text_block(str(item.data))))
+            else:
+                # Last resort: convert entire object to string
+                acp_blocks.append(tool_content(text_block(str(item))))
+    return acp_blocks
+
+
+def mcp_content_to_openai_format(
+    mcp_content: list[TextContent | ImageContent],
+) -> list | str:
+    """
+    Convert MCP content blocks to OpenAI-compatible content format.
+
+    Returns a list of content blocks (text + images) so the LLM
+    can see images returned by MCP tools (e.g. vision/capture tools).
+
+    Args:
+        mcp_content: List of content blocks from MCP CallToolResult
+
+    Returns:
+        List of OpenAI content blocks, or plain string if only text.
+    """
+    if not mcp_content:
+        return ""
+
+    blocks = []
+    for item in mcp_content:
+        if isinstance(item, TextContent):
+            blocks.append({"type": "text", "text": item.text})
+        elif isinstance(item, ImageContent):
+            blocks.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{item.mimeType};base64,{item.data}"},
+            })
+        else:
+            # Fallback: convert to text
+            text = getattr(item, "text", str(item))
+            blocks.append({"type": "text", "text": text})
+
+    # If only one text block, return plain string for compatibility
+    if len(blocks) == 1 and blocks[0]["type"] == "text":
+        return blocks[0]["text"]
+
+    return blocks
 
 
 async def execute_acp_terminal(
@@ -493,16 +576,22 @@ async def execute_acp_tool(
         if not mcp_client:
             raise RuntimeError(f"No MCP client for session {session_id}")
         result = await mcp_client.call_tool(tool_name, args)
-        result_content = result.content[0].text
-
+        
+        # Convert MCP content to ACP content blocks (for client display)
+        acp_content_blocks = mcp_content_to_acp_blocks(result.content)
+        
+        # Convert MCP content to OpenAI format (for LLM tool response)
+        # This preserves images so the LLM can see them
+        result_content = mcp_content_to_openai_format(result.content)
+        
         # 4. Send completion update with content
-        status = "completed" if "Error" not in result_content else "failed"
+        status = "completed" if not getattr(result, "isError", False) else "failed"
         await conn.session_update(
             session_id=session_id,
             update=update_tool_call(
                 acp_tool_call_id,
                 status=status,
-                content=[tool_content(text_block(result_content))],
+                content=acp_content_blocks,
             ),
         )
 
