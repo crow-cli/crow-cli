@@ -79,7 +79,17 @@ class AgentClient(Agent):
         self._pending_requests: dict[int, asyncio.Future] = {}
         self._bridge_process: asyncio.subprocess.Process | None = None
         self._update_task: asyncio.Task | None = None
+        self._downstream_tasks: set[asyncio.Task] = set()  # Track background request tasks
         self._cleanup_done: bool = False
+
+        # Track terminal tool calls so we can report correct status to upstream
+        # terminal_id -> {session_id, command, exit_code, signal}
+        self._terminal_tool_calls: dict[str, dict] = {}
+        # Map tool_call_ids from child agent to our terminal_ids
+        # tool_call_id -> terminal_id (set when terminal/create is called)
+        self._tool_call_to_terminal: dict[str, str] = {}
+        # Track the most recent terminal tool_call_id to associate with next terminal/create
+        self._pending_terminal_tool_call: str | None = None
 
         logger.info("AgentClient initialized")
 
@@ -221,6 +231,18 @@ class AgentClient(Agent):
                 },
             )
 
+            # The child agent may have responded with end_turn while tool calls
+            # are still executing via client methods (terminal/fs). Wait for all
+            # in-flight downstream requests to complete before returning to Zed,
+            # so Zed sees end_turn only after all tool calls have finished.
+            if self._downstream_tasks:
+                logger.info(
+                    f"Waiting for {len(self._downstream_tasks)} downstream tasks to complete..."
+                )
+                await asyncio.gather(*self._downstream_tasks, return_exceptions=True)
+                self._downstream_tasks.clear()
+                logger.info("All downstream tasks completed")
+
             logger.info(f"Child prompt complete: {response}")
 
             # Extract stop reason from response
@@ -316,29 +338,43 @@ class AgentClient(Agent):
                 # Check if this is a JSON-RPC message with an ID
                 if "id" in data:
                     request_id = data["id"]
-                    
+
                     # Check if this is a response to OUR request
                     if request_id in self._pending_requests:
                         future = self._pending_requests.pop(request_id)
                         future.set_result(data)
-                    
-                    # Otherwise, this is a request FROM the child agent that we need to execute
+
+                    # Otherwise, this is a request FROM the child agent that we need to execute.
+                    # Spawn as a background task so _handle_updates can keep reading
+                    # WebSocket messages while waiting for the upstream client to respond.
                     elif "method" in data:
-                        await self._handle_downstream_request(data)
+                        task = asyncio.create_task(
+                            self._handle_downstream_request(data)
+                        )
+                        self._downstream_tasks.add(task)
+                        task.add_done_callback(self._downstream_tasks.discard)
 
                 # Check if this is a notification from child agent (no "id" field)
                 elif "method" in data:
                     method = data["method"]
                     params = data.get("params", {})
-                    
+
                     # Forward session/update notifications to upstream
                     if method == "session/update":
                         logger.debug(f"Forwarding session/update to upstream: {params}")
                         session_id = params.get("sessionId")
                         update_data = params.get("update", {})
                         
-                        # Deserialize the update into the correct Pydantic model
-                        update = self._deserialize_update(update_data)
+                        session_update_type = update_data.get("sessionUpdate")
+                        
+                        # Track terminal tool calls when they start
+                        if session_update_type == "tool_call" and update_data.get("kind") == "execute":
+                            tool_call_id = update_data.get("toolCallId", "")
+                            self._pending_terminal_tool_call = tool_call_id
+                            logger.debug(f"Tracking pending terminal tool_call: {tool_call_id}")
+                        
+                        # Intercept tool_call_update for terminal tool calls and correct status
+                        update = self._intercept_tool_call_update(update_data)
                         
                         await self._conn.session_update(
                             session_id=session_id,
@@ -347,7 +383,7 @@ class AgentClient(Agent):
                         logger.debug(
                             f"Forwarded session/update: {update_data.get('sessionUpdate')}"
                         )
-                    
+
                     # Forward other notifications via ext_notification
                     else:
                         logger.debug(f"Forwarding notification to upstream: {method}")
@@ -361,41 +397,47 @@ class AgentClient(Agent):
             # Fail all pending requests so callers don't hang forever
             for req_id, future in self._pending_requests.items():
                 if not future.done():
-                    future.set_exception(
-                        RuntimeError(f"WebSocket closed: {e}")
-                    )
+                    future.set_exception(RuntimeError(f"WebSocket closed: {e}"))
             self._pending_requests.clear()
+            # Cancel any in-flight downstream request tasks
+            for task in self._downstream_tasks:
+                if not task.done():
+                    task.cancel()
+            self._downstream_tasks.clear()
         except Exception as e:
             logger.error(f"Error handling updates: {e}", exc_info=True)
             # Fail all pending requests
             for req_id, future in self._pending_requests.items():
                 if not future.done():
-                    future.set_exception(
-                        RuntimeError(f"Update handler error: {e}")
-                    )
+                    future.set_exception(RuntimeError(f"Update handler error: {e}"))
             self._pending_requests.clear()
+            # Cancel any in-flight downstream request tasks
+            for task in self._downstream_tasks:
+                if not task.done():
+                    task.cancel()
+            self._downstream_tasks.clear()
 
     async def _handle_downstream_request(self, data: dict):
         """
         Handle a JSON-RPC request from the downstream agent.
-        
+
         The downstream agent is calling a client method (like create_terminal,
         read_text_file, etc.) and expects a response. We need to execute this
         against the upstream client and send the response back.
-        
+
         Args:
             data: JSON-RPC request dict with id, method, params
         """
         request_id = data["id"]
         method = data["method"]
         params = data.get("params", {})
-        
+
         logger.info(f"Downstream request: {method} (id={request_id})")
-        
+
         try:
             # Execute the method against the upstream client
             result = await self._execute_client_method(method, params)
-            
+
             # Send successful response back to downstream
             response = {
                 "jsonrpc": "2.0",
@@ -404,10 +446,10 @@ class AgentClient(Agent):
             }
             await self._ws.send(json.dumps(response))
             logger.info(f"Sent response to downstream (id={request_id})")
-            
+
         except Exception as e:
             logger.error(f"Error executing {method}: {e}", exc_info=True)
-            
+
             # Send error response back to downstream
             response = {
                 "jsonrpc": "2.0",
@@ -422,11 +464,11 @@ class AgentClient(Agent):
     async def _execute_client_method(self, method: str, params: dict) -> dict:
         """
         Execute a client method against the upstream client.
-        
+
         Args:
             method: JSON-RPC method name (e.g., "terminal/create", "fs/read_text_file")
             params: Method parameters
-            
+
         Returns:
             Result dict from the upstream client
         """
@@ -440,42 +482,98 @@ class AgentClient(Agent):
                 env=params.get("env"),
                 output_byte_limit=params.get("outputByteLimit"),
             )
-            return {"terminalId": response.terminal_id}
+            terminal_id = response.terminal_id
+            session_id = params.get("sessionId")
             
+            # Associate with the most recent terminal tool_call if available
+            tool_call_id = self._pending_terminal_tool_call
+            if tool_call_id:
+                self._tool_call_to_terminal[tool_call_id] = terminal_id
+                self._pending_terminal_tool_call = None
+                logger.info(f"Mapped tool_call {tool_call_id} → terminal {terminal_id}")
+            
+            # Store terminal info so we can report correct status later
+            self._terminal_tool_calls[terminal_id] = {
+                "session_id": session_id,
+                "command": params.get("command", ""),
+                "exit_code": None,
+                "signal": None,
+            }
+            
+            return {"terminalId": terminal_id}
+
         elif method == "terminal/output":
             response = await self._conn.terminal_output(
                 session_id=params.get("sessionId"),
                 terminal_id=params.get("terminalId"),
             )
-            return {
+            terminal_id = params.get("terminalId")
+            
+            # Track exit status for terminal tool call status correction
+            if terminal_id in self._terminal_tool_calls and response.exit_status:
+                self._terminal_tool_calls[terminal_id]["exit_code"] = response.exit_status.exit_code
+                self._terminal_tool_calls[terminal_id]["signal"] = response.exit_status.signal
+                logger.info(
+                    f"Tracked terminal {terminal_id} exit: code={response.exit_status.exit_code}, signal={response.exit_status.signal}"
+                )
+            
+            result = {
                 "output": response.output,
                 "truncated": response.truncated,
             }
-            
+            if response.exit_status:
+                result["exitStatus"] = {
+                    "exitCode": response.exit_status.exit_code,
+                    "signal": response.exit_status.signal,
+                }
+            return result
+
         elif method == "terminal/wait_for_exit":
+            # First check if already exited via terminal/output (avoids race condition
+            # for quick commands that complete before wait_for_exit is called)
+            session_id = params.get("sessionId")
+            terminal_id = params.get("terminalId")
+
+            output_response = await self._conn.terminal_output(
+                session_id=session_id,
+                terminal_id=terminal_id,
+            )
+
+            # ACP protocol includes exitStatus in output response if command exited
+            if hasattr(output_response, "exit_status") and output_response.exit_status:
+                logger.info(
+                    f"Terminal already exited (from output): {output_response.exit_status}"
+                )
+                return {
+                    "exitCode": output_response.exit_status.exit_code,
+                    "signal": output_response.exit_status.signal,
+                }
+
+            # Still running, actually wait for exit
+            logger.info("Terminal still running, waiting for exit...")
             response = await self._conn.wait_for_terminal_exit(
-                session_id=params.get("sessionId"),
-                terminal_id=params.get("terminalId"),
+                session_id=session_id,
+                terminal_id=terminal_id,
             )
             return {
                 "exitCode": response.exit_code,
                 "signal": response.signal,
             }
-            
+
         elif method == "terminal/release":
             response = await self._conn.release_terminal(
                 session_id=params.get("sessionId"),
                 terminal_id=params.get("terminalId"),
             )
             return self._serialize_value(response) if response else {}
-            
+
         elif method == "terminal/kill":
             response = await self._conn.kill_terminal(
                 session_id=params.get("sessionId"),
                 terminal_id=params.get("terminalId"),
             )
             return self._serialize_value(response) if response else {}
-            
+
         elif method == "fs/read_text_file":
             response = await self._conn.read_text_file(
                 path=params.get("path"),
@@ -484,7 +582,7 @@ class AgentClient(Agent):
                 line=params.get("line"),
             )
             return {"content": response.content}
-            
+
         elif method == "fs/write_text_file":
             response = await self._conn.write_text_file(
                 content=params.get("content"),
@@ -493,7 +591,7 @@ class AgentClient(Agent):
             )
             # WriteTextFileResponse is a Pydantic model — serialize to dict
             return self._serialize_value(response) if response else {}
-            
+
         elif method == "session/request_permission":
             response = await self._conn.request_permission(
                 options=params.get("options"),
@@ -501,7 +599,7 @@ class AgentClient(Agent):
                 tool_call=params.get("toolCall"),
             )
             return self._serialize_value(response) if response else {}
-            
+
         else:
             # Try ext_method for unknown methods
             logger.warning(f"Unknown client method: {method}, trying ext_method")
@@ -553,6 +651,56 @@ class AgentClient(Agent):
         else:
             # Primitive value (str, int, float, bool, None)
             return value
+
+    def _intercept_tool_call_update(self, update_data: dict) -> Any:
+        """
+        Intercept tool_call_update for terminal tool calls and correct status.
+        
+        The downstream agent may report "failed" because it timed out waiting,
+        but the actual exit code might be 0 (success). Since we track the
+        real exit status from terminal/output responses, we can correct this.
+        
+        Returns the deserialized Pydantic model with corrected status.
+        """
+        session_update_type = update_data.get("sessionUpdate")
+        
+        # Only intercept tool_call_update for terminal status correction
+        if session_update_type == "tool_call_update":
+            tool_call_id = update_data.get("toolCallId", "")
+            status = update_data.get("status", "")
+            
+            # Look up terminal_id for this tool_call
+            terminal_id = self._tool_call_to_terminal.get(tool_call_id)
+            
+            if terminal_id and terminal_id in self._terminal_tool_calls:
+                terminal_info = self._terminal_tool_calls[terminal_id]
+                exit_code = terminal_info.get("exit_code")
+                signal = terminal_info.get("signal")
+                
+                # If we have exit status, determine correct status
+                if exit_code is not None:
+                    # exit_code 0 + no signal = success, regardless of timeout
+                    if exit_code == 0 and not signal:
+                        corrected_status = "completed"
+                    else:
+                        corrected_status = "failed"
+                    
+                    if status != corrected_status:
+                        logger.info(
+                            f"Correcting terminal tool call status: "
+                            f"tool_call_id={tool_call_id}, terminal_id={terminal_id}, "
+                            f"downstream said='{status}', actual exit_code={exit_code}, "
+                            f"corrected='{corrected_status}'"
+                        )
+                        # Create corrected copy with proper status
+                        update_data = {**update_data, "status": corrected_status}
+                    
+                    # Clean up tracking
+                    del self._terminal_tool_calls[terminal_id]
+                    if tool_call_id in self._tool_call_to_terminal:
+                        del self._tool_call_to_terminal[tool_call_id]
+        
+        return self._deserialize_update(update_data)
 
     def _deserialize_update(self, update_data: dict) -> Any:
         """
@@ -666,6 +814,14 @@ class AgentClient(Agent):
                 await self._update_task
             except asyncio.CancelledError:
                 pass
+
+        # Cancel pending downstream request tasks
+        for task in self._downstream_tasks:
+            if not task.done():
+                task.cancel()
+        if self._downstream_tasks:
+            await asyncio.gather(*self._downstream_tasks, return_exceptions=True)
+        self._downstream_tasks.clear()
 
         # Close WebSocket
         if self._ws and not self._ws.closed:
