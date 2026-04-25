@@ -408,15 +408,15 @@ async def edit(
 
     Usage:
     - The file_path parameter must be an absolute path
-    - You must read the file first before editing
+    - You must read the file first before editing and pay attention to whitespace
     - The tool uses fuzzy matching to handle minor whitespace/indentation differences
-    - The edit will FAIL if old_string is not unique - provide more context to make it unique
+    - old_string MUST BE unique - provide more context to make it unique or this will FAIL
     - Use replace_all=true to replace all occurrences (useful for renaming)
-    - Prefer editing existing files over creating new ones
+    - Prioritize editing existing files over full rewrites
 
     Args:
         file_path: The absolute path to the file to edit
-        old_string: The text to replace (fuzzy matching supported)
+        old_string: The text to replace (fuzzy matching supported — MUST BE UNIQUE IF NOT USING replace_all)
         new_string: The text to replace it with
         replace_all: Replace all occurrences (default false)
 

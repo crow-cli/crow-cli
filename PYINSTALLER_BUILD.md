@@ -32,8 +32,8 @@ Added `pyinstaller>=6.0.0` to dev dependency group
 
 ```bash
 cd crow-cli
-uv pip install pyinstaller
-uv run pyinstaller crow-cli.spec --noconfirm
+uv --project . pip install pyinstaller
+uv --project . run pyinstaller crow-cli.spec --noconfirm
 dist/crow-cli --help
 ```
 

@@ -63,8 +63,8 @@ from acp import (
 from acp.interfaces import Client
 from acp.schema import (
     AgentCapabilities,
-    AuthMethodAgent,
     AudioContentBlock,
+    AuthMethodAgent,
     AvailableCommand,
     AvailableCommandsUpdate,
     ClientCapabilities,
@@ -271,7 +271,7 @@ class AcpAgent(Agent):
             agent_info=Implementation(
                 name="crow-cli",
                 title="crow-cli",
-                version="0.1.14",
+                version="0.1.20",
             ),
         )
 

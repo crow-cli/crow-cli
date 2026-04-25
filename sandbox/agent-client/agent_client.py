@@ -14,6 +14,7 @@ The agent-client:
 import asyncio
 import json
 import logging
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -88,8 +89,11 @@ class AgentClient(Agent):
         # Map tool_call_ids from child agent to our terminal_ids
         # tool_call_id -> terminal_id (set when terminal/create is called)
         self._tool_call_to_terminal: dict[str, str] = {}
-        # Track the most recent terminal tool_call_id to associate with next terminal/create
-        self._pending_terminal_tool_call: str | None = None
+        # Track the most recent terminal tool_call_ids in FIFO order.
+        # When the child sends a tool_call notification, we enqueue it.
+        # When terminal/create fires, we dequeue the oldest pending ID.
+        # This handles parallel terminal creation without race conditions.
+        self._pending_terminal_tool_calls: deque[str] = deque()
 
         logger.info("AgentClient initialized")
 
@@ -370,8 +374,8 @@ class AgentClient(Agent):
                         # Track terminal tool calls when they start
                         if session_update_type == "tool_call" and update_data.get("kind") == "execute":
                             tool_call_id = update_data.get("toolCallId", "")
-                            self._pending_terminal_tool_call = tool_call_id
-                            logger.debug(f"Tracking pending terminal tool_call: {tool_call_id}")
+                            self._pending_terminal_tool_calls.append(tool_call_id)
+                            logger.debug(f"Enqueued pending terminal tool_call: {tool_call_id}")
                         
                         # Intercept tool_call_update for terminal tool calls and correct status
                         update = self._intercept_tool_call_update(update_data)
@@ -485,11 +489,10 @@ class AgentClient(Agent):
             terminal_id = response.terminal_id
             session_id = params.get("sessionId")
             
-            # Associate with the most recent terminal tool_call if available
-            tool_call_id = self._pending_terminal_tool_call
-            if tool_call_id:
+            # Pop the oldest pending tool_call_id (FIFO) to associate with this terminal
+            if self._pending_terminal_tool_calls:
+                tool_call_id = self._pending_terminal_tool_calls.popleft()
                 self._tool_call_to_terminal[tool_call_id] = terminal_id
-                self._pending_terminal_tool_call = None
                 logger.info(f"Mapped tool_call {tool_call_id} → terminal {terminal_id}")
             
             # Store terminal info so we can report correct status later

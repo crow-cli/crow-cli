@@ -1,12 +1,11 @@
 [project]
-name = "crow-test"
+name = "langfuse-test"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "crow-mcp>=0.1.0",
-    "ipython>=9.10.0",
-    "matplotlib>=3.10.8",
-    "numpy>=2.4.2",
+    "langfuse>=4.5.1",
+    "openai>=2.32.0",
+    "python-dotenv>=1.2.2",
 ]

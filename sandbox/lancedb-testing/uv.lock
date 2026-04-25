@@ -88,12 +88,14 @@ source = { virtual = "." }
 dependencies = [
     { name = "lancedb" },
     { name = "polars" },
+    { name = "pyarrow" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "lancedb", specifier = ">=0.30.0" },
     { name = "polars", specifier = ">=1.39.0" },
+    { name = "pyarrow", specifier = ">=23.0.1" },
 ]
 
 [[package]]

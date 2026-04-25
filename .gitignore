@@ -22,3 +22,4 @@ _site/
 crow-editor/frontend/node_modules
 
 *.log
+*.log*
