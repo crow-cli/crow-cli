@@ -13,7 +13,7 @@ AGENT_ARGS = (
     "--project",
     "/home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent",
     "run",
-    "/home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/main.py",
+    "/home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/scratch_db.py",
 )
 
 

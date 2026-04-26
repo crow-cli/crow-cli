@@ -1,49 +1,56 @@
 """
-Session management - persistence layer for conversation state.
+Agent session management - persistence layer for conversation state.
 
 One row = One message. No conv_index gymnastics. No reconstruction headaches.
 Just serialize the message dict, deserialize it back.
+
+Agent owns the session. agent_id = "{session_id}-{agent_idx}" is the PK.
+session_id is derived from agent_id for ACP upstream routing.
 """
 
 import json
 from logging import Logger
 from typing import Any
-from uuid import uuid4
 
 from coolname import generate_slug
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session as SQLAlchemySession
 
-from crow_cli.agent.db import Base, Message, Prompt, create_database
-from crow_cli.agent.db import Session as SessionModel
+from crow_cli.agent.db import Agent as AgentModel
+from crow_cli.agent.db import Base, FileSnapshot, Message, Prompt, create_database
 from crow_cli.agent.prompt import render_template
 
 
 def get_session_by_cwd(cwd, db_uri):
     """
-    Lookup sessions by working directory.
-    
+    Lookup agents by working directory.
+
     Returns list of session info dicts with session_id, title, updated_at.
     """
     db = SQLAlchemySession(create_engine(db_uri))
     try:
-        sessions = db.query(SessionModel).all()
+        agents = db.query(AgentModel).all()
         result = []
-        for session in sessions:
+        for agent in agents:
             # Parse prompt_args from JSON string to dict
-            prompt_args = session.prompt_args
+            prompt_args = agent.prompt_args
             if isinstance(prompt_args, str):
                 try:
                     prompt_args = json.loads(prompt_args)
                 except (json.JSONDecodeError, TypeError):
                     prompt_args = {}
-            
+
             # Check if workspace matches
             if not prompt_args or prompt_args.get("workspace") != cwd:
                 continue
-            
+
             # Get message count and title
-            msgs = db.query(Message).filter_by(session_id=session.session_id).order_by(Message.id).all()
+            msgs = (
+                db.query(Message)
+                .filter_by(agent_id=agent.agent_id)
+                .order_by(Message.id)
+                .all()
+            )
             if len(msgs) > 2:
                 # Get content from second message (index 1, after system message)
                 try:
@@ -55,21 +62,24 @@ def get_session_by_cwd(cwd, db_uri):
                     title = "Untitled Chat"
             else:
                 title = "Untitled Chat"
-            
-            result.append({
-                "cwd": cwd,
-                "session_id": session.session_id,
-                "title": title,
-                "updated_at": session.created_at.isoformat(),
-            })
+
+            result.append(
+                {
+                    "cwd": cwd,
+                    "session_id": agent.session_id,
+                    "agent_id": agent.agent_id,
+                    "title": title,
+                    "updated_at": agent.created_at.isoformat(),
+                }
+            )
         return result
     finally:
         db.close()
 
 
 def get_coolname() -> str:
-    """Generate a memorable slug with UUID suffix."""
-    return "-".join((generate_slug(4), uuid4().hex[:6]))
+    """Generate a memorable slug"""
+    return generate_slug(4)
 
 
 def lookup_or_create_prompt(
@@ -102,17 +112,21 @@ class Session:
     """
     Manages conversation state and persistence.
 
-    Simple model: messages live in memory as list[dict],
-    persisted to db as one row per message.
+    agent_id = "{session_id}-{agent_idx}" is the DB key.
+    session_id is derived for ACP upstream routing only.
     """
 
     def __init__(
         self,
+        agent_id: str,
         session_id: str,
+        agent_idx: int = 0,
         db_uri: str = "sqlite:///crow.db",
         cwd: str = "/tmp",
     ):
+        self.agent_id = agent_id
         self.session_id = session_id
+        self.agent_idx = agent_idx
         self.db_uri = db_uri
         self.cwd = cwd
         self.messages: list[dict] = []
@@ -129,12 +143,12 @@ class Session:
         return self._db
 
     @property
-    def model(self) -> SessionModel:
-        """Lazy-load session model from database"""
+    def model(self) -> AgentModel:
+        """Lazy-load agent model from database"""
         if self._model is None:
             self._model = (
-                self.db.query(SessionModel)
-                .filter_by(session_id=self.session_id)
+                self.db.query(AgentModel)
+                .filter_by(agent_id=self.agent_id)
                 .first()
             )
         return self._model
@@ -151,7 +165,7 @@ class Session:
 
         # Persist - one row = one message
         db_msg = Message(
-            session_id=self.session_id,
+            agent_id=self.agent_id,
             data=msg,
             role=msg.get("role", "unknown"),
             prompt_tokens=usage.get("prompt_tokens") if usage else None,
@@ -208,7 +222,7 @@ class Session:
         """Batch save messages to database."""
         for msg in messages:
             db_msg = Message(
-                session_id=self.session_id,
+                agent_id=self.agent_id,
                 data=msg,
                 role=msg.get("role", "unknown"),
             )
@@ -225,9 +239,11 @@ class Session:
         model_identifier: str,
         db_uri: str = "sqlite:///crow.db",
         cwd: str = "/tmp",
+        agent_idx: int = 0,
+        session_id: str | None = None,
         initial_messages: list[dict[str, Any]] | None = None,
     ) -> "Session":
-        """Factory method to create a new session."""
+        """Factory method to create a new agent session."""
         db = SQLAlchemySession(create_engine(db_uri))
 
         # Load and render prompt
@@ -237,11 +253,16 @@ class Session:
             raise ValueError(f"Prompt '{prompt_id}' not found")
 
         system_prompt = render_template(prompt.template, **prompt_args)
-        session_id = get_coolname()
+        if session_id is None:
+            session_id = get_coolname()
+        agent_id = f"{session_id}-{agent_idx}"
 
-        # Create session record
-        session_model = SessionModel(
+        # Create agent record
+        agent_model = AgentModel(
+            agent_id=agent_id,
             session_id=session_id,
+            agent_idx=agent_idx,
+            cwd=cwd,
             prompt_id=prompt_id,
             prompt_args=prompt_args,
             system_prompt=system_prompt,
@@ -249,12 +270,12 @@ class Session:
             request_params=request_params,
             model_identifier=model_identifier,
         )
-        db.add(session_model)
+        db.add(agent_model)
         db.commit()
         db.close()
 
         # Build session instance
-        session = cls(session_id, db_uri, cwd=cwd)
+        session = cls(agent_id, session_id, agent_idx, db_uri, cwd=cwd)
         session.model_identifier = model_identifier
         session.tools = tool_definitions
         session.request_params = request_params
@@ -274,89 +295,40 @@ class Session:
         return session
 
     @classmethod
-    def load(cls, session_id: str, db_uri: str = "sqlite:///crow.db") -> "Session":
-        """Factory method to load existing session from database."""
-        session = cls(session_id, db_uri)
+    def load(cls, agent_id: str, db_uri: str = "sqlite:///crow.db") -> "Session":
+        """Factory method to load existing agent session from database."""
+        db = SQLAlchemySession(create_engine(db_uri))
+        agent_model = db.query(AgentModel).filter_by(agent_id=agent_id).first()
+        if not agent_model:
+            db.close()
+            raise ValueError(f"Agent '{agent_id}' not found")
 
-        if session.model is None:
-            raise ValueError(f"Session '{session_id}' not found")
-
-        session.model_identifier = session.model.model_identifier
-        session.tools = session.model.tool_definitions
-        session.request_params = session.model.request_params
-        session.prompt_id = session.model.prompt_id
-        session.prompt_args = session.model.prompt_args
+        session = cls(
+            agent_id=agent_model.agent_id,
+            session_id=agent_model.session_id,
+            agent_idx=agent_model.agent_idx,
+            db_uri=db_uri,
+            cwd=agent_model.cwd,
+        )
+        session.model_identifier = agent_model.model_identifier
+        session.tools = agent_model.tool_definitions
+        session.request_params = agent_model.request_params
+        session.prompt_id = agent_model.prompt_id
+        session.prompt_args = agent_model.prompt_args
 
         # Load messages - just deserialize the data column
         messages = (
-            session.db.query(Message)
-            .filter_by(session_id=session_id)
+            db.query(Message)
+            .filter_by(agent_id=agent_id)
             .order_by(Message.id)
             .all()
         )
+        db.close()
         session.messages = [m.data for m in messages]
 
         return session
 
-    @classmethod
-    def swap_session_id(
-        cls,
-        old_session_id: str,
-        new_session_id: str,
-        db_uri: str = "sqlite:///crow.db",
-    ) -> str:
-        """
-        Atomically swap session IDs for compaction.
 
-        old_session_id -> archive_id (preserves full history)
-        new_session_id -> old_session_id (compacted session takes over)
-        """
-        archive_id = f"sess_archive_{uuid4().hex}"
-
-        db = SQLAlchemySession(create_engine(db_uri))
-        try:
-            # Move old session to archive
-            old_session = (
-                db.query(SessionModel).filter_by(session_id=old_session_id).first()
-            )
-            if not old_session:
-                raise ValueError(f"Session '{old_session_id}' not found")
-            old_session.session_id = archive_id
-            db.query(Message).filter_by(session_id=old_session_id).update(
-                {"session_id": archive_id}
-            )
-
-            # Move new session to old_session_id
-            new_session = (
-                db.query(SessionModel).filter_by(session_id=new_session_id).first()
-            )
-            if not new_session:
-                raise ValueError(f"Session '{new_session_id}' not found")
-            new_session.session_id = old_session_id
-            db.query(Message).filter_by(session_id=new_session_id).update(
-                {"session_id": old_session_id}
-            )
-
-            db.commit()
-            return archive_id
-        except Exception as e:
-            db.rollback()
-            raise e
-        finally:
-            db.close()
-
-    def update_from(self, other: "Session") -> None:
-        """Update this session's state from another session in-place."""
-        self.session_id = other.session_id
-        self.db_uri = other.db_uri
-        self.cwd = other.cwd
-        # Create a new list to avoid reference issues
-        self.messages = list(other.messages)
-        self.model_identifier = other.model_identifier
-        self.tools = other.tools
-        self.request_params = other.request_params
-        self.prompt_id = other.prompt_id
-        self.prompt_args = other.prompt_args
 
         if self._db is not None:
             self._db.close()

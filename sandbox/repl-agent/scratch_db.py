@@ -25,7 +25,7 @@ async def agent_run() -> None:
     config.config_dir = Path(
         "/home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/.crow"
     )
-    config.db_uri = "sqlite:////home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/.crow/crow-from-scratch.db"
+    config.db_uri = "sqlite:////home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/.crow/crow-new.db"
     config.MAX_COMPACT_TOKENS = 990_000
 
     agent = AcpAgent(config, hooks=[uv_project_hook])

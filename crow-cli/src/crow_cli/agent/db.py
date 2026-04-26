@@ -1,8 +1,11 @@
 """
-Database schema v2 - One row = One message.
+Database schema v3 - One row = One message. Agent-centric.
 
 No more conv_index gymnastics. No more reconstructing messages from
 scattered events. Just serialize the message dict, deserialize it back.
+
+Agents own sessions. Multiple agents can share a logical session_id.
+agent_id = "{session_id}-{idx}" is the primary key.
 
 Message shapes we actually need:
 - system:   {role, content}
@@ -14,7 +17,15 @@ Message shapes we actually need:
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, Text, create_engine
+from sqlalchemy import (
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Text,
+    UniqueConstraint,
+    create_engine,
+)
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -31,42 +42,73 @@ class Prompt(Base):
     template = Column(Text, nullable=False)
     created_at = Column(DateTime, nullable=False, default=datetime.now)
 
-    sessions = relationship("Session", back_populates="prompt")
+    agents = relationship("Agent", back_populates="prompt")
 
 
-class Session(Base):
+class Agent(Base):
     """
-    Session metadata - the "DNA" of the conversation.
+    Agent (formerly Session) - the "DNA" of a running agent instance.
 
-    Stores config, but NOT the messages themselves.
-    Messages live in the Message table.
+    agent_id = "{session_id}-{agent_idx}" is the PK.
+    session_id is the logical parent session (for ACP upstream routing).
     """
 
-    __tablename__ = "sessions"
+    __tablename__ = "agents"
 
-    session_id = Column(Text, primary_key=True)
+    agent_id = Column(Text, primary_key=True)
+    session_id = Column(Text, nullable=False, index=True)
+    agent_idx = Column(Integer, nullable=False, default=1)
+    cwd = Column(Text, nullable=False, default="/tmp")
     prompt_id = Column(Text, ForeignKey("prompts.id"), nullable=True)
     prompt_args = Column(JSON, nullable=True)
     system_prompt = Column(Text, nullable=False)
     tool_definitions = Column(JSON, nullable=False)
     request_params = Column(JSON, nullable=False)
     model_identifier = Column(Text, nullable=False)
+    status = Column(Text, nullable=False, default="active")
     created_at = Column(DateTime, nullable=False, default=datetime.now)
 
-    prompt = relationship("Prompt", back_populates="sessions")
+    prompt = relationship("Prompt", back_populates="agents")
     messages = relationship(
-        "Message", back_populates="session", cascade="all, delete-orphan"
+        "Message", back_populates="agent", cascade="all, delete-orphan"
+    )
+    file_snapshots = relationship(
+        "FileSnapshot", back_populates="agent", cascade="all, delete-orphan"
     )
 
 
-# TODO!
-# this needs to give the message the appropriate structure
-# and not just the simplified {role, content} either
-# The actual schema. tool calls for assistant will be json
-# we will save images to disk at
-#  ~/.crow/images/{session-id}-{image-session-counter}.png
-# and reference them in such a way session.load re-renders
-# faithful to original format
+class FileSnapshot(Base):
+    """
+    Pre-mutation file content captured by write/edit tool pre-hooks.
+
+    Murder backend reads this to serve content_before to Monaco.
+    Monaco handles the actual diff rendering.
+    """
+
+    __tablename__ = "file_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    agent_id = Column(
+        Text,
+        ForeignKey("agents.agent_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    tool_call_id = Column(Text, nullable=False, index=True)
+    tool_name = Column(Text, nullable=False)  # "write" or "edit"
+    file_path = Column(Text, nullable=False)
+    content_before = Column(Text, nullable=True)  # empty string if new file
+    timestamp = Column(DateTime, nullable=False, default=datetime.now)
+
+    agent = relationship("Agent", back_populates="file_snapshots")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "agent_id", "tool_call_id", "file_path", name="uq_agent_tool_file"
+        ),
+    )
+
+
 class Message(Base):
     """
     One row = One message.
@@ -83,8 +125,8 @@ class Message(Base):
     __tablename__ = "messages"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    session_id = Column(
-        Text, ForeignKey("sessions.session_id", ondelete="CASCADE"), nullable=False
+    agent_id = Column(
+        Text, ForeignKey("agents.agent_id", ondelete="CASCADE"), nullable=False
     )
     created_at = Column(DateTime, nullable=False, default=datetime.now)
 
@@ -99,7 +141,7 @@ class Message(Base):
     completion_tokens = Column(Integer, nullable=True)
     total_tokens = Column(Integer, nullable=True)
 
-    session = relationship("Session", back_populates="messages")
+    agent = relationship("Agent", back_populates="messages")
 
 
 def create_database(db_uri: str = "sqlite:///crow.db") -> None:

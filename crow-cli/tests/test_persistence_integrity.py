@@ -21,7 +21,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session as SQLAlchemySession
 
-from crow_cli.agent.db import Base, Message, Prompt, Session as SessionModel, create_database
+from crow_cli.agent.db import Base, Message, Prompt, Agent as AgentModel, create_database
 from crow_cli.agent.logger import setup_logger
 from crow_cli.agent.session import Session, lookup_or_create_prompt
 

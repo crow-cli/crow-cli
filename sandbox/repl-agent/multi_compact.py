@@ -1,3 +1,8 @@
+"""
+AcpAgent launcher with artificially low compaction threshold (16k tokens)
+for testing repeated compaction across multiple turns.
+"""
+
 import asyncio
 import sys
 from pathlib import Path
@@ -16,10 +21,9 @@ async def agent_run() -> None:
         "/home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/.crow"
     )
     config.db_uri = "sqlite:////home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/.crow/crow-fresh.db"
-    config.MAX_COMPACT_TOKENS = 190_000
+    # Artificially low threshold to trigger compaction quickly
+    config.MAX_COMPACT_TOKENS = 16_000
 
-    # Pass custom hooks: e.g. just uv_project_hook, or [] for none,
-    # or define your own CommandHook functions.
     agent = AcpAgent(config, hooks=[uv_project_hook])
 
     await run_agent(agent)

@@ -27,10 +27,10 @@ def register_slash_command(name: str, description: str):
 @register_slash_command(
     "compact", "Compact the conversation history to reduce context size"
 )
-async def compact_command(session_id: str, args: str, agent: Agent):
+async def compact_command(agent_id: str, args: str, agent: Agent):
     """Compact the conversation."""
 
-    session = agent._sessions.get(session_id)
+    session = agent._sessions.get(agent_id)
     if not session:
         return "Error: Session not found"
 
@@ -39,12 +39,12 @@ async def compact_command(session_id: str, args: str, agent: Agent):
         return f"Not enough conversation history to compact. Current message count: {len(session.messages)} (need at least 3: system + 2 messages)"
 
     agent._session_logger.info(
-        f"Compacting session {session_id} with {len(session.messages)} messages"
+        f"Compacting agent {agent_id} with {len(session.messages)} messages"
     )
 
     try:
         # Get current model for compaction
-        current_config = agent._config_values.get(session_id, {})
+        current_config = agent._config_values.get(agent_id, {})
         current_model_value = (
             current_config.get("model") or agent._default_model_value()
         )
@@ -61,9 +61,9 @@ async def compact_command(session_id: str, args: str, agent: Agent):
         llm = configure_llm(provider=provider, debug=False)
 
         def on_compact(sid, compacted_session):
-            agent._sessions[sid] = compacted_session
+            agent._sessions[compacted_session.agent_id] = compacted_session
             agent._session_logger.info(
-                f"on_compact callback: updated agent._sessions[{sid}] with {len(compacted_session.messages)} messages"
+                f"on_compact callback: updated with {len(compacted_session.messages)} messages"
             )
 
         agent._session_logger.info(
@@ -80,17 +80,6 @@ async def compact_command(session_id: str, args: str, agent: Agent):
             f"After compact: session.messages has {len(session.messages)} messages, result_session.messages has {len(result_session.messages)} messages"
         )
         agent._session_logger.info(f"Session same object: {session is result_session}")
-
-        # Verify the session in the dict
-        stored_session = agent._sessions.get(session_id)
-        if stored_session:
-            agent._session_logger.info(
-                f"Stored session has {len(stored_session.messages)} messages"
-            )
-        else:
-            agent._session_logger.warning(
-                f"Session {session_id} not found in agent._sessions after compact!"
-            )
 
         return f"Conversation compacted successfully! Reduced from {len(session.messages)} messages."
     except Exception as e:
@@ -109,10 +98,10 @@ async def help_command(session_id: str, args: str, agent: Agent):
 
 
 @register_slash_command("clear", "Clear the session context")
-async def clear_command(session_id: str, args: str, agent: Agent):
+async def clear_command(agent_id: str, args: str, agent: Agent):
     """Clear the session context."""
-    if session_id in agent._sessions:
-        session = agent._sessions[session_id]
+    if agent_id in agent._sessions:
+        session = agent._sessions[agent_id]
         # Keep system message, clear rest
         if session.messages and len(session.messages) > 0:
             # Keep first message (system prompt)
@@ -123,10 +112,10 @@ async def clear_command(session_id: str, args: str, agent: Agent):
 
 
 @register_slash_command("stop", "Stop current operation")
-async def stop_command(session_id: str, args: str, agent: Agent):
+async def stop_command(agent_id: str, args: str, agent: Agent):
     """Stop current operation."""
-    if session_id in agent._prompt_tasks:
-        agent._prompt_tasks[session_id].cancel()
+    if agent_id in agent._prompt_tasks:
+        agent._prompt_tasks[agent_id].cancel()
         return "Operation stopped."
     return "No active operation to stop."
 

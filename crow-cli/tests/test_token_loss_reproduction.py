@@ -69,7 +69,7 @@ class TestTokenLossReproduction:
 
     def _create_test_session(self, config: Config, cwd: str = "/tmp") -> Session:
         """Create a fresh test session with minimal setup."""
-        from crow_cli.agent.db import Session as SessionModel
+        from crow_cli.agent.db import Agent as AgentModel
         from crow_cli.agent.session import get_coolname
 
         session_id = get_coolname()
@@ -81,7 +81,7 @@ class TestTokenLossReproduction:
 
         db = SQLAlchemySession(create_engine(config.db_uri))
         db.add(
-            SessionModel(
+            AgentModel(
                 session_id=session_id,
                 system_prompt=system_prompt,
                 tool_definitions=[],

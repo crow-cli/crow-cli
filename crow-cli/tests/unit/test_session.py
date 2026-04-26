@@ -125,8 +125,8 @@ class TestSessionLoad:
         )
         session_id = session1.session_id
 
-        # Load session
-        session2 = Session.load(session_id, db_uri=temp_db_uri)
+        # Load session using agent_id (internal key)
+        session2 = Session.load(session1.agent_id, db_uri=temp_db_uri)
 
         # Verify
         assert session2.session_id == session_id
@@ -171,7 +171,7 @@ class TestSessionAddMessage:
         assert session.messages[1] == {"role": "user", "content": "Hello!"}
 
         # Verify in database
-        loaded = Session.load(session.session_id, db_uri=temp_db_uri)
+        loaded = Session.load(session.agent_id, db_uri=temp_db_uri)
         assert len(loaded.messages) == 2
         assert loaded.messages[1] == {"role": "user", "content": "Hello!"}
 
@@ -204,7 +204,7 @@ class TestSessionAddMessage:
         assert session.messages[3]["content"] == "Third"
 
         # Verify after reload
-        loaded = Session.load(session.session_id, db_uri=temp_db_uri)
+        loaded = Session.load(session.agent_id, db_uri=temp_db_uri)
         assert loaded.messages[1]["content"] == "First"
         assert loaded.messages[2]["content"] == "Second"
         assert loaded.messages[3]["content"] == "Third"
@@ -213,50 +213,11 @@ class TestSessionAddMessage:
 class TestSessionSwapIds:
     """Test session ID swapping for compaction."""
 
-    def test_session_swap_ids(self, temp_db_uri, sample_prompt_template):
-        """Atomically swap session IDs for compaction."""
-        # Create two sessions
-        prompt_id = lookup_or_create_prompt(
-            sample_prompt_template,
-            name="test-prompt",
-            db_uri=temp_db_uri,
-        )
-
-        session1 = Session.create(
-            prompt_id=prompt_id,
-            prompt_args={"name": "Crow", "workspace": "/tmp", "display_tree": "test/"},
-            tool_definitions=[],
-            request_params={},
-            model_identifier="test-model",
-            db_uri=temp_db_uri,
-            cwd="/tmp",
-        )
-
-        session2 = Session.create(
-            prompt_id=prompt_id,
-            prompt_args={"name": "Crow", "workspace": "/tmp", "display_tree": "test/"},
-            tool_definitions=[],
-            request_params={},
-            model_identifier="test-model",
-            db_uri=temp_db_uri,
-            cwd="/tmp",
-        )
-
-        old_id = session1.session_id
-        new_id = session2.session_id
-
-        # Swap
-        archive_id = Session.swap_session_id(old_id, new_id, db_uri=temp_db_uri)
-
-        # Verify archive_id is correct format
-        assert archive_id.startswith("sess_archive_")
-        
-        # Verify old_id is now archived (can't load it as old_id anymore)
-        # After swap: old_id -> archive_id, new_id -> old_id
-        # So loading old_id now gives us session2's data
-        loaded = Session.load(old_id, db_uri=temp_db_uri)
-        assert loaded is not None
-        # The loaded session should have session2's data now
+    def test_session_swap_ids_removed(self, temp_db_uri, sample_prompt_template):
+        """swap_session_id removed - compaction no longer needs ID swapping."""
+        # Compaction now just deletes old messages and inserts compacted ones
+        # under the same agent_id. No more ID gymnastics.
+        pass
 
 
 class TestSessionToolDefinitions:
@@ -289,7 +250,7 @@ class TestSessionToolDefinitions:
         assert session.tools == tools
 
         # Verify after reload
-        loaded = Session.load(session.session_id, db_uri=temp_db_uri)
+        loaded = Session.load(session.agent_id, db_uri=temp_db_uri)
         assert loaded.tools == tools
 
 
@@ -321,7 +282,7 @@ class TestSessionRoundtrip:
         session1.add_message({"role": "assistant", "content": "Hi!"})
 
         # Reload
-        session2 = Session.load(session1.session_id, db_uri=temp_db_uri)
+        session2 = Session.load(session1.agent_id, db_uri=temp_db_uri)
 
         # Verify all fields
         assert session2.session_id == session1.session_id

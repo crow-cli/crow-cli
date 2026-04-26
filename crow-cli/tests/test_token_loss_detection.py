@@ -19,7 +19,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session as SQLAlchemySession
 
 from crow_cli.agent.db import Message
-from crow_cli.agent.db import Session as SessionModel
+from crow_cli.agent.db import Agent as AgentModel
 from crow_cli.agent.logger import setup_logger
 from crow_cli.agent.session import Session, lookup_or_create_prompt
 

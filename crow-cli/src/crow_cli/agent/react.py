@@ -301,22 +301,24 @@ async def execute_tool_calls(
     config: Config,
     mcp_clients: dict[str, MCPClient],
     sessions: dict[str, Session],
-    session_id: str,
+    agent_id: str,
     tool_call_inputs: list[dict],
     logger: Logger,
     hooks: list[CommandHook],
+    db_uri: str = "",
 ) -> list[dict]:
     """
     Execute tool calls via MCP or ACP client terminal.
 
     Args:
         turn_id: Turn ID for ACP tool call IDs
-        session_id: Session ID to get MCP client
+        agent_id: Agent ID (internal key)
         tool_call_inputs: List of tool calls to execute
 
     Returns:
         List of tool results
     """
+    session_id = agent_id.rsplit("-", 1)[0]
     tool_results = []
     use_acp_terminal = client_capabilities and getattr(
         client_capabilities, "terminal", False
@@ -362,7 +364,7 @@ async def execute_tool_calls(
                     conn=conn,
                     sessions=sessions,
                     turn_id=turn_id,
-                    session_id=session_id,
+                    agent_id=agent_id,
                     tool_call_id=llm_tool_call_id,
                     args=arg_dict,
                     logger=logger,
@@ -372,16 +374,17 @@ async def execute_tool_calls(
                 result_content = await execute_acp_write(
                     conn=conn,
                     turn_id=turn_id,
-                    session_id=session_id,
+                    agent_id=agent_id,
                     tool_call_id=llm_tool_call_id,
                     args=arg_dict,
                     logger=logger,
+                    db_uri=db_uri,
                 )
             elif tool_name == config.READ_TOOL and use_acp_read:
                 result_content = await execute_acp_read(
                     conn=conn,
                     turn_id=turn_id,
-                    session_id=session_id,
+                    agent_id=agent_id,
                     tool_call_id=llm_tool_call_id,
                     args=arg_dict,
                     logger=logger,
@@ -392,17 +395,18 @@ async def execute_tool_calls(
                     turn_id=turn_id,
                     mcp_clients=mcp_clients,
                     config=config,
-                    session_id=session_id,
+                    agent_id=agent_id,
                     tool_call_id=llm_tool_call_id,
                     args=arg_dict,
                     logger=logger,
+                    db_uri=db_uri,
                 )
             else:
                 result_content = await execute_acp_tool(
                     conn=conn,
                     turn_id=turn_id,
                     mcp_clients=mcp_clients,
-                    session_id=session_id,
+                    agent_id=agent_id,
                     tool_call_id=llm_tool_call_id,
                     tool_name=tool_name,
                     args=arg_dict,
@@ -444,25 +448,27 @@ async def react_loop(
     llm: AsyncOpenAI,
     tools: list[dict],
     sessions: dict[str, Session],
-    session_id: str,
+    agent_id: str,
     state_accumulators: dict[str, dict],
     max_turns: int = 50000,
     on_compact: callable = None,
     logger: Logger = None,
     hooks: list[CommandHook] | None = None,
+    db_uri: str = "",
 ):
     """
     Main ReAct loop with cancellation support.
 
     Args:
-        session_id: Session ID to get session and tools
+        agent_id: Agent ID (internal key)
         max_turns: Maximum number of turns to execute
 
     Yields:
         Dictionary with 'type' and 'token' or 'messages' keys
     """
-    session = sessions.get(session_id)
+    session = sessions.get(agent_id)
     cwd = session.cwd
+    session_id = agent_id.rsplit("-", 1)[0]
     for turn in range(max_turns):
         response = await send_request(
             llm,
@@ -471,7 +477,7 @@ async def react_loop(
             config.MAX_TOKENS,
         )
         state_accumulator = state_accumulators.get(
-            session_id, {"thinking": [], "content": [], "tool_calls": {}}
+            agent_id, {"thinking": [], "content": [], "tool_calls": {}}
         )
         thinking, content, tool_call_inputs, usage = [], [], [], None
         try:
@@ -523,9 +529,7 @@ async def react_loop(
         if usage and usage["total_tokens"] > config.MAX_COMPACT_TOKENS:
             logger.info("Token threshold crossed. Initiating compaction...")
 
-            # Compact updates the session in-place, so all references
-            # (including the dictionary and local variables) automatically
-            # see the new compacted state - no manual reference updates needed!
+            old_agent_id = agent_id
             logger.info(f"Pre-compacted session length: {len(session.messages)}")
             session = await compact(
                 session=session,
@@ -534,8 +538,11 @@ async def react_loop(
                 on_compact=on_compact,
                 logger=logger,
             )
+            agent_id = session.agent_id  # update agent_id for next turn
             logger.info(f"Post-compacted session length: {len(session.messages)}")
             logger.info("Compaction complete - session updated in-place.")
+            # Start fresh turn with compacted session [system, user]
+            continue
 
         # This ends the react loop — NO TOOLS!!
         if not tool_call_inputs and len(content) > 0:
@@ -563,10 +570,11 @@ async def react_loop(
                 config=config,
                 mcp_clients=mcp_clients,
                 sessions=sessions,
-                session_id=session_id,
+                agent_id=agent_id,
                 tool_call_inputs=tool_call_inputs,
                 logger=logger,
                 hooks=hooks or [],
+                db_uri=db_uri,
             )
 
             session.add_assistant_response(

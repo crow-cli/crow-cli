@@ -125,6 +125,7 @@ class Config:
     EDIT_TOOL: str = "edit"
     SEARCH_TOOL: str = "web_search"
     FETCH_TOOL: str = "web_fetch"
+    ITERATIVE_TOOL: str = "iterative_refine"
 
     # Compaction parameters
     MAX_COMPACT_TOKENS: int = 190000
@@ -213,6 +214,7 @@ class Config:
             "EDIT_TOOL": str,
             "SEARCH_TOOL": str,
             "FETCH_TOOL": str,
+            "ITERATIVE_TOOL": str,
             "MAX_COMPACT_TOKENS": int,
             "N_STEPS_BACK_COMPACT": int,
             "MAX_TOKENS": int,

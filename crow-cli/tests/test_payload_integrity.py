@@ -225,14 +225,14 @@ class TestPayloadVsDatabaseIntegrity:
             db_uri = f"sqlite:///{f.name}"
 
         from crow_cli.agent.prompt import render_template
-        from crow_cli.agent.db import Base, Message, Session as SessionModel, create_database
+        from crow_cli.agent.db import Base, Message, Agent as AgentModel, create_database
         from sqlalchemy import create_engine
         from sqlalchemy.orm import Session as SQLAlchemySession
 
         create_database(db_uri)
         sid = "test-json-roundtrip"
         db = SQLAlchemySession(create_engine(db_uri))
-        db.add(SessionModel(
+        db.add(AgentModel(
             session_id=sid,
             system_prompt="test",
             tool_definitions=[],

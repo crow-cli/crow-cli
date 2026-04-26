@@ -35,10 +35,11 @@ async def test_reject_uv_without_project(mock_conn, mock_sessions, mock_logger):
         conn=mock_conn,
         sessions=mock_sessions,
         turn_id="1",
-        session_id="session_1",
+        agent_id="session-1-0",
         tool_call_id="123",
         args={"command": "uv run test.py"},
         logger=mock_logger,
+                hooks=[],
     )
     assert "REJECTED" in result
     assert "--project" in result
@@ -52,10 +53,11 @@ async def test_reject_uv_chained_without_project(mock_conn, mock_sessions, mock_
         conn=mock_conn,
         sessions=mock_sessions,
         turn_id="1",
-        session_id="session_1",
+        agent_id="session-1-0",
         tool_call_id="123",
         args={"command": "cd /tmp && uv run test.py"},
         logger=mock_logger,
+                hooks=[],
     )
     assert "REJECTED" in result
     mock_conn.create_terminal.assert_not_called()
@@ -68,10 +70,11 @@ async def test_reject_uv_sync_without_project(mock_conn, mock_sessions, mock_log
         conn=mock_conn,
         sessions=mock_sessions,
         turn_id="1",
-        session_id="session_1",
+        agent_id="session-1-0",
         tool_call_id="123",
         args={"command": "uv sync"},
         logger=mock_logger,
+                hooks=[],
     )
     assert "REJECTED" in result
 
@@ -90,10 +93,11 @@ async def test_allow_uv_with_project(mock_conn, mock_sessions, mock_logger):
         conn=mock_conn,
         sessions=mock_sessions,
         turn_id="1",
-        session_id="session_1",
+        agent_id="session-1-0",
         tool_call_id="123",
         args={"command": "uv --project . run test.py"},
         logger=mock_logger,
+                hooks=[],
     )
     assert "REJECTED" not in result
     mock_conn.create_terminal.assert_called_once()
@@ -112,10 +116,11 @@ async def test_allow_uv_chained_with_project(mock_conn, mock_sessions, mock_logg
         conn=mock_conn,
         sessions=mock_sessions,
         turn_id="1",
-        session_id="session_1",
+        agent_id="session-1-0",
         tool_call_id="123",
         args={"command": "cd /tmp && uv --project . run test.py"},
         logger=mock_logger,
+                hooks=[],
     )
     assert "REJECTED" not in result
     mock_conn.create_terminal.assert_called_once()
@@ -134,10 +139,11 @@ async def test_allow_uvx_without_project(mock_conn, mock_sessions, mock_logger):
         conn=mock_conn,
         sessions=mock_sessions,
         turn_id="1",
-        session_id="session_1",
+        agent_id="session-1-0",
         tool_call_id="123",
         args={"command": "uvx some-package"},
         logger=mock_logger,
+                hooks=[],
     )
     assert "REJECTED" not in result
     mock_conn.create_terminal.assert_called_once()
