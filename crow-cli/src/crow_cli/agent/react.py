@@ -16,7 +16,7 @@ from openai._exceptions import APITimeoutError
 from crow_cli.agent.compact import compact
 from crow_cli.agent.configure import Config
 from crow_cli.agent.context import maximal_deserialize
-from crow_cli.agent.hooks import CommandHook
+from crow_cli.agent.hooks import CommandHook, FileSnapshotHook
 from crow_cli.agent.prompt import normalize_blocks
 from crow_cli.agent.session import Session
 from crow_cli.agent.tools import (
@@ -305,7 +305,7 @@ async def execute_tool_calls(
     tool_call_inputs: list[dict],
     logger: Logger,
     hooks: list[CommandHook],
-    db_uri: str = "",
+    snapshot_hooks: list[FileSnapshotHook] | None = None,
 ) -> list[dict]:
     """
     Execute tool calls via MCP or ACP client terminal.
@@ -359,7 +359,7 @@ async def execute_tool_calls(
                     }
                 )
                 continue
-            if tool_name == config.TERMINAL_TOOL and use_acp_terminal:
+            if tool_name == "terminal" and use_acp_terminal:
                 result_content = await execute_acp_terminal(
                     conn=conn,
                     sessions=sessions,
@@ -370,17 +370,18 @@ async def execute_tool_calls(
                     logger=logger,
                     hooks=hooks,
                 )
-            elif tool_name == config.WRITE_TOOL and use_acp_write:
+            elif tool_name == "write" and use_acp_write:
                 result_content = await execute_acp_write(
                     conn=conn,
                     turn_id=turn_id,
+                    sessions=sessions,
                     agent_id=agent_id,
                     tool_call_id=llm_tool_call_id,
                     args=arg_dict,
                     logger=logger,
-                    db_uri=db_uri,
+                    snapshot_hooks=snapshot_hooks,
                 )
-            elif tool_name == config.READ_TOOL and use_acp_read:
+            elif tool_name == "read" and use_acp_read:
                 result_content = await execute_acp_read(
                     conn=conn,
                     turn_id=turn_id,
@@ -389,17 +390,17 @@ async def execute_tool_calls(
                     args=arg_dict,
                     logger=logger,
                 )
-            elif tool_name == config.EDIT_TOOL:
+            elif tool_name == "edit":
                 result_content = await execute_acp_edit(
                     conn=conn,
                     turn_id=turn_id,
                     mcp_clients=mcp_clients,
-                    config=config,
+                    sessions=sessions,
                     agent_id=agent_id,
                     tool_call_id=llm_tool_call_id,
                     args=arg_dict,
                     logger=logger,
-                    db_uri=db_uri,
+                    snapshot_hooks=snapshot_hooks,
                 )
             else:
                 result_content = await execute_acp_tool(
@@ -454,7 +455,7 @@ async def react_loop(
     on_compact: callable = None,
     logger: Logger = None,
     hooks: list[CommandHook] | None = None,
-    db_uri: str = "",
+    snapshot_hooks: list[FileSnapshotHook] | None = None,
 ):
     """
     Main ReAct loop with cancellation support.
@@ -574,7 +575,7 @@ async def react_loop(
                 tool_call_inputs=tool_call_inputs,
                 logger=logger,
                 hooks=hooks or [],
-                db_uri=db_uri,
+                snapshot_hooks=snapshot_hooks,
             )
 
             session.add_assistant_response(

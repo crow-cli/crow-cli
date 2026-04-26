@@ -121,6 +121,11 @@ async def get_tools(mcp_client: MCPClient) -> list[dict[str, Any]]:
     """
     Extract tools from an MCP client.
 
+    Strips the 'crow-mcp_' prefix from tool names to normalize them
+    (e.g., 'crow-mcp_read' -> 'read'). This ensures consistent tool
+    naming regardless of whether MCP servers are passed from a client
+    or loaded from the fallback config.
+
     Args:
         mcp_client: Connected MCP client
 
@@ -131,11 +136,16 @@ async def get_tools(mcp_client: MCPClient) -> list[dict[str, Any]]:
     tools = []
 
     for t in tools_result:
+        name = t.name
+        # Normalize: strip 'crow-mcp_' prefix if present
+        if name.startswith("crow-mcp_"):
+            name = name[len("crow-mcp_"):]
+
         tools.append(
             {
                 "type": "function",
                 "function": {
-                    "name": t.name,
+                    "name": name,
                     "description": t.description or "",
                     "parameters": t.inputSchema,
                 },

@@ -118,15 +118,6 @@ class Config:
     max_steps_per_turn: int = 100
     max_retries_per_step: int = 3
 
-    # Tool Constants
-    TERMINAL_TOOL: str = "terminal"
-    WRITE_TOOL: str = "write"
-    READ_TOOL: str = "read"
-    EDIT_TOOL: str = "edit"
-    SEARCH_TOOL: str = "web_search"
-    FETCH_TOOL: str = "web_fetch"
-    ITERATIVE_TOOL: str = "iterative_refine"
-
     # Compaction parameters
     MAX_COMPACT_TOKENS: int = 190000
     N_STEPS_BACK_COMPACT: int = 8
@@ -208,13 +199,6 @@ class Config:
         _OVERRIDABLE = {
             "max_steps_per_turn": int,
             "max_retries_per_step": int,
-            "TERMINAL_TOOL": str,
-            "WRITE_TOOL": str,
-            "READ_TOOL": str,
-            "EDIT_TOOL": str,
-            "SEARCH_TOOL": str,
-            "FETCH_TOOL": str,
-            "ITERATIVE_TOOL": str,
             "MAX_COMPACT_TOKENS": int,
             "N_STEPS_BACK_COMPACT": int,
             "MAX_TOKENS": int,

@@ -10,14 +10,23 @@ session_id is derived from agent_id for ACP upstream routing.
 
 import json
 from logging import Logger
+from pathlib import Path
 from typing import Any
 
 from coolname import generate_slug
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session as SQLAlchemySession
 
 from crow_cli.agent.db import Agent as AgentModel
 from crow_cli.agent.db import Base, FileSnapshot, Message, Prompt, create_database
+
+
+def _set_sqlite_pragma(dbapi_connection, connection_record):
+    """Set WAL mode and synchronous=NORMAL for concurrent read access."""
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.close()
 from crow_cli.agent.prompt import render_template
 
 
@@ -136,9 +145,10 @@ class Session:
 
     @property
     def db(self) -> SQLAlchemySession:
-        """Lazy-load database connection"""
+        """Lazy-load database connection with WAL mode for concurrent reads."""
         if self._db is None:
             engine = create_engine(self.db_uri)
+            event.listen(engine, "connect", _set_sqlite_pragma)
             self._db = SQLAlchemySession(engine)
         return self._db
 
@@ -152,6 +162,40 @@ class Session:
                 .first()
             )
         return self._model
+
+    def save_snapshot(
+        self,
+        tool_call_id: str,
+        tool_name: str,
+        file_path: str,
+        logger: Logger,
+    ) -> None:
+        """Capture pre-mutation file state for Monaco diffs.
+
+        Called before write/edit tools modify a file. Stores content_before
+        so Murder's frontend can render a diff between before and after states.
+        """
+        try:
+            content = ""
+            if Path(file_path).exists():
+                try:
+                    content = Path(file_path).read_text(
+                        encoding="utf-8", errors="replace"
+                    )
+                except Exception as e:
+                    logger.debug(f"Snapshot read failed for {file_path}: {e}")
+
+            snapshot = FileSnapshot(
+                agent_id=self.agent_id,
+                tool_call_id=tool_call_id,
+                tool_name=tool_name,
+                file_path=file_path,
+                content_before=content,
+            )
+            self.db.add(snapshot)
+            self.db.commit()
+        except Exception as e:
+            logger.warning(f"Snapshot capture failed for {file_path}: {e}")
 
     def add_message(self, msg: dict, usage: dict | None = None):
         """

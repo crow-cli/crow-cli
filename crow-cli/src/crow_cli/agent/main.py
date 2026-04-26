@@ -89,7 +89,12 @@ from fastmcp import Client as MCPClient
 from crow_cli.agent.compact import compact
 from crow_cli.agent.configure import Config, get_default_config_dir
 from crow_cli.agent.context import get_directory_tree
-from crow_cli.agent.hooks import CommandHook, uv_project_hook
+from crow_cli.agent.hooks import (
+    CommandHook,
+    FileSnapshotHook,
+    file_snapshot_hook,
+    uv_project_hook,
+)
 from crow_cli.agent.llm import configure_llm
 from crow_cli.agent.logger import setup_logger
 from crow_cli.agent.mcp_client import create_mcp_client_from_acp, get_tools
@@ -123,7 +128,10 @@ class AcpAgent(Agent):
     _logger: Logger
 
     def __init__(
-        self, config: Config | None = None, hooks: list[CommandHook] | None = None
+        self,
+        config: Config | None = None,
+        hooks: list[CommandHook] | None = None,
+        snapshot_hooks: list[FileSnapshotHook] | None = None,
     ) -> None:
         """
         Initialize the merged agent.
@@ -133,6 +141,9 @@ class AcpAgent(Agent):
             hooks: Command hooks to run before terminal execution.
                    If None, defaults to [uv_project_hook].
                    Pass [] to disable all hooks.
+            snapshot_hooks: Hooks to capture pre-mutation file state for Monaco diffs.
+                            If None, defaults to [file_snapshot_hook].
+                            Pass [] to disable snapshot capture.
 
         Sets up:
         - AsyncExitStack for resource management
@@ -145,6 +156,11 @@ class AcpAgent(Agent):
         self._config = config
         self._hooks: list[CommandHook] = (
             hooks if hooks is not None else [uv_project_hook]
+        )
+        self._snapshot_hooks: list[FileSnapshotHook] = (
+            snapshot_hooks
+            if snapshot_hooks is not None
+            else [file_snapshot_hook]
         )
         self._logger = setup_logger(self._config.config_dir / "logs" / "crow-cli.log")
         self._db_uri = self._config.db_uri
@@ -664,7 +680,7 @@ class AcpAgent(Agent):
                     on_compact=on_compact,
                     logger=self._session_logger,
                     hooks=self._hooks,
-                    db_uri=self._db_uri,
+                    snapshot_hooks=self._snapshot_hooks,
                 ):
                     chunk_type = chunk.get("type")
 

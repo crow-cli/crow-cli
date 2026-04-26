@@ -39,16 +39,6 @@ db_uri: sqlite:///${HOME}/.crow/crow.db
 #     provider: placeholder-provider
 #     model: gpt-3.5-turbo
 
-# If you're on mac and your UI looks like shit
-# CHANGE THESE IN ~/.crow/config.yaml
-# often times they'll just be `terminal`
-TERMINAL_TOOL: crow-mcp_terminal
-WRITE_TOOL: crow-mcp_write
-READ_TOOL: crow-mcp_read
-EDIT_TOOL: crow-mcp_edit
-SEARCH_TOOL: crow-mcp_web_search
-FETCH_TOOL: crow-mcp_web_fetch
-
 # Compaction parameters
 MAX_COMPACT_TOKENS: 180000
 N_STEPS_BACK_COMPACT: 8

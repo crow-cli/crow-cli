@@ -5,10 +5,8 @@ Intercepts terminal commands to enforce --project usage for 'uv' in ephemeral en
 """
 
 import asyncio
-import sqlite3
 from contextlib import suppress
 from logging import Logger
-from pathlib import Path
 from typing import Any
 
 from acp import (
@@ -35,47 +33,13 @@ from mcp.types import (
     TextContent,
 )
 
-from crow_cli.agent.configure import Config
-from crow_cli.agent.hooks import CommandHook
+from crow_cli.agent.hooks import CommandHook, FileSnapshotHook
 from crow_cli.agent.session import Session
 
 
 def route_to_session_id(agent_id: str) -> str:
     """Strip agent-idx suffix for ACP upstream calls."""
     return agent_id.rsplit("-", 1)[0]
-
-
-def capture_file_snapshot(
-    db_uri: str,
-    agent_id: str,
-    tool_call_id: str,
-    tool_name: str,
-    file_path: str,
-    logger: Logger,
-) -> None:
-    """Pre-hook: capture file state before write/edit mutation for Monaco diffs."""
-    try:
-        conn = sqlite3.connect(db_uri, timeout=5.0)
-        conn.execute("PRAGMA journal_mode=WAL;")
-        conn.execute("PRAGMA synchronous=NORMAL;")
-
-        content = ""
-        if Path(file_path).exists():
-            try:
-                content = Path(file_path).read_text(encoding="utf-8", errors="replace")
-            except Exception as e:
-                logger.debug(f"Snapshot read failed for {file_path}: {e}")
-
-        conn.execute(
-            """INSERT OR REPLACE INTO file_snapshots
-               (agent_id, tool_call_id, tool_name, file_path, content_before)
-               VALUES (?, ?, ?, ?, ?)""",
-            (agent_id, tool_call_id, tool_name, file_path, content),
-        )
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.warning(f"Snapshot capture failed for {file_path}: {e}")
 
 
 def tool_match(tool_name: str, terms: tuple[str]) -> bool:
@@ -345,20 +309,23 @@ async def execute_acp_terminal(
 async def execute_acp_write(
     conn: Client,
     turn_id: str,
+    sessions: dict[str, Session],
     agent_id: str,
     tool_call_id: str,
     args: dict[str, Any],
     logger: Logger,
-    db_uri: str = "",
+    snapshot_hooks: list[FileSnapshotHook] | None = None,
 ) -> str:
     """
     Write file via ACP client filesystem.
 
     Args:
         turn_id: Turn ID for ACP tool call IDs
+        sessions: Dict of agent_id -> Session
         agent_id: Agent ID (internal key)
         tool_call_id: LLM tool call ID
         args: Tool arguments from LLM (file_path, content)
+        snapshot_hooks: Hooks to capture pre-mutation file state
 
     Returns:
         Success message
@@ -371,8 +338,11 @@ async def execute_acp_write(
     acp_tool_call_id = f"{turn_id}/{tool_call_id}"
 
     # Pre-hook: capture before state for Monaco diffs
-    if db_uri and path:
-        capture_file_snapshot(db_uri, agent_id, acp_tool_call_id, "write", path, logger)
+    if path and snapshot_hooks:
+        session = sessions.get(agent_id)
+        if session:
+            for hook in snapshot_hooks:
+                hook(session, acp_tool_call_id, "write", path, logger)
 
     try:
         # 1. Send tool call start
@@ -505,12 +475,12 @@ async def execute_acp_edit(
     conn: Client,
     turn_id: str,
     mcp_clients: dict[str, MCPClient],
-    config: Config,
+    sessions: dict[str, Session],
     agent_id: str,
     tool_call_id: str,
     args: dict[str, Any],
     logger: Logger,
-    db_uri: str = "",
+    snapshot_hooks: list[FileSnapshotHook] | None = None,
 ) -> str:
     """
     Edit file with fuzzy matching, sending diff content to ACP client.
@@ -520,9 +490,11 @@ async def execute_acp_edit(
 
     Args:
         turn_id: Turn ID for ACP tool call IDs
+        sessions: Dict of agent_id -> Session
         agent_id: Agent ID (internal key)
         tool_call_id: LLM tool call ID
         args: Tool arguments from LLM (file_path, old_string, new_string, replace_all)
+        snapshot_hooks: Hooks to capture pre-mutation file state
 
     Returns:
         Result string from the edit operation
@@ -536,8 +508,11 @@ async def execute_acp_edit(
     acp_tool_call_id = f"{turn_id}/{tool_call_id}"
 
     # Pre-hook: capture before state for Monaco diffs
-    if db_uri and path:
-        capture_file_snapshot(db_uri, agent_id, acp_tool_call_id, "edit", path, logger)
+    if path and snapshot_hooks:
+        session = sessions.get(agent_id)
+        if session:
+            for hook in snapshot_hooks:
+                hook(session, acp_tool_call_id, "edit", path, logger)
 
     try:
         # 1. Send tool call start
@@ -569,7 +544,7 @@ async def execute_acp_edit(
         mcp_client = mcp_clients.get(agent_id)
         if not mcp_client:
             raise RuntimeError(f"No MCP client for session {session_id}")
-        result = await mcp_client.call_tool(config.EDIT_TOOL, args)
+        result = await mcp_client.call_tool("edit", args)
         result_content = result.content[0].text
 
         # 4. Send completion update

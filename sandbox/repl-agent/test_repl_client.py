@@ -13,7 +13,7 @@ AGENT_ARGS = (
     "--project",
     "/home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent",
     "run",
-    "/home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/scratch_db.py",
+    "/home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/main.py",
 )
 
 
@@ -83,11 +83,7 @@ def analyze_usage(client: AuditReplClient):
 async def test():
     c = AuditReplClient(AGENT_CMD, *AGENT_ARGS)
 
-    await c.send(
-        "Look through the murder directory to understand the codebase. "
-        "List all non-vendor files, then read the key source files. "
-        "Report what you found."
-    )
+    await c.send("edit hello-world.txt file to say Goodbye, World!")
 
     analyze_usage(c)
 
