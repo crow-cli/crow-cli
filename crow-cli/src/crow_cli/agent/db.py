@@ -72,41 +72,6 @@ class Agent(Base):
     messages = relationship(
         "Message", back_populates="agent", cascade="all, delete-orphan"
     )
-    file_snapshots = relationship(
-        "FileSnapshot", back_populates="agent", cascade="all, delete-orphan"
-    )
-
-
-class FileSnapshot(Base):
-    """
-    Pre-mutation file content captured by write/edit tool pre-hooks.
-
-    Murder backend reads this to serve content_before to Monaco.
-    Monaco handles the actual diff rendering.
-    """
-
-    __tablename__ = "file_snapshots"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    agent_id = Column(
-        Text,
-        ForeignKey("agents.agent_id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    tool_call_id = Column(Text, nullable=False, index=True)
-    tool_name = Column(Text, nullable=False)  # "write" or "edit"
-    file_path = Column(Text, nullable=False)
-    content_before = Column(Text, nullable=True)  # empty string if new file
-    timestamp = Column(DateTime, nullable=False, default=datetime.now)
-
-    agent = relationship("Agent", back_populates="file_snapshots")
-
-    __table_args__ = (
-        UniqueConstraint(
-            "agent_id", "tool_call_id", "file_path", name="uq_agent_tool_file"
-        ),
-    )
 
 
 class Message(Base):
@@ -145,10 +110,48 @@ class Message(Base):
 
 
 def create_database(db_uri: str = "sqlite:///crow.db") -> None:
-    """Create the database and tables."""
+    """Create the session database (agents, messages, prompts)."""
     engine = create_engine(db_uri)
     Base.metadata.create_all(engine)
 
 
-if __name__ == "__main__":
-    create_database()
+# ──────────────────────────────────────────────
+# Murder DB - separate SQLite for file snapshots
+# ──────────────────────────────────────────────
+# Lives in its own DB to avoid WAL lock contention
+# when crow-murder reads while crow-cli writes.
+
+MurderBase = declarative_base()
+
+
+class MurderFileSnapshot(MurderBase):
+    """
+    Pre-mutation file content captured by write/edit tool pre-hooks.
+
+    Stored in a SEPARATE database (crow-murder.db) to avoid WAL
+    lock contention. Keyed on session_id for Murder visualization.
+    No FK to agents table — murder doesn't care about agents.
+    """
+
+    __tablename__ = "file_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(Text, nullable=False, index=True)
+    agent_id = Column(Text, nullable=False, index=True)
+    tool_call_id = Column(Text, nullable=False, index=True)
+    tool_name = Column(Text, nullable=False)  # "write" or "edit"
+    file_path = Column(Text, nullable=False)
+    content_before = Column(Text, nullable=True)  # empty string if new file
+    timestamp = Column(DateTime, nullable=False, default=datetime.now)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id", "tool_call_id", "file_path", name="uq_session_tool_file"
+        ),
+    )
+
+
+def create_murder_database(murder_db_uri: str) -> None:
+    """Create the murder database (file_snapshots only)."""
+    engine = create_engine(murder_db_uri)
+    MurderBase.metadata.create_all(engine)

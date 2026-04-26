@@ -6,6 +6,9 @@ Just serialize the message dict, deserialize it back.
 
 Agent owns the session. agent_id = "{session_id}-{agent_idx}" is the PK.
 session_id is derived from agent_id for ACP upstream routing.
+
+File snapshots live in a SEPARATE database (crow-murder.db) to avoid
+WAL lock contention when crow-murder reads while crow-cli writes.
 """
 
 import json
@@ -18,7 +21,15 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session as SQLAlchemySession
 
 from crow_cli.agent.db import Agent as AgentModel
-from crow_cli.agent.db import Base, FileSnapshot, Message, Prompt, create_database
+from crow_cli.agent.db import (
+    Base,
+    Message,
+    MurderFileSnapshot,
+    Prompt,
+    create_database,
+    create_murder_database,
+)
+from crow_cli.agent.prompt import render_template
 
 
 def _set_sqlite_pragma(dbapi_connection, connection_record):
@@ -27,7 +38,6 @@ def _set_sqlite_pragma(dbapi_connection, connection_record):
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA synchronous=NORMAL")
     cursor.close()
-from crow_cli.agent.prompt import render_template
 
 
 def get_session_by_cwd(cwd, db_uri):
@@ -46,7 +56,7 @@ def get_session_by_cwd(cwd, db_uri):
             if isinstance(prompt_args, str):
                 try:
                     prompt_args = json.loads(prompt_args)
-                except (json.JSONDecodeError, TypeError):
+                except json.JSONDecodeError, TypeError:
                     prompt_args = {}
 
             # Check if workspace matches
@@ -67,7 +77,7 @@ def get_session_by_cwd(cwd, db_uri):
                     if isinstance(data, str):
                         data = json.loads(data)
                     title = data.get("content", "")[:50] if data else "Untitled Chat"
-                except (json.JSONDecodeError, AttributeError, TypeError):
+                except json.JSONDecodeError, AttributeError, TypeError:
                     title = "Untitled Chat"
             else:
                 title = "Untitled Chat"
@@ -123,6 +133,10 @@ class Session:
 
     agent_id = "{session_id}-{agent_idx}" is the DB key.
     session_id is derived for ACP upstream routing only.
+
+    Two databases:
+    - db_uri: session data (agents, messages, prompts)
+    - murder_db_uri: file snapshots (separate to avoid WAL contention)
     """
 
     def __init__(
@@ -131,15 +145,18 @@ class Session:
         session_id: str,
         agent_idx: int = 0,
         db_uri: str = "sqlite:///crow.db",
+        murder_db_uri: str = "sqlite:///crow-murder.db",
         cwd: str = "/tmp",
     ):
         self.agent_id = agent_id
         self.session_id = session_id
         self.agent_idx = agent_idx
         self.db_uri = db_uri
+        self.murder_db_uri = murder_db_uri
         self.cwd = cwd
         self.messages: list[dict] = []
         self._db = None
+        self._murder_db = None
         self._model = None
         self.model_identifier = None
 
@@ -153,13 +170,20 @@ class Session:
         return self._db
 
     @property
+    def murder_db(self) -> SQLAlchemySession:
+        """Lazy-load murder database connection for file snapshots."""
+        if self._murder_db is None:
+            engine = create_engine(self.murder_db_uri)
+            event.listen(engine, "connect", _set_sqlite_pragma)
+            self._murder_db = SQLAlchemySession(engine)
+        return self._murder_db
+
+    @property
     def model(self) -> AgentModel:
         """Lazy-load agent model from database"""
         if self._model is None:
             self._model = (
-                self.db.query(AgentModel)
-                .filter_by(agent_id=self.agent_id)
-                .first()
+                self.db.query(AgentModel).filter_by(agent_id=self.agent_id).first()
             )
         return self._model
 
@@ -174,6 +198,8 @@ class Session:
 
         Called before write/edit tools modify a file. Stores content_before
         so Murder's frontend can render a diff between before and after states.
+
+        Writes to separate murder DB to avoid WAL lock contention.
         """
         try:
             content = ""
@@ -185,15 +211,16 @@ class Session:
                 except Exception as e:
                     logger.debug(f"Snapshot read failed for {file_path}: {e}")
 
-            snapshot = FileSnapshot(
+            snapshot = MurderFileSnapshot(
+                session_id=self.session_id,
                 agent_id=self.agent_id,
                 tool_call_id=tool_call_id,
                 tool_name=tool_name,
                 file_path=file_path,
                 content_before=content,
             )
-            self.db.add(snapshot)
-            self.db.commit()
+            self.murder_db.add(snapshot)
+            self.murder_db.commit()
         except Exception as e:
             logger.warning(f"Snapshot capture failed for {file_path}: {e}")
 
@@ -282,12 +309,17 @@ class Session:
         request_params: dict[str, Any],
         model_identifier: str,
         db_uri: str = "sqlite:///crow.db",
+        murder_db_uri: str = "sqlite:///crow-murder.db",
         cwd: str = "/tmp",
         agent_idx: int = 0,
         session_id: str | None = None,
         initial_messages: list[dict[str, Any]] | None = None,
     ) -> "Session":
         """Factory method to create a new agent session."""
+        # Ensure both databases exist
+        create_database(db_uri)
+        create_murder_database(murder_db_uri)
+
         db = SQLAlchemySession(create_engine(db_uri))
 
         # Load and render prompt
@@ -319,7 +351,7 @@ class Session:
         db.close()
 
         # Build session instance
-        session = cls(agent_id, session_id, agent_idx, db_uri, cwd=cwd)
+        session = cls(agent_id, session_id, agent_idx, db_uri, murder_db_uri, cwd=cwd)
         session.model_identifier = model_identifier
         session.tools = tool_definitions
         session.request_params = request_params
@@ -339,7 +371,12 @@ class Session:
         return session
 
     @classmethod
-    def load(cls, agent_id: str, db_uri: str = "sqlite:///crow.db") -> "Session":
+    def load(
+        cls,
+        agent_id: str,
+        db_uri: str = "sqlite:///crow.db",
+        murder_db_uri: str = "sqlite:///crow-murder.db",
+    ) -> "Session":
         """Factory method to load existing agent session from database."""
         db = SQLAlchemySession(create_engine(db_uri))
         agent_model = db.query(AgentModel).filter_by(agent_id=agent_id).first()
@@ -352,6 +389,7 @@ class Session:
             session_id=agent_model.session_id,
             agent_idx=agent_model.agent_idx,
             db_uri=db_uri,
+            murder_db_uri=murder_db_uri,
             cwd=agent_model.cwd,
         )
         session.model_identifier = agent_model.model_identifier
@@ -362,19 +400,19 @@ class Session:
 
         # Load messages - just deserialize the data column
         messages = (
-            db.query(Message)
-            .filter_by(agent_id=agent_id)
-            .order_by(Message.id)
-            .all()
+            db.query(Message).filter_by(agent_id=agent_id).order_by(Message.id).all()
         )
         db.close()
         session.messages = [m.data for m in messages]
 
         return session
 
-
-
+    def close(self):
+        """Close database connections."""
         if self._db is not None:
             self._db.close()
+        if self._murder_db is not None:
+            self._murder_db.close()
         self._db = None
+        self._murder_db = None
         self._model = None

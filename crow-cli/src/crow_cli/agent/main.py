@@ -164,6 +164,7 @@ class AcpAgent(Agent):
         )
         self._logger = setup_logger(self._config.config_dir / "logs" / "crow-cli.log")
         self._db_uri = self._config.db_uri
+        self._murder_db_uri = self._config.murder_db_uri
         self._exit_stack = AsyncExitStack()
         self._agent_id: str | None = None
         self._session_id: str | None = None  # stripped version for ACP upstream
@@ -369,6 +370,7 @@ class AcpAgent(Agent):
             request_params={"temperature": 0.2},
             model_identifier=self._default_model_identifier(),
             db_uri=self._db_uri,
+            murder_db_uri=self._murder_db_uri,
             cwd=cwd,
             agent_idx=1,
         )
@@ -437,7 +439,9 @@ class AcpAgent(Agent):
             # Load agent from database — for backward compat, try agent_id = f"{session_id}-0"
             agent_id = f"{session_id}-0"
             self._logger.info("LOAD_SESSION: Step 1: Loading agent from DB")
-            session = Session.load(agent_id, db_uri=self._db_uri)
+            session = Session.load(
+                agent_id, db_uri=self._db_uri, murder_db_uri=self._murder_db_uri
+            )
             self._logger.info("LOAD_SESSION: Step 1 complete: Agent loaded from DB")
 
             # Setup MCP client (same as new_session)

@@ -207,6 +207,7 @@ async def compact(
         session_id=original_session_id,
         agent_idx=new_agent_idx,
         db_uri=session.db_uri,
+        murder_db_uri=session.murder_db_uri,
         cwd=session.cwd,
     )
     new_session.model_identifier = session.model_identifier

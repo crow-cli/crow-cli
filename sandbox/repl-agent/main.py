@@ -15,7 +15,8 @@ async def agent_run() -> None:
     config.config_dir = Path(
         "/home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/.crow"
     )
-    config.db_uri = "sqlite:////home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/.crow/crow-murder.db"
+    config.db_uri = "sqlite:////home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/.crow/crow-agent.db"
+    config.murder_db_uri = "sqlite:////home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/.crow/crow-snapshots.db"
     config.MAX_COMPACT_TOKENS = 190_000
 
     # Pass custom hooks: e.g. just uv_project_hook, or [] for none,
