@@ -17,8 +17,8 @@ import requests
 
 BASE = "http://localhost:3000/api/public"
 AUTH = (
-    os.getenv("LANGFUSE_PUBLIC_KEY", "pk-lf-67d6bf7b-3b3c-47fe-b2a5-2d4b0dca4277"),
-    os.getenv("LANGFUSE_SECRET_KEY", "sk-lf-897ed6fa-504f-4e71-84ef-469d4ca522ec"),
+    os.getenv("LANGFUSE_PUBLIC_KEY"),
+    os.getenv("LANGFUSE_SECRET_KEY"),
 )
 
 
@@ -179,7 +179,9 @@ def compare_traces():
         n_curr = len(curr_msgs)
         n_tools = len(curr_tools)
         last_role = curr_msgs[-1].get("role", "?") if curr_msgs else "?"
-        print(f"Trace[{i}]: {t['id'][:20]}... msgs={n_curr} tools={n_tools} last={last_role}")
+        print(
+            f"Trace[{i}]: {t['id'][:20]}... msgs={n_curr} tools={n_tools} last={last_role}"
+        )
 
         if prev_msgs is not None:
             n_prev = len(prev_msgs)
@@ -193,9 +195,13 @@ def compare_traces():
                     first_diff = j
                     break
 
-            tools_changed = json.dumps(prev_tools, sort_keys=True, default=str) != json.dumps(curr_tools, sort_keys=True, default=str)
+            tools_changed = json.dumps(
+                prev_tools, sort_keys=True, default=str
+            ) != json.dumps(curr_tools, sort_keys=True, default=str)
 
-            status = "PREFIX MATCH" if first_diff is None else f"DIFF AT MSG[{first_diff}]"
+            status = (
+                "PREFIX MATCH" if first_diff is None else f"DIFF AT MSG[{first_diff}]"
+            )
             if tools_changed:
                 status += " + TOOLS CHANGED"
             print(f"  -> Trace[{i}]: {status}")
@@ -216,13 +222,20 @@ def compare_traces():
                 if prev_names == curr_names:
                     # Same tools but schema changed — find which one
                     for j, (pt, ct) in enumerate(zip(prev_tools, curr_tools)):
-                        if json.dumps(pt, sort_keys=True, default=str) != json.dumps(ct, sort_keys=True, default=str):
+                        if json.dumps(pt, sort_keys=True, default=str) != json.dumps(
+                            ct, sort_keys=True, default=str
+                        ):
                             print(f"    Tool schema changed: {pt['function']['name']}")
-                            for k in set(list(pt["function"].keys()) + list(ct["function"].keys())):
+                            for k in set(
+                                list(pt["function"].keys())
+                                + list(ct["function"].keys())
+                            ):
                                 v1 = str(pt["function"].get(k, ""))
                                 v2 = str(ct["function"].get(k, ""))
                                 if v1 != v2:
-                                    print(f"      {k}: prev={len(v1)}B -> curr={len(v2)}B")
+                                    print(
+                                        f"      {k}: prev={len(v1)}B -> curr={len(v2)}B"
+                                    )
                 else:
                     print(f"    Tool list changed: {prev_names} -> {curr_names}")
                 print()

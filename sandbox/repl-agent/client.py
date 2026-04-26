@@ -6,6 +6,19 @@ Usage:
     await client.send("list files")
     print(client.conversation[client.session_id])  # programmatic access
     await client.close()
+
+With MCP servers:
+    from acp.schema import McpServerStdio, EnvVariable
+    client = ReplClient(
+        "uv", "--project", "...", "run", "main.py",
+        mcp_servers=[
+            McpServerStdio(
+                name="iterative-refinement",
+                command="uv",
+                args=["--project", "/path/to/repl-agent", "run", "iterative_refinement_mcp.py"],
+            ),
+        ],
+    )
 """
 
 import asyncio
@@ -23,11 +36,16 @@ from acp.schema import (
     AudioContentBlock,
     ClientCapabilities,
     EmbeddedResourceContentBlock,
+    EnvVariable,
+    HttpHeader,
+    HttpMcpServer,
     ImageContentBlock,
     Implementation,
+    McpServerStdio,
     PermissionOption,
     ReadTextFileResponse,
     ResourceContentBlock,
+    SseMcpServer,
     TextContentBlock,
     ToolCall,
     ToolCallProgress,
@@ -40,6 +58,32 @@ from rich.panel import Panel
 from rich.text import Text
 
 
+def stdio_mcp(
+    name: str,
+    command: str,
+    *args: str,
+    env: dict[str, str] | None = None,
+) -> McpServerStdio:
+    """Create an MCP stdio server config.
+
+    Args:
+        name: Server identifier (e.g. "iterative-refinement").
+        command: Binary to run (e.g. "uv").
+        args: Command arguments (e.g. "--project", ".", "run", "mcp_server.py").
+        env: Optional environment variables.
+
+    Returns:
+        An ``McpServerStdio`` instance ready for ``ReplClient(mcp_servers=[...])``.
+    """
+    env_list = [EnvVariable(name=k, value=v) for k, v in (env or {}).items()]
+    return McpServerStdio(
+        name=name,
+        command=command,
+        args=list(args),
+        env=env_list,
+    )
+
+
 class ReplClient(Client):
     """Generic ACP client where you specify the agent command."""
 
@@ -48,6 +92,7 @@ class ReplClient(Client):
     _conn = None
     _process = None
     _session_id: str | None = None
+    _spawn_cm = None
     _started = False
 
     # Conversation state: {session_id: [{"role": str, "content": str}]}
@@ -60,11 +105,13 @@ class ReplClient(Client):
         console: Console | None = None,
         cwd: str | Path | None = None,
         env: Mapping[str, str] | None = None,
+        mcp_servers: list[HttpMcpServer | SseMcpServer | McpServerStdio] | None = None,
     ):
         self.agent_command = agent_command
         self.agent_args = agent_args
         self.cwd = str(cwd) if cwd else None
         self.env = env
+        self.mcp_servers = mcp_servers or []
         self._console = console or Console()
         self._response_buffer: str = ""
         self._thinking_buffer: str = ""
@@ -186,6 +233,7 @@ class ReplClient(Client):
 
         # Clear response buffer before sending
         self._response_buffer = ""
+        self._thinking_buffer = ""
 
         resp = await self._conn.prompt(
             session_id=self._session_id,
@@ -239,7 +287,7 @@ class ReplClient(Client):
                 line = await asyncio.get_running_loop().run_in_executor(
                     None, lambda: self._console.input(prompt_text)
                 )
-            except (EOFError, KeyboardInterrupt):
+            except EOFError, KeyboardInterrupt:
                 self._console.print("\n[yellow]Goodbye![/yellow]")
                 break
             if not line.strip():
@@ -281,7 +329,9 @@ class ReplClient(Client):
             ),
         )
 
-        session = await self._conn.new_session(mcp_servers=[], cwd=self.cwd or ".")
+        session = await self._conn.new_session(
+            mcp_servers=self.mcp_servers, cwd=self.cwd or "."
+        )
         self._session_id = session.session_id
         self.conversation[self._session_id] = []
         self._console.print(f"[green]Session: {self._session_id}[/green]")

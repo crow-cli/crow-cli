@@ -89,6 +89,7 @@ from fastmcp import Client as MCPClient
 from crow_cli.agent.compact import compact
 from crow_cli.agent.configure import Config, get_default_config_dir
 from crow_cli.agent.context import get_directory_tree
+from crow_cli.agent.hooks import CommandHook, uv_project_hook
 from crow_cli.agent.llm import configure_llm
 from crow_cli.agent.logger import setup_logger
 from crow_cli.agent.mcp_client import create_mcp_client_from_acp, get_tools
@@ -121,12 +122,17 @@ class AcpAgent(Agent):
     _client_capabilities: ClientCapabilities | None = None
     _logger: Logger
 
-    def __init__(self, config: Config | None = None) -> None:
+    def __init__(
+        self, config: Config | None = None, hooks: list[CommandHook] | None = None
+    ) -> None:
         """
         Initialize the merged agent.
 
         Args:
             config: Configuration object. If None, uses defaults from env vars
+            hooks: Command hooks to run before terminal execution.
+                   If None, defaults to [uv_project_hook].
+                   Pass [] to disable all hooks.
 
         Sets up:
         - AsyncExitStack for resource management
@@ -137,6 +143,9 @@ class AcpAgent(Agent):
             config_dir: Path = get_default_config_dir()
             config: Config = Config.load(config_dir=config_dir)
         self._config = config
+        self._hooks: list[CommandHook] = (
+            hooks if hooks is not None else [uv_project_hook]
+        )
         self._logger = setup_logger(self._config.config_dir / "logs" / "crow-cli.log")
         self._db_uri = self._config.db_uri
         self._exit_stack = AsyncExitStack()
@@ -271,7 +280,7 @@ class AcpAgent(Agent):
             agent_info=Implementation(
                 name="crow-cli",
                 title="crow-cli",
-                version="0.1.20",
+                version="0.1.21",
             ),
         )
 
@@ -628,6 +637,7 @@ class AcpAgent(Agent):
                     state_accumulators=self._state_accumulators,
                     on_compact=on_compact,
                     logger=self._session_logger,
+                    hooks=self._hooks,
                 ):
                     chunk_type = chunk.get("type")
 

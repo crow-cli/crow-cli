@@ -1,6 +1,7 @@
 import asyncio
 import json
 from asyncio import Event
+from logging import Logger
 from typing import Any
 
 from acp.interfaces import Client
@@ -15,6 +16,7 @@ from openai._exceptions import APITimeoutError
 from crow_cli.agent.compact import compact
 from crow_cli.agent.configure import Config
 from crow_cli.agent.context import maximal_deserialize
+from crow_cli.agent.hooks import CommandHook
 from crow_cli.agent.prompt import normalize_blocks
 from crow_cli.agent.session import Session
 from crow_cli.agent.tools import (
@@ -302,6 +304,7 @@ async def execute_tool_calls(
     session_id: str,
     tool_call_inputs: list[dict],
     logger: Logger,
+    hooks: list[CommandHook],
 ) -> list[dict]:
     """
     Execute tool calls via MCP or ACP client terminal.
@@ -363,6 +366,7 @@ async def execute_tool_calls(
                     tool_call_id=llm_tool_call_id,
                     args=arg_dict,
                     logger=logger,
+                    hooks=hooks,
                 )
             elif tool_name == config.WRITE_TOOL and use_acp_write:
                 result_content = await execute_acp_write(
@@ -445,6 +449,7 @@ async def react_loop(
     max_turns: int = 50000,
     on_compact: callable = None,
     logger: Logger = None,
+    hooks: list[CommandHook] | None = None,
 ):
     """
     Main ReAct loop with cancellation support.
@@ -561,6 +566,7 @@ async def react_loop(
                 session_id=session_id,
                 tool_call_inputs=tool_call_inputs,
                 logger=logger,
+                hooks=hooks or [],
             )
 
             session.add_assistant_response(

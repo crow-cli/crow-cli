@@ -3,6 +3,8 @@ file:           compact.py
 description:    compact the middle over the conversation
 """
 
+from logging import Logger
+
 from openai import AsyncOpenAI
 
 from crow_cli.agent.prompt import normalize_blocks, render_template

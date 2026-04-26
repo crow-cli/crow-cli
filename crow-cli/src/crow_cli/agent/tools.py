@@ -1,3 +1,9 @@
+"""
+Tool execution utilities.
+
+Intercepts terminal commands to enforce --project usage for 'uv' in ephemeral environments.
+"""
+
 import asyncio
 from contextlib import suppress
 from logging import Logger
@@ -14,10 +20,6 @@ from acp.helpers import (
     tool_diff_content,
     update_tool_call,
 )
-from mcp.types import (
-    ImageContent,
-    TextContent,
-)
 from acp.interfaces import Client
 from acp.schema import (
     TerminalToolCallContent,
@@ -26,8 +28,13 @@ from acp.schema import (
     ToolKind,
 )
 from fastmcp import Client as MCPClient
+from mcp.types import (
+    ImageContent,
+    TextContent,
+)
 
 from crow_cli.agent.configure import Config
+from crow_cli.agent.hooks import CommandHook
 from crow_cli.agent.session import Session
 
 
@@ -80,9 +87,7 @@ def mcp_content_to_acp_blocks(
         elif isinstance(item, ImageContent):
             # MCP uses mimeType (camelCase), ACP uses mime_type (snake_case)
             acp_blocks.append(
-                tool_content(
-                    image_block(data=item.data, mime_type=item.mimeType)
-                )
+                tool_content(image_block(data=item.data, mime_type=item.mimeType))
             )
         else:
             # Fallback: try to extract text if possible
@@ -120,10 +125,12 @@ def mcp_content_to_openai_format(
         if isinstance(item, TextContent):
             blocks.append({"type": "text", "text": item.text})
         elif isinstance(item, ImageContent):
-            blocks.append({
-                "type": "image_url",
-                "image_url": {"url": f"data:{item.mimeType};base64,{item.data}"},
-            })
+            blocks.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{item.mimeType};base64,{item.data}"},
+                }
+            )
         else:
             # Fallback: convert to text
             text = getattr(item, "text", str(item))
@@ -144,6 +151,7 @@ async def execute_acp_terminal(
     tool_call_id: str,
     args: dict[str, Any],
     logger: Logger,
+    hooks: list[CommandHook],
 ) -> str:
     """
     Execute terminal command via ACP client terminal.
@@ -188,6 +196,13 @@ async def execute_acp_terminal(
                 status="pending",
             ),
         )
+
+        # --- Command hooks: pre-execution guards ---
+        # Ephemeral terminals do not persist cwd or env — hooks enforce policies.
+        for hook in hooks:
+            rejection = hook(command)
+            if rejection is not None:
+                return rejection
 
         # 2. Create terminal via ACP client
         logger.info(f"Creating ACP terminal for command: {command}")
@@ -576,14 +591,14 @@ async def execute_acp_tool(
         if not mcp_client:
             raise RuntimeError(f"No MCP client for session {session_id}")
         result = await mcp_client.call_tool(tool_name, args)
-        
+
         # Convert MCP content to ACP content blocks (for client display)
         acp_content_blocks = mcp_content_to_acp_blocks(result.content)
-        
+
         # Convert MCP content to OpenAI format (for LLM tool response)
         # This preserves images so the LLM can see them
         result_content = mcp_content_to_openai_format(result.content)
-        
+
         # 4. Send completion update with content
         status = "completed" if not getattr(result, "isError", False) else "failed"
         await conn.session_update(
