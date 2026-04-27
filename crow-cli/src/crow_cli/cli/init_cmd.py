@@ -211,38 +211,12 @@ def run_init():
         searxng_port = None
 
     # =========================================================================
-    # STEP 3: PostgreSQL
+    # STEP 3: Review
     # =========================================================================
-    console.print("\n[bold cyan]═══ Step 3: Database ═══[/bold cyan]\n")
+    console.print("\n[bold cyan]═══ Step 3: Review ═══[/bold cyan]\n")
 
-    setup_postgres = Confirm.ask(
-        "Set up PostgreSQL database? (Recommended for production, requires Docker)\n"
-        "  [dim]If no, will use SQLite (simpler, good for development)[/dim]",
-        default=True,
-    )
-
-    if setup_postgres:
-        pg_password = getpass.getpass(
-            "PostgreSQL password (hidden, or press Enter for random): "
-        ).strip()
-        if not pg_password:
-            import secrets
-
-            pg_password = secrets.token_urlsafe(32)
-            console.print("[dim]Generated random password[/dim]")
-
-        pg_port = Prompt.ask("PostgreSQL port", default="3492")
-        env_vars["POSTGRES_PASSWORD"] = pg_password
-        env_vars["POSTGRES_PORT"] = pg_port
-        db_uri = f"postgresql://postgres:${{POSTGRES_PASSWORD}}@localhost:${{POSTGRES_PORT}}/postgres"
-    else:
-        db_uri = f"sqlite:///{config_dir / 'crow.db'}"
-        console.print(f"[dim]Using SQLite at {config_dir / 'crow.db'}[/dim]")
-
-    # =========================================================================
-    # STEP 4: Review
-    # =========================================================================
-    console.print("\n[bold cyan]═══ Step 4: Review ═══[/bold cyan]\n")
+    db_uri = f"sqlite:///{config_dir / 'crow.db'}"
+    console.print(f"[dim]Using SQLite at {config_dir / 'crow.db'}[/dim]")
 
     # Show providers table
     if providers:
@@ -268,7 +242,7 @@ def run_init():
     s_table.add_column("Service", style="cyan")
     s_table.add_column("Status", style="green")
     s_table.add_row("SearXNG", "✓ Docker" if setup_searxng else "✗ Skip")
-    s_table.add_row("PostgreSQL", "✓ Docker" if setup_postgres else "✗ SQLite")
+    s_table.add_row("Database", "SQLite")
     console.print(s_table)
 
     console.print(f"\n[dim]Config directory: {config_dir}[/dim]")
@@ -279,9 +253,9 @@ def run_init():
         return
 
     # =========================================================================
-    # STEP 5: Write files
+    # STEP 4: Write files
     # =========================================================================
-    console.print("\n[bold cyan]═══ Step 5: Writing Configuration ═══[/bold cyan]\n")
+    console.print("\n[bold cyan]═══ Step 4: Writing Configuration ═══[/bold cyan]\n")
 
     # Ensure directory exists
     config_dir.mkdir(parents=True, exist_ok=True)
@@ -333,42 +307,22 @@ def run_init():
         f.write("\n".join(env_lines) + "\n")
     console.print(f"[green]✓[/green] Written {env_file}")
 
-    # Write docker-compose.yml if needed
-    if setup_searxng or setup_postgres:
+   # Write docker-compose.yml if needed
+    if setup_searxng:
         compose_data: dict[str, Any] = {"services": {}, "volumes": {}}
 
-        if setup_searxng:
-            compose_data["services"]["searxng"] = {
-                "image": "searxng/searxng",
-                "restart": "always",
-                "ports": ["${SEARXNG_PORT}:8080"],
-                "environment": [
-                    "BASE_URL=http://0.0.0.0:${SEARXNG_PORT}",
-                    "INSTANCE_NAME=crow-search",
-                ],
-                "volumes": ["./searxng:/etc/searxng"],
-            }
-            # Create searxng config directory
-            (config_dir / "searxng").mkdir(exist_ok=True)
-
-        if setup_postgres:
-            compose_data["services"]["db"] = {
-                "image": "postgres",
-                "restart": "always",
-                "environment": [
-                    "POSTGRES_USER=postgres",
-                    "POSTGRES_PASSWORD=${POSTGRES_PASSWORD}",
-                ],
-                "ports": ["${POSTGRES_PORT}:5432"],
-                "volumes": ["./postgres:/var/lib/postgresql"],
-                "healthcheck": {
-                    "test": ["CMD-SHELL", "pg_isready -U postgres"],
-                    "interval": "5s",
-                    "timeout": "5s",
-                    "retries": 5,
-                },
-            }
-            compose_data["volumes"]["database_data"] = {"driver": "local"}
+        compose_data["services"]["searxng"] = {
+            "image": "searxng/searxng",
+            "restart": "always",
+            "ports": ["${SEARXNG_PORT}:8080"],
+            "environment": [
+                "BASE_URL=http://0.0.0.0:${SEARXNG_PORT}",
+                "INSTANCE_NAME=crow-search",
+            ],
+            "volumes": ["./searxng:/etc/searxng"],
+        }
+        # Create searxng config directory
+        (config_dir / "searxng").mkdir(exist_ok=True)
 
         compose_file = config_dir / "compose.yaml"
         with open(compose_file, "w") as f:
@@ -379,10 +333,10 @@ def run_init():
     (config_dir / "logs").mkdir(exist_ok=True)
 
     # =========================================================================
-    # STEP 6: Start Docker
+    # STEP 5: Start Docker
     # =========================================================================
-    if setup_searxng or setup_postgres:
-        console.print("\n[bold cyan]═══ Step 6: Starting Services ═══[/bold cyan]\n")
+    if setup_searxng:
+        console.print("\n[bold cyan]═══ Step 5: Starting Services ═══[/bold cyan]\n")
 
         if Confirm.ask("Start Docker services now?", default=True):
             try:

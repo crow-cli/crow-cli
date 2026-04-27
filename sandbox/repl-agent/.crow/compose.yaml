@@ -3,23 +3,23 @@ services:
     image: searxng/searxng
     restart: always
     ports:
-    - ${SEARXNG_PORT}:8080
+      - ${SEARXNG_PORT}:8080
     environment:
-    - BASE_URL=http://0.0.0.0:${SEARXNG_PORT}
-    - INSTANCE_NAME=crow-search
+      - BASE_URL=http://0.0.0.0:${SEARXNG_PORT}
+      - INSTANCE_NAME=crow-search
     volumes:
-    - ./searxng:/etc/searxng
+      - ./searxng:/etc/searxng
 
   litellm:
     image: ghcr.io/berriai/litellm:main-v1.82.6-nightly
     restart: always
     ports:
-      - "4000:4000" # Default LiteLLM port; adjust if needed
+      - ${LITELLM_PORT}:4000
     environment:
-    - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+      - LITELLM_API_KEY=${LITELLM_API_KEY}
     volumes:
       - ./litellm/config.yaml:/app/config.yaml
-    command: [ "--config", "/app/config.yaml" ]
-
+    command: ["--config", "/app/config.yaml"]
 
 volumes: {}

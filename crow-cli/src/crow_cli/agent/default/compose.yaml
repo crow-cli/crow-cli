@@ -11,31 +11,14 @@ services:
     volumes:
       - ./searxng/:/etc/searxng
 
-  db:
-    image: postgres
-    platform: linux/arm64/v8
-    restart: always
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-    ports:
-      - ${POSTGRES_PORT}:5432
-    volumes:
-      - ./postgres:/var/lib/postgresql
-      # - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql:ro
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   litellm:
     image: ghcr.io/berriai/litellm:main-v1.82.6-nightly
     restart: always
     ports:
-      - "4000:4000" # Default LiteLLM port; adjust if needed
+      - ${LITELLM_PORT}:4000
     environment:
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
+      - LITELLM_API_KEY=${LITELLM_API_KEY}
     volumes:
       - ./litellm/config.yaml:/app/config.yaml
     command: ["--config", "/app/config.yaml"]

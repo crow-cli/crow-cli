@@ -13,7 +13,7 @@ murder_db_uri: sqlite:////home/thomas/.crow/crow-murder.db
 
 providers:
   litellm:
-    base_url: http://localhost:4000/v1
+    base_url: http://localhost:${LITELLM_PORT}/v1
     api_key: ${LITELLM_API_KEY}
 
   llamacpp:
@@ -32,13 +32,5 @@ models:
   qwen3.5-plus:
     provider: litellm
     model: qwen3.5-plus
-
-native_tools:
-  - edit
-  - write
-  - read
-  - terminal
-  - web_search
-  - web_fetch
 
 MAX_COMPACT_TOKENS: 190000
