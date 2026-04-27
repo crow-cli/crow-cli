@@ -6,7 +6,11 @@ and report which commands it actually used (rg vs find vs ls vs tree vs read-on-
 import asyncio
 import re
 
+import typer
+
 from client import ReplClient
+
+app = typer.Typer()
 
 AGENT_CMD = "uv"
 AGENT_ARGS = (
@@ -80,10 +84,9 @@ def analyze_usage(client: AuditReplClient):
     # We need to check the content of tool calls for the actual commands used
 
 
-async def test():
+async def run_test(user_prompt: str):
     c = AuditReplClient(AGENT_CMD, *AGENT_ARGS)
-
-    await c.send("edit hello-world.txt file to say Goodbye, World!")
+    await c.send(user_prompt)
 
     analyze_usage(c)
 
@@ -92,9 +95,21 @@ async def test():
     conversation = c.conversation.get(c._session_id, [])
     for msg in conversation:
         if msg["role"] == "assistant":
-            print(msg.get("content", "")[:2000])
+            print(msg.get("content", ""))
 
     await c.close()
 
 
-asyncio.run(test())
+@app.command()
+def main(
+    user_prompt: str = typer.Argument(
+        "Search the internet for agent client protocol",
+        help="The prompt to send to the agent",
+    ),
+):
+    """Test REPL client with a user prompt."""
+    asyncio.run(run_test(user_prompt))
+
+
+if __name__ == "__main__":
+    app()

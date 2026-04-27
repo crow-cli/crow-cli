@@ -25,7 +25,7 @@ def uv_project_hook(command: str) -> str | None:
     for segment in segments:
         seg = segment.strip()
         if seg.startswith("uv ") and not seg.startswith("uvx"):
-            if re.match(r"uv\s+(venv|tool)\b", seg):
+            if re.match(r"uv\s+(venv|tool|init|sync)\b", seg):
                 continue
             if "--project" not in seg:
                 return (

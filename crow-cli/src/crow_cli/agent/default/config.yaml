@@ -3,8 +3,11 @@
 mcpServers:
   crow-mcp:
     transport: stdio
-    command: uvx
+    command: uv
     args:
+      - "--project"
+      - /home/thomas/src/crow-ai/crow-cli/crow-mcp
+      - run
       - crow-mcp
 
 ###########################################################
@@ -24,7 +27,7 @@ mcpServers:
 
 # db_uri: postgresql://postgres:${POSTGRES_PASSWORD}@localhost:${POSTGRES_PORT}/postgres
 db_uri: sqlite:///${HOME}/.crow/crow.db
-
+murder_db_uri: sqlite:///${HOME}/.crow/crow-murder.db
 # This you're basically just filling out yourself with
 # the little tool I give
 # providers:
@@ -41,9 +44,7 @@ db_uri: sqlite:///${HOME}/.crow/crow.db
 
 # Compaction parameters
 MAX_COMPACT_TOKENS: 180000
-N_STEPS_BACK_COMPACT: 8
 
 MAX_TOKENS: 38192
 
-max_steps_per_turn: 100
 max_retries_per_step: 3

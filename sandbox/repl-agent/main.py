@@ -9,16 +9,14 @@ from crow_cli.agent.main import AcpAgent
 
 
 async def agent_run() -> None:
-    config_dir = get_default_config_dir()
+    config_dir = Path("/home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/.crow")
     config = Config.load(config_dir=config_dir)
     # Move the home directory
-    config.config_dir = Path(
-        "/home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/.crow"
-    )
-    config.db_uri = "sqlite:////home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/.crow/crow-agent.db"
-    config.murder_db_uri = "sqlite:////home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/.crow/crow-snapshots.db"
+    config.db_uri = "sqlite:////home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/.crow/crow-agent-1.db"
+    config.murder_db_uri = "sqlite:////home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/.crow/crow-snapshots-1.db"
     config.MAX_COMPACT_TOKENS = 190_000
-
+    # print(len(config.mcp_servers))
+    # print(config.llm.models)
     # Pass custom hooks: e.g. just uv_project_hook, or [] for none,
     # or define your own CommandHook functions.
     agent = AcpAgent(config, hooks=[uv_project_hook])

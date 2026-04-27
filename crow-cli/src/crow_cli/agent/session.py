@@ -371,6 +371,25 @@ class Session:
         return session
 
     @classmethod
+    def get_max_agent_idx(
+        cls,
+        session_id: str,
+        db_uri: str = "sqlite:///crow.db",
+    ) -> int:
+        """Return the highest agent_idx for a given session_id."""
+        db = SQLAlchemySession(create_engine(db_uri))
+        try:
+            result = (
+                db.query(AgentModel.agent_idx)
+                .filter_by(session_id=session_id)
+                .order_by(AgentModel.agent_idx.desc())
+                .first()
+            )
+            return result[0] if result else -1
+        finally:
+            db.close()
+
+    @classmethod
     def load(
         cls,
         agent_id: str,

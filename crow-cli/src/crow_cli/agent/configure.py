@@ -116,12 +116,10 @@ class Config:
     murder_db_uri: str = ""
     mcp_servers: dict[str, Any] = field(default_factory=dict)
 
-    max_steps_per_turn: int = 100
     max_retries_per_step: int = 3
 
     # Compaction parameters
     MAX_COMPACT_TOKENS: int = 190000
-    N_STEPS_BACK_COMPACT: int = 8
 
     MAX_TOKENS: int = 38192
 
@@ -204,9 +202,7 @@ class Config:
         murder_db_uri = parsed_config.get("murder_db_uri") or os.getenv(
             "MURDER_DATABASE_PATH", f"sqlite:///{target_dir / 'crow-murder.db'}"
         )
-
         _OVERRIDABLE = {
-            "max_steps_per_turn": int,
             "max_retries_per_step": int,
             "MAX_COMPACT_TOKENS": int,
             "N_STEPS_BACK_COMPACT": int,

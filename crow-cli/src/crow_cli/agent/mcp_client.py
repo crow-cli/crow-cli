@@ -10,6 +10,9 @@ from typing import Any
 
 from acp.schema import HttpMcpServer, McpServerStdio, SseMcpServer
 from fastmcp import Client as MCPClient
+from fastmcp.client.transports import MCPConfigTransport
+
+from crow_cli.agent.configure import Config
 
 
 def acp_to_fastmcp_config(
@@ -66,23 +69,23 @@ def acp_to_fastmcp_config(
 def create_mcp_client_from_acp(
     mcp_servers: list[HttpMcpServer | SseMcpServer | McpServerStdio] | None,
     cwd: str,
-    fallback_config: dict[str, Any] | None,
+    builtin_config: dict[str, Any] | None,
     logger: Logger,
 ) -> MCPClient:
     """
-    Create an MCP client from ACP MCP server configurations or fallback config.
+    Create an MCP client from ACP client provided configurations or builtin config.
 
     Args:
         mcp_servers: List of MCP server configurations from ACP client (can be None or empty)
         cwd: Working directory (passed to MCP tools)
-        fallback_config: FastMCP config dict with "mcpServers" key
+        builtin_config: FastMCP config dict with "mcpServers" key
 
     Returns:
         FastMCP Client instance (must be used with async with)
     """
     # Start with fallback config as base
     config: dict[str, Any] = (
-        dict(fallback_config) if fallback_config else {"mcpServers": {}}
+        dict(builtin_config) if builtin_config else {"mcpServers": {}}
     )
 
     # Convert any ACP mcp_servers and merge into config
@@ -99,7 +102,8 @@ def create_mcp_client_from_acp(
         raise ValueError("No MCP servers defined in the config")
 
     logger.info(f"Creating MCP client with {len(config['mcpServers'])} server(s)")
-    return MCPClient(config)
+    transport = MCPConfigTransport(config, name_as_prefix=False)
+    return config, MCPClient(transport)
 
 
 def create_mcp_client_from_config(config: dict[str, Any]) -> MCPClient:
@@ -134,18 +138,12 @@ async def get_tools(mcp_client: MCPClient) -> list[dict[str, Any]]:
     """
     tools_result = await mcp_client.list_tools()
     tools = []
-
     for t in tools_result:
-        name = t.name
-        # Normalize: strip 'crow-mcp_' prefix if present
-        if name.startswith("crow-mcp_"):
-            name = name[len("crow-mcp_"):]
-
         tools.append(
             {
                 "type": "function",
                 "function": {
-                    "name": name,
+                    "name": t.name,
                     "description": t.description or "",
                     "parameters": t.inputSchema,
                 },

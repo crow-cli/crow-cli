@@ -311,9 +311,8 @@ def run_init():
         "db_uri": db_uri,
         "providers": providers,
         "models": models,
-        "MAX_COMPACT_TOKENS": 120000,
+        "MAX_COMPACT_TOKENS": 190000,
         "N_STEPS_BACK_COMPACT": 8,
-        "max_steps_per_turn": 100,
         "max_retries_per_step": 3,
     }
 

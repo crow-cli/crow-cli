@@ -33,6 +33,7 @@ from mcp.types import (
     TextContent,
 )
 
+from crow_cli.agent.configure import Config
 from crow_cli.agent.hooks import CommandHook, FileSnapshotHook
 from crow_cli.agent.session import Session
 
@@ -545,6 +546,7 @@ async def execute_acp_edit(
         if not mcp_client:
             raise RuntimeError(f"No MCP client for session {session_id}")
         result = await mcp_client.call_tool("edit", args)
+
         result_content = result.content[0].text
 
         # 4. Send completion update

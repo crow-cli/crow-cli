@@ -158,9 +158,7 @@ class AcpAgent(Agent):
             hooks if hooks is not None else [uv_project_hook]
         )
         self._snapshot_hooks: list[FileSnapshotHook] = (
-            snapshot_hooks
-            if snapshot_hooks is not None
-            else [file_snapshot_hook]
+            snapshot_hooks if snapshot_hooks is not None else [file_snapshot_hook]
         )
         self._logger = setup_logger(self._config.config_dir / "logs" / "crow-cli.log")
         self._db_uri = self._config.db_uri
@@ -328,17 +326,17 @@ class AcpAgent(Agent):
         # ######################################
 
         # Use default MCP config if no servers provided
-        fallback_config = self._config.get_builtin_mcp_config()
-        self._logger.info("fallback_config: %s", fallback_config)
+        builtin_config = self._config.get_builtin_mcp_config()
+        self._logger.info("builtin_config: %s", builtin_config)
 
         # Create MCP client (builtin if no servers provided)
-        mcp_client = create_mcp_client_from_acp(
+        config, mcp_client = create_mcp_client_from_acp(
             mcp_servers=mcp_servers,
             cwd=cwd,
-            fallback_config=fallback_config,
+            builtin_config=builtin_config,
             logger=self._logger,
         )
-
+        self._config.mcp_servers = config
         # CRITICAL: Use AsyncExitStack for lifecycle management
         mcp_client = await self._exit_stack.enter_async_context(mcp_client)
 
@@ -436,9 +434,12 @@ class AcpAgent(Agent):
         self._logger.info("LOAD_SESSION: Loading session: %s", session_id)
 
         try:
-            # Load agent from database — for backward compat, try agent_id = f"{session_id}-0"
-            agent_id = f"{session_id}-0"
-            self._logger.info("LOAD_SESSION: Step 1: Loading agent from DB")
+            # Find the highest-indexed agent for this session
+            max_idx = Session.get_max_agent_idx(session_id, db_uri=self._db_uri)
+            agent_id = f"{session_id}-{max_idx}"
+            self._logger.info(
+                "LOAD_SESSION: Step 1: Loading agent %s from DB", agent_id
+            )
             session = Session.load(
                 agent_id, db_uri=self._db_uri, murder_db_uri=self._murder_db_uri
             )
@@ -446,29 +447,21 @@ class AcpAgent(Agent):
 
             # Setup MCP client (same as new_session)
             # Use default config if no servers given
-            self._logger.info("LOAD_SESSION: Step 2: Getting fallback config")
-            fallback_config = self._config.get_builtin_mcp_config()
+            self._logger.info("LOAD_SESSION: Step 2: Getting builtin config")
+            builtin_config = self._config.get_builtin_mcp_config()
             self._logger.info(
-                "LOAD_SESSION: Step 2 complete: fallback_config = %s", fallback_config
+                "LOAD_SESSION: Step 2 complete: builtin_config = %s", builtin_config
             )
 
-            if fallback_config:
-                self._logger.info(
-                    "LOAD_SESSION: Step 3: Creating MCP client with fallback config"
-                )
-                mcp_client = create_mcp_client_from_acp(
-                    mcp_servers=mcp_servers,
-                    cwd=cwd,
-                    fallback_config=fallback_config,
-                    logger=self._logger,
-                )
-            else:
-                mcp_client = create_mcp_client_from_acp(
-                    mcp_servers=mcp_servers,
-                    cwd=cwd,
-                    fallback_config=[],
-                    logger=self._logger,
-                )
+            self._logger.info(
+                "LOAD_SESSION: Step 3: Creating MCP client with fallback config"
+            )
+            mcp_client = create_mcp_client_from_acp(
+                mcp_servers=mcp_servers,
+                cwd=cwd,
+                builtin_config=builtin_config,
+                logger=self._logger,
+            )
             self._logger.info("LOAD_SESSION: Step 3 complete: MCP client created")
 
             # CRITICAL: Use AsyncExitStack for lifecycle management
@@ -522,8 +515,7 @@ class AcpAgent(Agent):
             "Set session %s config option %s -> %s", session_id, config_id, value
         )
 
-        # Look up agent_id for backward compat (agent_id = session_id-0)
-        agent_id = f"{session_id}-0"
+        agent_id = self._agent_id
 
         # Initialize if not set
         if agent_id not in self._config_values:
@@ -564,13 +556,12 @@ class AcpAgent(Agent):
         """
         self._session_logger.info("Prompt request for session: %s", session_id)
 
-        # Resolve session_id to agent_id (backward compat: agent_id = session_id-0)
-        agent_id = f"{session_id}-0"
-        # Also try the current agent_id if it matches
-        if self._agent_id and agent_id not in self._sessions:
-            # Check if the stripped session_id matches our agent's session_id
-            if self._sessions.get(self._agent_id):
-                agent_id = self._agent_id
+        # Resolve session_id to agent_id
+        if self._session_id == session_id and self._agent_id:
+            agent_id = self._agent_id
+        else:
+            max_idx = Session.get_max_agent_idx(session_id, db_uri=self._db_uri)
+            agent_id = f"{session_id}-{max_idx}"
 
         async def _execute_turn() -> PromptResponse:
             # Generate turn ID for this prompt (used for ACP tool call IDs)
@@ -664,10 +655,18 @@ class AcpAgent(Agent):
                     new_agent_id = compacted_session.agent_id
                     self._sessions[new_agent_id] = compacted_session
                     self._tools[new_agent_id] = self._tools.pop(old_agent_id, [])
-                    self._mcp_clients[new_agent_id] = self._mcp_clients.pop(old_agent_id)
-                    self._cancel_events[new_agent_id] = self._cancel_events.pop(old_agent_id, asyncio.Event())
-                    self._state_accumulators[new_agent_id] = self._state_accumulators.pop(old_agent_id, {})
-                    self._config_values[new_agent_id] = self._config_values.pop(old_agent_id, {})
+                    self._mcp_clients[new_agent_id] = self._mcp_clients.pop(
+                        old_agent_id
+                    )
+                    self._cancel_events[new_agent_id] = self._cancel_events.pop(
+                        old_agent_id, asyncio.Event()
+                    )
+                    self._state_accumulators[new_agent_id] = (
+                        self._state_accumulators.pop(old_agent_id, {})
+                    )
+                    self._config_values[new_agent_id] = self._config_values.pop(
+                        old_agent_id, {}
+                    )
                     self._agent_id = new_agent_id
 
                 async for chunk in react_loop(
@@ -739,9 +738,12 @@ class AcpAgent(Agent):
         """Handle cancellation by immediately cancelling the underlying Task."""
         self._session_logger.info("Cancel request for session: %s", session_id)
 
-        agent_id = f"{session_id}-0"
-        if self._agent_id and agent_id not in self._prompt_tasks:
+        # Resolve session_id to agent_id
+        if self._session_id == session_id and self._agent_id:
             agent_id = self._agent_id
+        else:
+            max_idx = Session.get_max_agent_idx(session_id, db_uri=self._db_uri)
+            agent_id = f"{session_id}-{max_idx}"
 
         task = self._prompt_tasks.get(agent_id)
         if task and not task.done():
