@@ -35,7 +35,7 @@ from mcp.types import (
 
 from crow_cli.agent.configure import Config
 from crow_cli.agent.hooks import CommandHook, FileSnapshotHook
-from crow_cli.agent.session import Session
+from crow_cli.agent.session import AgentSession
 
 
 def route_to_session_id(agent_id: str) -> str:
@@ -150,7 +150,7 @@ def mcp_content_to_openai_format(
 
 async def execute_acp_terminal(
     conn: Client,
-    sessions: dict[str, Session],
+    sessions: dict[str, AgentSession],
     turn_id: str,
     agent_id: str,
     tool_call_id: str,
@@ -310,7 +310,7 @@ async def execute_acp_terminal(
 async def execute_acp_write(
     conn: Client,
     turn_id: str,
-    sessions: dict[str, Session],
+    sessions: dict[str, AgentSession],
     agent_id: str,
     tool_call_id: str,
     args: dict[str, Any],
@@ -322,7 +322,7 @@ async def execute_acp_write(
 
     Args:
         turn_id: Turn ID for ACP tool call IDs
-        sessions: Dict of agent_id -> Session
+        sessions: Dict of agent_id -> AgentSession
         agent_id: Agent ID (internal key)
         tool_call_id: LLM tool call ID
         args: Tool arguments from LLM (file_path, content)
@@ -476,7 +476,7 @@ async def execute_acp_edit(
     conn: Client,
     turn_id: str,
     mcp_clients: dict[str, MCPClient],
-    sessions: dict[str, Session],
+    sessions: dict[str, AgentSession],
     agent_id: str,
     tool_call_id: str,
     args: dict[str, Any],
@@ -491,7 +491,7 @@ async def execute_acp_edit(
 
     Args:
         turn_id: Turn ID for ACP tool call IDs
-        sessions: Dict of agent_id -> Session
+        sessions: Dict of agent_id -> AgentSession
         agent_id: Agent ID (internal key)
         tool_call_id: LLM tool call ID
         args: Tool arguments from LLM (file_path, old_string, new_string, replace_all)
@@ -542,7 +542,7 @@ async def execute_acp_edit(
 
         # 3. Execute edit via local MCP tool (fuzzy matching is agent-side)
         logger.info(f"Executing edit via MCP: {path}")
-        mcp_client = mcp_clients.get(agent_id)
+        mcp_client = mcp_clients.get(session_id)
         if not mcp_client:
             raise RuntimeError(f"No MCP client for session {session_id}")
         result = await mcp_client.call_tool("edit", args)
@@ -620,7 +620,7 @@ async def execute_acp_tool(
 
         # 3. Execute tool via MCP
         logger.info(f"Executing tool via MCP: {tool_name}")
-        mcp_client = mcp_clients.get(agent_id)
+        mcp_client = mcp_clients.get(session_id)
         if not mcp_client:
             raise RuntimeError(f"No MCP client for session {session_id}")
         result = await mcp_client.call_tool(tool_name, args)

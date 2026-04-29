@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session as SQLAlchemySession
 
 from crow_cli.agent.db import Base, Message, Prompt, Agent as AgentModel, create_database
 from crow_cli.agent.logger import setup_logger
-from crow_cli.agent.session import Session, lookup_or_create_prompt
+from crow_cli.agent.session import AgentSession, lookup_or_create_prompt
 
 
 def count_tokens_in_message(msg: dict) -> int:
@@ -150,7 +150,7 @@ class TestMessageSerializationIntegrity:
     def test_simple_text_message_roundtrip(self, temp_db_uri, sample_prompt_template):
         """Simple text message should survive roundtrip perfectly."""
         prompt_id = lookup_or_create_prompt(sample_prompt_template, "test", temp_db_uri)
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
@@ -164,7 +164,7 @@ class TestMessageSerializationIntegrity:
         session.add_message(original_msg)
 
         # Reload and compare
-        loaded = Session.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.session_id, temp_db_uri)
         loaded_msg = loaded.messages[1]  # First message after system
 
         assert loaded_msg == original_msg, (
@@ -174,7 +174,7 @@ class TestMessageSerializationIntegrity:
     def test_multimodal_message_roundtrip(self, temp_db_uri, sample_prompt_template):
         """Multimodal message with images should survive roundtrip."""
         prompt_id = lookup_or_create_prompt(sample_prompt_template, "test", temp_db_uri)
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
@@ -200,7 +200,7 @@ class TestMessageSerializationIntegrity:
         session.add_message(original_msg)
 
         # Reload and compare
-        loaded = Session.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.session_id, temp_db_uri)
         loaded_msg = loaded.messages[1]
 
         assert loaded_msg == original_msg, (
@@ -210,7 +210,7 @@ class TestMessageSerializationIntegrity:
     def test_tool_call_message_roundtrip(self, temp_db_uri, sample_prompt_template):
         """Message with tool_calls should survive roundtrip."""
         prompt_id = lookup_or_create_prompt(sample_prompt_template, "test", temp_db_uri)
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
@@ -237,7 +237,7 @@ class TestMessageSerializationIntegrity:
         session.add_message(original_msg)
 
         # Reload and compare
-        loaded = Session.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.session_id, temp_db_uri)
         loaded_msg = loaded.messages[1]
 
         assert loaded_msg == original_msg, (
@@ -247,7 +247,7 @@ class TestMessageSerializationIntegrity:
     def test_thinking_content_roundtrip(self, temp_db_uri, sample_prompt_template):
         """Message with reasoning_content (thinking) should survive roundtrip."""
         prompt_id = lookup_or_create_prompt(sample_prompt_template, "test", temp_db_uri)
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
@@ -265,7 +265,7 @@ class TestMessageSerializationIntegrity:
         session.add_message(original_msg)
 
         # Reload and compare
-        loaded = Session.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.session_id, temp_db_uri)
         loaded_msg = loaded.messages[1]
 
         assert loaded_msg == original_msg, (
@@ -277,7 +277,7 @@ class TestMessageSerializationIntegrity:
     ):
         """Complex message with nested structures should survive roundtrip."""
         prompt_id = lookup_or_create_prompt(sample_prompt_template, "test", temp_db_uri)
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
@@ -320,7 +320,7 @@ class TestMessageSerializationIntegrity:
         session.add_message(original_msg)
 
         # Reload and compare
-        loaded = Session.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.session_id, temp_db_uri)
         loaded_msg = loaded.messages[1]
 
         assert loaded_msg == original_msg, (
@@ -337,7 +337,7 @@ class TestInMemoryVsPersistedConsistency:
     ):
         """Message added to session should be immediately persisted to database."""
         prompt_id = lookup_or_create_prompt(sample_prompt_template, "test", temp_db_uri)
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
@@ -373,7 +373,7 @@ class TestInMemoryVsPersistedConsistency:
     def test_full_history_consistency(self, temp_db_uri, sample_prompt_template):
         """Full message history should be consistent between memory and database."""
         prompt_id = lookup_or_create_prompt(sample_prompt_template, "test", temp_db_uri)
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
@@ -430,7 +430,7 @@ class TestInMemoryVsPersistedConsistency:
     def test_token_count_consistency(self, temp_db_uri, sample_prompt_template):
         """Token counts should be consistent between in-memory and persisted messages."""
         prompt_id = lookup_or_create_prompt(sample_prompt_template, "test", temp_db_uri)
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
@@ -486,9 +486,9 @@ class TestReactLoopBoundaryIntegrity:
     def test_session_state_after_add_assistant_response(
         self, temp_db_uri, sample_prompt_template
     ):
-        """Session state after add_assistant_response should be fully persistent."""
+        """AgentSession state after add_assistant_response should be fully persistent."""
         prompt_id = lookup_or_create_prompt(sample_prompt_template, "test", temp_db_uri)
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
@@ -528,7 +528,7 @@ class TestReactLoopBoundaryIntegrity:
         )
 
         # Reload and verify
-        loaded = Session.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.session_id, temp_db_uri)
 
         # Check message count
         assert len(loaded.messages) == 2, (
@@ -547,7 +547,7 @@ class TestReactLoopBoundaryIntegrity:
     ):
         """Session state after tool response should be fully persistent."""
         prompt_id = lookup_or_create_prompt(sample_prompt_template, "test", temp_db_uri)
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
@@ -584,7 +584,7 @@ class TestReactLoopBoundaryIntegrity:
         session.add_tool_response([tool_result], logger=logger)
 
         # Reload and verify
-        loaded = Session.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.session_id, temp_db_uri)
 
         # Should have: system, assistant, tool
         assert len(loaded.messages) == 3, (
@@ -600,7 +600,7 @@ class TestReactLoopBoundaryIntegrity:
     def test_long_conversation_integrity(self, temp_db_uri, sample_prompt_template):
         """Long conversation (simulating 85k tokens) should maintain integrity."""
         prompt_id = lookup_or_create_prompt(sample_prompt_template, "test", temp_db_uri)
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
@@ -661,7 +661,7 @@ class TestReactLoopBoundaryIntegrity:
         in_memory_tokens = calculate_total_tokens(session.messages)
 
         # Reload and compare
-        loaded = Session.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.session_id, temp_db_uri)
         persisted_tokens = calculate_total_tokens(loaded.messages)
 
         # Verify
@@ -690,7 +690,7 @@ class TestUsageTrackingIntegrity:
     def test_usage_persistence(self, temp_db_uri, sample_prompt_template):
         """Usage data should be persisted with messages."""
         prompt_id = lookup_or_create_prompt(sample_prompt_template, "test", temp_db_uri)
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
@@ -723,7 +723,7 @@ class TestUsageTrackingIntegrity:
     def test_usage_sum_across_messages(self, temp_db_uri, sample_prompt_template):
         """Sum of usage across messages should be accurate."""
         prompt_id = lookup_or_create_prompt(sample_prompt_template, "test", temp_db_uri)
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
@@ -788,7 +788,7 @@ class TestEdgeCases:
     def test_empty_content_handling(self, temp_db_uri, sample_prompt_template):
         """Empty content should be handled consistently."""
         prompt_id = lookup_or_create_prompt(sample_prompt_template, "test", temp_db_uri)
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
@@ -802,13 +802,13 @@ class TestEdgeCases:
         session.add_message({"role": "user", "content": ""})
 
         # Reload and verify
-        loaded = Session.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.session_id, temp_db_uri)
         assert loaded.messages[1]["content"] == ""
 
     def test_unicode_content_handling(self, temp_db_uri, sample_prompt_template):
         """Unicode content should survive roundtrip."""
         prompt_id = lookup_or_create_prompt(sample_prompt_template, "test", temp_db_uri)
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
@@ -822,13 +822,13 @@ class TestEdgeCases:
         session.add_message(unicode_msg)
 
         # Reload and verify
-        loaded = Session.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.session_id, temp_db_uri)
         assert loaded.messages[1] == unicode_msg
 
     def test_very_long_single_message(self, temp_db_uri, sample_prompt_template):
         """Very long single message should survive roundtrip."""
         prompt_id = lookup_or_create_prompt(sample_prompt_template, "test", temp_db_uri)
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
@@ -844,7 +844,7 @@ class TestEdgeCases:
         session.add_message(long_msg)
 
         # Reload and verify
-        loaded = Session.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.session_id, temp_db_uri)
         assert loaded.messages[1]["content"] == long_content
         assert len(loaded.messages[1]["content"]) == 10000
 
@@ -853,7 +853,7 @@ class TestEdgeCases:
     ):
         """Special characters in tool arguments should be preserved."""
         prompt_id = lookup_or_create_prompt(sample_prompt_template, "test", temp_db_uri)
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
@@ -881,7 +881,7 @@ class TestEdgeCases:
         session.add_message(tool_msg)
 
         # Reload and verify
-        loaded = Session.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.session_id, temp_db_uri)
         loaded_msg = loaded.messages[1]
 
         assert loaded_msg == tool_msg, (

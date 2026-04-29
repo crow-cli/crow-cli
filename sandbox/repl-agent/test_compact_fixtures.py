@@ -11,9 +11,6 @@ from pathlib import Path
 
 import pytest
 from crow_cli.agent.compact import (
-    _clean_messages,
-    _collect_tool_call_ids,
-    _collect_tool_response_ids,
     _fill_missing_tool_responses,
     compact,
 )
@@ -33,59 +30,6 @@ def list_fixtures():
 
 
 # ── Logic tests: tool call ID collection ──────────────────────────
-
-
-class TestCollectToolCallIds:
-    """Test extraction of tool_call_ids from assistant messages."""
-
-    def test_no_tool_calls(self):
-        fixture = load_fixture("case_01_system_user_only")
-        ids = _collect_tool_call_ids(fixture["messages"])
-        assert ids == set()
-
-    def test_reasoning_only(self):
-        fixture = load_fixture("case_02_reasoning_only")
-        ids = _collect_tool_call_ids(fixture["messages"])
-        assert ids == set()
-
-    def test_content_only(self):
-        fixture = load_fixture("case_03_content_only")
-        ids = _collect_tool_call_ids(fixture["messages"])
-        assert ids == set()
-
-    def test_unexecuted_tools(self):
-        fixture = load_fixture("case_04_unexecuted_tools")
-        ids = _collect_tool_call_ids(fixture["messages"])
-        assert len(ids) == 2  # First assistant has 2 tool_calls
-
-    def test_mid_conversation(self):
-        fixture = load_fixture("case_05_mid_conversation_all_responded")
-        ids = _collect_tool_call_ids(fixture["messages"])
-        assert len(ids) == 4  # Two assistant messages, each with 2 tool_calls
-
-    def test_complete_turn(self):
-        fixture = load_fixture("case_07_complete_turn")
-        ids = _collect_tool_call_ids(fixture["messages"])
-        assert len(ids) == 4  # Only two assistant messages had tool_calls
-
-
-class TestCollectToolResponseIds:
-    """Test extraction of tool_call_ids from tool response messages."""
-
-    def test_no_responses(self):
-        fixture = load_fixture("case_04_unexecuted_tools")
-        ids = _collect_tool_response_ids(fixture["messages"])
-        assert ids == set()
-
-    def test_partial_responses(self):
-        fixture = load_fixture("case_06_partial_tool_responses")
-        ids = _collect_tool_response_ids(fixture["messages"])
-        assert len(ids) == 3  # One of 4 tool responses missing
-
-    def test_all_responses(self):
-        fixture = load_fixture("case_07_complete_turn")
-        ids = _collect_tool_response_ids(fixture["messages"])
-        assert len(ids) == 4  # All 4 tool responses present
 
 
 class TestFillMissingToolResponses:
@@ -123,37 +67,14 @@ class TestFillMissingToolResponses:
         fixture = load_fixture("case_06_partial_tool_responses")
         result = _fill_missing_tool_responses(fixture["messages"])
         # Existing tool responses should be untouched
-        existing_ids = _collect_tool_response_ids(fixture["messages"])
-        result_ids = _collect_tool_response_ids(result)
-        assert existing_ids.issubset(result_ids)
-
-
-class TestCleanMessages:
-    """Test message normalization for LLM input."""
-
-    def test_multimodal_content(self):
-        """Content blocks with list format get normalized to string."""
-        fixture = load_fixture("case_01_system_user_only")
-        # User message has content as list: [{"type": "text", "text": "..."}]
-        user_msg = fixture["messages"][1]
-        assert isinstance(user_msg["content"], list)
-
-        cleaned = _clean_messages(fixture["messages"])
-        assert isinstance(cleaned[1]["content"], str)
-        assert "Look through the murder directory" in cleaned[1]["content"]
-
-    def test_preserves_tool_calls(self):
-        """tool_calls field should be preserved."""
-        fixture = load_fixture("case_04_unexecuted_tools")
-        cleaned = _clean_messages(fixture["messages"])
-        assert "tool_calls" in cleaned[2]
-
-    def test_preserves_tool_call_id(self):
-        """tool_call_id field should be preserved."""
-        fixture = load_fixture("case_07_complete_turn")
-        cleaned = _clean_messages(fixture["messages"])
-        tool_msgs = [m for m in cleaned if m["role"] == "tool"]
-        assert all("tool_call_id" in m for m in tool_msgs)
+        existing_tool_msgs = [m for m in fixture["messages"] if m["role"] == "tool"]
+        result_tool_msgs = [m for m in result if m["role"] == "tool"]
+        # All original tool messages should still be present
+        for orig in existing_tool_msgs:
+            assert any(
+                m.get("tool_call_id") == orig.get("tool_call_id")
+                for m in result_tool_msgs
+            )
 
 
 # ── Real LLM tests ────────────────────────────────────────────────

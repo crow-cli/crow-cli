@@ -32,7 +32,7 @@ from openai import AsyncOpenAI
 from crow_cli.agent.configure import Config, get_default_config_dir
 from crow_cli.agent.llm import configure_llm
 from crow_cli.agent.logger import setup_logger
-from crow_cli.agent.session import Session, lookup_or_create_prompt
+from crow_cli.agent.session import AgentSession, lookup_or_create_prompt
 
 # Skip marker for live tests
 pytestmark = pytest.mark.skipif(
@@ -108,7 +108,7 @@ class TestLiveLLMPersistence:
         logger.setLevel(logging.INFO)
 
         prompt_id = lookup_or_create_prompt(sample_prompt_template, "test", temp_db_uri)
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
@@ -159,7 +159,7 @@ class TestLiveLLMPersistence:
         assert chars_after > chars_before, "No content added"
 
         # Reload from database
-        loaded = Session.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.session_id, temp_db_uri)
 
         # Verify persisted state
         assert len(loaded.messages) == len(session.messages), (
@@ -196,7 +196,7 @@ class TestLiveLLMPersistence:
         logger.setLevel(logging.INFO)
 
         prompt_id = lookup_or_create_prompt(sample_prompt_template, "test", temp_db_uri)
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
@@ -241,7 +241,7 @@ class TestLiveLLMPersistence:
         total_chars_in_memory = precise_char_count(session.messages)
 
         # Reload and compare
-        loaded = Session.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.session_id, temp_db_uri)
         total_chars_persisted = precise_char_count(loaded.messages)
 
         # Verify
@@ -274,7 +274,7 @@ class TestLiveLLMPersistence:
         logger.setLevel(logging.INFO)
 
         prompt_id = lookup_or_create_prompt(sample_prompt_template, "test", temp_db_uri)
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
@@ -333,7 +333,7 @@ class TestLiveLLMPersistence:
         in_memory_chars_after = precise_char_count(session.messages)
 
         # Reload and compare
-        loaded = Session.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.session_id, temp_db_uri)
         persisted_chars = precise_char_count(loaded.messages)
 
         # Verify

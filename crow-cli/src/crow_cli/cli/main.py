@@ -60,9 +60,24 @@ def run_agentmain():
 
 
 @app.command("init")
-def run_init():
+def run_init(
+    config_dir: Path = typer.Option(
+        None,
+        "--config-dir",
+        "-d",
+        help="Configuration directory (default: ~/.crow)",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip all confirmation prompts",
+    ),
+):
     """Initialize Crow configuration interactively."""
-    init_command()
+    if config_dir is None:
+        config_dir = Path.home() / ".crow"
+    init_command(config_dir=config_dir, yes=yes)
 
 
 @app.command("auth")

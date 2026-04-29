@@ -91,8 +91,6 @@ from crow_cli.agent.configure import Config, get_default_config_dir
 from crow_cli.agent.context import get_directory_tree
 from crow_cli.agent.hooks import (
     CommandHook,
-    FileSnapshotHook,
-    file_snapshot_hook,
     uv_project_hook,
 )
 from crow_cli.agent.llm import configure_llm
@@ -100,7 +98,7 @@ from crow_cli.agent.logger import setup_logger
 from crow_cli.agent.mcp_client import create_mcp_client_from_acp, get_tools
 from crow_cli.agent.prompt import normalize_prompt
 from crow_cli.agent.react import react_loop
-from crow_cli.agent.session import Session, get_session_by_cwd, lookup_or_create_prompt
+from crow_cli.agent.session import AgentSession, get_session_by_cwd, lookup_or_create_prompt
 from crow_cli.agent.slash import (
     _SLASH_COMMANDS,
     parse_slash_command,
@@ -131,7 +129,6 @@ class AcpAgent(Agent):
         self,
         config: Config | None = None,
         hooks: list[CommandHook] | None = None,
-        snapshot_hooks: list[FileSnapshotHook] | None = None,
     ) -> None:
         """
         Initialize the merged agent.
@@ -141,9 +138,6 @@ class AcpAgent(Agent):
             hooks: Command hooks to run before terminal execution.
                    If None, defaults to [uv_project_hook].
                    Pass [] to disable all hooks.
-            snapshot_hooks: Hooks to capture pre-mutation file state for Monaco diffs.
-                            If None, defaults to [file_snapshot_hook].
-                            Pass [] to disable snapshot capture.
 
         Sets up:
         - AsyncExitStack for resource management
@@ -157,29 +151,25 @@ class AcpAgent(Agent):
         self._hooks: list[CommandHook] = (
             hooks if hooks is not None else [uv_project_hook]
         )
-        self._snapshot_hooks: list[FileSnapshotHook] = (
-            snapshot_hooks if snapshot_hooks is not None else [file_snapshot_hook]
-        )
         self._logger = setup_logger(self._config.config_dir / "logs" / "crow-cli.log")
         self._db_uri = self._config.db_uri
-        self._murder_db_uri = self._config.murder_db_uri
         self._exit_stack = AsyncExitStack()
         self._agent_id: str | None = None
         self._session_id: str | None = None  # stripped version for ACP upstream
-        self._sessions: dict[str, Session] = {}
-        self._mcp_clients: dict[str, MCPClient] = {}  # agent_id -> mcp_client
-        self._tools: dict[str, list[dict]] = {}  # agent_id -> tools
-        self._cancel_events: dict[str, asyncio.Event] = {}  # agent_id -> cancel_event
+        self._sessions: dict[str, AgentSession] = {}
+        self._mcp_clients: dict[str, MCPClient] = {}  # session_id -> mcp_client
+        self._tools: dict[str, list[dict]] = {}  # session_id -> tools
+        self._cancel_events: dict[str, asyncio.Event] = {}  # session_id -> cancel_event
         self._state_accumulators: dict[
             str, dict
-        ] = {}  # agent_id -> partial state for cancellation
+        ] = {}  # session_id -> partial state for cancellation
         self._tool_call_ids: dict[
             str, str
-        ] = {}  # agent_id -> persistent terminal_id for stateful terminals
+        ] = {}  # session_id -> persistent terminal_id for stateful terminals
         self._prompt_tasks: dict[str, asyncio.Task] = {}
         self._config_values: dict[
             str, dict[str, str]
-        ] = {}  # agent_id -> {config_id: value}
+        ] = {}  # session_id -> {config_id: value}
 
     def _default_model_value(self) -> str:
         model = next(iter(self._config.llm.models.values()), None)
@@ -191,7 +181,7 @@ class AcpAgent(Agent):
         model = next(iter(self._config.llm.models.values()), None)
         return model.model_id if model else ""
 
-    def _get_config_options(self, agent_id: str) -> list[SessionConfigOptionSelect]:
+    def _get_config_options(self, session_id: str) -> list[SessionConfigOptionSelect]:
         """Generate the config options for a session based on current values."""
         options_list: list[SessionConfigSelectOption] = []
         for model in self._config.llm.models.values():
@@ -203,7 +193,7 @@ class AcpAgent(Agent):
                 )
             )
 
-        current_vals = self._config_values.get(agent_id, {})
+        current_vals = self._config_values.get(session_id, {})
         default_model = self._default_model_value()
         current_model = current_vals.get("model", default_model)
 
@@ -357,7 +347,7 @@ class AcpAgent(Agent):
         else:
             agents_content = "No AGENTS.md found"
 
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={
                 "workspace": cwd,
@@ -368,7 +358,6 @@ class AcpAgent(Agent):
             request_params={"temperature": 0.2},
             model_identifier=self._default_model_identifier(),
             db_uri=self._db_uri,
-            murder_db_uri=self._murder_db_uri,
             cwd=cwd,
             agent_idx=1,
         )
@@ -377,19 +366,19 @@ class AcpAgent(Agent):
         self._sessions[session.agent_id] = session
         self._agent_id = session.agent_id
         self._session_id = session.session_id  # stripped for ACP upstream
-        self._mcp_clients[session.agent_id] = mcp_client
-        self._tools[session.agent_id] = tools
-        self._cancel_events[session.agent_id] = asyncio.Event()
+        self._mcp_clients[session.session_id] = mcp_client
+        self._tools[session.session_id] = tools
+        self._cancel_events[session.session_id] = asyncio.Event()
         self._session_logger = setup_logger(
             self._config.config_dir / "logs" / f"crow-cli-{session.session_id}.log",
             name=f"{session.session_id}-crow-logger",
         )
         # Set default values for new session config
         default_model = self._default_model_value()
-        self._config_values[session.agent_id] = {"model": default_model}
+        self._config_values[session.session_id] = {"model": default_model}
 
         self._logger.info(
-            "Created session: %s (agent_id: %s) with %d tools",
+            "Created session: %s (session_id: %s) with %d tools",
             session.session_id,
             session.agent_id,
             len(tools),
@@ -401,7 +390,7 @@ class AcpAgent(Agent):
             len(tools),
         )
 
-        config_options = self._get_config_options(session.agent_id)
+        config_options = self._get_config_options(session.session_id)
 
         # Send available commands update asynchronously
         if self._conn is not None:
@@ -435,13 +424,14 @@ class AcpAgent(Agent):
 
         try:
             # Find the highest-indexed agent for this session
-            max_idx = Session.get_max_agent_idx(session_id, db_uri=self._db_uri)
+            max_idx = AgentSession.get_max_agent_idx(session_id, db_uri=self._db_uri)
             agent_id = f"{session_id}-{max_idx}"
             self._logger.info(
                 "LOAD_SESSION: Step 1: Loading agent %s from DB", agent_id
             )
-            session = Session.load(
-                agent_id, db_uri=self._db_uri, murder_db_uri=self._murder_db_uri
+            session = AgentSession.load(
+                agent_id,
+                db_uri=self._db_uri,
             )
             self._logger.info("LOAD_SESSION: Step 1 complete: Agent loaded from DB")
 
@@ -478,23 +468,23 @@ class AcpAgent(Agent):
             self._sessions[session.agent_id] = session
             self._agent_id = session.agent_id
             self._session_id = session.session_id
-            self._mcp_clients[session.agent_id] = mcp_client
-            self._tools[session.agent_id] = tools
-            self._cancel_events[session.agent_id] = asyncio.Event()
+            self._mcp_clients[session_id] = mcp_client
+            self._tools[session_id] = tools
+            self._cancel_events[session_id] = asyncio.Event()
             self._session_logger = setup_logger(
                 self._config.config_dir / "logs" / f"crow-cli-{session.session_id}.log",
                 name=f"{session.session_id}-crow-logger",
             )
             # Initialize session config if not present
-            if session.agent_id not in self._config_values:
+            if session.session_id not in self._config_values:
                 default_model = self._default_model_value()
-                self._config_values[session.agent_id] = {
+                self._config_values[session.session_id] = {
                     "model": session.model_identifier or default_model
                 }
 
             # TODO: Replay conversation history to client
 
-            config_options = self._get_config_options(session.agent_id)
+            config_options = self._get_config_options(session.session_id)
             return LoadSessionResponse(config_options=config_options)
         except Exception as e:
             self._logger.error("Failed to load session %s: %s", session_id, e)
@@ -515,13 +505,18 @@ class AcpAgent(Agent):
             "Set session %s config option %s -> %s", session_id, config_id, value
         )
 
-        agent_id = self._agent_id
+        # Resolve session_id to agent_id (same pattern as prompt/cancel)
+        if self._session_id == session_id and self._agent_id:
+            agent_id = self._agent_id
+        else:
+            max_idx = AgentSession.get_max_agent_idx(session_id, db_uri=self._db_uri)
+            agent_id = f"{session_id}-{max_idx}"
 
         # Initialize if not set
         if agent_id not in self._config_values:
             self._config_values[agent_id] = {}
 
-        self._config_values[agent_id][config_id] = value
+        self._config_values[session_id][config_id] = value
 
         # Update session model if the config changed was the model
         if config_id == "model" and agent_id in self._sessions:
@@ -533,7 +528,7 @@ class AcpAgent(Agent):
             else:
                 session.model_identifier = value
 
-        config_options = self._get_config_options(agent_id)
+        config_options = self._get_config_options(session_id)
         return SetSessionConfigOptionResponse(config_options=config_options)
 
     async def prompt(
@@ -560,7 +555,7 @@ class AcpAgent(Agent):
         if self._session_id == session_id and self._agent_id:
             agent_id = self._agent_id
         else:
-            max_idx = Session.get_max_agent_idx(session_id, db_uri=self._db_uri)
+            max_idx = AgentSession.get_max_agent_idx(session_id, db_uri=self._db_uri)
             agent_id = f"{session_id}-{max_idx}"
 
         async def _execute_turn() -> PromptResponse:
@@ -570,7 +565,7 @@ class AcpAgent(Agent):
             # Get session
             session = self._sessions.get(agent_id)
             if not session:
-                self._session_logger.error("Session not found: %s", agent_id)
+                self._session_logger.error("AgentSession not found: %s", agent_id)
                 return PromptResponse(stop_reason="cancelled")
 
             # Build user message content (supports text, images, and resource links)
@@ -615,22 +610,22 @@ class AcpAgent(Agent):
             session.add_message({"role": "user", "content": user_content})
 
             # Clear cancel event for this new prompt
-            cancel_event = self._cancel_events.get(agent_id)
+            cancel_event = self._cancel_events.get(session_id)
             if cancel_event:
                 cancel_event.clear()
 
             # Initialize state accumulator for this prompt (for cancellation persistence)
-            self._state_accumulators[agent_id] = {
+            self._state_accumulators[session_id] = {
                 "thinking": [],
                 "content": [],
-                "tool_call_inputs": [],
+                "tool_calls": {},
             }
 
-            tools = self._tools[agent_id]
+            tools = self._tools[session_id]
 
             # Stream chunks directly from react_loop - no queue, no latency
             try:
-                current_config = self._config_values.get(agent_id, {})
+                current_config = self._config_values.get(session_id, {})
                 current_model_value = (
                     current_config.get("model") or self._default_model_value()
                 )
@@ -650,23 +645,10 @@ class AcpAgent(Agent):
 
                 llm = configure_llm(provider=provider, debug=False)
 
-                def on_compact(old_agent_id: str, compacted_session: Session):
+                def on_compact(old_agent_id: str, compacted_session: AgentSession):
                     """Update all agent-keyed references after compaction."""
                     new_agent_id = compacted_session.agent_id
                     self._sessions[new_agent_id] = compacted_session
-                    self._tools[new_agent_id] = self._tools.pop(old_agent_id, [])
-                    self._mcp_clients[new_agent_id] = self._mcp_clients.pop(
-                        old_agent_id
-                    )
-                    self._cancel_events[new_agent_id] = self._cancel_events.pop(
-                        old_agent_id, asyncio.Event()
-                    )
-                    self._state_accumulators[new_agent_id] = (
-                        self._state_accumulators.pop(old_agent_id, {})
-                    )
-                    self._config_values[new_agent_id] = self._config_values.pop(
-                        old_agent_id, {}
-                    )
                     self._agent_id = new_agent_id
 
                 async for chunk in react_loop(
@@ -683,7 +665,6 @@ class AcpAgent(Agent):
                     on_compact=on_compact,
                     logger=self._session_logger,
                     hooks=self._hooks,
-                    snapshot_hooks=self._snapshot_hooks,
                 ):
                     chunk_type = chunk.get("type")
 
@@ -717,7 +698,7 @@ class AcpAgent(Agent):
                 raise
 
         task = asyncio.create_task(_execute_turn())
-        self._prompt_tasks[agent_id] = task
+        self._prompt_tasks[session_id] = task
 
         # 3. Await the task and handle the cancellation at the top level
         try:
@@ -732,20 +713,13 @@ class AcpAgent(Agent):
             return PromptResponse(stop_reason="end_turn")
         finally:
             # 4. Cleanup the task reference when done
-            self._prompt_tasks.pop(agent_id, None)
+            self._prompt_tasks.pop(session_id, None)
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
         """Handle cancellation by immediately cancelling the underlying Task."""
         self._session_logger.info("Cancel request for session: %s", session_id)
 
-        # Resolve session_id to agent_id
-        if self._session_id == session_id and self._agent_id:
-            agent_id = self._agent_id
-        else:
-            max_idx = Session.get_max_agent_idx(session_id, db_uri=self._db_uri)
-            agent_id = f"{session_id}-{max_idx}"
-
-        task = self._prompt_tasks.get(agent_id)
+        task = self._prompt_tasks.get(session_id)
         if task and not task.done():
             task.cancel()
 

@@ -1,24 +1,31 @@
 """
 crow-cli init - Interactive configuration setup wizard.
 
-Builds config.yaml and .env in ~/.crow (or CROW_CONFIG_DIR).
+Builds config.yaml and .env in ~/.crow (or --config-dir).
+
+Configuration priority (highest to lowest):
+1. LLM_*_API_KEY / LLM_*_BASE_URL env vars
+2. config.yaml in config_dir (if exists)
+3. .env in current directory (loaded via load_dotenv)
+4. Interactive prompts
 """
 
 import getpass
 import os
-import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
 import httpx
 import yaml
+from dotenv import load_dotenv
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
-from crow_cli.agent.configure import get_default_config_dir
+load_dotenv()  # Load .env from current directory if present
 
 console = Console()
 
@@ -111,29 +118,104 @@ def select_models(models: list[dict]) -> list[tuple[str, str]]:
     return selected
 
 
-def run_init():
+def wait_for_searxng_ready(config_dir: Path, port: str, max_wait: int = 30) -> bool:
+    """Wait for SearXNG to be ready.
+
+    Checks both:
+    1. settings.yml exists on host (container started + volume mounted)
+    2. HTTP endpoint responds (container is actually listening)
+
+    Returns True if ready, False if timed out.
+    """
+    searxng_dir = config_dir / "searxng"
+    settings_file = searxng_dir / "settings.yml"
+    elapsed = 0
+
+    console.print(f"  [dim]Waiting for SearXNG to start...[/dim]")
+    while elapsed < max_wait:
+        # Check HTTP endpoint (primary readiness signal)
+        try:
+            with httpx.Client() as client:
+                response = client.get(
+                    f"http://localhost:{port}/search?q=test&format=json",
+                    timeout=3,
+                )
+                if response.status_code == 200:
+                    console.print(f"  [green]✓[/green] SearXNG ready ({elapsed}s)")
+                    return True
+        except httpx.ConnectError:
+            pass  # Not ready yet
+        except httpx.RequestError:
+            pass  # Not ready yet
+
+        # Fallback: check if settings.yml exists on host
+        if settings_file.exists():
+            console.print(f"  [green]✓[/green] SearXNG ready ({elapsed}s)")
+            return True
+
+        time.sleep(2)
+        elapsed += 2
+
+    console.print(f"  [red]✗[/red] SearXNG did not start within {max_wait}s")
+    return False
+
+
+def enable_searxng_json(config_dir: Path, port: str) -> bool:
+    """Test that SearXNG JSON endpoint works.
+
+    We already wrote settings.yml with JSON enabled before docker started.
+    Just wait for the container and test.
+    """
+    if not wait_for_searxng_ready(config_dir, port):
+        return False
+
+    console.print("  [dim]Testing JSON endpoint...[/dim]")
+    try:
+        base_url = f"http://localhost:{port}"
+        with httpx.Client() as client:
+            response = client.get(
+                f"{base_url}/search",
+                params={"q": "test", "format": "json"},
+                timeout=10,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        if data.get("results") is not None:
+            count = len(data["results"])
+            console.print(f"  [green]✓[/green] JSON endpoint working! ({count} results)")
+            return True
+        else:
+            console.print("  [yellow]Warning: No results in JSON response[/yellow]")
+            return True  # Still working, just no results yet
+    except httpx.HTTPError as e:
+        console.print(f"  [red]✗ JSON endpoint failed: {e}[/red]")
+        return False
+
+
+def run_init(config_dir: Path, yes: bool = False):
     """Run the interactive initialization wizard."""
-    config_dir = get_default_config_dir()
+    config_dir = Path(os.path.expanduser(str(config_dir)))
 
     console.print(
         Panel.fit(
             "[bold]🪶 Crow CLI Setup[/bold]\n\n"
-            f"This will create your configuration in [cyan]{config_dir}[/cyan]\n"
-            "You can override with CROW_CONFIG_DIR environment variable.",
+            f"This will create your configuration in [cyan]{config_dir}[/cyan]",
             border_style="magenta",
         )
     )
 
-    # Check if config already exists
+    # Load existing config if present (for merging)
     config_file = config_dir / "config.yaml"
     env_file = config_dir / ".env"
-
-    if config_file.exists():
+    existing_config = None
+    if config_file.exists() and not yes:
         if not Confirm.ask(
             f"\n[yellow]{config_file} already exists. Overwrite?[/]", default=False
         ):
             console.print("[red]Aborted.[/red]")
             return
+        existing_config = yaml.safe_load(config_file.read_text())
 
     # Data structures
     providers: dict[str, dict] = {}
@@ -145,70 +227,124 @@ def run_init():
     # =========================================================================
     console.print("\n[bold cyan]═══ Step 1: LLM Providers ═══[/bold cyan]\n")
 
-    while True:
-        console.print("[dim]--- Add a provider ---[/dim]")
-
-        provider_name = (
-            Prompt.ask("Provider name (e.g., openai, anthropic, openrouter)")
-            .strip()
-            .lower()
-        )
-        if not provider_name:
-            console.print("[red]Provider name required[/red]")
-            continue
-
-        base_url = Prompt.ask("Base URL (e.g., https://api.openai.com/v1)").strip()
-        if not base_url:
-            console.print("[red]Base URL required[/red]")
-            continue
-
-        api_key = getpass.getpass("API key (hidden): ").strip()
-        if not api_key:
+    if yes:
+        # In --yes mode, check env vars for provider config
+        console.print("[dim]→ --yes mode: checking env vars for providers...[/dim]")
+        # Look for LLM_{PROVIDER}_API_KEY / LLM_{PROVIDER}_BASE_URL patterns
+        for key, value in os.environ.items():
+            if key.startswith("LLM_") and key.endswith("_API_KEY"):
+                provider = key[len("LLM_"):-len("_API_KEY")].lower()
+                base_url_key = f"LLM_{provider.upper()}_BASE_URL"
+                base_url = os.environ.get(base_url_key, "")
+                if base_url and value:
+                    console.print(
+                        f"  [cyan]✓[/cyan] Found provider: [green]{provider}[/green] "
+                        f"from env vars"
+                    )
+                    providers[provider] = {
+                        "base_url": base_url,
+                        "api_key": f"${{{key}}}",
+                    }
+                    env_vars[key] = value
+                    # Try to fetch models
+                    try:
+                        available_models = fetch_models(base_url, value)
+                        for model in available_models[:5]:  # Take first 5
+                            models[model["id"]] = {
+                                "provider": provider,
+                                "model": model["id"],
+                            }
+                    except Exception:
+                        pass  # Best effort, not critical
+        if not providers:
             console.print(
-                "[yellow]Warning: No API key provided. You'll need to set it manually.[/yellow]"
+                "[yellow]  No providers found in env vars. "
+                "Add LLM_<PROVIDER>_API_KEY + LLM_<PROVIDER>_BASE_URL.[/yellow]"
             )
+        console.print()
+    else:
+        while True:
+            console.print("[dim]--- Add a provider ---[/dim]")
 
-        # Store provider
-        providers[provider_name] = {
-            "base_url": base_url,
-            "api_key": f"${{{provider_name.upper()}_API_KEY}}",
-        }
-        env_vars[f"{provider_name.upper()}_API_KEY"] = api_key
-
-        # Try to fetch models
-        if api_key and base_url:
-            console.print(f"\n[cyan]Fetching models from {provider_name}...[/cyan]")
-            available_models = fetch_models(base_url, api_key)
-            selected = select_models(available_models)
-
-            for friendly_name, model_id in selected:
-                models[friendly_name] = {
-                    "provider": provider_name,
-                    "model": model_id,
-                }
-        else:
-            console.print(
-                "[yellow]Skipping model fetch (no API key or base URL)[/yellow]"
+            provider_name = (
+                Prompt.ask("Provider name (e.g., openai, anthropic, openrouter)")
+                .strip()
+                .lower()
             )
+            if not provider_name:
+                console.print("[red]Provider name required[/red]")
+                continue
 
-        if not Confirm.ask("\nAdd another provider?", default=False):
-            break
+            base_url = Prompt.ask(
+                "Base URL (e.g., https://api.openai.com/v1)"
+            ).strip()
+            if not base_url:
+                console.print("[red]Base URL required[/red]")
+                continue
+
+            api_key = getpass.getpass("API key (hidden): ").strip()
+            if not api_key:
+                console.print(
+                    "[yellow]Warning: No API key provided. "
+                    "You'll need to set it manually.[/yellow]"
+                )
+
+            # Store provider
+            providers[provider_name] = {
+                "base_url": base_url,
+                "api_key": f"${{{provider_name.upper()}_API_KEY}}",
+            }
+            env_vars[f"{provider_name.upper()}_API_KEY"] = api_key
+
+            # Try to fetch models
+            if api_key and base_url:
+                console.print(
+                    f"\n[cyan]Fetching models from {provider_name}...[/cyan]"
+                )
+                available_models = fetch_models(base_url, api_key)
+                selected = select_models(available_models)
+
+                for friendly_name, model_id in selected:
+                    models[friendly_name] = {
+                        "provider": provider_name,
+                        "model": model_id,
+                    }
+            else:
+                console.print(
+                    "[yellow]Skipping model fetch (no API key or base URL)[/yellow]"
+                )
+
+            if not Confirm.ask("\nAdd another provider?", default=False):
+                break
 
     # =========================================================================
     # STEP 2: SearXNG
     # =========================================================================
     console.print("\n[bold cyan]═══ Step 2: SearXNG (Local Search) ═══[/bold cyan]\n")
 
-    setup_searxng = Confirm.ask(
-        "Set up local SearXNG search instance? (Requires Docker)",
-        default=True,
-    )
-
-    if setup_searxng:
-        searxng_port = Prompt.ask("SearXNG port", default="2946")
+    setup_searxng = None
+    if yes:
+        # In --yes mode, default to installing
+        setup_searxng = True
+        searxng_port = os.environ.get("SEARXNG_PORT", "2946")
+        env_vars["SEARXNG_PORT"] = searxng_port
+        console.print("[dim]→ --yes mode: defaulting to SearXNG install[/dim]")
+    elif os.environ.get("YES_INSTALL_SEARXNG", "").lower() in ("1", "true", "yes"):
+        setup_searxng = True
+        console.print("[dim]→ YES_INSTALL_SEARXNG=1 detected, skipping prompt[/dim]")
+        searxng_port = os.environ.get("SEARXNG_PORT", "2946")
         env_vars["SEARXNG_PORT"] = searxng_port
     else:
-        searxng_port = None
+        setup_searxng = Confirm.ask(
+            "Set up local SearXNG search instance? (Requires Docker)",
+            default=True,
+        )
+
+        if setup_searxng:
+            searxng_port = Prompt.ask("SearXNG port", default="2946")
+            env_vars["SEARXNG_PORT"] = searxng_port
+        else:
+            searxng_port = None
 
     # =========================================================================
     # STEP 3: Review
@@ -216,6 +352,7 @@ def run_init():
     console.print("\n[bold cyan]═══ Step 3: Review ═══[/bold cyan]\n")
 
     db_uri = f"sqlite:///{config_dir / 'crow.db'}"
+    murder_db_uri = f"sqlite:///{config_dir / 'crow.db'}"
     console.print(f"[dim]Using SQLite at {config_dir / 'crow.db'}[/dim]")
 
     # Show providers table
@@ -248,7 +385,7 @@ def run_init():
     console.print(f"\n[dim]Config directory: {config_dir}[/dim]")
     console.print(f"[dim]Database: {db_uri}[/dim]")
 
-    if not Confirm.ask("\nLooks good?", default=True):
+    if not yes and not Confirm.ask("\nLooks good?", default=True):
         console.print("[red]Aborted. No files were written.[/red]")
         return
 
@@ -283,6 +420,7 @@ def run_init():
             }
         },
         "db_uri": db_uri,
+        "murder_db_uri": murder_db_uri,
         "providers": providers,
         "models": models,
         "MAX_COMPACT_TOKENS": 190000,
@@ -307,7 +445,7 @@ def run_init():
         f.write("\n".join(env_lines) + "\n")
     console.print(f"[green]✓[/green] Written {env_file}")
 
-   # Write docker-compose.yml if needed
+    # Write docker-compose.yml if needed
     if setup_searxng:
         compose_data: dict[str, Any] = {"services": {}, "volumes": {}}
 
@@ -322,7 +460,15 @@ def run_init():
             "volumes": ["./searxng:/etc/searxng"],
         }
         # Create searxng config directory
-        (config_dir / "searxng").mkdir(exist_ok=True)
+        searxng_dir = config_dir / "searxng"
+        searxng_dir.mkdir(exist_ok=True)
+
+        # Write settings.yml with JSON enabled BEFORE docker starts.
+        # The container will see this mounted file and use it.
+        settings = {"search": {"formats": ["html", "json"]}}
+        with open(searxng_dir / "settings.yml", "w") as f:
+            yaml.dump(settings, f, default_flow_style=False)
+        console.print(f"[green]✓[/green] Wrote SearXNG settings with JSON output")
 
         compose_file = config_dir / "compose.yaml"
         with open(compose_file, "w") as f:
@@ -338,27 +484,52 @@ def run_init():
     if setup_searxng:
         console.print("\n[bold cyan]═══ Step 5: Starting Services ═══[/bold cyan]\n")
 
-        if Confirm.ask("Start Docker services now?", default=True):
+        start_docker = True
+        if not yes:
+            start_docker = Confirm.ask("Start Docker services now?", default=True)
+
+        if start_docker:
+            # Start SearXNG container first (it writes settings.yml to volume)
+            console.print("  [dim]Starting SearXNG container...[/dim]")
             try:
-                subprocess.run(
+                result = subprocess.run(
                     ["docker", "compose", "up", "-d"],
                     cwd=config_dir,
-                    check=True,
+                    capture_output=True,
+                    text=True,
                 )
-                console.print("[green]✓[/green] Docker services started")
+                if result.returncode == 0:
+                    console.print("  [green]✓[/green] SearXNG container started")
+
+                    # Now enable JSON output and validate
+                    searxng_ok = enable_searxng_json(config_dir, searxng_port)
+                    if searxng_ok:
+                        console.print(
+                            "  [green]✓[/green] SearXNG configured and validated"
+                        )
+                    else:
+                        console.print(
+                            "  [yellow]Warning: SearXNG validation failed. "
+                            "You may need to configure it manually.[/yellow]"
+                        )
+                else:
+                    console.print(
+                        f"  [red]Failed to start SearXNG: {result.stderr}[/red]"
+                    )
             except subprocess.CalledProcessError as e:
-                console.print(f"[red]Failed to start Docker services: {e}[/red]")
+                console.print(f"  [red]Failed to start SearXNG: {e}[/red]")
             except FileNotFoundError:
                 console.print(
-                    "[red]Docker not found. Please start services manually.[/red]"
+                    "  [yellow]Docker not found. "
+                    "Please start services manually.[/yellow]"
                 )
 
     # =========================================================================
     # Done
     # =========================================================================
+    console.print()
     console.print(
-        "\n"
-        + Panel.fit(
+        Panel.fit(
             "[bold green]✓ Configuration complete![/bold green]\n\n"
             f"Config: [cyan]{config_file}[/cyan]\n"
             f"Secrets: [cyan]{env_file}[/cyan]\n\n"
@@ -369,6 +540,8 @@ def run_init():
 
 
 # For typer integration
-def init_command():
+def init_command(config_dir: Path = None, yes: bool = False):
     """Initialize Crow configuration interactively."""
-    run_init()
+    if config_dir is None:
+        config_dir = Path(os.path.expanduser("~/.crow"))
+    run_init(config_dir=config_dir, yes=yes)

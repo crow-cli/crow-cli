@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session as SQLAlchemySession
 
 from crow_cli.agent.db import Agent as AgentModel
 from crow_cli.agent.db import Message as MessageModel
-from crow_cli.agent.session import Session
+from crow_cli.agent.session import AgentSession
 
 MAX_OUTPUT_TOKENS = 30000
 
@@ -38,84 +38,52 @@ Be thorough and detailed. This summary will replace the conversation history, so
 """
 
 
-def _collect_tool_call_ids(messages: list[dict]) -> set[str]:
-    """Extract all tool_call_ids from assistant messages."""
-    ids = set()
-    for msg in messages:
-        if msg.get("role") == "assistant" and "tool_calls" in msg:
-            for tc in msg["tool_calls"]:
-                tool_call_id = (
-                    tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
-                )
-                if tool_call_id:
-                    ids.add(tool_call_id)
-    return ids
-
-
-def _collect_tool_response_ids(messages: list[dict]) -> set[str]:
-    """Extract all tool_call_ids from tool response messages."""
-    ids = set()
-    for msg in messages:
-        if msg.get("role") == "tool":
-            tcid = msg.get("tool_call_id")
-            if tcid:
-                ids.add(tcid)
-    return ids
-
-
 def _fill_missing_tool_responses(messages: list[dict]) -> list[dict]:
     """
-    For every tool_call_id in assistant messages that has no matching
-    tool response, append a fake tool response.
+    Only checks the LAST assistant message for dangling tool calls.
+    All prior turns already have their tool responses.
     """
-    call_ids = _collect_tool_call_ids(messages)
-    response_ids = _collect_tool_response_ids(messages)
-    missing = call_ids - response_ids
-
-    result = list(messages)
-    for tool_call_id in sorted(missing):
-        result.append(
-            {
-                "role": "tool",
-                "tool_call_id": tool_call_id,
-                "content": "Tool call was interrupted due to context compaction. Please retry if still needed.",
+    # Walk backwards to find the last assistant message with tool_calls
+    for i in range(len(messages) - 1, -1, -1):
+        msg = messages[i]
+        if msg.get("role") == "assistant" and "tool_calls" in msg:
+            call_ids = {
+                tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                for tc in msg["tool_calls"]
             }
-        )
-    return result
+            # Scan trailing tool responses for matching IDs
+            response_ids = set()
+            for j in range(i + 1, len(messages)):
+                if messages[j].get("role") == "tool":
+                    tcid = messages[j].get("tool_call_id")
+                    if tcid:
+                        response_ids.add(tcid)
 
+            missing = call_ids - response_ids
+            if not missing:
+                return list(messages)  # All responded, return as-is
 
-def _clean_messages(messages: list[dict]) -> list[dict]:
-    """Normalize messages for LLM input - handle multimodal content blocks."""
-    cleaned = []
-    for msg in messages:
-        role = msg.get("role")
-        content = msg.get("content")
-        if isinstance(content, list):
-            # Normalize multimodal content blocks
-            parts = []
-            for block in content:
-                if isinstance(block, dict) and block.get("type") == "text":
-                    parts.append(block.get("text", ""))
-                else:
-                    parts.append(str(block))
-            content = "\n".join(parts)
-        cleaned.append(
-            {
-                "role": role,
-                "content": content,
-                **({k: v for k, v in msg.items() if k not in ("role", "content")}),
-            }
-        )
-    return cleaned
+            result = list(messages)
+            for tool_call_id in sorted(missing):
+                result.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "content": "Tool call was interrupted due to context compaction. Please retry if still needed.",
+                    }
+                )
+            return result
+
+    return list(messages)  # No tool calls found at all
 
 
 async def compact(
-    session: Session,
+    session: AgentSession,
     llm: AsyncOpenAI,
     cwd: str,
     on_compact: callable = None,
     logger: Logger = None,
-) -> Session:
+) -> AgentSession:
     """
     Compact the conversation by summarizing it into a single message.
 
@@ -139,14 +107,23 @@ async def compact(
             f"Compacting agent {session.agent_id} ({len(session.messages)} messages)..."
         )
 
-    # 1. Fill missing tool responses so LLM sees consistent state
+    # 1. Fill missing tool responses on the last assistant message only
     messages = _fill_missing_tool_responses(session.messages)
-    messages = _clean_messages(messages)
 
-    # 2. Append compaction prompt
+    # 2. Guard against user+user: if last message is user, insert lightweight
+    #    assistant placeholder so the compaction prompt doesn't break API rules
+    if messages[-1].get("role") == "user":
+        messages.append(
+            {
+                "role": "assistant",
+                "content": "Ready to compact. Calling no tools.",
+            }
+        )
+
+    # 3. Append compaction prompt
     messages.append({"role": "user", "content": COMPACTION_PROMPT})
 
-    # 3. Send to LLM
+    # 4. Send to LLM
     request_params = dict(session.request_params)
     request_params["max_tokens"] = MAX_OUTPUT_TOKENS
 
@@ -166,7 +143,7 @@ async def compact(
     if logger:
         logger.info(f"Compact usage: {usage}")
 
-    # 4. Create new agent record: same session_id, next agent_idx
+    # 5. Create new agent record: same session_id, next agent_idx
     new_agent_idx = original_agent_idx + 1
     new_agent_id = f"{original_session_id}-{new_agent_idx}"
 
@@ -201,13 +178,12 @@ async def compact(
 
         db.commit()
 
-    # 5. Create fresh Session object (avoids stale _db/_model from old agent)
-    new_session = Session(
+    # 6. Create fresh Session object (avoids stale _db/_model from old agent)
+    new_session = AgentSession(
         agent_id=new_agent_id,
         session_id=original_session_id,
         agent_idx=new_agent_idx,
         db_uri=session.db_uri,
-        murder_db_uri=session.murder_db_uri,
         cwd=session.cwd,
     )
     new_session.model_identifier = session.model_identifier

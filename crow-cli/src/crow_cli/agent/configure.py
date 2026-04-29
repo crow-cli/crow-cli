@@ -113,7 +113,6 @@ class Config:
     config_dir: Path
     llm: LLMConfig = field(default_factory=LLMConfig)
     db_uri: str = ""
-    murder_db_uri: str = ""
     mcp_servers: dict[str, Any] = field(default_factory=dict)
 
     max_retries_per_step: int = 3
@@ -169,11 +168,9 @@ class Config:
             db_fallback = os.getenv(
                 "DATABASE_PATH", f"sqlite:///{target_dir / 'crow.db'}"
             )
-            murder_db_fallback = f"sqlite:///{target_dir / 'crow-murder.db'}"
             return cls(
                 config_dir=target_dir,
                 db_uri=db_fallback,
-                murder_db_uri=murder_db_fallback,
             )
 
         with open(yaml_file, "r") as f:
@@ -199,9 +196,6 @@ class Config:
         db_uri = parsed_config.get("db_uri") or os.getenv(
             "DATABASE_PATH", f"sqlite:///{target_dir / 'crow.db'}"
         )
-        murder_db_uri = parsed_config.get("murder_db_uri") or os.getenv(
-            "MURDER_DATABASE_PATH", f"sqlite:///{target_dir / 'crow-murder.db'}"
-        )
         _OVERRIDABLE = {
             "max_retries_per_step": int,
             "MAX_COMPACT_TOKENS": int,
@@ -218,6 +212,5 @@ class Config:
             llm=llm_config,
             mcp_servers=parsed_config.get("mcpServers", {}),
             db_uri=db_uri,
-            murder_db_uri=murder_db_uri,
             **overrides,
         )

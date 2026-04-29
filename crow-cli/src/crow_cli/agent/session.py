@@ -22,22 +22,11 @@ from sqlalchemy.orm import Session as SQLAlchemySession
 
 from crow_cli.agent.db import Agent as AgentModel
 from crow_cli.agent.db import (
-    Base,
     Message,
-    MurderFileSnapshot,
     Prompt,
     create_database,
-    create_murder_database,
 )
 from crow_cli.agent.prompt import render_template
-
-
-def _set_sqlite_pragma(dbapi_connection, connection_record):
-    """Set WAL mode and synchronous=NORMAL for concurrent read access."""
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA synchronous=NORMAL")
-    cursor.close()
 
 
 def get_session_by_cwd(cwd, db_uri):
@@ -127,7 +116,7 @@ def lookup_or_create_prompt(
         db.close()
 
 
-class Session:
+class AgentSession:
     """
     Manages conversation state and persistence.
 
@@ -136,7 +125,6 @@ class Session:
 
     Two databases:
     - db_uri: session data (agents, messages, prompts)
-    - murder_db_uri: file snapshots (separate to avoid WAL contention)
     """
 
     def __init__(
@@ -145,14 +133,12 @@ class Session:
         session_id: str,
         agent_idx: int = 0,
         db_uri: str = "sqlite:///crow.db",
-        murder_db_uri: str = "sqlite:///crow-murder.db",
         cwd: str = "/tmp",
     ):
         self.agent_id = agent_id
         self.session_id = session_id
         self.agent_idx = agent_idx
         self.db_uri = db_uri
-        self.murder_db_uri = murder_db_uri
         self.cwd = cwd
         self.messages: list[dict] = []
         self._db = None
@@ -165,18 +151,8 @@ class Session:
         """Lazy-load database connection with WAL mode for concurrent reads."""
         if self._db is None:
             engine = create_engine(self.db_uri)
-            event.listen(engine, "connect", _set_sqlite_pragma)
             self._db = SQLAlchemySession(engine)
         return self._db
-
-    @property
-    def murder_db(self) -> SQLAlchemySession:
-        """Lazy-load murder database connection for file snapshots."""
-        if self._murder_db is None:
-            engine = create_engine(self.murder_db_uri)
-            event.listen(engine, "connect", _set_sqlite_pragma)
-            self._murder_db = SQLAlchemySession(engine)
-        return self._murder_db
 
     @property
     def model(self) -> AgentModel:
@@ -309,16 +285,14 @@ class Session:
         request_params: dict[str, Any],
         model_identifier: str,
         db_uri: str = "sqlite:///crow.db",
-        murder_db_uri: str = "sqlite:///crow-murder.db",
         cwd: str = "/tmp",
         agent_idx: int = 0,
         session_id: str | None = None,
         initial_messages: list[dict[str, Any]] | None = None,
-    ) -> "Session":
+    ) -> "AgentSession":
         """Factory method to create a new agent session."""
         # Ensure both databases exist
         create_database(db_uri)
-        create_murder_database(murder_db_uri)
 
         db = SQLAlchemySession(create_engine(db_uri))
 
@@ -351,7 +325,7 @@ class Session:
         db.close()
 
         # Build session instance
-        session = cls(agent_id, session_id, agent_idx, db_uri, murder_db_uri, cwd=cwd)
+        session = cls(agent_id, session_id, agent_idx, db_uri, cwd=cwd)
         session.model_identifier = model_identifier
         session.tools = tool_definitions
         session.request_params = request_params
@@ -394,8 +368,7 @@ class Session:
         cls,
         agent_id: str,
         db_uri: str = "sqlite:///crow.db",
-        murder_db_uri: str = "sqlite:///crow-murder.db",
-    ) -> "Session":
+    ) -> "AgentSession":
         """Factory method to load existing agent session from database."""
         db = SQLAlchemySession(create_engine(db_uri))
         agent_model = db.query(AgentModel).filter_by(agent_id=agent_id).first()
@@ -408,7 +381,6 @@ class Session:
             session_id=agent_model.session_id,
             agent_idx=agent_model.agent_idx,
             db_uri=db_uri,
-            murder_db_uri=murder_db_uri,
             cwd=agent_model.cwd,
         )
         session.model_identifier = agent_model.model_identifier

@@ -14,7 +14,7 @@ import pytest
 
 from crow_cli.agent.configure import Config
 from crow_cli.agent.prompt import normalize_blocks
-from crow_cli.agent.session import Session
+from crow_cli.agent.session import AgentSession
 
 
 def normalize_messages_for_api(messages: list[dict]) -> list[dict]:
@@ -74,7 +74,7 @@ class TestPayloadVsDatabaseIntegrity:
             db.close()
 
         # Load session
-        session = Session.load(sid, db_uri=config.db_uri)
+        session = AgentSession.load(sid, db_uri=config.db_uri)
         assert len(session.messages) == msg_count
 
         # Normalize exactly as send_request does
@@ -205,7 +205,7 @@ class TestPayloadVsDatabaseIntegrity:
         rest = stem[len("payload-"):]
         # Hash is last 12 chars, preceded by "-"
         session_id = rest[:-13]  # remove "-{12charhash}"
-        session = Session.load(session_id, db_uri=config.db_uri)
+        session = AgentSession.load(session_id, db_uri=config.db_uri)
 
         # Log for comparison
         print(f"\n=== Token Consistency Check ===")
@@ -242,7 +242,7 @@ class TestPayloadVsDatabaseIntegrity:
         db.commit()
         db.close()
 
-        session = Session(sid, db_uri=db_uri)
+        session = AgentSession(sid, db_uri=db_uri)
         test_msg = {
             "role": "assistant",
             "content": "",
@@ -257,6 +257,6 @@ class TestPayloadVsDatabaseIntegrity:
         }
         session.add_message(test_msg)
 
-        session2 = Session.load(sid, db_uri=db_uri)
+        session2 = AgentSession.load(sid, db_uri=db_uri)
         assert len(session2.messages) == len(session.messages)
         assert session2.messages[0] == session.messages[0]

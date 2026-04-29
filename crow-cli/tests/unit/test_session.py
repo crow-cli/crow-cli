@@ -3,7 +3,7 @@
 import pytest
 
 from crow_cli.agent.db import create_database
-from crow_cli.agent.session import Session, lookup_or_create_prompt
+from crow_cli.agent.session import AgentSession, lookup_or_create_prompt
 
 
 class TestSessionCreate:
@@ -19,7 +19,7 @@ class TestSessionCreate:
         )
 
         # Create session
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Crow", "workspace": "/tmp", "display_tree": "test/"},
             tool_definitions=[{"name": "test_tool"}],
@@ -54,7 +54,7 @@ class TestSessionCreate:
             {"role": "assistant", "content": "Previous response"},
         ]
 
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Crow", "workspace": "/tmp", "display_tree": "test/"},
             tool_definitions=[],
@@ -86,7 +86,7 @@ class TestSessionCreate:
             {"role": "user", "content": "Should be kept"},
         ]
 
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Crow", "workspace": "/tmp", "display_tree": "test/"},
             tool_definitions=[],
@@ -114,7 +114,7 @@ class TestSessionLoad:
             db_uri=temp_db_uri,
         )
 
-        session1 = Session.create(
+        session1 = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Crow", "workspace": "/tmp", "display_tree": "test/"},
             tool_definitions=[{"name": "test_tool"}],
@@ -126,7 +126,7 @@ class TestSessionLoad:
         session_id = session1.session_id
 
         # Load session using agent_id (internal key)
-        session2 = Session.load(session1.agent_id, db_uri=temp_db_uri)
+        session2 = AgentSession.load(session1.agent_id, db_uri=temp_db_uri)
 
         # Verify
         assert session2.session_id == session_id
@@ -139,7 +139,7 @@ class TestSessionLoad:
     def test_session_load_not_found(self, temp_db_uri):
         """Load non-existent session raises error."""
         with pytest.raises(ValueError, match="not found"):
-            Session.load("non-existent-id", db_uri=temp_db_uri)
+            AgentSession.load("non-existent-id", db_uri=temp_db_uri)
 
 
 class TestSessionAddMessage:
@@ -153,7 +153,7 @@ class TestSessionAddMessage:
             db_uri=temp_db_uri,
         )
 
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Crow", "workspace": "/tmp", "display_tree": "test/"},
             tool_definitions=[],
@@ -171,7 +171,7 @@ class TestSessionAddMessage:
         assert session.messages[1] == {"role": "user", "content": "Hello!"}
 
         # Verify in database
-        loaded = Session.load(session.agent_id, db_uri=temp_db_uri)
+        loaded = AgentSession.load(session.agent_id, db_uri=temp_db_uri)
         assert len(loaded.messages) == 2
         assert loaded.messages[1] == {"role": "user", "content": "Hello!"}
 
@@ -183,7 +183,7 @@ class TestSessionAddMessage:
             db_uri=temp_db_uri,
         )
 
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Crow", "workspace": "/tmp", "display_tree": "test/"},
             tool_definitions=[],
@@ -204,7 +204,7 @@ class TestSessionAddMessage:
         assert session.messages[3]["content"] == "Third"
 
         # Verify after reload
-        loaded = Session.load(session.agent_id, db_uri=temp_db_uri)
+        loaded = AgentSession.load(session.agent_id, db_uri=temp_db_uri)
         assert loaded.messages[1]["content"] == "First"
         assert loaded.messages[2]["content"] == "Second"
         assert loaded.messages[3]["content"] == "Third"
@@ -236,7 +236,7 @@ class TestSessionToolDefinitions:
             {"name": "tool2", "description": "Tool 2"},
         ]
 
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Crow", "workspace": "/tmp", "display_tree": "test/"},
             tool_definitions=tools,
@@ -250,7 +250,7 @@ class TestSessionToolDefinitions:
         assert session.tools == tools
 
         # Verify after reload
-        loaded = Session.load(session.agent_id, db_uri=temp_db_uri)
+        loaded = AgentSession.load(session.agent_id, db_uri=temp_db_uri)
         assert loaded.tools == tools
 
 
@@ -267,7 +267,7 @@ class TestSessionRoundtrip:
 
         tools = [{"name": "test_tool", "description": "A test tool"}]
 
-        session1 = Session.create(
+        session1 = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Crow", "workspace": "/tmp", "display_tree": "test/"},
             tool_definitions=tools,
@@ -282,7 +282,7 @@ class TestSessionRoundtrip:
         session1.add_message({"role": "assistant", "content": "Hi!"})
 
         # Reload
-        session2 = Session.load(session1.agent_id, db_uri=temp_db_uri)
+        session2 = AgentSession.load(session1.agent_id, db_uri=temp_db_uri)
 
         # Verify all fields
         assert session2.session_id == session1.session_id

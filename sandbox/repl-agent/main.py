@@ -13,7 +13,6 @@ async def agent_run() -> None:
     config = Config.load(config_dir=config_dir)
     # Move the home directory
     config.db_uri = "sqlite:////home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/.crow/crow-agent-1.db"
-    config.murder_db_uri = "sqlite:////home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/.crow/crow-snapshots-1.db"
     config.MAX_COMPACT_TOKENS = 190_000
     # print(len(config.mcp_servers))
     # print(config.llm.models)

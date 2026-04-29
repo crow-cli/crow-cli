@@ -13,7 +13,7 @@ from openai._exceptions import APITimeoutError as APITimeoutError2
 sys.path.insert(0, "/home/thomas/src/backup/nid-backup/crow-cli/src")
 
 from crow_cli.agent.react import send_request
-from crow_cli.agent.session import Session
+from crow_cli.agent.session import AgentSession
 
 
 async def test_timeout_error_retry():
@@ -22,7 +22,7 @@ async def test_timeout_error_retry():
 
     # Create mock objects
     mock_llm = MagicMock()
-    mock_session = MagicMock(spec=Session)
+    mock_session = MagicMock(spec=AgentSession)
     mock_session.model_identifier = "test-model"
     mock_session.messages = [{"role": "user", "content": "test"}]
     mock_tools = []
@@ -54,7 +54,7 @@ async def test_rate_limit_error_retry():
 
     # Create mock objects
     mock_llm = MagicMock()
-    mock_session = MagicMock(spec=Session)
+    mock_session = MagicMock(spec=AgentSession)
     mock_session.model_identifier = "test-model"
     mock_session.messages = [{"role": "user", "content": "test"}]
     mock_tools = []
@@ -86,7 +86,7 @@ async def test_connection_error_retry():
 
     # Create mock objects
     mock_llm = MagicMock()
-    mock_session = MagicMock(spec=Session)
+    mock_session = MagicMock(spec=AgentSession)
     mock_session.model_identifier = "test-model"
     mock_session.messages = [{"role": "user", "content": "test"}]
     mock_tools = []
@@ -118,7 +118,7 @@ async def test_max_retries_exceeded():
 
     # Create mock objects
     mock_llm = MagicMock()
-    mock_session = MagicMock(spec=Session)
+    mock_session = MagicMock(spec=AgentSession)
     mock_session.model_identifier = "test-model"
     mock_session.messages = [{"role": "user", "content": "test"}]
     mock_tools = []
@@ -152,7 +152,7 @@ async def test_successful_request():
 
     # Create mock objects
     mock_llm = MagicMock()
-    mock_session = MagicMock(spec=Session)
+    mock_session = MagicMock(spec=SAgentession)
     mock_session.model_identifier = "test-model"
     mock_session.messages = [{"role": "user", "content": "test"}]
     mock_tools = []

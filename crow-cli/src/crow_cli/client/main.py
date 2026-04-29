@@ -3,7 +3,7 @@
 Crow ACP Client - A transparent, observable agent client.
 
 This is our microscope. Our Frankenstein monitor. Full visibility into:
-- Session state (database)
+- AgentSession state (database)
 - Message flow (what we send/receive)
 - Agent behavior (logs, tool calls)
 

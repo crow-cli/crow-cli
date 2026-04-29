@@ -18,7 +18,7 @@ from crow_cli.agent.configure import Config
 from crow_cli.agent.context import maximal_deserialize
 from crow_cli.agent.hooks import CommandHook, FileSnapshotHook
 from crow_cli.agent.prompt import normalize_blocks
-from crow_cli.agent.session import Session
+from crow_cli.agent.session import AgentSession
 from crow_cli.agent.tools import (
     execute_acp_edit,
     execute_acp_read,
@@ -27,10 +27,12 @@ from crow_cli.agent.tools import (
     execute_acp_write,
 )
 
+def session_from_agent_id(agent_id):
+    return agent_id.rsplit("-", 1)[0]
 
 async def send_request(
     llm: AsyncOpenAI,
-    session: Session,
+    session: AgentSession,
     tools: list[dict],
     max_tokens: int,
     max_retries: int = 3,
@@ -300,7 +302,7 @@ async def execute_tool_calls(
     turn_id: str,
     config: Config,
     mcp_clients: dict[str, MCPClient],
-    sessions: dict[str, Session],
+    sessions: dict[str, AgentSession],
     agent_id: str,
     tool_call_inputs: list[dict],
     logger: Logger,
@@ -318,7 +320,7 @@ async def execute_tool_calls(
     Returns:
         List of tool results
     """
-    session_id = agent_id.rsplit("-", 1)[0]
+    session_id = session_from_agent_id(agent_id)
     tool_results = []
     use_acp_terminal = client_capabilities and getattr(
         client_capabilities, "terminal", False
@@ -448,7 +450,7 @@ async def react_loop(
     mcp_clients: dict[str, MCPClient],
     llm: AsyncOpenAI,
     tools: list[dict],
-    sessions: dict[str, Session],
+    sessions: dict[str, AgentSession],
     agent_id: str,
     state_accumulators: dict[str, dict],
     max_turns: int = 50000,
@@ -469,7 +471,7 @@ async def react_loop(
     """
     session = sessions.get(agent_id)
     cwd = session.cwd
-    session_id = agent_id.rsplit("-", 1)[0]
+    session_id = session_from_agent_id(agent_id)
     for turn in range(max_turns):
         response = await send_request(
             llm,
@@ -478,7 +480,7 @@ async def react_loop(
             config.MAX_TOKENS,
         )
         state_accumulator = state_accumulators.get(
-            agent_id, {"thinking": [], "content": [], "tool_calls": {}}
+            session_id, {"thinking": [], "content": [], "tool_calls": {}}
         )
         thinking, content, tool_call_inputs, usage = [], [], [], None
         try:

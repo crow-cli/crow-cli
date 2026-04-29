@@ -10,13 +10,13 @@ from logging import Logger
 from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
-    from crow_cli.agent.session import Session
+    from crow_cli.agent.session import AgentSession
 
 CommandHook = Callable[[str], str | None]
 
 # File snapshot hooks capture pre-mutation file state for Monaco diffs.
 # They don't reject - they just record.
-FileSnapshotHook = Callable[["Session", str, str, str, Logger], None]
+FileSnapshotHook = Callable[["AgentSession", str, str, str, Logger], None]
 
 
 def uv_project_hook(command: str) -> str | None:
@@ -34,14 +34,3 @@ def uv_project_hook(command: str) -> str | None:
                     "Refusing to execute without --project."
                 )
     return None
-
-
-def file_snapshot_hook(
-    session: "Session",
-    tool_call_id: str,
-    tool_name: str,
-    file_path: str,
-    logger: Logger,
-) -> None:
-    """Default file snapshot hook - captures pre-mutation state for Monaco diffs."""
-    session.save_snapshot(tool_call_id, tool_name, file_path, logger)

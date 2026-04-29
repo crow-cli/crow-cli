@@ -27,7 +27,6 @@ mcpServers:
 
 # db_uri: postgresql://postgres:${POSTGRES_PASSWORD}@localhost:${POSTGRES_PORT}/postgres
 db_uri: sqlite:///${HOME}/.crow/crow.db
-murder_db_uri: sqlite:///${HOME}/.crow/crow-murder.db
 # This you're basically just filling out yourself with
 # the little tool I give
 # providers:

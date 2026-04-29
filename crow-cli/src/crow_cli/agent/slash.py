@@ -2,6 +2,7 @@
 Slash command registry and handlers for crow-cli agent.
 """
 
+import asyncio
 import re
 from typing import TYPE_CHECKING
 
@@ -32,7 +33,7 @@ async def compact_command(agent_id: str, args: str, agent: Agent):
 
     session = agent._sessions.get(agent_id)
     if not session:
-        return "Error: Session not found"
+        return "Error: AgentSession not found"
 
     # Check if there's enough conversation to compact
     if len(session.messages) < 3:
@@ -60,10 +61,13 @@ async def compact_command(agent_id: str, args: str, agent: Agent):
 
         llm = configure_llm(provider=provider, debug=False)
 
-        def on_compact(sid, compacted_session):
-            agent._sessions[compacted_session.agent_id] = compacted_session
+        def on_compact(old_agent_id, compacted_session):
+            new_agent_id = compacted_session.agent_id
+            agent._sessions[new_agent_id] = compacted_session
+            agent._agent_id = new_agent_id
             agent._session_logger.info(
-                f"on_compact callback: updated with {len(compacted_session.messages)} messages"
+                f"on_compact callback: updated agent_id {old_agent_id} -> {new_agent_id}, "
+                f"{len(compacted_session.messages)} messages"
             )
 
         agent._session_logger.info(
@@ -79,7 +83,7 @@ async def compact_command(agent_id: str, args: str, agent: Agent):
         agent._session_logger.info(
             f"After compact: session.messages has {len(session.messages)} messages, result_session.messages has {len(result_session.messages)} messages"
         )
-        agent._session_logger.info(f"Session same object: {session is result_session}")
+        agent._session_logger.info(f"AgentSession same object: {session is result_session}")
 
         return f"Conversation compacted successfully! Reduced from {len(session.messages)} messages."
     except Exception as e:
@@ -107,8 +111,8 @@ async def clear_command(agent_id: str, args: str, agent: Agent):
             # Keep first message (system prompt)
             system_msg = session.messages[0]
             session.messages = [system_msg]
-        return "Session context cleared."
-    return "Session not found."
+        return "AgentSession context cleared."
+    return "AgentSession not found."
 
 
 @register_slash_command("stop", "Stop current operation")

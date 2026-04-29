@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session as SQLAlchemySession
 from crow_cli.agent.db import Message
 from crow_cli.agent.db import Agent as AgentModel
 from crow_cli.agent.logger import setup_logger
-from crow_cli.agent.session import Session, lookup_or_create_prompt
+from crow_cli.agent.session import AgentSession, lookup_or_create_prompt
 
 
 def precise_char_count(messages: list[dict]) -> int:
