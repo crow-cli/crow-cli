@@ -1,3 +1,5 @@
+"""We're just going to keep defaults in a python file to clear up sys.frozen nonsense"""
+
 SYSTEM_PROMPT = """You are Crow agent, a helpful AI assistant that can interact with a computer to solve tasks.
 
 Working directory:
@@ -120,6 +122,14 @@ AGENTS.md:
 * Try to follow the instructions exactly as given - don't make extra or fewer actions if not asked, except for searching the internet for help.
 * Avoid unnecessary defensive programming; do not add redundant fallbacks or default values — fail fast instead of masking misconfigurations.
 </IMPORTANT>
+
+
+<STATE>
+* A database of previous agent conversastions is available at {{ db_uri }}
+* You can use `sqlite3` to search through previous agent conversations and interactions if needed or the user requests
+* The schema of the tables are as follows (agent-id is the unique agent identifier)
+{{ table_schema }}
+</STATE>
 """
 
 COMPOSE_YAML = """services:
@@ -192,21 +202,21 @@ LITELLM_CONFIG_YAML = """model_list:
       model: dashscope/qwen3.6-plus
       api_base: https://coding-intl.dashscope.aliyuncs.com/v1
       api_key: os.environ/DASHSCOPE_API_KEY
-  - model_name: kimi-k2.5
-    litellm_params:
-      model: dashscope/kimi-k2.5
-      api_base: https://coding-intl.dashscope.aliyuncs.com/v1
-      api_key: os.environ/DASHSCOPE_API_KEY
+  # - model_name: kimi-k2.5
+  #   litellm_params:
+  #     model: dashscope/kimi-k2.5
+  #     api_base: https://coding-intl.dashscope.aliyuncs.com/v1
+  #     api_key: os.environ/DASHSCOPE_API_KEY
   - model_name: glm-5
     litellm_params:
       model: dashscope/glm-5
       api_base: https://coding-intl.dashscope.aliyuncs.com/v1
       api_key: os.environ/DASHSCOPE_API_KEY
-  - model_name: MiniMax-M2.5
-    litellm_params:
-      model: dashscope/MiniMax-M2.5
-      api_base: https://coding-intl.dashscope.aliyuncs.com/v1
-      api_key: os.environ/DASHSCOPE_API_KEY
+  # - model_name: MiniMax-M2.5
+  #   litellm_params:
+  #     model: dashscope/MiniMax-M2.5
+  #     api_base: https://coding-intl.dashscope.aliyuncs.com/v1
+  #     api_key: os.environ/DASHSCOPE_API_KEY
 
 general_settings:
   master_key: os.environ/LITELLM_API_KEY

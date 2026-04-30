@@ -26,8 +26,10 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
 )
+from sqlalchemy.dialects import sqlite
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.schema import CreateTable
 
 Base = declarative_base()
 
@@ -113,3 +115,15 @@ def create_database(db_uri: str = "sqlite:///crow.db") -> None:
     """Create the session database (agents, messages, prompts)."""
     engine = create_engine(db_uri)
     Base.metadata.create_all(engine)
+
+
+def view_agent_schema(model: Base) -> str:
+    create_statement = CreateTable(model.__table__).compile(dialect=sqlite.dialect())
+    return create_statement.__str__()
+
+
+def get_schemas() -> str:
+    schemas = []
+    for table in [Prompt, Agent, Message]:
+        schemas.append(view_agent_schema(table))
+    return "\n\n".join(schemas)

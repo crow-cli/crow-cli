@@ -9,10 +9,11 @@ from crow_cli.agent.main import AcpAgent
 
 
 async def agent_run() -> None:
-    config_dir = Path("/home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/.crow")
+    config_dir_str = "/home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/.crow-test"
+    config_dir = Path(config_dir_str)
     config = Config.load(config_dir=config_dir)
     # Move the home directory
-    config.db_uri = "sqlite:////home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/.crow/crow-agent-1.db"
+    config.db_uri = f"sqlite:///{config_dir_str}/crow-agent-1.db"
     config.MAX_COMPACT_TOKENS = 190_000
     # print(len(config.mcp_servers))
     # print(config.llm.models)

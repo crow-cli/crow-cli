@@ -1,7 +1,6 @@
 import asyncio
 import contextlib
 import os
-import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -54,9 +53,18 @@ STATUS_ICONS = {
 # ===========================================================================
 # ACP Agent
 @app.command("acp")
-def run_agentmain():
+def run_agentmain(
+    config_dir: Path = typer.Option(
+        None,
+        "--config-dir",
+        "-d",
+        help="Configuration directory (default: ~/.crow)",
+    ),
+):
     """Main entry point for the crow-cli agent."""
-    agent_main()
+    if config_dir is None:
+        config_dir = Path.home() / ".crow"
+    agent_main(config_dir=config_dir)
 
 
 @app.command("init")
@@ -105,11 +113,6 @@ def run_auth():
 # ============================================================================
 
 
-def get_db_uri() -> str:
-    """Get the default database path."""
-    return os.path.expanduser("~/.crow/crow.db")
-
-
 @app.command("inspect")
 def inspect_db(
     session_id: str | None = typer.Option(
@@ -118,62 +121,55 @@ def inspect_db(
     messages: bool = typer.Option(False, "--messages", "-m", help="Show messages"),
     limit: int = typer.Option(20, "--limit", "-l", help="Limit number of rows"),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
+    config_dir: Path = typer.Option(
+        None,
+        "--config-dir",
+        "-d",
+        help="Configuration directory (default: ~/.crow)",
+    ),
 ):
     """Inspect the Crow database - see session state, messages, etc."""
     import json
 
-    db_uri = get_db_uri()
+    from crow_cli.agent.session import AgentSession
 
-    if not os.path.exists(db_uri):
+    if config_dir is None:
+        config_dir = Path.home() / ".crow"
+    db_uri = f"sqlite:///{config_dir / 'crow.db'}"
+    db_path = str(config_dir / "crow.db")
+
+    if not os.path.exists(db_path):
         if json_output:
-            print(json.dumps({"error": f"Database not found at {db_uri}"}))
+            print(json.dumps({"error": f"Database not found at {db_path}"}))
         else:
-            client._console.print(f"[red]Database not found at {db_uri}[/red]")
+            client._console.print(f"[red]Database not found at {db_path}[/red]")
         raise SystemExit(1)
 
-    conn = sqlite3.connect(db_uri)
-    conn.row_factory = sqlite3.Row
-    cur = conn.cursor()
-
     if session_id:
-        # Show specific session
-        cur.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,))
-        session = cur.fetchone()
-
-        if not session:
+        # Use existing AgentSession methods to get the latest agent for this session
+        max_idx = AgentSession.get_max_agent_idx(session_id, db_uri=db_uri)
+        if max_idx < 0:
             if json_output:
                 print(json.dumps({"error": f"Session '{session_id}' not found"}))
             else:
                 client._console.print(f"[red]Session '{session_id}' not found[/red]")
             raise SystemExit(1)
 
-        # Build session dict
-        session_data = {}
-        for key in session.keys():
-            val = session[key]
-            if key in ("tool_definitions", "request_params", "system_prompt"):
-                continue
-            session_data[key] = val
+        agent_id = f"{session_id}-{max_idx}"
+        session_obj = AgentSession.load(agent_id, db_uri=db_uri)
 
-        # Get messages if requested
+        session_data = {
+            "agent_id": session_obj.agent_id,
+            "session_id": session_obj.session_id,
+            "cwd": session_obj.cwd,
+            "model_identifier": session_obj.model_identifier,
+            "agent_idx": session_obj.agent_idx,
+        }
+
         msgs_data = []
         if messages:
-            cur.execute(
-                "SELECT id, role, created_at, data FROM messages WHERE session_id = ? ORDER BY id LIMIT ?",
-                (session_id, limit),
-            )
-            msgs = cur.fetchall()
-
-            for msg in msgs:
-                msg_data = json.loads(msg["data"])
-                msgs_data.append(
-                    {
-                        "id": msg["id"],
-                        "role": msg["role"],
-                        "created_at": msg["created_at"],
-                        "data": msg_data,
-                    }
-                )
+            for msg in session_obj.messages[:limit]:
+                msgs_data.append({"role": msg["role"], "data": msg})
 
         if json_output:
             output = {"session": session_data}
@@ -181,91 +177,79 @@ def inspect_db(
                 output["messages"] = msgs_data
             print(json.dumps(output, indent=2, default=str))
         else:
-            # Session info table
             table = Table(title=f"Session: {session_id}", show_header=False)
             table.add_column("Field", style="cyan")
             table.add_column("Value", style="green")
-
             for key, val in session_data.items():
                 table.add_row(key, str(val))
-
             client._console.print(table)
 
-            # Show messages if requested
             if messages:
                 msg_table = Table(title=f"Messages ({len(msgs_data)} shown)")
                 msg_table.add_column("ID", style="dim")
                 msg_table.add_column("Role", style="cyan")
-                msg_table.add_column("Created", style="dim")
                 msg_table.add_column("Content Preview", style="white")
-
-                for msg in msgs_data:
+                for i, msg in enumerate(msgs_data):
                     content = msg["data"].get("content", "")
+                    if isinstance(content, list):
+                        content = str(content)
                     preview = content[:100] + "..." if len(content) > 100 else content
-                    msg_table.add_row(
-                        str(msg["id"]),
-                        msg["role"],
-                        msg["created_at"][:19] if msg["created_at"] else "",
-                        preview.replace("\n", " "),
-                    )
-
+                    msg_table.add_row(str(i), msg["role"], preview.replace("\n", " "))
                 client._console.print(msg_table)
     else:
-        # List all sessions
-        cur.execute(
-            """
-            SELECT s.session_id, s.created_at, s.model_identifier, COUNT(m.id) as message_count
-            FROM sessions s
-            LEFT JOIN messages m ON s.session_id = m.session_id
-            GROUP BY s.session_id
-            ORDER BY s.created_at DESC
-            LIMIT ?
-        """,
-            (limit,),
-        )
-        sessions = cur.fetchall()
+        # List all sessions — use AgentSession.get_max_agent_idx to enumerate
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session as SQLAlchemySession
+        from crow_cli.agent.db import Agent as AgentModel
+        from crow_cli.agent.db import Message
 
-        if not sessions:
+        engine = create_engine(db_uri)
+        db = SQLAlchemySession(engine)
+        agents = db.query(AgentModel).order_by(AgentModel.created_at.desc()).all()
+
+        # Deduplicate by session_id, keep highest idx
+        seen: dict[str, dict] = {}
+        for agent in agents:
+            sid = agent.session_id
+            if sid not in seen or agent.agent_idx > seen[sid]["agent_idx"]:
+                msg_count = db.query(Message).filter_by(agent_id=agent.agent_id).count()
+                seen[sid] = {
+                    "session_id": sid,
+                    "created_at": agent.created_at.isoformat(),
+                    "model_identifier": agent.model_identifier,
+                    "agent_idx": agent.agent_idx,
+                    "message_count": msg_count,
+                }
+        db.close()
+
+        sessions_list = list(seen.values())[:limit]
+
+        if not sessions_list:
             if json_output:
                 print(json.dumps({"sessions": []}))
             else:
                 client._console.print("[yellow]No sessions found[/yellow]")
             raise SystemExit(0)
 
-        sessions_data = []
-        for sess in sessions:
-            sessions_data.append(
-                {
-                    "session_id": sess["session_id"],
-                    "created_at": sess["created_at"],
-                    "model_identifier": sess["model_identifier"],
-                    "message_count": sess["message_count"],
-                }
-            )
-
         if json_output:
-            print(json.dumps({"sessions": sessions_data}, indent=2, default=str))
+            print(json.dumps({"sessions": sessions_list}, indent=2, default=str))
         else:
             table = Table(title="Crow Sessions")
             table.add_column("Session ID", style="cyan")
             table.add_column("Created", style="dim")
             table.add_column("Model", style="green")
             table.add_column("Messages", style="yellow")
-
-            for sess in sessions_data:
+            for sess in sessions_list:
                 table.add_row(
                     sess["session_id"],
-                    sess["created_at"][:19] if sess["created_at"] else "",
+                    sess["created_at"][:19],
                     sess["model_identifier"] or "",
                     str(sess["message_count"]),
                 )
-
             client._console.print(table)
             client._console.print(
                 f"\n[dim]Use --session <id> --messages to inspect a specific session[/dim]"
             )
-
-    conn.close()
 
 
 # ============================================================================
@@ -287,6 +271,12 @@ def run(
     cwd: str = typer.Option(os.getcwd(), "--cwd", "-c", help="Working directory"),
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Enable verbose logging"
+    ),
+    config_dir: Path = typer.Option(
+        None,
+        "--config-dir",
+        "-d",
+        help="Configuration directory (default: ~/.crow)",
     ),
 ):
     """

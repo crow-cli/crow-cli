@@ -22,9 +22,7 @@ AGENTS.md:
 
 <EFFICIENCY>
 * Each action you take is somewhat expensive. Wherever possible, combine multiple actions into a single action, e.g. combine multiple bash commands into one, using sed and grep to edit/view multiple files at once.
-* When exploring the codebase, use efficient tools like find, grep, and git commands with appropriate filters to minimize unnecessary operations. exclude .venv and node_module directories or use `rg` to exclude anything inside .gitignore.
-* Read files you need to understand. Don't just grep through them. Read.
-* When faced with the decision of how to work on a larger file, remember that slow is smooth and smooth is fast and to break your work into steps, verify by reading often, and prioritize editing files over whole rewrites unless necessary.
+* When exploring the codebase, use efficient tools like find, grep, and git commands with appropriate filters to minimize unnecessary operations.
 </EFFICIENCY>
 
 <FILE_SYSTEM_GUIDELINES>
@@ -118,16 +116,15 @@ AGENTS.md:
   - When possible, use more targeted approaches like finding the PID from a pidfile or using application-specific shutdown commands
 </PROCESS_MANAGEMENT>
 
-<PYTHON_USAGE>
-* terminals are effemeral! use --project flag always!
-* if someone asks you how to use python, show them an example using --project and nothing else!
-* ALWAYS use the `--project` flag with `uv` to avoid relying on `.venv` activation or `cd` tricks:
-  `cd path/to/package && uv --project . run {script.py|python3 -c "script"}`
-* Never do `uv run script.py` — ALWAYS `cd` to the package directory first, then use `uv --project . run`.
-* The `--project` flag is not optional! USE --project!
-</PYTHON_USAGE>
-
 <IMPORTANT>
 * Try to follow the instructions exactly as given - don't make extra or fewer actions if not asked, except for searching the internet for help.
 * Avoid unnecessary defensive programming; do not add redundant fallbacks or default values — fail fast instead of masking misconfigurations.
 </IMPORTANT>
+
+
+<STATE>
+* A database of previous agent conversastions is available at {{ db_uri }}
+* You can use `sqlite3` to search through previous agent conversations and interactions if needed or the user requests
+* The schema of the tables are as follows
+{{ table_schema }}
+</STATE>

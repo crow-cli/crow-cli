@@ -1,4 +1,4 @@
-general:
+SEARXNG_SETTINGS_YML = """general:
   # Debug mode, only for development. Is overwritten by ${SEARXNG_DEBUG}
   debug: false
   # displayed name
@@ -2797,3 +2797,4 @@ doi_resolvers:
   sci-hub.ru: "https://sci-hub.ru/"
 
 default_doi_resolver: "oadoi.org"
+"""

@@ -1,86 +1,66 @@
+"""
+Configuration management for crow-cli.
+
+Default config files are Python string constants imported from defaults.
+On first access to ~/.crow, defaults are written to disk if nothing exists.
+The user's config.yaml is read from disk for actual runtime config.
+"""
+
 import os
 import re
-import shutil
-import sys
 from dataclasses import dataclass, field
-from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Any
 
 import yaml
 from dotenv import load_dotenv
 
-# Regex to find ${VAR_NAME} in strings
+from crow_cli.agent.default import (
+    COMPOSE_YAML,
+    CONFIG_YAML,
+    LITELLM_CONFIG_YAML,
+    SEARXNG_SETTINGS_YML,
+    SYSTEM_PROMPT,
+)
+
 ENV_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
-CROW_DIR = ".crow"
+CROW_DIR = Path.home() / ".crow"
 
-# Files that get copied from bundled defaults to ~/.crow on first run
-_DEFAULT_FILES = {
-    "config.yaml": "config.yaml",
-    "compose.yaml": "compose.yaml",
-    ".env.example": ".env.example",
-    "litellm/config.yaml": "litellm/config.yaml",
-    "prompts/system_prompt.jinja2": "prompts/system_prompt.jinja2",
-    "searxng/settings.yml": "searxng/settings.yml",
+
+def get_default_config_dir(config_dir: Path | str | None = None) -> Path:
+    """Return the config directory. If config_dir is given, use it. Otherwise ~/.crow."""
+    if config_dir is None:
+        return CROW_DIR
+    return Path(config_dir).resolve()
+
+
+# All default files as (destination_relative_path, content_string)
+_DEFAULT_FILES: dict[str, str] = {
+    "config.yaml": CONFIG_YAML,
+    "compose.yaml": COMPOSE_YAML,
+    "litellm/config.yaml": LITELLM_CONFIG_YAML,
+    "prompts/system_prompt.jinja2": SYSTEM_PROMPT,
+    "searxng/settings.yml": SEARXNG_SETTINGS_YML,
 }
 
 
-def _get_default_source_dir() -> Path:
-    """Return the path to the bundled default config directory."""
-    if getattr(sys, "frozen", False):
-        return Path(sys._MEIPASS) / "crow_cli" / "agent" / "default"
-    # Unfrozen: use importlib.resources
-    config_src = files("crow_cli.agent.default")
-    with as_file(config_src) as src_path:
-        return Path(src_path)
+def _write_defaults_if_missing(config_dir: Path) -> None:
+    """Write default config files to disk only if they don't already exist."""
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / "logs").mkdir(exist_ok=True)
 
-
-def _copy_default_config(config_dir: Path):
-    """Copy bundled default config files to config_dir, creating subdirs as needed.
-
-    PyInstaller --onefile extracts individual 'datas' entries as directories
-    containing a file of the same name (e.g. config.yaml/config.yaml).
-    Handle this by descending one level when the source is a directory.
-    """
-    src = _get_default_source_dir()
-    for rel_path, dest_rel in _DEFAULT_FILES.items():
-        src_file = src / rel_path
-        # PyInstaller quirk: individual datas entries become dir/dir/filename
-        if src_file.is_dir():
-            src_file = src_file / src_file.name
-        dst_file = config_dir / dest_rel
-        dst_file.parent.mkdir(parents=True, exist_ok=True)
-        if src_file.is_file():
-            dst_file.write_bytes(src_file.read_bytes())
-
-
-def get_default_config_dir() -> Path:
-    config_dir = Path.home() / CROW_DIR
-
-    if not config_dir.exists():
-        config_dir.mkdir(parents=True, exist_ok=True)
-        _copy_default_config(config_dir)
-
-    # Always ensure logs exist
-    log_dir = config_dir / "logs"
-    log_dir.mkdir(exist_ok=True, parents=True)
-    log_file = log_dir / "crow-cli.log"
-    if not log_file.exists():
-        log_file.touch()
-
-    return config_dir
+    for rel_path, content in _DEFAULT_FILES.items():
+        target = config_dir / rel_path
+        if not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content)
 
 
 def resolve_env_vars(value: Any) -> Any:
-    """Recursively traverse dictionaries/lists and replace ${VAR} with env variables."""
+    """Recursively replace ${VAR} with environment variable values."""
     if isinstance(value, str):
-
-        def replace(match):
-            env_var = match.group(1)
-            return os.getenv(env_var, "")
-
-        return ENV_PATTERN.sub(replace, value)
+        return ENV_PATTERN.sub(lambda m: os.getenv(m.group(1), ""), value)
     elif isinstance(value, dict):
         return {k: resolve_env_vars(v) for k, v in value.items()}
     elif isinstance(value, list):
@@ -114,12 +94,8 @@ class Config:
     llm: LLMConfig = field(default_factory=LLMConfig)
     db_uri: str = ""
     mcp_servers: dict[str, Any] = field(default_factory=dict)
-
     max_retries_per_step: int = 3
-
-    # Compaction parameters
     MAX_COMPACT_TOKENS: int = 190000
-
     MAX_TOKENS: int = 38192
 
     @property
@@ -128,89 +104,73 @@ class Config:
 
     def get_builtin_mcp_config(self) -> dict[str, Any]:
         """Return MCP config dict in FastMCP format."""
-        mcp_servers: dict[str, Any] = dict(self.mcp_servers or {})
+        return {"mcpServers": dict(self.mcp_servers or {})}
 
-        crow_mcp = mcp_servers.get("crow-mcp")
-        if isinstance(crow_mcp, dict):
-            args = crow_mcp.get("args")
-            if isinstance(args, list) and "--project" in args:
-                try:
-                    idx = args.index("--project")
-                    if idx + 1 < len(args):
-                        candidate = Path(args[idx + 1])
-                        if not candidate.exists():
-                            repo_root = Path(__file__).resolve().parents[4]
-                            local_path = repo_root / "crow-mcp"
-                            if local_path.exists():
-                                args[idx + 1] = str(local_path)
-                except ValueError:
-                    pass
-
-        return {"mcpServers": mcp_servers}
+    @property
+    def is_configured(self) -> bool:
+        """Check if the config has at least one LLM provider and model."""
+        return bool(self.llm.providers and self.llm.models)
 
     @classmethod
-    def load(cls, config_dir: str | Path | None = None) -> "Config":
-        if config_dir is None:
-            target_dir = get_default_config_dir()
-        else:
-            target_dir = Path(config_dir)
-            (target_dir / "logs").mkdir(parents=True, exist_ok=True)
-            (target_dir / "logs" / "crow-cli.log").touch(exist_ok=True)
+    def load(cls, config_dir: Path | None = None) -> "Config":
+        target_dir = get_default_config_dir(config_dir)
 
-        target_dir.mkdir(parents=True, exist_ok=True)
+        # Write defaults if nothing exists yet
+        if not (target_dir / "config.yaml").exists():
+            _write_defaults_if_missing(target_dir)
 
+        # Load .env
         env_file = target_dir / ".env"
         if env_file.exists():
             load_dotenv(env_file)
 
-        yaml_file = target_dir / "config.yaml"
-        if not yaml_file.exists():
-            db_fallback = os.getenv(
-                "DATABASE_PATH", f"sqlite:///{target_dir / 'crow.db'}"
-            )
+        # If no config.yaml, return a bare Config
+        config_file = target_dir / "config.yaml"
+        if not config_file.exists():
             return cls(
                 config_dir=target_dir,
-                db_uri=db_fallback,
+                db_uri=os.getenv("DATABASE_PATH", str(target_dir / "crow.db")),
             )
 
-        with open(yaml_file, "r") as f:
-            raw_config = yaml.safe_load(f) or {}
+        with open(config_file) as f:
+            raw = yaml.safe_load(f) or {}
 
-        parsed_config = resolve_env_vars(raw_config)
-        llm_config = LLMConfig()
+        parsed = resolve_env_vars(raw)
 
-        for p_name, p_data in parsed_config.get("providers", {}).items():
-            llm_config.providers[p_name] = LLMProvider(
-                name=p_name,
-                api_key=p_data.get("api_key"),
-                base_url=p_data.get("base_url"),
+        # Parse providers
+        llm = LLMConfig()
+        for name, data in parsed.get("providers", {}).items():
+            llm.providers[name] = LLMProvider(
+                name=name,
+                api_key=data.get("api_key"),
+                base_url=data.get("base_url"),
             )
 
-        for m_name, m_data in parsed_config.get("models", {}).items():
-            llm_config.models[m_name] = LLModel(
-                name=m_name,
-                provider_name=m_data.get("provider", ""),
-                model_id=m_data.get("model", ""),
+        # Parse models
+        for name, data in parsed.get("models", {}).items():
+            llm.models[name] = LLModel(
+                name=name,
+                provider_name=data.get("provider", ""),
+                model_id=data.get("model", ""),
             )
 
-        db_uri = parsed_config.get("db_uri") or os.getenv(
-            "DATABASE_PATH", f"sqlite:///{target_dir / 'crow.db'}"
+        # Parse overrides
+        db_uri = parsed.get("db_uri") or os.getenv(
+            "DATABASE_PATH", str(target_dir / "crow.db")
         )
-        _OVERRIDABLE = {
-            "max_retries_per_step": int,
-            "MAX_COMPACT_TOKENS": int,
-            "N_STEPS_BACK_COMPACT": int,
-            "MAX_TOKENS": int,
-        }
         overrides = {}
-        for key, typ in _OVERRIDABLE.items():
-            if key in parsed_config:
-                overrides[key] = typ(parsed_config[key])
+        for key, typ in (
+            ("max_retries_per_step", int),
+            ("MAX_COMPACT_TOKENS", int),
+            ("MAX_TOKENS", int),
+        ):
+            if key in parsed:
+                overrides[key] = typ(parsed[key])
 
         return cls(
             config_dir=target_dir,
-            llm=llm_config,
-            mcp_servers=parsed_config.get("mcpServers", {}),
+            llm=llm,
             db_uri=db_uri,
+            mcp_servers=parsed.get("mcpServers", {}),
             **overrides,
         )

@@ -8,12 +8,16 @@ Configuration priority (highest to lowest):
 2. config.yaml in config_dir (if exists)
 3. .env in current directory (loaded via load_dotenv)
 4. Interactive prompts
+
+DashScope easter egg:
+    If base_url matches coding-intl.dashscope.aliyuncs.com,
+    LiteLLM is auto-provisioned as a proxy with qwen3.6-plus + glm-5.
 """
 
+import base64
 import getpass
 import os
-import subprocess
-import time
+import secrets
 from pathlib import Path
 from typing import Any
 
@@ -25,15 +29,29 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
+from crow_cli.agent.default import (
+    COMPOSE_YAML,
+    LITELLM_CONFIG_YAML,
+    SYSTEM_PROMPT,
+)
+
 load_dotenv()  # Load .env from current directory if present
 
 console = Console()
+
+# DashScope detection
+DASHSCOPE_URL = "https://coding-intl.dashscope.aliyuncs.com/v1"
+
+# Default models to use when DashScope is detected
+DASHSCOPE_MODELS = {
+    "qwen3.6-plus": {"provider": "dashscope", "model": "qwen3.6-plus"},
+    "glm-5": {"provider": "dashscope", "model": "glm-5"},
+}
 
 
 def fetch_models(base_url: str, api_key: str) -> list[dict]:
     """Fetch available models from an OpenAI-compatible /models endpoint."""
     try:
-        # Ensure base_url doesn't end with slash
         base_url = base_url.rstrip("/")
         url = f"{base_url}/models"
 
@@ -73,7 +91,6 @@ def select_models(models: list[dict]) -> list[tuple[str, str]]:
         f"\n[cyan]Found {len(models)} models. Select which ones to add:[/cyan]"
     )
 
-    # Show all models
     table = Table(show_header=True, header_style="bold cyan")
     table.add_column("#", style="dim", width=4)
     table.add_column("Model ID", style="green")
@@ -84,7 +101,6 @@ def select_models(models: list[dict]) -> list[tuple[str, str]]:
 
     console.print(table)
 
-    # Get selections
     console.print(
         "\n[dim]Enter model numbers to add (comma-separated, e.g., 1,3,5) or 'all' or 'none':[/dim]"
     )
@@ -102,13 +118,11 @@ def select_models(models: list[dict]) -> list[tuple[str, str]]:
             console.print("[red]Invalid selection[/red]")
             return []
 
-    # Filter valid indices
     indices = [i for i in indices if 0 <= i < len(models)]
 
     selected = []
     for idx in indices:
         model_id = models[idx]["id"]
-        # Ask for friendly name
         default_name = model_id.split("/")[-1] if "/" in model_id else model_id
         friendly_name = Prompt.ask(
             f"  Friendly name for [green]{model_id}[/]", default=default_name
@@ -118,79 +132,15 @@ def select_models(models: list[dict]) -> list[tuple[str, str]]:
     return selected
 
 
-def wait_for_searxng_ready(config_dir: Path, port: str, max_wait: int = 30) -> bool:
-    """Wait for SearXNG to be ready.
-
-    Checks both:
-    1. settings.yml exists on host (container started + volume mounted)
-    2. HTTP endpoint responds (container is actually listening)
-
-    Returns True if ready, False if timed out.
-    """
-    searxng_dir = config_dir / "searxng"
-    settings_file = searxng_dir / "settings.yml"
-    elapsed = 0
-
-    console.print(f"  [dim]Waiting for SearXNG to start...[/dim]")
-    while elapsed < max_wait:
-        # Check HTTP endpoint (primary readiness signal)
-        try:
-            with httpx.Client() as client:
-                response = client.get(
-                    f"http://localhost:{port}/search?q=test&format=json",
-                    timeout=3,
-                )
-                if response.status_code == 200:
-                    console.print(f"  [green]✓[/green] SearXNG ready ({elapsed}s)")
-                    return True
-        except httpx.ConnectError:
-            pass  # Not ready yet
-        except httpx.RequestError:
-            pass  # Not ready yet
-
-        # Fallback: check if settings.yml exists on host
-        if settings_file.exists():
-            console.print(f"  [green]✓[/green] SearXNG ready ({elapsed}s)")
-            return True
-
-        time.sleep(2)
-        elapsed += 2
-
-    console.print(f"  [red]✗[/red] SearXNG did not start within {max_wait}s")
-    return False
+def is_dashscope_url(base_url: str) -> bool:
+    """Detect if base_url points to DashScope's coding-intl endpoint."""
+    return "coding-intl.dashscope.aliyuncs.com" in base_url
 
 
-def enable_searxng_json(config_dir: Path, port: str) -> bool:
-    """Test that SearXNG JSON endpoint works.
-
-    We already wrote settings.yml with JSON enabled before docker started.
-    Just wait for the container and test.
-    """
-    if not wait_for_searxng_ready(config_dir, port):
-        return False
-
-    console.print("  [dim]Testing JSON endpoint...[/dim]")
-    try:
-        base_url = f"http://localhost:{port}"
-        with httpx.Client() as client:
-            response = client.get(
-                f"{base_url}/search",
-                params={"q": "test", "format": "json"},
-                timeout=10,
-            )
-            response.raise_for_status()
-            data = response.json()
-
-        if data.get("results") is not None:
-            count = len(data["results"])
-            console.print(f"  [green]✓[/green] JSON endpoint working! ({count} results)")
-            return True
-        else:
-            console.print("  [yellow]Warning: No results in JSON response[/yellow]")
-            return True  # Still working, just no results yet
-    except httpx.HTTPError as e:
-        console.print(f"  [red]✗ JSON endpoint failed: {e}[/red]")
-        return False
+def generate_litellm_key() -> str:
+    """Generate a random 64-char base64-encoded LiteLLM master key."""
+    raw = secrets.token_bytes(48)  # 384 bits
+    return base64.b64encode(raw).decode()[:64]
 
 
 def run_init(config_dir: Path, yes: bool = False):
@@ -205,22 +155,21 @@ def run_init(config_dir: Path, yes: bool = False):
         )
     )
 
-    # Load existing config if present (for merging)
     config_file = config_dir / "config.yaml"
     env_file = config_dir / ".env"
-    existing_config = None
     if config_file.exists() and not yes:
         if not Confirm.ask(
             f"\n[yellow]{config_file} already exists. Overwrite?[/]", default=False
         ):
             console.print("[red]Aborted.[/red]")
             return
-        existing_config = yaml.safe_load(config_file.read_text())
 
     # Data structures
     providers: dict[str, dict] = {}
     models: dict[str, dict] = {}
     env_vars: dict[str, str] = {}
+    setup_litellm = False
+    dashscope_api_key = None
 
     # =========================================================================
     # STEP 1: Add providers
@@ -228,15 +177,42 @@ def run_init(config_dir: Path, yes: bool = False):
     console.print("\n[bold cyan]═══ Step 1: LLM Providers ═══[/bold cyan]\n")
 
     if yes:
-        # In --yes mode, check env vars for provider config
         console.print("[dim]→ --yes mode: checking env vars for providers...[/dim]")
-        # Look for LLM_{PROVIDER}_API_KEY / LLM_{PROVIDER}_BASE_URL patterns
         for key, value in os.environ.items():
             if key.startswith("LLM_") and key.endswith("_API_KEY"):
-                provider = key[len("LLM_"):-len("_API_KEY")].lower()
+                provider = key[len("LLM_") : -len("_API_KEY")].lower()
                 base_url_key = f"LLM_{provider.upper()}_BASE_URL"
                 base_url = os.environ.get(base_url_key, "")
                 if base_url and value:
+                    # ── DashScope easter egg in --yes mode ──────────────────
+                    if is_dashscope_url(base_url):
+                        console.print(
+                            "\n[bold magenta]🥚 Ope! DashScope detected![/bold magenta]"
+                        )
+                        console.print(
+                            "[dim]Spinning up LiteLLM proxy with qwen3.6-plus + glm-5...[/dim]"
+                        )
+
+                        setup_litellm = True
+                        dashscope_api_key = value
+                        litellm_key = generate_litellm_key()
+                        litellm_port = os.environ.get("LITELLM_PORT", "4000")
+                        env_vars["DASHSCOPE_API_KEY"] = value
+                        env_vars["LITELLM_API_KEY"] = litellm_key
+                        env_vars["LITELLM_PORT"] = litellm_port
+
+                        providers["dashscope"] = {
+                            "base_url": f"http://localhost:{litellm_port}/v1",
+                            "api_key": f"${{LITELLM_API_KEY}}",
+                        }
+                        models.update(DASHSCOPE_MODELS)
+
+                        console.print("  [green]✓[/green] Provider: dashscope → LiteLLM proxy")
+                        console.print("  [green]✓[/green] Models: qwen3.6-plus, glm-5")
+                        console.print("  [green]✓[/green] LiteLLM master key generated")
+                        continue
+                    # ── End DashScope easter egg ────────────────────────────
+
                     console.print(
                         f"  [cyan]✓[/cyan] Found provider: [green]{provider}[/green] "
                         f"from env vars"
@@ -246,16 +222,15 @@ def run_init(config_dir: Path, yes: bool = False):
                         "api_key": f"${{{key}}}",
                     }
                     env_vars[key] = value
-                    # Try to fetch models
                     try:
                         available_models = fetch_models(base_url, value)
-                        for model in available_models[:5]:  # Take first 5
+                        for model in available_models[:5]:
                             models[model["id"]] = {
                                 "provider": provider,
                                 "model": model["id"],
                             }
                     except Exception:
-                        pass  # Best effort, not critical
+                        pass
         if not providers:
             console.print(
                 "[yellow]  No providers found in env vars. "
@@ -275,9 +250,7 @@ def run_init(config_dir: Path, yes: bool = False):
                 console.print("[red]Provider name required[/red]")
                 continue
 
-            base_url = Prompt.ask(
-                "Base URL (e.g., https://api.openai.com/v1)"
-            ).strip()
+            base_url = Prompt.ask("Base URL (e.g., https://api.openai.com/v1)").strip()
             if not base_url:
                 console.print("[red]Base URL required[/red]")
                 continue
@@ -289,18 +262,50 @@ def run_init(config_dir: Path, yes: bool = False):
                     "You'll need to set it manually.[/yellow]"
                 )
 
-            # Store provider
+            # ── DashScope easter egg ──────────────────────────────────
+            if is_dashscope_url(base_url) and api_key:
+                console.print(
+                    "\n[bold magenta]🥚 Ope! DashScope detected![/bold magenta]"
+                )
+                console.print(
+                    "[dim]Spinning up LiteLLM proxy with qwen3.6-plus + glm-5...[/dim]"
+                )
+
+                setup_litellm = True
+                dashscope_api_key = api_key
+                litellm_key = generate_litellm_key()
+                litellm_port = os.environ.get("LITELLM_PORT", "4000")
+                env_vars["DASHSCOPE_API_KEY"] = api_key
+                env_vars["LITELLM_API_KEY"] = litellm_key
+                env_vars["LITELLM_PORT"] = litellm_port
+
+                # Provider points to local LiteLLM proxy
+                providers["dashscope"] = {
+                    "base_url": f"http://localhost:{litellm_port}/v1",
+                    "api_key": f"${{LITELLM_API_KEY}}",
+                }
+
+                # Pre-configured models
+                models.update(DASHSCOPE_MODELS)
+
+                console.print("  [green]✓[/green] Provider: dashscope → LiteLLM proxy")
+                console.print("  [green]✓[/green] Models: qwen3.6-plus, glm-5")
+                console.print("  [green]✓[/green] LiteLLM master key generated")
+                console.print()
+
+                if not Confirm.ask("\nAdd another provider?", default=False):
+                    break
+                continue
+            # ── End DashScope easter egg ──────────────────────────────
+
             providers[provider_name] = {
                 "base_url": base_url,
                 "api_key": f"${{{provider_name.upper()}_API_KEY}}",
             }
             env_vars[f"{provider_name.upper()}_API_KEY"] = api_key
 
-            # Try to fetch models
             if api_key and base_url:
-                console.print(
-                    f"\n[cyan]Fetching models from {provider_name}...[/cyan]"
-                )
+                console.print(f"\n[cyan]Fetching models from {provider_name}...[/cyan]")
                 available_models = fetch_models(base_url, api_key)
                 selected = select_models(available_models)
 
@@ -324,7 +329,6 @@ def run_init(config_dir: Path, yes: bool = False):
 
     setup_searxng = None
     if yes:
-        # In --yes mode, default to installing
         setup_searxng = True
         searxng_port = os.environ.get("SEARXNG_PORT", "2946")
         env_vars["SEARXNG_PORT"] = searxng_port
@@ -352,10 +356,8 @@ def run_init(config_dir: Path, yes: bool = False):
     console.print("\n[bold cyan]═══ Step 3: Review ═══[/bold cyan]\n")
 
     db_uri = f"sqlite:///{config_dir / 'crow.db'}"
-    murder_db_uri = f"sqlite:///{config_dir / 'crow.db'}"
     console.print(f"[dim]Using SQLite at {config_dir / 'crow.db'}[/dim]")
 
-    # Show providers table
     if providers:
         p_table = Table(title="Providers", show_header=True)
         p_table.add_column("Name", style="cyan")
@@ -364,7 +366,6 @@ def run_init(config_dir: Path, yes: bool = False):
             p_table.add_row(name, data["base_url"])
         console.print(p_table)
 
-    # Show models table
     if models:
         m_table = Table(title="Models", show_header=True)
         m_table.add_column("Friendly Name", style="green")
@@ -374,11 +375,11 @@ def run_init(config_dir: Path, yes: bool = False):
             m_table.add_row(name, data["provider"], data["model"])
         console.print(m_table)
 
-    # Show services
     s_table = Table(title="Services", show_header=True)
     s_table.add_column("Service", style="cyan")
     s_table.add_column("Status", style="green")
     s_table.add_row("SearXNG", "✓ Docker" if setup_searxng else "✗ Skip")
+    s_table.add_row("LiteLLM", "✓ Docker" if setup_litellm else "✗ N/A")
     s_table.add_row("Database", "SQLite")
     console.print(s_table)
 
@@ -394,18 +395,19 @@ def run_init(config_dir: Path, yes: bool = False):
     # =========================================================================
     console.print("\n[bold cyan]═══ Step 4: Writing Configuration ═══[/bold cyan]\n")
 
-    # Ensure directory exists
     config_dir.mkdir(parents=True, exist_ok=True)
 
-    # Copy system prompt template from repo config directory
-    repo_prompts = Path(__file__).parents[3] / "config" / "prompts"
+    # System prompt template
     dest_prompts = config_dir / "prompts"
     dest_prompts.mkdir(parents=True, exist_ok=True)
-    for template_file in repo_prompts.glob("*.jinja2"):
-        shutil.copy2(template_file, dest_prompts / template_file.name)
-    console.print(f"[green]✓[/green] Copied prompt templates to {dest_prompts}")
+    prompt_file = dest_prompts / "system_prompt.jinja2"
+    if not prompt_file.exists():
+        prompt_file.write_text(SYSTEM_PROMPT)
+        console.print(f"[green]✓[/green] Wrote prompt template to {prompt_file}")
+    else:
+        console.print(f"[yellow]⊘[/yellow] Prompt template already exists, skipping")
 
-    # Build config.yaml
+    # config.yaml — single source of truth for crow-cli config
     config_data: dict[str, Any] = {
         "mcpServers": {
             "crow-mcp": {
@@ -420,7 +422,6 @@ def run_init(config_dir: Path, yes: bool = False):
             }
         },
         "db_uri": db_uri,
-        "murder_db_uri": murder_db_uri,
         "providers": providers,
         "models": models,
         "MAX_COMPACT_TOKENS": 190000,
@@ -428,7 +429,6 @@ def run_init(config_dir: Path, yes: bool = False):
         "max_retries_per_step": 3,
     }
 
-    # Write config.yaml
     with open(config_file, "w") as f:
         yaml.dump(
             config_data,
@@ -439,104 +439,117 @@ def run_init(config_dir: Path, yes: bool = False):
         )
     console.print(f"[green]✓[/green] Written {config_file}")
 
-    # Write .env
+    # .env — secrets live here, not in config.yaml
     env_lines = [f"{k}={v}" for k, v in env_vars.items()]
     with open(env_file, "w") as f:
         f.write("\n".join(env_lines) + "\n")
     console.print(f"[green]✓[/green] Written {env_file}")
 
-    # Write docker-compose.yml if needed
-    if setup_searxng:
-        compose_data: dict[str, Any] = {"services": {}, "volumes": {}}
+    # LiteLLM config (if DashScope detected)
+    if setup_litellm:
+        litellm_dir = config_dir / "litellm"
+        litellm_dir.mkdir(parents=True, exist_ok=True)
+        litellm_config_file = litellm_dir / "config.yaml"
+        if not litellm_config_file.exists():
+            litellm_config_file.write_text(LITELLM_CONFIG_YAML)
+            console.print(
+                f"[green]✓[/green] Wrote LiteLLM config to {litellm_config_file}"
+            )
+        else:
+            console.print(f"[yellow]⊘[/yellow] LiteLLM config already exists, skipping")
 
-        compose_data["services"]["searxng"] = {
-            "image": "searxng/searxng",
-            "restart": "always",
-            "ports": ["${SEARXNG_PORT}:8080"],
-            "environment": [
-                "BASE_URL=http://0.0.0.0:${SEARXNG_PORT}",
-                "INSTANCE_NAME=crow-search",
-            ],
-            "volumes": ["./searxng:/etc/searxng"],
-        }
-        # Create searxng config directory
+    # SearXNG compose + settings (written but NOT started)
+    if setup_searxng:
         searxng_dir = config_dir / "searxng"
         searxng_dir.mkdir(exist_ok=True)
 
-        # Write settings.yml with JSON enabled BEFORE docker starts.
-        # The container will see this mounted file and use it.
         settings = {"search": {"formats": ["html", "json"]}}
         with open(searxng_dir / "settings.yml", "w") as f:
             yaml.dump(settings, f, default_flow_style=False)
-        console.print(f"[green]✓[/green] Wrote SearXNG settings with JSON output")
+        console.print(f"[green]✓[/green] Wrote SearXNG settings.yml")
 
+    # Build compose.yaml from defaults — selectively include services
+    compose_template = yaml.safe_load(COMPOSE_YAML)
+    available_services = compose_template.get("services", {})
+    active_services: dict[str, Any] = {}
+
+    if setup_searxng and "searxng" in available_services:
+        active_services["searxng"] = available_services["searxng"]
+
+    if setup_litellm and "litellm" in available_services:
+        active_services["litellm"] = available_services["litellm"]
+
+    if active_services:
+        compose_data: dict[str, Any] = {
+            "services": active_services,
+            "volumes": compose_template.get("volumes", {}),
+        }
         compose_file = config_dir / "compose.yaml"
         with open(compose_file, "w") as f:
             yaml.dump(compose_data, f, default_flow_style=False, sort_keys=False)
         console.print(f"[green]✓[/green] Written {compose_file}")
 
-    # Create logs directory
+    # Logs directory
     (config_dir / "logs").mkdir(exist_ok=True)
 
     # =========================================================================
-    # STEP 5: Start Docker
+    # STEP 5: Start services (just instructions)
     # =========================================================================
+    docker_services = []
     if setup_searxng:
-        console.print("\n[bold cyan]═══ Step 5: Starting Services ═══[/bold cyan]\n")
+        docker_services.append("SearXNG")
+    if setup_litellm:
+        docker_services.append("LiteLLM")
 
-        start_docker = True
-        if not yes:
-            start_docker = Confirm.ask("Start Docker services now?", default=True)
+    if docker_services:
+        console.print("\n[bold cyan]═══ Step 5: Start Services ═══[/bold cyan]\n")
 
-        if start_docker:
-            # Start SearXNG container first (it writes settings.yml to volume)
-            console.print("  [dim]Starting SearXNG container...[/dim]")
-            try:
-                result = subprocess.run(
-                    ["docker", "compose", "up", "-d"],
-                    cwd=config_dir,
-                    capture_output=True,
-                    text=True,
-                )
-                if result.returncode == 0:
-                    console.print("  [green]✓[/green] SearXNG container started")
-
-                    # Now enable JSON output and validate
-                    searxng_ok = enable_searxng_json(config_dir, searxng_port)
-                    if searxng_ok:
-                        console.print(
-                            "  [green]✓[/green] SearXNG configured and validated"
-                        )
-                    else:
-                        console.print(
-                            "  [yellow]Warning: SearXNG validation failed. "
-                            "You may need to configure it manually.[/yellow]"
-                        )
-                else:
-                    console.print(
-                        f"  [red]Failed to start SearXNG: {result.stderr}[/red]"
-                    )
-            except subprocess.CalledProcessError as e:
-                console.print(f"  [red]Failed to start SearXNG: {e}[/red]")
-            except FileNotFoundError:
-                console.print(
-                    "  [yellow]Docker not found. "
-                    "Please start services manually.[/yellow]"
-                )
+        console.print(
+            Panel(
+                f"[bold white]cd {config_dir} && docker compose up -d[/bold white]",
+                title="[yellow]Start " + " + ".join(docker_services) + "[/yellow]",
+                border_style="yellow",
+            )
+        )
 
     # =========================================================================
     # Done
     # =========================================================================
+    config_logs = config_dir / "logs"
+    system_prompt_dir = config_dir / "prompts"
+
     console.print()
-    console.print(
-        Panel.fit(
-            "[bold green]✓ Configuration complete![/bold green]\n\n"
-            f"Config: [cyan]{config_file}[/cyan]\n"
-            f"Secrets: [cyan]{env_file}[/cyan]\n\n"
-            '[dim]Test with: crow-cli run "hello"[/dim]',
-            border_style="green",
+    if setup_searxng or setup_litellm:
+        console.print(
+            Panel.fit(
+                "[bold green]✓ Configuration complete![/bold green]\n\n"
+                f"Config:   [cyan]{config_file}[/cyan]\n"
+                f"Database: [cyan]{config_dir / 'crow.db'}[/cyan]\n"
+                f"Logs:     [cyan]{config_logs}[/cyan]\n"
+                f"Prompt:   [cyan]{system_prompt_dir}/system_prompt.jinja2[/cyan]\n"
+                f"Secrets:  [cyan]{env_file}[/cyan]\n"
+                f"Compose:  [cyan]{compose_file}[/cyan]\n\n"
+                "[dim]Start services with:[/dim]\n"
+                f"    [bold red]cd {config_dir} && docker compose up -d[/bold red]\n"
+                f"[dim]Then to test:\n"
+                f'    [bold white]crow-cli run "hey"[/bold white]',
+                border_style="green",
+            )
         )
-    )
+    else:
+        console.print(
+            Panel.fit(
+                "[bold green]✓ Configuration complete![/bold green]\n\n"
+                f"Config:   [cyan]{config_file}[/cyan]\n"
+                f"Database: [cyan]{config_dir / 'crow.db'}[/cyan]\n"
+                f"Logs:     [cyan]{config_logs}[/cyan]\n"
+                f"Prompt:   [cyan]{system_prompt_dir}/system_prompt.jinja2[/cyan]\n"
+                f"Secrets:  [cyan]{env_file}[/cyan]\n\n"
+                f"[dim][bold red]Web Search tool will not work! Reconsider setting up searxng![/bold red][/dim]\n"
+                f'[dim]Run to test: crow-cli run "hey"',
+                border_style="green",
+            )
+        )
 
 
 # For typer integration

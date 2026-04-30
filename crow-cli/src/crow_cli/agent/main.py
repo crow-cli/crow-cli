@@ -8,37 +8,32 @@ This is the single agent class that combines:
 No wrapper, no nested agents - just one clean Agent(acp.Agent) implementation.
 """
 
-import platform
-import sys
-
 # Fix for PyInstaller + asyncio stdin on Linux
 # MUST be applied BEFORE any acp imports
-if getattr(sys, "frozen", False) and platform.system() == "Linux":
-    import asyncio
-
-    import acp.stdio as _acp_stdio
-
-    async def _frozen_posix_stdio_streams(loop, limit=None):
-        """Use threaded stdin feeder for frozen builds on Linux."""
-        reader = (
-            asyncio.StreamReader(limit=limit)
-            if limit is not None
-            else asyncio.StreamReader()
-        )
-        _acp_stdio._start_stdin_feeder(loop, reader)
-
-        write_protocol = _acp_stdio._WritePipeProtocol()
-        transport = _acp_stdio._StdoutTransport()
-        writer = asyncio.StreamWriter(transport, write_protocol, None, loop)
-        return reader, writer
-
-    # Patch the function
-    _acp_stdio._posix_stdio_streams = _frozen_posix_stdio_streams
+# if getattr(sys, "frozen", False) and platform.system() == "Linux":
+#     import asyncio
+#     import acp.stdio as _acp_stdio
+#     async def _frozen_posix_stdio_streams(loop, limit=None):
+#         """Use threaded stdin feeder for frozen builds on Linux."""
+#         reader = (
+#             asyncio.StreamReader(limit=limit)
+#             if limit is not None
+#             else asyncio.StreamReader()
+#         )
+#         _acp_stdio._start_stdin_feeder(loop, reader)
+#         write_protocol = _acp_stdio._WritePipeProtocol()
+#         transport = _acp_stdio._StdoutTransport()
+#         writer = asyncio.StreamWriter(transport, write_protocol, None, loop)
+#         return reader, writer
+#     # Patch the function
+#     _acp_stdio._posix_stdio_streams = _frozen_posix_stdio_streams
 
 import asyncio
 import base64
 import mimetypes
 import os
+import platform
+import sys
 import uuid
 from contextlib import AsyncExitStack
 from pathlib import Path
@@ -89,6 +84,7 @@ from fastmcp import Client as MCPClient
 from crow_cli.agent.compact import compact
 from crow_cli.agent.configure import Config, get_default_config_dir
 from crow_cli.agent.context import get_directory_tree
+from crow_cli.agent.db import get_schemas
 from crow_cli.agent.hooks import (
     CommandHook,
     uv_project_hook,
@@ -98,7 +94,11 @@ from crow_cli.agent.logger import setup_logger
 from crow_cli.agent.mcp_client import create_mcp_client_from_acp, get_tools
 from crow_cli.agent.prompt import normalize_prompt
 from crow_cli.agent.react import react_loop
-from crow_cli.agent.session import AgentSession, get_session_by_cwd, lookup_or_create_prompt
+from crow_cli.agent.session import (
+    AgentSession,
+    get_session_by_cwd,
+    lookup_or_create_prompt,
+)
 from crow_cli.agent.slash import (
     _SLASH_COMMANDS,
     parse_slash_command,
@@ -353,6 +353,8 @@ class AcpAgent(Agent):
                 "workspace": cwd,
                 "display_tree": display_tree,
                 "agents_content": agents_content,
+                "db_uri": self._config.db_uri,
+                "table_schemas": get_schemas(),
             },
             tool_definitions=tools,
             request_params={"temperature": 0.2},
@@ -446,7 +448,7 @@ class AcpAgent(Agent):
             self._logger.info(
                 "LOAD_SESSION: Step 3: Creating MCP client with fallback config"
             )
-            mcp_client = create_mcp_client_from_acp(
+            config, mcp_client = create_mcp_client_from_acp(
                 mcp_servers=mcp_servers,
                 cwd=cwd,
                 builtin_config=builtin_config,
@@ -477,10 +479,14 @@ class AcpAgent(Agent):
             )
             # Initialize session config if not present
             if session.session_id not in self._config_values:
-                default_model = self._default_model_value()
-                self._config_values[session.session_id] = {
-                    "model": session.model_identifier or default_model
-                }
+                # Resolve model_identifier to "provider_name:model_id" format
+                resolved = self._default_model_value()
+                if session.model_identifier:
+                    for m in self._config.llm.models.values():
+                        if m.model_id == session.model_identifier:
+                            resolved = f"{m.provider_name}:{m.model_id}"
+                            break
+                self._config_values[session.session_id] = {"model": resolved}
 
             # TODO: Replay conversation history to client
 
@@ -550,6 +556,18 @@ class AcpAgent(Agent):
         Cancellation is handled via try/except - state is persisted by react_loop.
         """
         self._session_logger.info("Prompt request for session: %s", session_id)
+        if not self._config.is_configured:
+            setup_msg = (
+                "Hi there! 👋 Thanks for trying out `crow-cli`!\n\n"
+                "I __don't__ have access to an LLM provider yet. Be sure to have your provider API key and base url ready and run:\n\n"
+                " > `uvx crow-cli init`\n\n"
+                "Then restart your agent. I'll be ready when you are."
+            )
+            await self._conn.session_update(
+                session_id=session_id,
+                update=update_agent_message(text_block(setup_msg)),
+            )
+            return PromptResponse(stop_reason="end_turn")
 
         # Resolve session_id to agent_id
         if self._session_id == session_id and self._agent_id:
@@ -754,12 +772,15 @@ class AcpAgent(Agent):
         return ListSessionsResponse(sessions=sessions, next_cursor=None)
 
 
-async def agent_run() -> None:
-    await run_agent(AcpAgent())
+async def agent_run(config_dir: Path | None = None) -> None:
+    config: Config | None = None
+    if config_dir is not None:
+        config = Config.load(config_dir=config_dir)
+    await run_agent(AcpAgent(config=config))
 
 
-def main():
-    asyncio.run(agent_run())
+def main(config_dir: Path | None = None):
+    asyncio.run(agent_run(config_dir=config_dir))
 
 
 if __name__ == "__main__":
