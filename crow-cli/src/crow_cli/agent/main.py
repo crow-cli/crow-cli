@@ -8,25 +8,40 @@ This is the single agent class that combines:
 No wrapper, no nested agents - just one clean Agent(acp.Agent) implementation.
 """
 
-# Fix for PyInstaller + asyncio stdin on Linux
-# MUST be applied BEFORE any acp imports
-# if getattr(sys, "frozen", False) and platform.system() == "Linux":
-#     import asyncio
-#     import acp.stdio as _acp_stdio
-#     async def _frozen_posix_stdio_streams(loop, limit=None):
-#         """Use threaded stdin feeder for frozen builds on Linux."""
-#         reader = (
-#             asyncio.StreamReader(limit=limit)
-#             if limit is not None
-#             else asyncio.StreamReader()
-#         )
-#         _acp_stdio._start_stdin_feeder(loop, reader)
-#         write_protocol = _acp_stdio._WritePipeProtocol()
-#         transport = _acp_stdio._StdoutTransport()
-#         writer = asyncio.StreamWriter(transport, write_protocol, None, loop)
-#         return reader, writer
-#     # Patch the function
-#     _acp_stdio._posix_stdio_streams = _frozen_posix_stdio_streams
+SETUP_MESSAGE = """# Welcome!
+👋 Hi there! Thanks for trying out `crow-cli`!
+
+Unfortunately I _don't_ have access to an LLM provider yet, so let's walk you through the steps to get one configured.
+
+# Install Dependencies
+To install `uv` run the following in a terminal:
+```bash
+# On macOS and Linux.
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+## Preferred coding plan
+I use both local models and cloud API providers. If you don't have a coding plan, I highly recommend the [Alibaba Cloud Coding plan](https://www.alibabacloud.com/help/en/model-studio/coding-plan) from the makers of Qwen. It's tops!
+
+## Local models
+To get started you can download [`ollama`](ollama.com/download) or any of the plethora of local model provider programs. I highly recommend building [llama.cpp from source.](https://gist.github.com/odellus/b9a22e06493a83171435a17602934be9)
+```bash
+# Install ollama to get started
+curl -fsSL https://ollama.com/install.sh | sh
+# Size up your model from this to fit your hardware capabilities
+ollama pull qwen3.5:0.8b
+```
+By default ollama's `API_KEY` is `empty` and the base url is [http://localhost:11434/v1](http://localhost:11434/v1)
+
+# Configure `crow-cli`
+Now you're guaranteed to have an API key and a base url to acces an LLM, run the following and throw your url and keys in there.
+```bash
+uvx crow-cli init
+```
+
+Then restart your agent.
+
+Don't forget to `cd ~/.crow && docker compose up -d` afterwards!"""
 
 import asyncio
 import base64
@@ -557,15 +572,9 @@ class AcpAgent(Agent):
         """
         self._session_logger.info("Prompt request for session: %s", session_id)
         if not self._config.is_configured:
-            setup_msg = (
-                "Hi there! 👋 Thanks for trying out `crow-cli`!\n\n"
-                "I __don't__ have access to an LLM provider yet. Be sure to have your provider API key and base url ready and run:\n\n"
-                " > `uvx crow-cli init`\n\n"
-                "Then restart your agent. I'll be ready when you are."
-            )
             await self._conn.session_update(
                 session_id=session_id,
-                update=update_agent_message(text_block(setup_msg)),
+                update=update_agent_message(text_block(SETUP_MESSAGE)),
             )
             return PromptResponse(stop_reason="end_turn")
 
