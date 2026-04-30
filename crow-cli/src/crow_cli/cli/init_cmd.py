@@ -32,6 +32,7 @@ from rich.table import Table
 from crow_cli.agent.default import (
     COMPOSE_YAML,
     LITELLM_CONFIG_YAML,
+    SEARXNG_SETTINGS_YML,
     SYSTEM_PROMPT,
 )
 
@@ -207,7 +208,9 @@ def run_init(config_dir: Path, yes: bool = False):
                         }
                         models.update(DASHSCOPE_MODELS)
 
-                        console.print("  [green]✓[/green] Provider: dashscope → LiteLLM proxy")
+                        console.print(
+                            "  [green]✓[/green] Provider: dashscope → LiteLLM proxy"
+                        )
                         console.print("  [green]✓[/green] Models: qwen3.6-plus, glm-5")
                         console.print("  [green]✓[/green] LiteLLM master key generated")
                         continue
@@ -463,9 +466,8 @@ def run_init(config_dir: Path, yes: bool = False):
         searxng_dir = config_dir / "searxng"
         searxng_dir.mkdir(exist_ok=True)
 
-        settings = {"search": {"formats": ["html", "json"]}}
         with open(searxng_dir / "settings.yml", "w") as f:
-            yaml.dump(settings, f, default_flow_style=False)
+            f.write(SEARXNG_SETTINGS_YML)
         console.print(f"[green]✓[/green] Wrote SearXNG settings.yml")
 
     # Build compose.yaml from defaults — selectively include services
