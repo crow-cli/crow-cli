@@ -113,6 +113,7 @@ from crow_cli.agent.session import (
     AgentSession,
     get_session_by_cwd,
     lookup_or_create_prompt,
+    get_coolname
 )
 from crow_cli.agent.slash import (
     _SLASH_COMMANDS,
@@ -300,7 +301,7 @@ class AcpAgent(Agent):
             agent_info=Implementation(
                 name="crow-cli",
                 title="crow-cli",
-                version="0.1.21",
+                version="0.1.23",
             ),
         )
 
@@ -361,7 +362,7 @@ class AcpAgent(Agent):
                 agents_content = f.read()
         else:
             agents_content = "No AGENTS.md found"
-
+        session_id = get_coolname()
         session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={
@@ -370,6 +371,7 @@ class AcpAgent(Agent):
                 "agents_content": agents_content,
                 "db_uri": self._config.db_uri,
                 "table_schemas": get_schemas(),
+                "session_id": session_id,
             },
             tool_definitions=tools,
             request_params={"temperature": 0.2},
@@ -377,6 +379,7 @@ class AcpAgent(Agent):
             db_uri=self._db_uri,
             cwd=cwd,
             agent_idx=1,
+            session_id=session_id,
         )
 
         # Store in-memory references keyed on agent_id

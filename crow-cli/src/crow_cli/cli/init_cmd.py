@@ -415,20 +415,14 @@ def run_init(config_dir: Path, yes: bool = False):
         "mcpServers": {
             "crow-mcp": {
                 "transport": "stdio",
-                "command": "uv",
-                "args": [
-                    "--project",
-                    str(Path(__file__).parent.parent.parent.parent.parent / "crow-mcp"),
-                    "run",
-                    "crow-mcp",
-                ],
+                "command": "uvx",
+                "args": ["crow-mcp"],
             }
         },
         "db_uri": db_uri,
         "providers": providers,
         "models": models,
         "MAX_COMPACT_TOKENS": 190000,
-        "N_STEPS_BACK_COMPACT": 8,
         "max_retries_per_step": 3,
     }
 

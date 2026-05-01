@@ -197,7 +197,7 @@ wheels = [
 
 [[package]]
 name = "crow-cli"
-version = "0.1.21"
+version = "0.1.22"
 source = { directory = "../../crow-cli" }
 dependencies = [
     { name = "agent-client-protocol" },

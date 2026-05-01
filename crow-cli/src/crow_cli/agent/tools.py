@@ -5,6 +5,7 @@ Intercepts terminal commands to enforce --project usage for 'uv' in ephemeral en
 """
 
 import asyncio
+import json
 from contextlib import suppress
 from logging import Logger
 from typing import Any
@@ -333,6 +334,11 @@ async def execute_acp_write(
     """
     path = args.get("file_path", "")
     content = args.get("content", "")
+
+    # maximal_deserialize may have decoded JSON strings into dicts/lists.
+    # If content is not a string, serialize it back so write_text_file works.
+    if not isinstance(content, str):
+        content = json.dumps(content, ensure_ascii=False, indent=2)
     session_id = route_to_session_id(agent_id)
 
     # Build ACP tool call ID from turn_id + llm tool call id

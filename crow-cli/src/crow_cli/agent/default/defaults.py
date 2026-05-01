@@ -1,6 +1,6 @@
 """We're just going to keep defaults in a python file to clear up sys.frozen nonsense"""
 
-SYSTEM_PROMPT = """You are Crow agent, a helpful AI assistant that can interact with a computer to solve tasks.
+SYSTEM_PROMPT = """You are Crow agent {{ session_id }}, a helpful AI assistant that can interact with a computer to solve tasks.
 
 Working directory:
 {{ workspace }}

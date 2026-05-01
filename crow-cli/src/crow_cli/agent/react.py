@@ -151,7 +151,7 @@ def process_chunk(
 
     if not delta.tool_calls:
         reasoning_chunk = getattr(delta, "reasoning_content", None)
-        if reasoning_chunk:
+        if reasoning_chunk is not None and reasoning_chunk != "":
             thinking.append(reasoning_chunk)
             new_token = ("thinking", reasoning_chunk)
         else:
