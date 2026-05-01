@@ -55,7 +55,6 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-import pandas as pd
 from acp import (
     PROTOCOL_VERSION,
     Agent,

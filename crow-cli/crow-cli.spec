@@ -8,20 +8,19 @@ a = Analysis(
     ['src/crow_cli/cli/main.py'],
     pathex=[],
     binaries=[],
-    datas=[
-        ('src/crow_cli/agent/default', 'crow_cli/agent/default'),
-    ] + copy_metadata('fastmcp')
+    datas=(
+        copy_metadata('fastmcp')
       + copy_metadata('agent-client-protocol')
       + copy_metadata('typer')
       + copy_metadata('rich')
       + copy_metadata('openai')
       + copy_metadata('httpx')
-      + copy_metadata('pandas')
       + copy_metadata('sqlalchemy')
       + copy_metadata('jinja2')
       + copy_metadata('pyyaml')
       + copy_metadata('coolname')
-      + copy_metadata('directory-tree'),
+      + copy_metadata('directory-tree')
+    ),
     hiddenimports=[
         'crow_cli',
         'crow_cli.agent',
@@ -43,7 +42,6 @@ a = Analysis(
         'fastmcp',
         'openai',
         'httpx',
-        'pandas',
         'sqlalchemy',
         'jinja2',
         'yaml',
