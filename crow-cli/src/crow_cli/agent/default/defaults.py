@@ -151,7 +151,6 @@ COMPOSE_YAML = """services:
       - ${LITELLM_PORT}:4000
     environment:
       - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
-      - LITELLM_API_KEY=${LITELLM_API_KEY}
     volumes:
       - ./litellm/config.yaml:/app/config.yaml
     command: ["--config", "/app/config.yaml"]
@@ -201,22 +200,19 @@ LITELLM_CONFIG_YAML = """model_list:
       model: dashscope/qwen3.6-plus
       api_base: https://coding-intl.dashscope.aliyuncs.com/v1
       api_key: os.environ/DASHSCOPE_API_KEY
-  # - model_name: kimi-k2.5
-  #   litellm_params:
-  #     model: dashscope/kimi-k2.5
-  #     api_base: https://coding-intl.dashscope.aliyuncs.com/v1
-  #     api_key: os.environ/DASHSCOPE_API_KEY
+  - model_name: kimi-k2.5
+    litellm_params:
+      model: dashscope/kimi-k2.5
+      api_base: https://coding-intl.dashscope.aliyuncs.com/v1
+      api_key: os.environ/DASHSCOPE_API_KEY
   - model_name: glm-5
     litellm_params:
       model: dashscope/glm-5
       api_base: https://coding-intl.dashscope.aliyuncs.com/v1
       api_key: os.environ/DASHSCOPE_API_KEY
-  # - model_name: MiniMax-M2.5
-  #   litellm_params:
-  #     model: dashscope/MiniMax-M2.5
-  #     api_base: https://coding-intl.dashscope.aliyuncs.com/v1
-  #     api_key: os.environ/DASHSCOPE_API_KEY
-
-general_settings:
-  master_key: os.environ/LITELLM_API_KEY
+  - model_name: MiniMax-M2.5
+    litellm_params:
+      model: dashscope/MiniMax-M2.5
+      api_base: https://coding-intl.dashscope.aliyuncs.com/v1
+      api_key: os.environ/DASHSCOPE_API_KEY
 """

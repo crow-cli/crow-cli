@@ -138,10 +138,6 @@ def is_dashscope_url(base_url: str) -> bool:
     return "coding-intl.dashscope.aliyuncs.com" in base_url
 
 
-def generate_litellm_key() -> str:
-    """Generate a random 64-char base64-encoded LiteLLM master key."""
-    raw = secrets.token_bytes(48)  # 384 bits
-    return base64.b64encode(raw).decode()[:64]
 
 
 def run_init(config_dir: Path, yes: bool = False):
@@ -196,7 +192,7 @@ def run_init(config_dir: Path, yes: bool = False):
 
                         setup_litellm = True
                         dashscope_api_key = value
-                        litellm_key = generate_litellm_key()
+                        litellm_key = "EMPTY"
                         litellm_port = os.environ.get("LITELLM_PORT", "4000")
                         env_vars["DASHSCOPE_API_KEY"] = value
                         env_vars["LITELLM_API_KEY"] = litellm_key
@@ -276,7 +272,7 @@ def run_init(config_dir: Path, yes: bool = False):
 
                 setup_litellm = True
                 dashscope_api_key = api_key
-                litellm_key = generate_litellm_key()
+                litellm_key = "EMPTY"
                 litellm_port = os.environ.get("LITELLM_PORT", "4000")
                 env_vars["DASHSCOPE_API_KEY"] = api_key
                 env_vars["LITELLM_API_KEY"] = litellm_key
