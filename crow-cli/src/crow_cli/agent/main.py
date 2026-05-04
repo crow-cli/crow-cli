@@ -680,6 +680,12 @@ class AcpAgent(Agent):
                     self._sessions[new_agent_id] = compacted_session
                     self._agent_id = new_agent_id
 
+                # Setup chunk log directory if chunk_log enabled
+                chunk_log_dir = None
+                if self._config.chunk_log:
+                    chunk_log_dir = self._config.config_dir / "logs" / session.session_id
+                    chunk_log_dir.mkdir(parents=True, exist_ok=True)
+
                 async for chunk in react_loop(
                     conn=self._conn,
                     config=self._config,
@@ -694,6 +700,7 @@ class AcpAgent(Agent):
                     on_compact=on_compact,
                     logger=self._session_logger,
                     hooks=self._hooks,
+                    chunk_log_dir=chunk_log_dir,
                 ):
                     chunk_type = chunk.get("type")
 
@@ -783,15 +790,20 @@ class AcpAgent(Agent):
         return ListSessionsResponse(sessions=sessions, next_cursor=None)
 
 
-async def agent_run(config_dir: Path | None = None) -> None:
-    config: Config | None = None
-    if config_dir is not None:
+async def agent_run(
+    config_dir: Path | None = None,
+    config: Config | None = None,
+    debug: bool = False,
+) -> None:
+    if config is None:
         config = Config.load(config_dir=config_dir)
+    if debug:
+        config.chunk_log = True
     await run_agent(AcpAgent(config=config))
 
 
-def main(config_dir: Path | None = None):
-    asyncio.run(agent_run(config_dir=config_dir))
+def main(config_dir: Path | None = None, config: Config | None = None, debug: bool = False):
+    asyncio.run(agent_run(config_dir=config_dir, config=config, debug=debug))
 
 
 if __name__ == "__main__":

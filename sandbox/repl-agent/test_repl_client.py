@@ -13,11 +13,19 @@ from client import ReplClient
 app = typer.Typer()
 
 AGENT_CMD = "uv"
+# AGENT_ARGS = (
+#     "--project",
+#     "/home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent",
+#     "run",
+#     "/home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/main.py",
+# )
 AGENT_ARGS = (
     "--project",
-    "/home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent",
+    "/Users/thomas/src/crow-ai/crow-cli/crow-cli",
     "run",
-    "/home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/main.py",
+    "crow-cli",
+    "acp",
+    "--debug",
 )
 
 

@@ -60,11 +60,16 @@ def run_agentmain(
         "-d",
         help="Configuration directory (default: ~/.crow)",
     ),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Enable chunk-level JSONL logging for debugging",
+    ),
 ):
     """Main entry point for the crow-cli agent."""
     if config_dir is None:
         config_dir = Path.home() / ".crow"
-    agent_main(config_dir=config_dir)
+    agent_main(config_dir=config_dir, debug=debug)
 
 
 @app.command("init")
