@@ -2,6 +2,7 @@ import asyncio
 import json
 from asyncio import Event
 from logging import Logger
+from pathlib import Path
 from typing import Any
 
 from acp.interfaces import Client
@@ -243,13 +244,40 @@ def process_tool_call_inputs(tool_calls: dict) -> tuple[list[dict], list[bool]]:
     return tool_call_inputs, repaired_flags
 
 
-async def process_response(response, state_accumulator: dict):
+def _serialize_chunk(chunk) -> dict:
+    """
+    Serialize a streaming chunk to a JSON-serializable dict.
+
+    Dumps EVERYTHING from the chunk - we don't assume what's in it.
+    Recursively handles nested Pydantic models and lists.
+    """
+    def _serialize_value(value):
+        if isinstance(value, (str, int, float, bool, type(None))):
+            return value
+        if isinstance(value, list):
+            return [_serialize_value(v) for v in value]
+        if isinstance(value, dict):
+            return {k: _serialize_value(v) for k, v in value.items()}
+        # Pydantic model or arbitrary object - serialize attributes
+        if hasattr(value, "model_dump"):
+            return _serialize_value(value.model_dump())
+        result = {}
+        for attr in dir(value):
+            if not attr.startswith("_") and not callable(getattr(value, attr)):
+                result[attr] = _serialize_value(getattr(value, attr))
+        return result
+
+    return _serialize_value(chunk)
+
+
+async def process_response(response, state_accumulator: dict, chunk_log_path: str | None = None):
     """
     Process streaming response from LLM.
 
     Args:
         response: Streaming response from LLM
         state_accumulator: Optional dict to expose partial state externally
+        chunk_log_path: Optional path to JSONL file for full chunk logging
 
     Yields:
         Tuple of (message_type, token) for each chunk
@@ -267,24 +295,46 @@ async def process_response(response, state_accumulator: dict):
             "tool_calls": tool_calls,
         }
     )
-    async for chunk in response:
-        # Check for usage in chunk (litellm returns it in the final chunk with stream_options={"include_usage": True})
-        if hasattr(chunk, "usage") and chunk.usage is not None:
-            final_usage = {
-                "prompt_tokens": getattr(chunk.usage, "prompt_tokens", None),
-                "completion_tokens": getattr(chunk.usage, "completion_tokens", None),
-                "total_tokens": getattr(chunk.usage, "total_tokens", None),
-            }
+    chunk_index = 0
+    chunk_log_file = None
+    if chunk_log_path:
+        chunk_log_file = open(chunk_log_path, 'a')
 
-        thinking, content, tool_calls, new_token = process_chunk(
-            chunk, thinking, content, tool_calls
-        )
-        state_accumulator["thinking"] = thinking
-        state_accumulator["content"] = content
-        state_accumulator["tool_calls"] = tool_calls
-        msg_type, token = new_token
-        if msg_type:
-            yield msg_type, token
+    try:
+        async for chunk in response:
+            chunk_index += 1
+
+            # Check for usage in chunk (litellm returns it in the final chunk with stream_options={"include_usage": True})
+            if hasattr(chunk, "usage") and chunk.usage is not None:
+                final_usage = {
+                    "prompt_tokens": getattr(chunk.usage, "prompt_tokens", None),
+                    "completion_tokens": getattr(chunk.usage, "completion_tokens", None),
+                    "total_tokens": getattr(chunk.usage, "total_tokens", None),
+                }
+
+            thinking, content, tool_calls, new_token = process_chunk(
+                chunk, thinking, content, tool_calls
+            )
+            state_accumulator["thinking"] = thinking
+            state_accumulator["content"] = content
+            state_accumulator["tool_calls"] = tool_calls
+            msg_type, token = new_token
+
+            # Write the ENTIRE raw chunk to JSONL
+            if chunk_log_file is not None:
+                log_entry = {
+                    "chunk_index": chunk_index,
+                    "msg_type": new_token[0],
+                    "chunk": _serialize_chunk(chunk),
+                }
+                chunk_log_file.write(json.dumps(log_entry) + "\n")
+                chunk_log_file.flush()
+
+            if msg_type:
+                yield msg_type, token
+    finally:
+        if chunk_log_file:
+            chunk_log_file.close()
 
     # Yield final result as a special chunk
     thinking, content, tool_calls = (
@@ -458,6 +508,7 @@ async def react_loop(
     logger: Logger = None,
     hooks: list[CommandHook] | None = None,
     snapshot_hooks: list[FileSnapshotHook] | None = None,
+    chunk_log_dir: str | None = None,
 ):
     """
     Main ReAct loop with cancellation support.
@@ -465,6 +516,7 @@ async def react_loop(
     Args:
         agent_id: Agent ID (internal key)
         max_turns: Maximum number of turns to execute
+        chunk_log_dir: Optional directory to write raw chunk JSONL logs
 
     Yields:
         Dictionary with 'type' and 'token' or 'messages' keys
@@ -472,6 +524,7 @@ async def react_loop(
     session = sessions.get(agent_id)
     cwd = session.cwd
     session_id = session_from_agent_id(agent_id)
+    chunk_index = 0
     for turn in range(max_turns):
         response = await send_request(
             llm,
@@ -483,8 +536,13 @@ async def react_loop(
             session_id, {"thinking": [], "content": [], "tool_calls": {}}
         )
         thinking, content, tool_call_inputs, usage = [], [], [], None
+
+        chunk_log_path = None
+        if chunk_log_dir:
+            chunk_log_path = str(Path(chunk_log_dir) / f"turn-{turn_id}.jsonl")
+
         try:
-            async for msg_type, token in process_response(response, state_accumulator):
+            async for msg_type, token in process_response(response, state_accumulator, chunk_log_path=chunk_log_path):
                 if msg_type == "final":
                     thinking, content, tool_call_inputs, usage = token
                 else:

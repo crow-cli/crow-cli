@@ -97,6 +97,7 @@ class Config:
     max_retries_per_step: int = 3
     MAX_COMPACT_TOKENS: int = 190000
     MAX_TOKENS: int = 38192
+    chunk_log: bool = False  # Write every raw chunk to JSONL for debugging
 
     @property
     def log_path(self) -> str:
@@ -166,6 +167,8 @@ class Config:
         ):
             if key in parsed:
                 overrides[key] = typ(parsed[key])
+        if "chunk_log" in parsed:
+            overrides["chunk_log"] = bool(parsed["chunk_log"])
 
         return cls(
             config_dir=target_dir,
