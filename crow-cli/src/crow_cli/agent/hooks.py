@@ -33,4 +33,10 @@ def uv_project_hook(command: str) -> str | None:
                     "Example: cd path/to/package && uv --project . run script.py\n"
                     "Refusing to execute without --project."
                 )
+        if seg.startswith("python ") or seg.startswith("python3 "):
+            return (
+                "REJECTED: Use 'uv' instead of python.\n"
+                "Example: cd path/to/package && uv --project . run script.py\n"
+                "Refusing to execute raw python command."
+            )
     return None

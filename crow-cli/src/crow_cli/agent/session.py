@@ -159,9 +159,6 @@ class AgentSession:
             )
         return self._model
 
-        except Exception as e:
-            logger.warning(f"Snapshot capture failed for {file_path}: {e}")
-
     def add_message(self, msg: dict, usage: dict | None = None):
         """
         Add message to in-memory list AND persist to database.
