@@ -9,8 +9,6 @@ mcpServers:
       - crow-mcp
 
 db_uri: sqlite:////home/thomas/.crow/crow.db
-murder_db_uri: sqlite:////home/thomas/.crow/crow-murder.db
-
 providers:
   litellm:
     base_url: http://localhost:${LITELLM_PORT}/v1

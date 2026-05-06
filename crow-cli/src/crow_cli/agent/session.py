@@ -6,9 +6,6 @@ Just serialize the message dict, deserialize it back.
 
 Agent owns the session. agent_id = "{session_id}-{agent_idx}" is the PK.
 session_id is derived from agent_id for ACP upstream routing.
-
-File snapshots live in a SEPARATE database (crow-murder.db) to avoid
-WAL lock contention when crow-murder reads while crow-cli writes.
 """
 
 import json
@@ -142,7 +139,6 @@ class AgentSession:
         self.cwd = cwd
         self.messages: list[dict] = []
         self._db = None
-        self._murder_db = None
         self._model = None
         self.model_identifier = None
 
@@ -163,40 +159,6 @@ class AgentSession:
             )
         return self._model
 
-    def save_snapshot(
-        self,
-        tool_call_id: str,
-        tool_name: str,
-        file_path: str,
-        logger: Logger,
-    ) -> None:
-        """Capture pre-mutation file state for Monaco diffs.
-
-        Called before write/edit tools modify a file. Stores content_before
-        so Murder's frontend can render a diff between before and after states.
-
-        Writes to separate murder DB to avoid WAL lock contention.
-        """
-        try:
-            content = ""
-            if Path(file_path).exists():
-                try:
-                    content = Path(file_path).read_text(
-                        encoding="utf-8", errors="replace"
-                    )
-                except Exception as e:
-                    logger.debug(f"Snapshot read failed for {file_path}: {e}")
-
-            snapshot = MurderFileSnapshot(
-                session_id=self.session_id,
-                agent_id=self.agent_id,
-                tool_call_id=tool_call_id,
-                tool_name=tool_name,
-                file_path=file_path,
-                content_before=content,
-            )
-            self.murder_db.add(snapshot)
-            self.murder_db.commit()
         except Exception as e:
             logger.warning(f"Snapshot capture failed for {file_path}: {e}")
 
@@ -402,8 +364,5 @@ class AgentSession:
         """Close database connections."""
         if self._db is not None:
             self._db.close()
-        if self._murder_db is not None:
-            self._murder_db.close()
         self._db = None
-        self._murder_db = None
         self._model = None

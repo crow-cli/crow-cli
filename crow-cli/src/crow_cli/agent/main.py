@@ -20,9 +20,6 @@ To install `uv` run the following in a terminal:
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-## Preferred coding plan
-I use both local models and cloud API providers. If you don't have a coding plan, I highly recommend the [Alibaba Cloud Coding plan](https://www.alibabacloud.com/help/en/model-studio/coding-plan) from the makers of Qwen. It's tops!
-
 ## Local models
 To get started you can download [`ollama`](ollama.com/download) or any of the plethora of local model provider programs. I highly recommend building [llama.cpp from source.](https://gist.github.com/odellus/b9a22e06493a83171435a17602934be9)
 ```bash

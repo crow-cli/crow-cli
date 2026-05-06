@@ -79,7 +79,7 @@ async def read(
     """Reads files from the local filesystem with line numbers. Cannot read directories. Files must be under current working directory as this tool is usually owned by client.
 
     Args:
-        file_path: The absolute path to the file to read
+        file_path: Absolute path of the file to read - REQUIRED
         offset: Line number to start reading from (1-indexed) - OPTIONAL
         limit: Maximum number of lines to read (2000 default) - OPTIONAL
 

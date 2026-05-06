@@ -199,7 +199,7 @@ async def execute_acp_terminal(
             update=ToolCallStart(
                 session_update="tool_call",
                 tool_call_id=acp_tool_call_id,
-                title=f"terminal: {command[:50]}{'...' if len(command) > 50 else ''}",
+                title=command,
                 kind="execute",
                 status="pending",
             ),
