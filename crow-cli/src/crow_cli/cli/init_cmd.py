@@ -9,9 +9,7 @@ Configuration priority (highest to lowest):
 3. .env in current directory (loaded via load_dotenv)
 4. Interactive prompts
 
-DashScope easter egg:
-    If base_url matches coding-intl.dashscope.aliyuncs.com,
-    LiteLLM is auto-provisioned as a proxy with qwen3.6-plus + glm-5.
+
 """
 
 import base64
@@ -31,7 +29,6 @@ from rich.table import Table
 
 from crow_cli.agent.default import (
     COMPOSE_YAML,
-    LITELLM_CONFIG_YAML,
     SEARXNG_SETTINGS_YML,
     SYSTEM_PROMPT,
 )
@@ -165,7 +162,6 @@ def run_init(config_dir: Path, yes: bool = False):
     providers: dict[str, dict] = {}
     models: dict[str, dict] = {}
     env_vars: dict[str, str] = {}
-    setup_litellm = False
     dashscope_api_key = None
 
     # =========================================================================
@@ -181,36 +177,6 @@ def run_init(config_dir: Path, yes: bool = False):
                 base_url_key = f"LLM_{provider.upper()}_BASE_URL"
                 base_url = os.environ.get(base_url_key, "")
                 if base_url and value:
-                    # ── DashScope easter egg in --yes mode ──────────────────
-                    if is_dashscope_url(base_url):
-                        console.print(
-                            "\n[bold magenta]🥚 Ope! DashScope detected![/bold magenta]"
-                        )
-                        console.print(
-                            "[dim]Spinning up LiteLLM proxy with qwen3.6-plus + glm-5...[/dim]"
-                        )
-
-                        setup_litellm = True
-                        dashscope_api_key = value
-                        litellm_key = "EMPTY"
-                        litellm_port = os.environ.get("LITELLM_PORT", "4000")
-                        env_vars["DASHSCOPE_API_KEY"] = value
-                        env_vars["LITELLM_API_KEY"] = litellm_key
-                        env_vars["LITELLM_PORT"] = litellm_port
-
-                        providers["dashscope"] = {
-                            "base_url": f"http://localhost:{litellm_port}/v1",
-                            "api_key": f"${{LITELLM_API_KEY}}",
-                        }
-                        models.update(DASHSCOPE_MODELS)
-
-                        console.print(
-                            "  [green]✓[/green] Provider: dashscope → LiteLLM proxy"
-                        )
-                        console.print("  [green]✓[/green] Models: qwen3.6-plus, glm-5")
-                        console.print("  [green]✓[/green] LiteLLM master key generated")
-                        continue
-                    # ── End DashScope easter egg ────────────────────────────
 
                     console.print(
                         f"  [cyan]✓[/cyan] Found provider: [green]{provider}[/green] "
@@ -261,41 +227,6 @@ def run_init(config_dir: Path, yes: bool = False):
                     "You'll need to set it manually.[/yellow]"
                 )
 
-            # ── DashScope easter egg ──────────────────────────────────
-            if is_dashscope_url(base_url) and api_key:
-                console.print(
-                    "\n[bold magenta]🥚 Ope! DashScope detected![/bold magenta]"
-                )
-                console.print(
-                    "[dim]Spinning up LiteLLM proxy with qwen3.6-plus + glm-5...[/dim]"
-                )
-
-                setup_litellm = True
-                dashscope_api_key = api_key
-                litellm_key = "EMPTY"
-                litellm_port = os.environ.get("LITELLM_PORT", "4000")
-                env_vars["DASHSCOPE_API_KEY"] = api_key
-                env_vars["LITELLM_API_KEY"] = litellm_key
-                env_vars["LITELLM_PORT"] = litellm_port
-
-                # Provider points to local LiteLLM proxy
-                providers["dashscope"] = {
-                    "base_url": f"http://localhost:{litellm_port}/v1",
-                    "api_key": f"${{LITELLM_API_KEY}}",
-                }
-
-                # Pre-configured models
-                models.update(DASHSCOPE_MODELS)
-
-                console.print("  [green]✓[/green] Provider: dashscope → LiteLLM proxy")
-                console.print("  [green]✓[/green] Models: qwen3.6-plus, glm-5")
-                console.print("  [green]✓[/green] LiteLLM master key generated")
-                console.print()
-
-                if not Confirm.ask("\nAdd another provider?", default=False):
-                    break
-                continue
-            # ── End DashScope easter egg ──────────────────────────────
 
             providers[provider_name] = {
                 "base_url": base_url,
@@ -378,7 +309,6 @@ def run_init(config_dir: Path, yes: bool = False):
     s_table.add_column("Service", style="cyan")
     s_table.add_column("Status", style="green")
     s_table.add_row("SearXNG", "✓ Docker" if setup_searxng else "✗ Skip")
-    s_table.add_row("LiteLLM", "✓ Docker" if setup_litellm else "✗ N/A")
     s_table.add_row("Database", "SQLite")
     console.print(s_table)
 
@@ -438,18 +368,7 @@ def run_init(config_dir: Path, yes: bool = False):
         f.write("\n".join(env_lines) + "\n")
     console.print(f"[green]✓[/green] Written {env_file}")
 
-    # LiteLLM config (if DashScope detected)
-    if setup_litellm:
-        litellm_dir = config_dir / "litellm"
-        litellm_dir.mkdir(parents=True, exist_ok=True)
-        litellm_config_file = litellm_dir / "config.yaml"
-        if not litellm_config_file.exists():
-            litellm_config_file.write_text(LITELLM_CONFIG_YAML)
-            console.print(
-                f"[green]✓[/green] Wrote LiteLLM config to {litellm_config_file}"
-            )
-        else:
-            console.print(f"[yellow]⊘[/yellow] LiteLLM config already exists, skipping")
+
 
     # SearXNG compose + settings (written but NOT started)
     if setup_searxng:
@@ -467,9 +386,6 @@ def run_init(config_dir: Path, yes: bool = False):
 
     if setup_searxng and "searxng" in available_services:
         active_services["searxng"] = available_services["searxng"]
-
-    if setup_litellm and "litellm" in available_services:
-        active_services["litellm"] = available_services["litellm"]
 
     if active_services:
         compose_data: dict[str, Any] = {
@@ -490,8 +406,6 @@ def run_init(config_dir: Path, yes: bool = False):
     docker_services = []
     if setup_searxng:
         docker_services.append("SearXNG")
-    if setup_litellm:
-        docker_services.append("LiteLLM")
 
     if docker_services:
         console.print("\n[bold cyan]═══ Step 5: Start Services ═══[/bold cyan]\n")
@@ -511,7 +425,7 @@ def run_init(config_dir: Path, yes: bool = False):
     system_prompt_dir = config_dir / "prompts"
 
     console.print()
-    if setup_searxng or setup_litellm:
+    if setup_searxng:
         console.print(
             Panel.fit(
                 "[bold green]✓ Configuration complete![/bold green]\n\n"

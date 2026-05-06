@@ -18,7 +18,6 @@ from dotenv import load_dotenv
 from crow_cli.agent.default import (
     COMPOSE_YAML,
     CONFIG_YAML,
-    LITELLM_CONFIG_YAML,
     SEARXNG_SETTINGS_YML,
     SYSTEM_PROMPT,
 )
@@ -39,7 +38,6 @@ def get_default_config_dir(config_dir: Path | str | None = None) -> Path:
 _DEFAULT_FILES: dict[str, str] = {
     "config.yaml": CONFIG_YAML,
     "compose.yaml": COMPOSE_YAML,
-    "litellm/config.yaml": LITELLM_CONFIG_YAML,
     "prompts/system_prompt.jinja2": SYSTEM_PROMPT,
     "searxng/settings.yml": SEARXNG_SETTINGS_YML,
 }

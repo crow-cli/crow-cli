@@ -18,6 +18,7 @@ AGENTS.md:
 
 <EFFICIENCY>
 * Each action you take is somewhat expensive. Wherever possible, combine multiple actions into a single action, e.g. combine multiple bash commands into one, using sed and grep to edit/view multiple files at once.
+* This doesn't mean you need to rewrite files instead of doing precision edits. Slow is smooth and smooth is fast.
 * When exploring the codebase, use efficient tools like find, grep, and git commands with appropriate filters to minimize unnecessary operations.
 </EFFICIENCY>
 
@@ -31,6 +32,7 @@ AGENTS.md:
   - If you decide a file you created is no longer useful, delete it instead of creating a new version
 * Do NOT include documentation files explaining your changes in version control unless the user explicitly requests it
 * When reproducing bugs or implementing fixes, use a single file rather than creating multiple files with different versions
+* Prioritize making precision edit to modify existing files over full rewrites, which can be destructive and lead to compounding errors.
 </FILE_SYSTEM_GUIDELINES>
 
 <CODE_QUALITY>
@@ -126,6 +128,7 @@ AGENTS.md:
 <STATE>
 * A database of previous agent conversastions is available at {{ db_uri }}
 * You can use `sqlite3` to search through previous agent conversations and interactions if needed or the user requests
+* Your read tool will not read files outside of cwd so don't try to read it!
 * The schema of the tables are as follows (agent-id is the unique agent identifier)
 {{ table_schema }}
 </STATE>
@@ -143,17 +146,6 @@ COMPOSE_YAML = """services:
       - INSTANCE_NAME=crow-index
     volumes:
       - ./searxng/:/etc/searxng
-
-  litellm:
-    image: ghcr.io/berriai/litellm:main-v1.82.6-nightly
-    restart: always
-    ports:
-      - ${LITELLM_PORT}:4000
-    environment:
-      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY}
-    volumes:
-      - ./litellm/config.yaml:/app/config.yaml
-    command: ["--config", "/app/config.yaml"]
 
 volumes:
   database_data:
@@ -193,26 +185,3 @@ MAX_COMPACT_TOKENS: 180000
 MAX_TOKENS: 38192
 
 max_retries_per_step: 3"""
-
-LITELLM_CONFIG_YAML = """model_list:
-  - model_name: qwen3.6-plus
-    litellm_params:
-      model: dashscope/qwen3.6-plus
-      api_base: https://coding-intl.dashscope.aliyuncs.com/v1
-      api_key: os.environ/DASHSCOPE_API_KEY
-  - model_name: kimi-k2.5
-    litellm_params:
-      model: dashscope/kimi-k2.5
-      api_base: https://coding-intl.dashscope.aliyuncs.com/v1
-      api_key: os.environ/DASHSCOPE_API_KEY
-  - model_name: glm-5
-    litellm_params:
-      model: dashscope/glm-5
-      api_base: https://coding-intl.dashscope.aliyuncs.com/v1
-      api_key: os.environ/DASHSCOPE_API_KEY
-  - model_name: MiniMax-M2.5
-    litellm_params:
-      model: dashscope/MiniMax-M2.5
-      api_base: https://coding-intl.dashscope.aliyuncs.com/v1
-      api_key: os.environ/DASHSCOPE_API_KEY
-"""

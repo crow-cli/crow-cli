@@ -130,58 +130,62 @@ def process_chunk(
     thinking: list[str],
     content: list[str],
     tool_calls: dict,
-) -> tuple[list[str], list[str], dict, list[tuple[str | None, Any]]]:
+) -> tuple[list[str], list[str], dict, tuple[str | None, Any]]:
     """
     Process a single streaming chunk.
 
+    Args:
+        chunk: Streaming chunk from LLM
+        thinking: Accumulated thinking tokens
+        content: Accumulated content tokens
+        tool_calls: Accumulated tool calls (dict keyed by index)
+
     Returns:
-        Tuple of (thinking, content, tool_calls, new_tokens)
-        where new_tokens is a list since a single chunk can contain both
-        reasoning_content AND content (e.g. at the transition boundary).
+        Tuple of (thinking, content, tool_calls, new_token)
     """
     # Final chunk may have usage but no choices
     if not chunk.choices or len(chunk.choices) == 0:
-        return thinking, content, tool_calls, []
+        return thinking, content, tool_calls, (None, None)
 
     delta = chunk.choices[0].delta
-    new_tokens: list[tuple[str | None, Any]] = []
+    new_token = (None, None)
 
-    # Check reasoning_content first
-    reasoning_chunk = getattr(delta, "reasoning_content", None)
-    if reasoning_chunk is not None and reasoning_chunk != "":
-        thinking.append(reasoning_chunk)
-        new_tokens.append(("thinking", reasoning_chunk))
-
-    # Check content independently - transition chunks have BOTH
-    content_chunk = delta.content
-    if content_chunk is not None and content_chunk != "":
-        content.append(content_chunk)
-        new_tokens.append(("content", content_chunk))
-
-    # Handle tool_calls independently
-    if delta.tool_calls:
+    if not delta.tool_calls:
+        reasoning_chunk = getattr(delta, "reasoning_content", None)
+        if reasoning_chunk is not None and reasoning_chunk != "":
+            thinking.append(reasoning_chunk)
+            new_token = ("thinking", reasoning_chunk)
+        else:
+            verbal_chunk = delta.content
+            if verbal_chunk:
+                content.append(verbal_chunk)
+                new_token = ("content", verbal_chunk)
+    else:
         for call in delta.tool_calls:
             index = call.index
 
+            # Initialize the dictionary for this index if it doesn't exist
             if index not in tool_calls:
                 tool_calls[index] = {"id": "", "function_name": "", "arguments": []}
 
+            # Update fields if they are present in this delta
             if call.id:
                 tool_calls[index]["id"] = call.id
             if call.function and call.function.name:
                 tool_calls[index]["function_name"] = call.function.name
-                new_tokens.append(
-                    ("tool_call",
-                     (call.function.name, call.function.arguments or ""))
+                new_token = (
+                    "tool_call",
+                    (call.function.name, call.function.arguments or ""),
                 )
 
             if call.function and call.function.arguments:
                 arg_fragment = call.function.arguments
                 tool_calls[index]["arguments"].append(arg_fragment)
-                if not any(t[0] == "tool_call" for t in new_tokens):
-                    new_tokens.append(("tool_args", arg_fragment))
+                # Only yield args if we didn't just yield the initial tool_call token above
+                if new_token[0] != "tool_call":
+                    new_token = ("tool_args", arg_fragment)
 
-    return thinking, content, tool_calls, new_tokens
+    return thinking, content, tool_calls, new_token
 
 
 def process_tool_call_inputs(tool_calls: dict) -> tuple[list[dict], list[bool]]:
@@ -300,7 +304,7 @@ async def process_response(response, state_accumulator: dict, chunk_log_path: st
         async for chunk in response:
             chunk_index += 1
 
-            # Check for usage in chunk (litellm returns it in the final chunk with stream_options={"include_usage": True})
+            # Check for usage in chunk
             if hasattr(chunk, "usage") and chunk.usage is not None:
                 final_usage = {
                     "prompt_tokens": getattr(chunk.usage, "prompt_tokens", None),
@@ -308,25 +312,25 @@ async def process_response(response, state_accumulator: dict, chunk_log_path: st
                     "total_tokens": getattr(chunk.usage, "total_tokens", None),
                 }
 
-            thinking, content, tool_calls, new_tokens = process_chunk(
+            thinking, content, tool_calls, new_token = process_chunk(
                 chunk, thinking, content, tool_calls
             )
             state_accumulator["thinking"] = thinking
             state_accumulator["content"] = content
             state_accumulator["tool_calls"] = tool_calls
+            msg_type, token = new_token
 
             # Write the ENTIRE raw chunk to JSONL
             if chunk_log_file is not None:
                 log_entry = {
                     "chunk_index": chunk_index,
-                    "msg_types": [t[0] for t in new_tokens] if new_tokens else None,
+                    "msg_type": new_token[0],
                     "chunk": _serialize_chunk(chunk),
                 }
                 chunk_log_file.write(json.dumps(log_entry) + "\n")
                 chunk_log_file.flush()
 
-            # Yield each token from this chunk (handles transition chunks with both)
-            for msg_type, token in new_tokens:
+            if msg_type:
                 yield msg_type, token
     finally:
         if chunk_log_file:
