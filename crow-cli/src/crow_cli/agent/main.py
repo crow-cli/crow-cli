@@ -109,7 +109,8 @@ from crow_cli.agent.session import (
     AgentSession,
     get_session_by_cwd,
     lookup_or_create_prompt,
-    get_coolname
+    get_coolname,
+    make_agent_session,
 )
 from crow_cli.agent.slash import (
     _SLASH_COMMANDS,
@@ -344,39 +345,44 @@ class AcpAgent(Agent):
 
         # Get tools from MCP server
         tools = await get_tools(mcp_client)
-
-        # Load prompt template and get or create prompt_id
-        template_path = self._config.config_dir / "prompts" / "system_prompt.jinja2"
-        template = template_path.read_text()
-        prompt_id = lookup_or_create_prompt(
-            template, name="crow-default", db_uri=self._db_uri
+        session = make_agent_session(
+            self._config,
+            tools,
+            self._default_model_identifier(),
+            cwd,
         )
-        display_tree = get_directory_tree(cwd)
-        agent_path = os.path.join(cwd, "AGENTS.md")
-        if os.path.exists(agent_path):
-            with open(agent_path, "r") as f:
-                agents_content = f.read()
-        else:
-            agents_content = "No AGENTS.md found"
-        session_id = get_coolname()
-        session = AgentSession.create(
-            prompt_id=prompt_id,
-            prompt_args={
-                "workspace": cwd,
-                "display_tree": display_tree,
-                "agents_content": agents_content,
-                "db_uri": self._config.db_uri,
-                "table_schemas": get_schemas(),
-                "session_id": session_id,
-            },
-            tool_definitions=tools,
-            request_params={"temperature": 0.2},
-            model_identifier=self._default_model_identifier(),
-            db_uri=self._db_uri,
-            cwd=cwd,
-            agent_idx=1,
-            session_id=session_id,
-        )
+        # # Load prompt template and get or create prompt_id
+        # template_path = self._config.config_dir / "prompts" / "system_prompt.jinja2"
+        # template = template_path.read_text()
+        # prompt_id = lookup_or_create_prompt(
+        #     template, name="crow-default", db_uri=self._db_uri
+        # )
+        # display_tree = get_directory_tree(cwd)
+        # agent_path = os.path.join(cwd, "AGENTS.md")
+        # if os.path.exists(agent_path):
+        #     with open(agent_path, "r") as f:
+        #         agents_content = f.read()
+        # else:
+        #     agents_content = "No AGENTS.md found"
+        # session_id = get_coolname()
+        # session = AgentSession.create(
+        #     prompt_id=prompt_id,
+        #     prompt_args={
+        #         "workspace": cwd,
+        #         "display_tree": display_tree,
+        #         "agents_content": agents_content,
+        #         "db_uri": self._config.db_uri,
+        #         "table_schemas": get_schemas(),
+        #         "session_id": session_id,
+        #     },
+        #     tool_definitions=tools,
+        #     request_params={"temperature": 0.2},
+        #     model_identifier=self._default_model_identifier(),
+        #     db_uri=self._db_uri,
+        #     cwd=cwd,
+        #     agent_idx=1,
+        #     session_id=session_id,
+        # )
 
         # Store in-memory references keyed on agent_id
         self._sessions[session.agent_id] = session
@@ -669,7 +675,7 @@ class AcpAgent(Agent):
                         "No LLM providers configured. Check ~/.crow/config.yaml."
                     )
 
-                llm = configure_llm(provider=provider, debug=False)
+                llm = configure_llm(provider=provider, debug=self._config.chunk_log, logger=self._session_logger)
 
                 def on_compact(old_agent_id: str, compacted_session: AgentSession):
                     """Update all agent-keyed references after compaction."""

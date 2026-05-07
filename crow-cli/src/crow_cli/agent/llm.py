@@ -6,20 +6,16 @@ import httpx
 from openai import AsyncOpenAI
 
 from crow_cli.agent.configure import LLMProvider
+from logging import Logger
 
 
-def log_request(request):
-    """Log HTTP requests for debugging"""
-    print(f"\n{'=' * 20} RAW REQUEST {'=' * 20}")
-    print(f"{request.method} {request.url}")
-    print(f"Headers: {dict(request.headers)}")
-    print(f"Body: {request.read().decode()}")
-    print(f"{'=' * 53}\n")
+
 
 
 def configure_llm(
     provider: LLMProvider,
     debug: bool = False,
+    logger: Logger | None = None,
 ) -> AsyncOpenAI:
     """
     Configure async LLM client.
@@ -31,6 +27,13 @@ def configure_llm(
     Returns:
         Configured AsyncOpenAI client
     """
+    async def log_request(request):
+        """Log HTTP requests for debugging"""
+        logger.info(f"\n{'=' * 20} RAW REQUEST {'=' * 20}")
+        logger.info(f"{request.method} {request.url}")
+        logger.info(f"Headers: {dict(request.headers)}")
+        logger.info(f"Body: {request.read().decode()}")
+
     api_key = provider.api_key
     base_url = provider.base_url
 
@@ -39,8 +42,11 @@ def configure_llm(
     else:
         http_client = None
 
-    return AsyncOpenAI(
+    client = AsyncOpenAI(
         api_key=api_key,
         base_url=base_url,
         http_client=http_client,
+        default_headers={"User-Agent": "KimiCLI/1.41.0"},
     )
+    logger.info(f"USER-AGENT: {client.user_agent}") # =
+    return client

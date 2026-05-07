@@ -328,9 +328,9 @@ class ReplClient(Client):
                 version="0.1.0",
             ),
         )
-
+        print(self.mcp_servers)
         session = await self._conn.new_session(
-            mcp_servers=self.mcp_servers, cwd=self.cwd or "."
+            mcp_servers=self.mcp_servers, cwd=self.cwd or str(Path.cwd())
         )
         self._session_id = session.session_id
         self.conversation[self._session_id] = []

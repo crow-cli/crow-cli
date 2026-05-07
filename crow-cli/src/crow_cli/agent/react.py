@@ -28,8 +28,10 @@ from crow_cli.agent.tools import (
     execute_acp_write,
 )
 
+
 def session_from_agent_id(agent_id):
     return agent_id.rsplit("-", 1)[0]
+
 
 async def send_request(
     llm: AsyncOpenAI,
@@ -130,62 +132,57 @@ def process_chunk(
     thinking: list[str],
     content: list[str],
     tool_calls: dict,
-) -> tuple[list[str], list[str], dict, tuple[str | None, Any]]:
+) -> tuple[list[str], list[str], dict, list[tuple[str | None, Any]]]:
     """
     Process a single streaming chunk.
 
-    Args:
-        chunk: Streaming chunk from LLM
-        thinking: Accumulated thinking tokens
-        content: Accumulated content tokens
-        tool_calls: Accumulated tool calls (dict keyed by index)
-
     Returns:
-        Tuple of (thinking, content, tool_calls, new_token)
+        Tuple of (thinking, content, tool_calls, new_tokens)
+        where new_tokens is a list since a single chunk can contain both
+        reasoning_content AND content (e.g. at the transition boundary).
     """
     # Final chunk may have usage but no choices
     if not chunk.choices or len(chunk.choices) == 0:
-        return thinking, content, tool_calls, (None, None)
+        return thinking, content, tool_calls, []
 
     delta = chunk.choices[0].delta
-    new_token = (None, None)
+    new_tokens: list[tuple[str | None, Any]] = []
 
-    if not delta.tool_calls:
-        reasoning_chunk = getattr(delta, "reasoning_content", None)
-        if reasoning_chunk is not None and reasoning_chunk != "":
-            thinking.append(reasoning_chunk)
-            new_token = ("thinking", reasoning_chunk)
-        else:
-            verbal_chunk = delta.content
-            if verbal_chunk:
-                content.append(verbal_chunk)
-                new_token = ("content", verbal_chunk)
-    else:
+    # Check reasoning_content first
+    reasoning_chunk = getattr(delta, "reasoning_content", None)
+    if reasoning_chunk is not None and reasoning_chunk != "":
+        thinking.append(reasoning_chunk)
+        new_tokens.append(("thinking", reasoning_chunk))
+
+    # Check content independently - transition chunks have BOTH
+    content_chunk = delta.content
+    if content_chunk is not None and content_chunk != "":
+        content.append(content_chunk)
+        new_tokens.append(("content", content_chunk))
+
+    # Handle tool_calls independently
+    if delta.tool_calls:
         for call in delta.tool_calls:
             index = call.index
 
-            # Initialize the dictionary for this index if it doesn't exist
             if index not in tool_calls:
                 tool_calls[index] = {"id": "", "function_name": "", "arguments": []}
 
-            # Update fields if they are present in this delta
             if call.id:
                 tool_calls[index]["id"] = call.id
             if call.function and call.function.name:
                 tool_calls[index]["function_name"] = call.function.name
-                new_token = (
-                    "tool_call",
-                    (call.function.name, call.function.arguments or ""),
+                new_tokens.append(
+                    ("tool_call", (call.function.name, call.function.arguments or ""))
                 )
 
             if call.function and call.function.arguments:
                 arg_fragment = call.function.arguments
                 tool_calls[index]["arguments"].append(arg_fragment)
-                # Only yield args if we didn't just yield the initial tool_call token above
-                if new_token[0] != "tool_call":
-                    new_token = ("tool_args", arg_fragment)
+                if not any(t[0] == "tool_call" for t in new_tokens):
+                    new_tokens.append(("tool_args", arg_fragment))
 
-    return thinking, content, tool_calls, new_token
+    return thinking, content, tool_calls, new_tokens
 
 
 def process_tool_call_inputs(tool_calls: dict) -> tuple[list[dict], list[bool]]:
@@ -251,6 +248,7 @@ def _serialize_chunk(chunk) -> dict:
     Dumps EVERYTHING from the chunk - we don't assume what's in it.
     Recursively handles nested Pydantic models and lists.
     """
+
     def _serialize_value(value):
         if isinstance(value, (str, int, float, bool, type(None))):
             return value
@@ -270,7 +268,9 @@ def _serialize_chunk(chunk) -> dict:
     return _serialize_value(chunk)
 
 
-async def process_response(response, state_accumulator: dict, chunk_log_path: str | None = None):
+async def process_response(
+    response, state_accumulator: dict, chunk_log_path: str | None = None
+):
     """
     Process streaming response from LLM.
 
@@ -298,39 +298,41 @@ async def process_response(response, state_accumulator: dict, chunk_log_path: st
     chunk_index = 0
     chunk_log_file = None
     if chunk_log_path:
-        chunk_log_file = open(chunk_log_path, 'a')
+        chunk_log_file = open(chunk_log_path, "a")
 
     try:
         async for chunk in response:
             chunk_index += 1
 
-            # Check for usage in chunk
+            # Check for usage in chunk (litellm returns it in the final chunk with stream_options={"include_usage": True})
             if hasattr(chunk, "usage") and chunk.usage is not None:
                 final_usage = {
                     "prompt_tokens": getattr(chunk.usage, "prompt_tokens", None),
-                    "completion_tokens": getattr(chunk.usage, "completion_tokens", None),
+                    "completion_tokens": getattr(
+                        chunk.usage, "completion_tokens", None
+                    ),
                     "total_tokens": getattr(chunk.usage, "total_tokens", None),
                 }
 
-            thinking, content, tool_calls, new_token = process_chunk(
+            thinking, content, tool_calls, new_tokens = process_chunk(
                 chunk, thinking, content, tool_calls
             )
             state_accumulator["thinking"] = thinking
             state_accumulator["content"] = content
             state_accumulator["tool_calls"] = tool_calls
-            msg_type, token = new_token
 
             # Write the ENTIRE raw chunk to JSONL
             if chunk_log_file is not None:
                 log_entry = {
                     "chunk_index": chunk_index,
-                    "msg_type": new_token[0],
+                    "msg_types": [t[0] for t in new_tokens] if new_tokens else None,
                     "chunk": _serialize_chunk(chunk),
                 }
                 chunk_log_file.write(json.dumps(log_entry) + "\n")
                 chunk_log_file.flush()
 
-            if msg_type:
+            # Yield each token from this chunk (handles transition chunks with both)
+            for msg_type, token in new_tokens:
                 yield msg_type, token
     finally:
         if chunk_log_file:
@@ -542,7 +544,9 @@ async def react_loop(
             chunk_log_path = str(Path(chunk_log_dir) / f"turn-{turn_id}.jsonl")
 
         try:
-            async for msg_type, token in process_response(response, state_accumulator, chunk_log_path=chunk_log_path):
+            async for msg_type, token in process_response(
+                response, state_accumulator, chunk_log_path=chunk_log_path
+            ):
                 if msg_type == "final":
                     thinking, content, tool_call_inputs, usage = token
                 else:
@@ -595,7 +599,7 @@ async def react_loop(
             session = await compact(
                 session=session,
                 llm=llm,
-                cwd=session.cwd,
+                config=config,
                 on_compact=on_compact,
                 logger=logger,
             )

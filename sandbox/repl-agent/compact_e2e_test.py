@@ -41,7 +41,7 @@ async def test_compaction():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
 
-    agents = conn.execute("SELECT agent_id, session_id, agent_idx FROM agents ORDER BY id").fetchall()
+    agents = conn.execute("SELECT agent_id, session_id, agent_idx FROM agents ORDER BY created_at").fetchall()
     print(f"\n=== Agents in DB ===")
     for a in agents:
         print(f"  agent_id={a['agent_id']} session_id={a['session_id']} idx={a['agent_idx']}")

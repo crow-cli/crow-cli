@@ -16,7 +16,7 @@ async def agent_run() -> None:
     config.db_uri = "sqlite:////home/thomas/src/crow-ai/crow-cli/sandbox/repl-agent/.crow/crow-compact.db"
 
     # VERY low threshold so compaction triggers after first tool call
-    config.MAX_COMPACT_TOKENS = 5000
+    config.MAX_COMPACT_TOKENS = 4500
 
     agent = AcpAgent(config, hooks=[uv_project_hook])
 

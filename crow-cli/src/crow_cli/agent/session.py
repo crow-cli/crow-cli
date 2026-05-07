@@ -9,6 +9,7 @@ session_id is derived from agent_id for ACP upstream routing.
 """
 
 import json
+import os
 from logging import Logger
 from pathlib import Path
 from typing import Any
@@ -22,9 +23,12 @@ from crow_cli.agent.db import (
     Message,
     Prompt,
     create_database,
+    get_schemas,
 )
 from crow_cli.agent.prompt import render_template
+from crow_cli.agent.context import get_directory_tree
 
+from crow_cli.agent.configure import Config
 
 def get_session_by_cwd(cwd, db_uri):
     """
@@ -363,3 +367,47 @@ class AgentSession:
             self._db.close()
         self._db = None
         self._model = None
+
+
+def make_agent_session(
+    config: Config,
+    tools: list[dict],
+    model_id: str,
+    cwd: str,
+    session_id: str | None = None,
+    agent_idx: int | None = None,
+):
+    template_path = config.config_dir / "prompts" / "system_prompt.jinja2"
+    template = template_path.read_text()
+    prompt_id = lookup_or_create_prompt(
+        template, name="crow-default", db_uri=config.db_uri
+    )
+    display_tree = get_directory_tree(cwd)
+    agent_path = os.path.join(cwd, "AGENTS.md")
+    if os.path.exists(agent_path):
+        with open(agent_path, "r") as f:
+            agents_content = f.read()
+    else:
+        agents_content = "No AGENTS.md found"
+    if session_id is None:
+        session_id = get_coolname()
+    if agent_idx is None:
+        agent_idx = 1
+    return AgentSession.create(
+        prompt_id=prompt_id,
+        prompt_args={
+            "workspace": cwd,
+            "display_tree": display_tree,
+            "agents_content": agents_content,
+            "db_uri": config.db_uri,
+            "table_schemas": get_schemas(),
+            "session_id": session_id,
+        },
+        tool_definitions=tools,
+        request_params={"temperature": 0.2},
+        model_identifier=model_id,
+        db_uri=config.db_uri,
+        cwd=cwd,
+        agent_idx=agent_idx,
+        session_id=session_id,
+    )

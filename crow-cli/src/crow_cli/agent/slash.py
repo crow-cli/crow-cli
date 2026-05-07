@@ -76,14 +76,16 @@ async def compact_command(agent_id: str, args: str, agent: Agent):
         result_session = await compact(
             session=session,
             llm=llm,
-            cwd=session.cwd,
+            config=agent._config,
             on_compact=on_compact,
             logger=agent._session_logger,
         )
         agent._session_logger.info(
             f"After compact: session.messages has {len(session.messages)} messages, result_session.messages has {len(result_session.messages)} messages"
         )
-        agent._session_logger.info(f"AgentSession same object: {session is result_session}")
+        agent._session_logger.info(
+            f"AgentSession same object: {session is result_session}"
+        )
 
         return f"Conversation compacted successfully! Reduced from {len(session.messages)} messages."
     except Exception as e:

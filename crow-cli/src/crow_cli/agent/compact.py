@@ -16,12 +16,12 @@ Nothing is ever deleted.
 from logging import Logger
 
 from openai import AsyncOpenAI
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session as SQLAlchemySession
 
-from crow_cli.agent.db import Agent as AgentModel
-from crow_cli.agent.db import Message as MessageModel
-from crow_cli.agent.session import AgentSession
+from crow_cli.agent.configure import Config
+from crow_cli.agent.session import (
+    AgentSession,
+    make_agent_session,
+)
 
 MAX_OUTPUT_TOKENS = 30000
 
@@ -80,7 +80,7 @@ def _fill_missing_tool_responses(messages: list[dict]) -> list[dict]:
 async def compact(
     session: AgentSession,
     llm: AsyncOpenAI,
-    cwd: str,
+    config: Config,
     on_compact: callable = None,
     logger: Logger = None,
 ) -> AgentSession:
@@ -146,57 +146,25 @@ async def compact(
     # 5. Create new agent record: same session_id, next agent_idx
     new_agent_idx = original_agent_idx + 1
     new_agent_id = f"{original_session_id}-{new_agent_idx}"
-
-    system_msg = session.messages[0]
-    compacted_messages = [
-        system_msg,
-        {"role": "user", "content": summary},
-    ]
-
-    engine = create_engine(session.db_uri)
-    with SQLAlchemySession(engine) as db:
-        new_agent = AgentModel(
-            agent_id=new_agent_id,
-            session_id=original_session_id,
-            agent_idx=new_agent_idx,
-            prompt_id=session.prompt_id,
-            prompt_args=session.prompt_args,
-            system_prompt=system_msg.get("content", ""),
-            tool_definitions=session.tools,
-            request_params=session.request_params,
-            model_identifier=session.model_identifier,
-        )
-        db.add(new_agent)
-
-        for msg in compacted_messages:
-            db_msg = MessageModel(
-                agent_id=new_agent_id,
-                data=msg,
-                role=msg.get("role", "unknown"),
-            )
-            db.add(db_msg)
-
-        db.commit()
-
-    # 6. Create fresh Session object (avoids stale _db/_model from old agent)
-    new_session = AgentSession(
-        agent_id=new_agent_id,
+    new_session = make_agent_session(
+        config,
+        session.tools,
+        session.model_identifier if session.model_identifier else "",
+        session.cwd,
         session_id=original_session_id,
         agent_idx=new_agent_idx,
-        db_uri=session.db_uri,
-        cwd=session.cwd,
     )
-    new_session.model_identifier = session.model_identifier
-    new_session.tools = session.tools
-    new_session.request_params = session.request_params
-    new_session.prompt_id = session.prompt_id
-    new_session.prompt_args = session.prompt_args
-    new_session.messages = compacted_messages
+
+    last_msgs = last_messages(session)
+    new_agent_prompt = f"{summary}\n\nLast messages:\n\n{last_msgs}"
+    new_session.add_message(
+        {"role": "user", "content": new_agent_prompt},
+    )
 
     if logger:
         logger.info(
             f"Compacted: agent {session.agent_id} -> {new_agent_id}, "
-            f"{len(session.messages)} messages -> {len(compacted_messages)}"
+            f"{len(session.messages)} messages -> {len(new_session.messages)}"
         )
 
     # Callback for async task contexts
@@ -204,3 +172,47 @@ async def compact(
         on_compact(session.agent_id, new_session)
 
     return new_session
+
+
+def last_messages(session: AgentSession, n_messages: int = 20, max_chars: int = 300):
+    if len(session.messages) > n_messages:
+        last_msgs = session.messages[-n_messages:]
+    else:
+        last_msgs = session.messages
+    last_msgs_list = []
+    for msg in last_msgs:
+        role = msg["role"]
+        if role == "user":
+            last_msgs_list.append("USER:")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                new_content = [
+                    x.get("text", "")
+                    for x in content
+                    if isinstance(x, dict) and x.get("type") == "text"
+                ]
+                new_content = " ".join(new_content)
+            else:
+                new_content = content
+            last_msgs_list.append(new_content)
+        if role == "tool":
+            last_msgs_list.append("TOOL RESULT:")
+            content = msg.get("content", "")
+            new_content = content[:max_chars] if len(content) > max_chars else content
+            last_msgs_list.append(new_content)
+        if role == "assistant":
+            last_msgs_list.append("ASSISTANT:")
+            content = msg.get("content", "")
+            new_content = content[:max_chars] if len(content) > max_chars else content
+            last_msgs_list.append(new_content)
+            tool_calls = msg.get("tool_calls", [])
+            for tool_call in tool_calls:
+                tool_args = tool_call.get("function", {})
+                name = tool_args.get("name", "")
+                arguments = tool_args.get("arguments", "")
+                last_msgs_list.append(f"TOOL — {name}:")
+                new_args = (
+                    arguments[:max_chars] if len(arguments) > max_chars else arguments
+                )
+                last_msgs_list.append(new_args)
+    return "\n".join(last_msgs_list)

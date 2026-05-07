@@ -22,6 +22,7 @@ from acp.schema import (
 from jinja2 import Environment, FileSystemLoader
 
 from crow_cli.agent.context import context_fetcher, uri_to_path
+from crow_cli.agent.configure import Config
 
 
 def get_attr(block, name, default=""):
