@@ -174,6 +174,17 @@ async def compact(
     return new_session
 
 
+def unroll_content(content: str | list):
+    if isinstance(content, list):
+        new_content = [
+            x.get("text", "")
+            for x in content
+            if isinstance(x, dict) and x.get("type") == "text"
+        ]
+        return " ".join(new_content)
+    else:
+        return content
+
 def last_messages(session: AgentSession, n_messages: int = 20, max_chars: int = 300):
     if len(session.messages) > n_messages:
         last_msgs = session.messages[-n_messages:]
@@ -184,25 +195,16 @@ def last_messages(session: AgentSession, n_messages: int = 20, max_chars: int = 
         role = msg["role"]
         if role == "user":
             last_msgs_list.append("USER:")
-            content = msg.get("content", "")
-            if isinstance(content, list):
-                new_content = [
-                    x.get("text", "")
-                    for x in content
-                    if isinstance(x, dict) and x.get("type") == "text"
-                ]
-                new_content = " ".join(new_content)
-            else:
-                new_content = content
-            last_msgs_list.append(new_content)
+            content = unroll_content(msg.get("content", ""))
+            last_msgs_list.append(content)
         if role == "tool":
             last_msgs_list.append("TOOL RESULT:")
-            content = msg.get("content", "")
+            content = unroll_content(msg.get("content", ""))
             new_content = content[:max_chars] if len(content) > max_chars else content
             last_msgs_list.append(new_content)
         if role == "assistant":
             last_msgs_list.append("ASSISTANT:")
-            content = msg.get("content", "")
+            content = unroll_content(msg.get("content", ""))
             new_content = content[:max_chars] if len(content) > max_chars else content
             last_msgs_list.append(new_content)
             tool_calls = msg.get("tool_calls", [])
