@@ -65,7 +65,7 @@ def get_tool_kind(tool_name: str) -> ToolKind:
         return "search"
     elif tool_match(tool_name, ("fetch", "download")):
         return "fetch"
-    elif tool_match(tool_name, ("terminal", "bash", "shell", "execute")):
+    elif tool_match(tool_name, ("terminal", "bash", "shell", "execute", "prompt")):
         return "execute"
     else:
         return "other"
@@ -658,3 +658,94 @@ async def execute_acp_tool(
             update=update_tool_call(acp_tool_call_id, status="failed"),
         )
         return f"Error: {str(e)}"
+
+
+
+async def execute_acp_prompt(
+    conn: Client,
+    turn_id: str,
+    mcp_clients: dict[str, MCPClient],
+    agent_id: str,
+    tool_call_id: str,
+    tool_name: str,
+    args: dict[str, Any],
+    logger: Logger,
+) -> str:
+    """
+    Execute a the prompt tool after adding session_id to tools args via MCP and report with content.
+
+    Used for tools like search, fetch, etc. that return text content
+    to display to the user.
+
+    Args:
+        turn_id: Turn ID for ACP tool call IDs
+        agent_id: Agent ID (internal key)
+        tool_call_id: LLM tool call ID
+        tool_name: Name of the MCP tool to call
+        args: Tool arguments _from_ LLM
+        kind: Tool kind for display (search, fetch, other)
+
+    Returns:
+        Result string from the tool
+    """
+    session_id = route_to_session_id(agent_id)
+    # Build ACP tool call ID from turn_id + llm tool call id
+    acp_tool_call_id = f"{turn_id}/{tool_call_id}"
+    kind: ToolKind = get_tool_kind(tool_name)
+    try:
+        # 1. Send tool call start
+        title = f"{tool_name}"
+        await conn.session_update(
+            session_id=session_id,
+            update=ToolCallStart(
+                session_update="tool_call",
+                tool_call_id=acp_tool_call_id,
+                title=title,
+                kind=kind,
+                status="pending",
+            ),
+        )
+
+        # 2. Send in_progress update
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(acp_tool_call_id, status="in_progress"),
+        )
+
+        # 3. Execute tool via MCP
+        logger.info(f"Executing tool via MCP: {tool_name}")
+        mcp_client = mcp_clients.get(session_id)
+        if not mcp_client:
+            raise RuntimeError(f"No MCP client for session {session_id}")
+        args["from_session_id"] = session_id
+        result = await mcp_client.call_tool(tool_name, args)
+
+        # Convert MCP content to ACP content blocks (for client display)
+        acp_content_blocks = mcp_content_to_acp_blocks(result.content)
+
+        # Convert MCP content to OpenAI format (for LLM tool response)
+        # This preserves images so the LLM can see them
+        result_content = mcp_content_to_openai_format(result.content)
+
+        # 4. Send completion update with content
+        status = "completed" if not getattr(result, "isError", False) else "failed"
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(
+                acp_tool_call_id,
+                status=status,
+                content=acp_content_blocks,
+            ),
+        )
+
+        return result_content
+
+    except Exception as e:
+        logger.error(f"Error executing tool {tool_name}: {e}", exc_info=True)
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(acp_tool_call_id, status="failed"),
+        )
+        return f"Error: {str(e)}"
+
+

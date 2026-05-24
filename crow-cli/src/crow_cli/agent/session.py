@@ -377,8 +377,11 @@ def make_agent_session(
     session_id: str | None = None,
     agent_idx: int | None = None,
 ):
-    template_path = config.config_dir / "prompts" / "system_prompt.jinja2"
-    template = template_path.read_text()
+    if not config.system_prompt:
+        template_path = config.config_dir / "prompts" / "system_prompt.jinja2"
+        template = template_path.read_text()
+    else:
+        template = config.system_prompt
     prompt_id = lookup_or_create_prompt(
         template, name="crow-default", db_uri=config.db_uri
     )

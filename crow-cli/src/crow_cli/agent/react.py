@@ -26,6 +26,7 @@ from crow_cli.agent.tools import (
     execute_acp_terminal,
     execute_acp_tool,
     execute_acp_write,
+    execute_acp_prompt,
 )
 
 
@@ -456,6 +457,18 @@ async def execute_tool_calls(
                     logger=logger,
                     snapshot_hooks=snapshot_hooks,
                 )
+            elif tool_name == "prompt":
+                result_content = await execute_acp_prompt(
+                    conn=conn,
+                    turn_id=turn_id,
+                    mcp_clients=mcp_clients,
+                    agent_id=agent_id,
+                    tool_call_id=llm_tool_call_id,
+                    tool_name=tool_name,
+                    args=arg_dict,
+                    logger=logger,
+                )
+
             else:
                 result_content = await execute_acp_tool(
                     conn=conn,

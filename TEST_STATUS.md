@@ -141,3 +141,11 @@ This establishes:
 - ✅ Full session lifecycle works
 
 The foundation is solid and we're ready to expand the test suite systematically.
+
+
+
+does this work or no?
+
+yeah
+
+seems to work now

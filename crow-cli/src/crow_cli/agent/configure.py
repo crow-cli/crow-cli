@@ -96,6 +96,7 @@ class Config:
     MAX_COMPACT_TOKENS: int = 190000
     MAX_TOKENS: int = 38192
     chunk_log: bool = False  # Write every raw chunk to JSONL for debugging
+    system_prompt: str = SYSTEM_PROMPT
 
     @property
     def log_path(self) -> str:
