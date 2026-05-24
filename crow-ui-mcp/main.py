@@ -18,7 +18,8 @@ def prompt(message: str, session_id: str, from_session_id: str = "session-123"):
         ]
     )
     res = requests.post(url, headers=headers, json=request_body)
-    if res.status_code == 200:
+    print(res.status_code)
+    if res.status_code == 202:
         return "Message sent"
     else:
         return "Message not sent"

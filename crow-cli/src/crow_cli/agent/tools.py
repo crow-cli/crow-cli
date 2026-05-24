@@ -674,8 +674,8 @@ async def execute_acp_prompt(
     """
     Execute a the prompt tool after adding session_id to tools args via MCP and report with content.
 
-    Used for tools like search, fetch, etc. that return text content
-    to display to the user.
+    Used for prompt tool which sends a message to another agent
+    Returns text content to display to the user.
 
     Args:
         turn_id: Turn ID for ACP tool call IDs
