@@ -377,7 +377,9 @@ def make_agent_session(
     session_id: str | None = None,
     agent_idx: int | None = None,
 ):
-    if not config.system_prompt:
+    if config.system_prompt_path:
+        template = config.system_prompt_path.read_text()
+    elif not config.system_prompt:
         template_path = config.config_dir / "prompts" / "system_prompt.jinja2"
         template = template_path.read_text()
     else:

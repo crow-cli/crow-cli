@@ -1,21 +1,28 @@
 import asyncio
 import contextlib
+import json
+import logging
 import os
 import sys
 from pathlib import Path
 from typing import Any
 
 import typer
+import yaml
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from crow_cli.agent.configure import Config
+from crow_cli.agent.db import Agent as AgentModel
+from crow_cli.agent.db import Message
 from crow_cli.agent.main import main as agent_main
+from crow_cli.agent.session import AgentSession
 from crow_cli.cli.init_cmd import init_command
-
-# from crow_cli.agent.config import settings
 from crow_cli.client.main import CrowClient, connect_client
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session as SQLAlchemySession
 
 app = typer.Typer(
     name="crow-cli",
@@ -65,11 +72,48 @@ def run_agentmain(
         "--debug",
         help="Enable chunk-level JSONL logging for debugging",
     ),
+    system_prompt_path: Path = typer.Option(
+        None,
+        "--system-prompt-path",
+        "-p",
+        help="Path to a Jinja2 system prompt template file",
+    ),
+    config_file: Path = typer.Option(
+        None,
+        "--config-file",
+        "-o",
+        help="YAML file with config values to override",
+    ),
 ):
     """Main entry point for the crow-cli agent."""
     if config_dir is None:
         config_dir = Path.home() / ".crow"
-    agent_main(config_dir=config_dir, debug=debug)
+
+    config = Config.load(config_dir=config_dir)
+
+    if config_file and config_file.exists():
+        with open(config_file) as f:
+            overrides = yaml.safe_load(f) or {}
+        if "system_prompt_path" in overrides:
+            config.system_prompt_path = Path(overrides["system_prompt_path"])
+        if "db_uri" in overrides:
+            config.db_uri = overrides["db_uri"]
+        if "max_retries_per_step" in overrides:
+            config.max_retries_per_step = int(overrides["max_retries_per_step"])
+        if "MAX_COMPACT_TOKENS" in overrides:
+            config.MAX_COMPACT_TOKENS = int(overrides["MAX_COMPACT_TOKENS"])
+        if "MAX_TOKENS" in overrides:
+            config.MAX_TOKENS = int(overrides["MAX_TOKENS"])
+        if "chunk_log" in overrides:
+            config.chunk_log = bool(overrides["chunk_log"])
+
+    if system_prompt_path:
+        config.system_prompt_path = system_prompt_path
+
+    if debug:
+        config.chunk_log = True
+
+    agent_main(config=config)
 
 
 @app.command("init")
@@ -134,10 +178,6 @@ def inspect_db(
     ),
 ):
     """Inspect the Crow database - see session state, messages, etc."""
-    import json
-
-    from crow_cli.agent.session import AgentSession
-
     if config_dir is None:
         config_dir = Path.home() / ".crow"
     db_uri = f"sqlite:///{config_dir / 'crow.db'}"
@@ -203,11 +243,6 @@ def inspect_db(
                 client._console.print(msg_table)
     else:
         # List all sessions — use AgentSession.get_max_agent_idx to enumerate
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import Session as SQLAlchemySession
-        from crow_cli.agent.db import Agent as AgentModel
-        from crow_cli.agent.db import Message
-
         engine = create_engine(db_uri)
         db = SQLAlchemySession(engine)
         agents = db.query(AgentModel).order_by(AgentModel.created_at.desc()).all()
@@ -290,8 +325,6 @@ def run(
     Default mode: Send a single prompt and exit after response.
     Interactive mode (-i): Start a REPL loop.
     """
-    import logging
-
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
     else:

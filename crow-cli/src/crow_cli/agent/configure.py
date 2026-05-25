@@ -98,7 +98,7 @@ class Config:
     MAX_TOKENS: int = 38192
     chunk_log: bool = False  # Write every raw chunk to JSONL for debugging
     system_prompt: str = SYSTEM_PROMPT
-
+    system_prompt_path: Path | None = None
     @property
     def log_path(self) -> str:
         return str(self.config_dir / "logs" / "crow-cli.log")
@@ -177,10 +177,15 @@ class Config:
 
         mcp_servers = parsed.get("mcpServers", {})
         _logger.info("FINAL mcp_servers stored in Config: %s", mcp_servers)
+        system_prompt_path = None
+        if "system_prompt_path" in parsed:
+            system_prompt_path = Path(parsed["system_prompt_path"])
+
         return cls(
             config_dir=target_dir,
             llm=llm,
             db_uri=db_uri,
             mcp_servers=mcp_servers,
+            system_prompt_path=system_prompt_path,
             **overrides,
         )
