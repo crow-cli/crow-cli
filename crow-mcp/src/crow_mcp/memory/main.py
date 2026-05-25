@@ -21,6 +21,8 @@ engine = create_engine(f"sqlite:///{DB_PATH}")
 
 Base = declarative_base()
 
+from crow_mcp.server.main import mcp
+
 
 class Agent(Base):
     __tablename__ = "agents"
@@ -59,9 +61,6 @@ class ContentMode(str, Enum):
     WITH_THINKING = "with_thinking"
     WITH_TOOLS = "with_tools"
     FULL = "full"
-
-
-mcp = FastMCP("crow-memory-mcp")
 
 
 def _extract_searchable_text(data: dict) -> str:

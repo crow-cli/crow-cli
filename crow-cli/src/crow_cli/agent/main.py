@@ -50,6 +50,7 @@ import uuid
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any
+from importlib.metadata import version
 
 import httpx
 from acp import (
@@ -298,7 +299,7 @@ class AcpAgent(Agent):
             agent_info=Implementation(
                 name="crow-cli",
                 title="crow-cli",
-                version="0.1.23",
+                version=version("crow-cli"),
             ),
         )
 

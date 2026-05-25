@@ -402,8 +402,6 @@ def make_agent_session(
             "workspace": cwd,
             "display_tree": display_tree,
             "agents_content": agents_content,
-            "db_uri": config.db_uri,
-            "table_schemas": get_schemas(),
             "session_id": session_id,
         },
         tool_definitions=tools,

@@ -124,14 +124,6 @@ AGENTS.md:
 * Add important insights, patterns, and learnings to this file to improve future task performance.
 * This repository skill is automatically loaded for every conversation and helps maintain context across sessions.
 </MEMORY>
-
-<STATE>
-* A database of previous agent conversastions is available at {{ db_uri }}
-* You can use `sqlite3` to search through previous agent conversations and interactions if needed or the user requests
-* Your read tool will not read files outside of cwd so don't try to read it!
-* The schema of the tables are as follows (agent-id is the unique agent identifier)
-{{ table_schema }}
-</STATE>
 """
 
 COMPOSE_YAML = """services:
