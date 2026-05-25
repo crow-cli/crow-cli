@@ -21,6 +21,7 @@ from crow_cli.agent.default import (
     SEARXNG_SETTINGS_YML,
     SYSTEM_PROMPT,
 )
+from crow_cli.agent.logger import setup_logger
 
 ENV_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
@@ -104,7 +105,8 @@ class Config:
 
     def get_builtin_mcp_config(self) -> dict[str, Any]:
         """Return MCP config dict in FastMCP format."""
-        return {"mcpServers": dict(self.mcp_servers or {})}
+        cfg = {"mcpServers": dict(self.mcp_servers or {})}
+        return cfg
 
     @property
     def is_configured(self) -> bool:
@@ -114,6 +116,7 @@ class Config:
     @classmethod
     def load(cls, config_dir: Path | None = None) -> "Config":
         target_dir = get_default_config_dir(config_dir)
+        _logger = setup_logger(target_dir / "logs" / "crow-cli.log")
 
         # Write defaults if nothing exists yet
         if not (target_dir / "config.yaml").exists():
@@ -127,6 +130,7 @@ class Config:
         # If no config.yaml, return a bare Config
         config_file = target_dir / "config.yaml"
         if not config_file.exists():
+            _logger.info("No config.yaml found, returning bare Config")
             return cls(
                 config_dir=target_dir,
                 db_uri=os.getenv("DATABASE_PATH", str(target_dir / "crow.db")),
@@ -135,7 +139,9 @@ class Config:
         with open(config_file) as f:
             raw = yaml.safe_load(f) or {}
 
+        _logger.info("RAW config.yaml mcpServers: %s", raw.get("mcpServers", {}))
         parsed = resolve_env_vars(raw)
+        _logger.info("PARSED config.yaml mcpServers after resolve_env_vars: %s", parsed.get("mcpServers", {}))
 
         # Parse providers
         llm = LLMConfig()
@@ -169,10 +175,12 @@ class Config:
         if "chunk_log" in parsed:
             overrides["chunk_log"] = bool(parsed["chunk_log"])
 
+        mcp_servers = parsed.get("mcpServers", {})
+        _logger.info("FINAL mcp_servers stored in Config: %s", mcp_servers)
         return cls(
             config_dir=target_dir,
             llm=llm,
             db_uri=db_uri,
-            mcp_servers=parsed.get("mcpServers", {}),
+            mcp_servers=mcp_servers,
             **overrides,
         )

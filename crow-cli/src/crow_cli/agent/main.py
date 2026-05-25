@@ -329,6 +329,8 @@ class AcpAgent(Agent):
         #  mcp servers == tools == system prompt
         # ######################################
 
+        self._logger.info("new_session mcp_servers from ACP: %s", mcp_servers)
+
         # Use default MCP config if no servers provided
         builtin_config = self._config.get_builtin_mcp_config()
         self._logger.info("builtin_config: %s", builtin_config)
@@ -340,6 +342,7 @@ class AcpAgent(Agent):
             builtin_config=builtin_config,
             logger=self._logger,
         )
+        self._logger.info("new_session merged config from create_mcp_client_from_acp: %s", config)
         self._config.mcp_servers = config
         # CRITICAL: Use AsyncExitStack for lifecycle management
         mcp_client = await self._exit_stack.enter_async_context(mcp_client)
@@ -460,6 +463,7 @@ class AcpAgent(Agent):
 
             # Setup MCP client (same as new_session)
             # Use default config if no servers given
+            self._logger.info("LOAD_SESSION: mcp_servers from ACP: %s", mcp_servers)
             self._logger.info("LOAD_SESSION: Step 2: Getting builtin config")
             builtin_config = self._config.get_builtin_mcp_config()
             self._logger.info(
@@ -475,6 +479,7 @@ class AcpAgent(Agent):
                 builtin_config=builtin_config,
                 logger=self._logger,
             )
+            self._logger.info("LOAD_SESSION merged config: %s", config)
             self._logger.info("LOAD_SESSION: Step 3 complete: MCP client created")
 
             # CRITICAL: Use AsyncExitStack for lifecycle management

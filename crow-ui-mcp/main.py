@@ -10,12 +10,14 @@ mcp = FastMCP("crow-ui-mcp")
 
 def prompt(message: str, session_id: str, from_session_id: str = "session-123"):
     """Send a prompt message to another agent session."""
-    url = f"http://localhost:4723/api/acp/sessions/{session_id}/prompt"
+    port = os.getenv("CROW_UI_PORT", 4723)
+    url = f"http://localhost:{port}/api/acp/sessions/{session_id}/relay"
     headers = {"Content-Type": "application/json"}
     request_body = dict(
         blocks=[
             dict(type="text", text=message)
-        ]
+        ],
+        from_session_id=from_session_id,
     )
     res = requests.post(url, headers=headers, json=request_body)
     print(res.status_code)

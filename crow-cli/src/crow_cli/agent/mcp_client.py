@@ -17,6 +17,7 @@ from crow_cli.agent.configure import Config
 
 def acp_to_fastmcp_config(
     mcp_servers: list[HttpMcpServer | SseMcpServer | McpServerStdio],
+    logger: Logger | None = None,
 ) -> dict[str, Any]:
     """
     Convert ACP mcp_servers to FastMCP configuration dict.
@@ -36,6 +37,8 @@ def acp_to_fastmcp_config(
         if isinstance(server, McpServerStdio):
             # Convert List[EnvVariable] to dict[str, str]
             env_dict = {e.name: e.value for e in server.env}
+            if logger:
+                logger.info("  acp_to_fastmcp_config: server '%s' env_dict=%s", server.name, env_dict)
 
             config["mcpServers"][server.name] = {
                 "transport": "stdio",
@@ -83,21 +86,29 @@ def create_mcp_client_from_acp(
     Returns:
         FastMCP Client instance (must be used with async with)
     """
+    logger.info("create_mcp_client_from_acp called")
+    logger.info("  mcp_servers param: %s", mcp_servers)
+    logger.info("  builtin_config param: %s", builtin_config)
+
     # Start with fallback config as base
     config: dict[str, Any] = (
         dict(builtin_config) if builtin_config else {"mcpServers": {}}
     )
+    logger.info("  base config after builtin: %s", config)
 
     # Convert any ACP mcp_servers and merge into config
     if mcp_servers:
-        acp_config = acp_to_fastmcp_config(mcp_servers)
+        acp_config = acp_to_fastmcp_config(mcp_servers, logger=logger)
+        logger.info("  acp_config converted: %s", acp_config)
         config["mcpServers"].update(acp_config["mcpServers"])
+        logger.info("  config after merging acp: %s", config)
 
     # Add cwd to each server config
-    for server_config in config["mcpServers"].values():
+    for name, server_config in config["mcpServers"].items():
         server_config["cwd"] = cwd
+        logger.info("  server '%s' env: %s", name, server_config.get("env"))
 
-    logger.info("  final config: %s", config)
+    logger.info("  final config (before transport): %s", config)
     if not config.get("mcpServers"):
         raise ValueError("No MCP servers defined in the config")
 
