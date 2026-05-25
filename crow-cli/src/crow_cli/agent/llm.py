@@ -7,6 +7,7 @@ from openai import AsyncOpenAI
 
 from crow_cli.agent.configure import LLMProvider
 from logging import Logger
+from importlib.metadata import version
 
 
 
@@ -46,7 +47,7 @@ def configure_llm(
         api_key=api_key,
         base_url=base_url,
         http_client=http_client,
-        default_headers={"User-Agent": "KimiCLI/1.41.0"},
+        default_headers={"User-Agent": f"CrowCLI/{version('crow-cli')}"},
     )
     logger.info(f"USER-AGENT: {client.user_agent}") # =
     return client
