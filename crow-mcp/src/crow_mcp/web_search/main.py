@@ -42,15 +42,14 @@ class Infobox(BaseModel):
 
 class SearchResponse(BaseModel):
     query: str
-    number_of_results: int
     results: list[SearchResult]
     infoboxes: list[Infobox]
 
 
 @mcp.tool
 async def web_search(queries: list[str], limit: int = 10) -> str:
-    f"""## Search Tool Instructions
-    **Search the internet. USE THIS LIBERALLY.**
+    """## Search Tool Instructions   
+**Search the internet. USE THIS LIBERALLY.**
     If you are:
     - Uncertain about the user's query
     - About to make something up
