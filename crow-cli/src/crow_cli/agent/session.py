@@ -66,8 +66,17 @@ def get_session_by_cwd(cwd, db_uri):
                     data = msgs[1].data
                     if isinstance(data, str):
                         data = json.loads(data)
-                    title = data.get("content", "")[:50] if data else "Untitled Chat"
-                except json.JSONDecodeError, AttributeError, TypeError:
+                    content = data.get("content", "") if data else ""
+                    # Handle content blocks (list of dicts) vs plain string
+                    if isinstance(content, list):
+                        title = "".join(
+                            block.get("text", "") for block in content if block.get("type") == "text"
+                        )[:50]
+                    else:
+                        title = str(content)[:50]
+                    if not title:
+                        title = "Untitled Chat"
+                except (json.JSONDecodeError, AttributeError, TypeError):
                     title = "Untitled Chat"
             else:
                 title = "Untitled Chat"

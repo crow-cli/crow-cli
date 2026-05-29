@@ -791,7 +791,7 @@ class AcpAgent(Agent):
     async def list_sessions(
         self, cursor: str | None = None, cwd: str | None = None, **kwargs: Any
     ) -> ListSessionsResponse:
-        self._logger.info("Listing sessions for working directory: {cwd}", cwd=cwd)
+        self._logger.info("Listing sessions for working directory: %s", cwd)
         if cwd is None:
             return ListSessionsResponse(sessions=[], next_cursor=None)
         sessions_info = get_session_by_cwd(cwd, self._db_uri)
