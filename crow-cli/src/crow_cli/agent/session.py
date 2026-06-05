@@ -397,12 +397,18 @@ def make_agent_session(
         template, name="crow-default", db_uri=config.db_uri
     )
     display_tree = get_directory_tree(cwd)
-    agent_path = os.path.join(cwd, "AGENTS.md")
+    agent_path = os.path.join(cwd, "AGENTS.typ")
     if os.path.exists(agent_path):
         with open(agent_path, "r") as f:
             agents_content = f.read()
     else:
-        agents_content = "No AGENTS.md found"
+        # Fallback to markdown
+        agent_path = os.path.join(cwd, "AGENTS.md")
+        if os.path.exists(agent_path):
+            with open(agent_path, "r") as f:
+                agents_content = f.read()
+        else:
+            agents_content = "No AGENTS.md found"
     if session_id is None:
         session_id = get_coolname()
     if agent_idx is None:
