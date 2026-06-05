@@ -20,6 +20,7 @@ from crow_cli.agent.db import Message
 from crow_cli.agent.main import main as agent_main
 from crow_cli.agent.session import AgentSession
 from crow_cli.cli.init_cmd import init_command
+from crow_cli.cli.install import app as install_app
 from crow_cli.client.main import CrowClient, connect_client
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session as SQLAlchemySession
@@ -28,6 +29,9 @@ app = typer.Typer(
     name="crow-cli",
     help="Transparent CLI for Crow agent - full observability into agent state",
 )
+
+# Register command groups
+app.add_typer(install_app, name="install")
 
 
 console = Console()
