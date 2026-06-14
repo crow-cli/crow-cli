@@ -749,3 +749,241 @@ async def execute_acp_prompt(
         return f"Error: {str(e)}"
 
 
+# ─── Orchestration tool execution ──────────────────────────────────────────
+# Routes to client via ACP ext_method for agent-to-agent communication
+# Backend methods: _send, _task/read, _task/write
+
+
+async def execute_orchestration_send_prompt(
+    conn: Client,
+    turn_id: str,
+    agent_id: str,
+    tool_call_id: str,
+    args: dict[str, Any],
+    logger: Logger,
+) -> str:
+    """
+    Send a prompt to another agent session via _send ext_method.
+    
+    Args:
+        conn: ACP client connection
+        turn_id: Current turn ID
+        agent_id: Current agent ID
+        tool_call_id: LLM tool call ID
+        args: Tool arguments (toSessionId, blocks)
+        logger: Logger instance
+    
+    Returns:
+        Result from the client-side operation
+    """
+    session_id = route_to_session_id(agent_id)
+    acp_tool_call_id = f"{turn_id}/{tool_call_id}"
+    to_session_id = args.get("to_session_id", "")
+    blocks = args.get("blocks", [])
+    
+    try:
+        # 1. Send tool call start
+        await conn.session_update(
+            session_id=session_id,
+            update=ToolCallStart(
+                session_update="tool_call",
+                tool_call_id=acp_tool_call_id,
+                title=f"Send prompt to {to_session_id}",
+                kind="execute",
+                status="pending",
+            ),
+        )
+        
+        # 2. Call _send ext_method to route to client
+        logger.info(f"Routing _send to client: to={to_session_id}")
+        result = await conn.ext_method(
+            method="send",
+            params={
+                "toSessionId": to_session_id,
+                "blocks": blocks,
+            }
+        )
+        
+        # 3. Send completion
+        status_msg = result.get("status", "sent")
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(
+                tool_call_id=acp_tool_call_id,
+                status="completed",
+                content=[tool_content(text_block(f"Message sent: {status_msg}"))],
+            ),
+        )
+        
+        return f"Message sent to {to_session_id}: {status_msg}"
+        
+    except Exception as e:
+        logger.error(f"Error in send_prompt: {e}", exc_info=True)
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(acp_tool_call_id, status="failed"),
+        )
+        return f"Error sending prompt: {str(e)}"
+
+
+async def execute_orchestration_task_read(
+    conn: Client,
+    turn_id: str,
+    agent_id: str,
+    tool_call_id: str,
+    args: dict[str, Any],
+    logger: Logger,
+) -> str:
+    """
+    Read task list via _task/read ext_method.
+    
+    Args:
+        conn: ACP client connection
+        turn_id: Current turn ID
+        agent_id: Current agent ID
+        tool_call_id: LLM tool call ID
+        args: Tool arguments (none needed)
+        logger: Logger instance
+    
+    Returns:
+        Task list summary
+    """
+    session_id = route_to_session_id(agent_id)
+    acp_tool_call_id = f"{turn_id}/{tool_call_id}"
+    
+    try:
+        # 1. Send tool call start
+        await conn.session_update(
+            session_id=session_id,
+            update=ToolCallStart(
+                session_update="tool_call",
+                tool_call_id=acp_tool_call_id,
+                title="Read task list",
+                kind="execute",
+                status="pending",
+            ),
+        )
+        
+        # 2. Call _task/read ext_method
+        logger.info("Routing _task/read to client")
+        result = await conn.ext_method(
+            method="_task/read",
+            params={}
+        )
+        
+        # 3. Format result
+        summary = result.get("summary", "No tasks")
+        tasks = result.get("tasks", [])
+        
+        tasks_text = summary
+        if tasks:
+            tasks_text += "\n\n" + "\n".join([
+                f"- [{t.get('status', 'pending')}] {t.get('title', 'untitled')} (id: {t.get('id', '?')})"
+                for t in tasks
+            ])
+        
+        # 4. Send completion
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(
+                tool_call_id=acp_tool_call_id,
+                status="completed",
+                content=[tool_content(text_block(tasks_text))],
+            ),
+        )
+        
+        return tasks_text
+        
+    except Exception as e:
+        logger.error(f"Error in task_read: {e}", exc_info=True)
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(acp_tool_call_id, status="failed"),
+        )
+        return f"Error reading tasks: {str(e)}"
+
+
+async def execute_orchestration_task_write(
+    conn: Client,
+    turn_id: str,
+    agent_id: str,
+    tool_call_id: str,
+    args: dict[str, Any],
+    logger: Logger,
+) -> str:
+    """
+    Create/update/delete task via _task/write ext_method.
+    
+    Args:
+        conn: ACP client connection
+        turn_id: Current turn ID
+        agent_id: Current agent ID
+        tool_call_id: LLM tool call ID
+        args: Tool arguments (action, title, description, task_id, status, assigned_to)
+        logger: Logger instance
+    
+    Returns:
+        Result from the client-side operation
+    """
+    session_id = route_to_session_id(agent_id)
+    acp_tool_call_id = f"{turn_id}/{tool_call_id}"
+    action = args.get("action", "")
+    
+    try:
+        # 1. Send tool call start
+        await conn.session_update(
+            session_id=session_id,
+            update=ToolCallStart(
+                session_update="tool_call",
+                tool_call_id=acp_tool_call_id,
+                title=f"Task: {action}",
+                kind="execute",
+                status="pending",
+            ),
+        )
+        
+        # 2. Call _task/write ext_method
+        logger.info(f"Routing _task/write to client: action={action}")
+        result = await conn.ext_method(
+            method="_task/write",
+            params={
+                "action": action,
+                "title": args.get("title"),
+                "description": args.get("description"),
+                "taskId": args.get("task_id"),
+                "status": args.get("status"),
+                "assignedTo": args.get("assigned_to"),
+            }
+        )
+        
+        # 3. Format result
+        if action == "create":
+            task = result.get("task", {})
+            message = f"Created task: {task.get('title', 'untitled')} (id: {task.get('id', '?')})"
+        elif action == "update":
+            task = result.get("task", {})
+            message = f"Updated task: {task.get('title', 'untitled')} (status: {task.get('status', '?')})"
+        elif action == "delete":
+            message = "Task deleted"
+        else:
+            message = f"Action {action} completed"
+        
+        # 4. Send completion
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(
+                tool_call_id=acp_tool_call_id,
+                status="completed",
+                content=[tool_content(text_block(message))],
+            ),
+        )
+        
+        return message
+        
+    except Exception as e:
+        logger.error(f"Error in task_write: {e}", exc_info=True)
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(acp_tool_call_id, status="failed"),
+        )
+        return f"Error writing task: {str(e)}"

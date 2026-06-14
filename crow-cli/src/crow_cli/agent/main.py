@@ -184,6 +184,7 @@ class AcpAgent(Agent):
         self._config_values: dict[
             str, dict[str, str]
         ] = {}  # session_id -> {config_id: value}
+        self._notification_queue: list[dict] = []  # queued extension notifications
 
     def _default_model_value(self) -> str:
         model = next(iter(self._config.llm.models.values()), None)
@@ -775,7 +776,14 @@ class AcpAgent(Agent):
 
     async def ext_notification(self, method: str, params: dict[str, Any]) -> None:
         """Handle extension notifications"""
-        self._logger.info("Extension notification: %s", method)
+        self._logger.info("Extension notification: %s with params: %s", method, params)
+        
+        # Queue _send notifications for processing
+        if method == "_send":
+            if not hasattr(self, '_notification_queue'):
+                self._notification_queue = []
+            self._notification_queue.append(params)
+            self._logger.info("Queued _send notification, queue size: %d", len(self._notification_queue))
 
     async def cleanup(self) -> None:
         """

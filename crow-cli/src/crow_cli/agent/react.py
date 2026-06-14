@@ -27,6 +27,9 @@ from crow_cli.agent.tools import (
     execute_acp_tool,
     execute_acp_write,
     execute_acp_prompt,
+    execute_orchestration_send_prompt,
+    execute_orchestration_task_read,
+    execute_orchestration_task_write,
 )
 
 
@@ -468,7 +471,33 @@ async def execute_tool_calls(
                     args=arg_dict,
                     logger=logger,
                 )
-
+            elif tool_name == "send_prompt":
+                result_content = await execute_orchestration_send_prompt(
+                    conn=conn,
+                    turn_id=turn_id,
+                    agent_id=agent_id,
+                    tool_call_id=llm_tool_call_id,
+                    args=arg_dict,
+                    logger=logger,
+                )
+            elif tool_name == "task_read":
+                result_content = await execute_orchestration_task_read(
+                    conn=conn,
+                    turn_id=turn_id,
+                    agent_id=agent_id,
+                    tool_call_id=llm_tool_call_id,
+                    args=arg_dict,
+                    logger=logger,
+                )
+            elif tool_name == "task_write":
+                result_content = await execute_orchestration_task_write(
+                    conn=conn,
+                    turn_id=turn_id,
+                    agent_id=agent_id,
+                    tool_call_id=llm_tool_call_id,
+                    args=arg_dict,
+                    logger=logger,
+                )
             else:
                 result_content = await execute_acp_tool(
                     conn=conn,

@@ -1,0 +1,16 @@
+[project]
+name = "crow-task-mcp"
+version = "0.1.0"
+description = "Orchestration tools for agent-to-agent communication via ACP protocol"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "fastmcp>=3.4.2",
+]
+
+[project.scripts]
+crow-task-mcp = "crow_task_mcp.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -110,6 +110,8 @@ def run_agentmain(
             config.MAX_TOKENS = int(overrides["MAX_TOKENS"])
         if "chunk_log" in overrides:
             config.chunk_log = bool(overrides["chunk_log"])
+        if "mcpServers" in overrides:
+            config.mcp_servers = overrides["mcpServers"]
 
     if system_prompt_path:
         config.system_prompt_path = system_prompt_path

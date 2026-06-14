@@ -24,3 +24,10 @@ crow-editor/frontend/node_modules
 
 *.log
 *.log*
+
+
+crow-mcp/.venv
+crow-task-mcp/.venv
+crow-task-mcp/src/crow_task_mcp/__pycache__/
+crow-orchestrator-mcp/.venv
+crow-orchestrator-mcp/src/crow_orchestrator_mcp/__pycache__
