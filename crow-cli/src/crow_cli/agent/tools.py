@@ -867,7 +867,7 @@ async def execute_orchestration_task_read(
         # 2. Call _task/read ext_method
         logger.info("Routing _task/read to client")
         result = await conn.ext_method(
-            method="_task/read",
+            method="task/read",
             params={}
         )
         
@@ -945,7 +945,7 @@ async def execute_orchestration_task_write(
         # 2. Call _task/write ext_method
         logger.info(f"Routing _task/write to client: action={action}")
         result = await conn.ext_method(
-            method="_task/write",
+            method="task/write",
             params={
                 "action": action,
                 "title": args.get("title"),
@@ -987,3 +987,78 @@ async def execute_orchestration_task_write(
             update=update_tool_call(acp_tool_call_id, status="failed"),
         )
         return f"Error writing task: {str(e)}"
+
+
+async def execute_orchestration_task_send(
+    conn: Client,
+    turn_id: str,
+    agent_id: str,
+    tool_call_id: str,
+    args: dict[str, Any],
+    logger: Logger,
+) -> str:
+    """
+    Send a batch of tasks to an orchestrator session via _task/send ext_method.
+    
+    Args:
+        conn: ACP client connection
+        turn_id: Current turn ID
+        agent_id: Current agent ID
+        tool_call_id: LLM tool call ID
+        args: Tool arguments (to_session_id, tasks)
+        logger: Logger instance
+    
+    Returns:
+        Result from the client-side operation
+    """
+    session_id = route_to_session_id(agent_id)
+    acp_tool_call_id = f"{turn_id}/{tool_call_id}"
+    to_session_id = args.get("to_session_id", "")
+    tasks = args.get("tasks", [])
+    
+    try:
+        # 1. Send tool call start
+        await conn.session_update(
+            session_id=session_id,
+            update=ToolCallStart(
+                session_update="tool_call",
+                tool_call_id=acp_tool_call_id,
+                title=f"Send {len(tasks)} tasks to {to_session_id}",
+                kind="execute",
+                status="pending",
+            ),
+        )
+        
+        # 2. Call _task/send ext_method
+        logger.info(f"Routing _task/send to client: to={to_session_id}, count={len(tasks)}")
+        result = await conn.ext_method(
+            method="task/send",
+            params={
+                "toSessionId": to_session_id,
+                "tasks": tasks,
+            }
+        )
+        
+        # 3. Format result
+        task_count = result.get("taskCount", len(tasks))
+        message = f"Sent {task_count} tasks to orchestrator session {to_session_id}"
+        
+        # 4. Send completion
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(
+                tool_call_id=acp_tool_call_id,
+                status="completed",
+                content=[tool_content(text_block(message))],
+            ),
+        )
+        
+        return message
+        
+    except Exception as e:
+        logger.error(f"Error in task_send: {e}", exc_info=True)
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(acp_tool_call_id, status="failed"),
+        )
+        return f"Error sending tasks: {str(e)}"

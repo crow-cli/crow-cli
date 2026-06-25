@@ -30,6 +30,7 @@ from crow_cli.agent.tools import (
     execute_orchestration_send_prompt,
     execute_orchestration_task_read,
     execute_orchestration_task_write,
+    execute_orchestration_task_send,
 )
 
 
@@ -491,6 +492,15 @@ async def execute_tool_calls(
                 )
             elif tool_name == "task_write":
                 result_content = await execute_orchestration_task_write(
+                    conn=conn,
+                    turn_id=turn_id,
+                    agent_id=agent_id,
+                    tool_call_id=llm_tool_call_id,
+                    args=arg_dict,
+                    logger=logger,
+                )
+            elif tool_name == "task_send":
+                result_content = await execute_orchestration_task_send(
                     conn=conn,
                     turn_id=turn_id,
                     agent_id=agent_id,

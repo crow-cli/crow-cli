@@ -206,21 +206,29 @@ async def query_memory(
 ) -> str:
     """Query agent conversation history from the crow database.
 
+    Results are returned newest-first (most recent messages at the top).
+    Use `limit` to get the N most recent messages for a session — this is
+    the common case for an agent checking what just happened.
+
     Progressive disclosure:
     - query only (no session_id): discovery mode — search across all sessions
-    - session_id only: browse mode — list messages in that session
+    - session_id only: browse mode — most recent messages in that session
     - session_id + query: deep dive — search within session with context window
 
     Args:
         query: Search term. None means no text filter.
         session_id: Filter to a specific session. None = search all sessions.
-        agent_idx: Filter to a specific agent within a session. None = all agents.
+        agent_idx: Filter to a specific agent within a session. If omitted with
+            a session_id, defaults to the most recent agent_idx (highest). Pass
+            None explicitly to search all agents.
         mode: ContentMode enum controlling what message types to show.
         context: Number of messages around each match (like grep -C). Only applies with session_id.
         after: ISO datetime string. Only messages after this time.
         before: ISO datetime string. Only messages before this time.
-        limit: Max results to return (default 50, hard cap 200).
-        offset: Pagination offset.
+        limit: Max results to return (default 50, hard cap 200). Since results
+            are newest-first, this is effectively "the N most recent messages."
+        offset: Pagination offset (into the past). offset=50 skips the 50 most
+            recent messages and returns the next batch.
 
     Returns:
         Markdown-formatted results — table for discovery, transcript for deep dive.
@@ -236,8 +244,17 @@ async def query_memory(
 
         if session_id:
             q = q.filter(Agent.session_id == session_id)
-        if agent_idx is not None:
-            q = q.filter(Agent.agent_idx == agent_idx)
+            # Default to the most recent agent_idx when not specified.
+            # After compaction, a new agent_idx is created — the old one's
+            # messages are stale. Without this, queries mix all agents together.
+            if agent_idx is not None:
+                q = q.filter(Agent.agent_idx == agent_idx)
+            else:
+                max_idx = db.query(Agent.agent_idx).filter(
+                    Agent.session_id == session_id
+                ).order_by(Agent.agent_idx.desc()).first()
+                if max_idx is not None:
+                    q = q.filter(Agent.agent_idx == max_idx[0])
         if after:
             try:
                 dt = datetime.fromisoformat(after)
@@ -285,6 +302,11 @@ async def query_memory(
                 messages = [all_results[i][0] for i in sorted(match_indices)]
         else:
             messages = [r[0] for r in all_results]
+
+        # Reverse for newest-first display. Context window was computed in
+        # chronological order above; now we flip so the most recent messages
+        # come first. offset/limit then paginate backward in time.
+        messages.reverse()
 
         total = len(messages)
         messages = messages[offset : offset + limit]

@@ -19,17 +19,26 @@ mcp = FastMCP("crow-orchestrator-mcp")
 
 @mcp.tool()
 def task_send(to_session_id: str, tasks: list[dict]) -> dict:
-    """Send a batch of tasks to an orchestrator session.
-    
-    Creates tasks in the target session and sends the first task as a prompt
-    to kick off the orchestrator. Use this to delegate work to worker agents.
-    
+    """Delegate a batch of tasks to another agent session.
+
+    Populates the target session's task list, records this session as the
+    caller, and kicks off the target's task loop. The loop promotes the
+    first Pending task and prompts the target with it, then advances
+    through the list. When the loop exits normally (all tasks done or the
+    list is empty), the backend sends a canned completion message back to
+    this session telling you to call query_memory for the target's final
+    summary.
+
+    Orchestrator-only: use this to delegate work to worker agents. Workers
+    do not advertise it. Load this server alongside crow-task-mcp (which
+    provides send_prompt, task_read, task_write).
+
     Args:
-        to_session_id: Session ID of the orchestrator agent to receive tasks
+        to_session_id: Session ID of the agent to receive the tasks
         tasks: Array of task definitions, each with:
             - title (required): Human-readable task description
             - description (optional): Detailed instructions for the task
-    
+
     Returns:
         Dictionary with:
             - success: Whether the operation succeeded

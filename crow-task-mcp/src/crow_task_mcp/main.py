@@ -8,7 +8,8 @@ Architecture:
 - Tools are defined here as schemas for the LLM
 - Actual execution happens in crow-cli/tools.py via ACP ext_method calls
 - The client (sidex) routes ext_method calls to sidex-acp backend
-- Backend methods: _send, _task/read, _task/write, _task/send
+- Backend methods: _send, _task/read, _task/write
+- task_send (_task/send) lives in crow-orchestrator-mcp, loaded only by orchestrators
 
 Note: Queue operations (_queue/*) are internal client logic and NOT exposed to agents.
 """
@@ -20,22 +21,20 @@ mcp = FastMCP("crow-task-mcp")
 
 @mcp.tool()
 def send_prompt(to_session_id: str, blocks: list[dict]) -> str:
-    """Send a prompt message to another agent session.
-    
-    This initiates an async two-step communication:
-    1. Returns immediately with status
-    2. Backend prompts target session with your message
-    3. Target works (react loop, tools, etc.)
-    4. Target finishes (prompt response with stopReason)
-    5. Backend re-prompts target: "Summarize what you did"
-    6. Backend sends _send notification back to you with the summary
-    
+    """Send a prompt to another agent session (fire-and-forget).
+
+    The backend prompts the target session with your message blocks and
+    returns immediately. There is no summary re-prompt and no callback —
+    the target works through its react loop on its own. Retrieve the
+    target's response later by calling query_memory with
+    session_id="<to_session_id>" and limit=1.
+
     Args:
         to_session_id: The session ID of the agent to send the message to
         blocks: Array of content blocks (text, image, etc.)
-    
+
     Returns:
-        Status message (actual response comes via _send notification)
+        Status message ("sent"); the actual response is fetched via query_memory
     """
     raise NotImplementedError(
         "Orchestration tools are executed by crow-cli via ACP ext_method. "
@@ -77,26 +76,6 @@ def task_write(
     
     Returns:
         Dictionary with task object or success status
-    """
-    raise NotImplementedError(
-        "Orchestration tools are executed by crow-cli via ACP ext_method. "
-        "This schema is for LLM tool selection only."
-    )
-
-
-@mcp.tool()
-def task_send(to_session_id: str, tasks: list[dict]) -> dict:
-    """Send a batch of tasks to an orchestrator session.
-    
-    Creates tasks in the target session and sends the first task as a prompt
-    to kick off the orchestrator.
-    
-    Args:
-        to_session_id: Session ID of the orchestrator agent
-        tasks: Array of task definitions, each with "title" and optional "description"
-    
-    Returns:
-        Dictionary with success status, task count, and target session ID
     """
     raise NotImplementedError(
         "Orchestration tools are executed by crow-cli via ACP ext_method. "
