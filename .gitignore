@@ -31,3 +31,6 @@ crow-task-mcp/.venv
 crow-task-mcp/src/crow_task_mcp/__pycache__/
 crow-orchestrator-mcp/.venv
 crow-orchestrator-mcp/src/crow_orchestrator_mcp/__pycache__
+
+
+sandbox/lancedb-testing/pylate_lancedb/

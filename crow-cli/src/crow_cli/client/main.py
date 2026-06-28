@@ -27,6 +27,8 @@ Usage:
 
 import asyncio
 import sys
+import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from acp import (
@@ -68,9 +70,11 @@ class CrowClient(Client):
     _last_chunk: AgentMessageChunk | AgentThoughtChunk | None = None
     _console: Console
     _tool_calls: dict[str, dict] = {}  # Track tool call metadata by ID
+    _task_list: list[dict] = []
 
     def __init__(self, console: Console):
         self._console = console
+        self._task_list = []
 
     async def request_permission(
         self,
@@ -174,10 +178,40 @@ class CrowClient(Client):
             return "<content>"
 
     async def ext_method(self, method: str, params: dict) -> dict:
+        if method == "task/read":
+            return self._task_read()
+        elif method == "task/write":
+            return self._task_write(params)
         raise RequestError.method_not_found(method)
 
     async def ext_notification(self, method: str, params: dict) -> None:
         raise RequestError.method_not_found(method)
+
+    # ─── Task management (client-side) ────────────────────────────────────
+
+    def _task_read(self) -> dict:
+        return {
+            "tasks": self._task_list,
+            "summary": self._format_task_summary(self._task_list),
+        }
+
+    def _task_write(self, params: dict) -> dict:
+        todos = params.get("todos", [])
+        now = datetime.now(timezone.utc).isoformat()
+        tasks = []
+        for i, todo in enumerate(todos):
+            tasks.append({
+                "id": str(uuid.uuid4()),
+                "title": todo.get("content") or todo.get("title") or f"Task {i + 1}",
+                "description": None,
+                "status": todo.get("status", "pending"),
+                "priority": todo.get("priority", "medium"),
+                "assigned_to": todo.get("assignedTo"),
+                "created_at": now,
+                "updated_at": now,
+            })
+        self._task_list = tasks
+        return {"tasks": tasks}
 
     async def spawn_agent(self, cwd: str) -> asyncio.subprocess.Process:
         """Spawn the crow-acp agent subprocess."""
@@ -219,7 +253,7 @@ class CrowClient(Client):
         session_id: str,
         prompt: str,
     ) -> None:
-        """Send a single prompt and wait for completion."""
+        """Send a single prompt and wait for completion, then nag on incomplete tasks."""
         self._console.print()
         self._console.print(
             Panel(
@@ -233,7 +267,38 @@ class CrowClient(Client):
             prompt=[text_block(prompt)],
         )
 
-        self._console.print()  # Final newline after agent response
+        self._console.print()
+
+        # Nag loop: if the agent left incomplete tasks, keep prompting
+        # until they're all done (or safety limit hit).
+        for _ in range(50):
+            incomplete = [
+                t for t in self._task_list
+                if t["status"] in ("pending", "in_progress")
+            ]
+            if not incomplete:
+                break
+
+            task_lines = "\n".join(
+                f"- [{t['status']}] {t['title']}" for t in incomplete
+            )
+            nag = (
+                f"You have {len(incomplete)} incomplete task(s):\n\n"
+                f"{task_lines}\n\n"
+                f'Call task_write with the full todos list, updating statuses '
+                f'for completed tasks to "completed".'
+            )
+
+            self._console.print()
+            self._console.rule("[dim yellow]Nag[/dim yellow]")
+            self._console.print()
+
+            await conn.prompt(
+                session_id=session_id,
+                prompt=[text_block(nag)],
+            )
+
+            self._console.print()
 
     async def interactive_loop(
         self, conn: ClientSideConnection, session_id: str

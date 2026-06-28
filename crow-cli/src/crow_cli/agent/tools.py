@@ -50,6 +50,10 @@ def tool_match(tool_name: str, terms: tuple[str]) -> bool:
 
 def get_tool_kind(tool_name: str) -> ToolKind:
     """Map tool names to ACP ToolKind."""
+    # Orchestration tools: exact-match first so the substring rules below don't
+    # misclassify them (task_read->read, task_write->edit, send_prompt->execute).
+    if tool_name in ("send_prompt", "task_read", "task_write", "task_send"):
+        return "other"
     # Common MCP tool patterns
     if tool_match(tool_name, ("read_file", "read", "view", "list_directory", "list")):
         return "read"
@@ -789,7 +793,7 @@ async def execute_orchestration_send_prompt(
                 session_update="tool_call",
                 tool_call_id=acp_tool_call_id,
                 title=f"Send prompt to {to_session_id}",
-                kind="execute",
+                kind="other",
                 status="pending",
             ),
         )
@@ -859,7 +863,7 @@ async def execute_orchestration_task_read(
                 session_update="tool_call",
                 tool_call_id=acp_tool_call_id,
                 title="Read task list",
-                kind="execute",
+                kind="other",
                 status="pending",
             ),
         )
@@ -912,23 +916,23 @@ async def execute_orchestration_task_write(
     logger: Logger,
 ) -> str:
     """
-    Create/update/delete task via _task/write ext_method.
-    
+    Wholesale-replace the session's task list via _task/write ext_method.
+
     Args:
         conn: ACP client connection
         turn_id: Current turn ID
         agent_id: Current agent ID
         tool_call_id: LLM tool call ID
-        args: Tool arguments (action, title, description, task_id, status, assigned_to)
+        args: Tool arguments (todos: list[dict])
         logger: Logger instance
-    
+
     Returns:
         Result from the client-side operation
     """
     session_id = route_to_session_id(agent_id)
     acp_tool_call_id = f"{turn_id}/{tool_call_id}"
-    action = args.get("action", "")
-    
+    todos = args.get("todos", [])
+
     try:
         # 1. Send tool call start
         await conn.session_update(
@@ -936,38 +940,23 @@ async def execute_orchestration_task_write(
             update=ToolCallStart(
                 session_update="tool_call",
                 tool_call_id=acp_tool_call_id,
-                title=f"Task: {action}",
-                kind="execute",
+                title=f"Write {len(todos)} todos",
+                kind="other",
                 status="pending",
             ),
         )
-        
+
         # 2. Call _task/write ext_method
-        logger.info(f"Routing _task/write to client: action={action}")
+        logger.info(f"Routing _task/write to client: {len(todos)} todos")
         result = await conn.ext_method(
             method="task/write",
-            params={
-                "action": action,
-                "title": args.get("title"),
-                "description": args.get("description"),
-                "taskId": args.get("task_id"),
-                "status": args.get("status"),
-                "assignedTo": args.get("assigned_to"),
-            }
+            params={"todos": todos}
         )
-        
+
         # 3. Format result
-        if action == "create":
-            task = result.get("task", {})
-            message = f"Created task: {task.get('title', 'untitled')} (id: {task.get('id', '?')})"
-        elif action == "update":
-            task = result.get("task", {})
-            message = f"Updated task: {task.get('title', 'untitled')} (status: {task.get('status', '?')})"
-        elif action == "delete":
-            message = "Task deleted"
-        else:
-            message = f"Action {action} completed"
-        
+        tasks = result.get("tasks", [])
+        message = f"Updated task list: {len(tasks)} task(s)"
+
         # 4. Send completion
         await conn.session_update(
             session_id=session_id,
@@ -977,9 +966,9 @@ async def execute_orchestration_task_write(
                 content=[tool_content(text_block(message))],
             ),
         )
-        
+
         return message
-        
+
     except Exception as e:
         logger.error(f"Error in task_write: {e}", exc_info=True)
         await conn.session_update(
@@ -1024,7 +1013,7 @@ async def execute_orchestration_task_send(
                 session_update="tool_call",
                 tool_call_id=acp_tool_call_id,
                 title=f"Send {len(tasks)} tasks to {to_session_id}",
-                kind="execute",
+                kind="other",
                 status="pending",
             ),
         )

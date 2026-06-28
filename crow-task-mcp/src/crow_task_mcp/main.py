@@ -56,26 +56,20 @@ def task_read() -> dict:
 
 
 @mcp.tool()
-def task_write(
-    action: str,
-    title: str | None = None,
-    description: str | None = None,
-    task_id: str | None = None,
-    status: str | None = None,
-    assigned_to: str | None = None
-) -> dict:
-    """Create, update, or delete tasks in the session's task list.
-    
+def task_write(todos: list[dict]) -> dict:
+    """Wholesale-replace the session's task list with a new set of todos.
+
+    Each call replaces the entire list — regenerate the full list with
+    updated statuses each time (like OpenCode's TodoWrite). No CRUD actions.
+
     Args:
-        action: One of "create", "update", or "delete"
-        title: Task title (required for create)
-        description: Task description (optional for create)
-        task_id: Task ID (required for update/delete)
-        status: Task status (optional for update): "pending", "in_progress", "completed", "failed"
-        assigned_to: Session ID of assigned agent (optional for update)
-    
+        todos: Array of todo objects, each with:
+            - content (required): Brief description of the task
+            - status: "pending", "in_progress", "completed", "failed", "cancelled"
+            - priority: "high", "medium", "low"
+
     Returns:
-        Dictionary with task object or success status
+        Dictionary with the updated tasks array
     """
     raise NotImplementedError(
         "Orchestration tools are executed by crow-cli via ACP ext_method. "
