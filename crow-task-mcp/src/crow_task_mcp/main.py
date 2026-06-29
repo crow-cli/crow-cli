@@ -21,20 +21,20 @@ mcp = FastMCP("crow-task-mcp")
 
 @mcp.tool()
 def send_prompt(to_session_id: str, blocks: list[dict]) -> str:
-    """Send a prompt to another agent session (fire-and-forget).
+    """Send a prompt to another agent session.
 
     The backend prompts the target session with your message blocks and
-    returns immediately. There is no summary re-prompt and no callback —
-    the target works through its react loop on its own. Retrieve the
-    target's response later by calling query_memory with
-    session_id="<to_session_id>" and limit=1.
+    returns immediately. When the target finishes processing, you will
+    receive a notification telling you to call query_memory to see the
+    result. On error, you will also be notified.
 
     Args:
         to_session_id: The session ID of the agent to send the message to
         blocks: Array of content blocks (text, image, etc.)
 
     Returns:
-        Status message ("sent"); the actual response is fetched via query_memory
+        Status message ("sent"); the result is delivered via a
+        completion notification, then fetched via query_memory
     """
     raise NotImplementedError(
         "Orchestration tools are executed by crow-cli via ACP ext_method. "
