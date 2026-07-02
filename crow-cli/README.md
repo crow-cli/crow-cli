@@ -570,4 +570,4 @@ If you see errors about malformed tool call arguments:
 
 ## License
 
-Apache-2.0
+MIT

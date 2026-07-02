@@ -195,4 +195,4 @@ flowchart TD
 
 ## License
 
-[Apache-2.0](./LICENSE.md)
+[MIT](./LICENSE.md)
