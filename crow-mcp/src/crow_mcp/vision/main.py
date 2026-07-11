@@ -15,15 +15,27 @@ def capture_webcam(device_index: int = 6) -> Image:
     Args:
         device_index: Webcam device index (default: 6)
     """
-    cap = cv2.VideoCapture(device_index)
+    cap = cv2.VideoCapture(device_index, cv2.CAP_V4L2)
 
     if not cap.isOpened():
         raise ValueError(f"❌ Failed to open webcam at index {device_index}")
 
+    # Some UVC cameras (e.g. the generic "USB Camera" on this machine) only
+    # expose MJPG formats and will return black frames if OpenCV's default
+    # pixel format is used. Force MJPG + 480p before reading.
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_FPS, 30)
+
+    # Warm-up: discard a few frames so auto-exposure/gain can settle.
+    for _ in range(5):
+        cap.read()
+
     ret, frame = cap.read()
     cap.release()
 
-    if not ret:
+    if not ret or frame is None or frame.size == 0:
         raise RuntimeError("❌ Failed to capture frame from webcam")
 
     # 1. Encode the OpenCV matrix (NumPy array) into a JPEG buffer

@@ -25,11 +25,14 @@ def send_prompt(to_session_id: str, blocks: list[dict]) -> str:
 
     The backend prompts the target session with your message blocks and
     returns immediately. When the target finishes processing, you will
-    receive a notification telling you to call query_memory to see the
+    receive a notification telling you to call
+    `query_memory(session_id=<target_session_id>, limit=1)` to see the
     result. On error, you will also be notified.
 
     Args:
-        to_session_id: The session ID of the agent to send the message to
+        to_session_id: The session ID of the agent to send the message to.
+            This is a coolname-style slug, e.g.
+            "accurate-amethyst-salmon-from-vega".
         blocks: Array of content blocks (text, image, etc.)
 
     Returns:

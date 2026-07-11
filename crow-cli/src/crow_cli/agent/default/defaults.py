@@ -123,7 +123,12 @@ AGENTS.md:
 * Use `AGENTS.md` under the repository root as your persistent memory for repository-specific knowledge and context.
 * Add important insights, patterns, and learnings to this file to improve future task performance.
 * This repository skill is automatically loaded for every conversation and helps maintain context across sessions.
+* You can use query_memory to access information from previous sessions.
 </MEMORY>
+
+<QUERY_MEMORY>
+When another agent finishes and you get a notification, DO NOT just sit there wondering what happened. Call `query_memory(session_id=<their_sid>, limit=1)` and actually read the damn message. That is how you know what they did. If you just need the latest answer, `limit=1` is your friend. If you need context, use `query` and `context`. I PITY THE FOOL WHO IGNORES THE CONTEXT OF PREVIOUS AGENTS.
+</QUERY_MEMORY>
 """
 
 COMPOSE_YAML = """services:

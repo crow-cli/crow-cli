@@ -1051,3 +1051,117 @@ async def execute_orchestration_task_send(
             update=update_tool_call(acp_tool_call_id, status="failed"),
         )
         return f"Error sending tasks: {str(e)}"
+
+
+async def execute_orchestration_orchestrator_task_read(
+    conn: Client,
+    turn_id: str,
+    agent_id: str,
+    tool_call_id: str,
+    args: dict[str, Any],
+    logger: Logger,
+) -> str:
+    """Read orchestrator task list via _task/orchestrator/read ext_method."""
+    session_id = route_to_session_id(agent_id)
+    acp_tool_call_id = f"{turn_id}/{tool_call_id}"
+
+    try:
+        await conn.session_update(
+            session_id=session_id,
+            update=ToolCallStart(
+                session_update="tool_call",
+                tool_call_id=acp_tool_call_id,
+                title="Read orchestrator task list",
+                kind="other",
+                status="pending",
+            ),
+        )
+
+        logger.info("Routing _task/orchestrator/read to client")
+        result = await conn.ext_method(
+            method="task/orchestrator/read",
+            params={}
+        )
+
+        summary = result.get("summary", "No orchestrator tasks")
+        tasks = result.get("tasks", [])
+
+        tasks_text = summary
+        if tasks:
+            tasks_text += "\n\n" + "\n".join([
+                f"- [{t.get('status', 'pending')}] {t.get('title', 'untitled')} (id: {t.get('id', '?')})"
+                for t in tasks
+            ])
+
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(
+                tool_call_id=acp_tool_call_id,
+                status="completed",
+                content=[tool_content(text_block(tasks_text))],
+            ),
+        )
+
+        return tasks_text
+
+    except Exception as e:
+        logger.error(f"Error in orchestrator_task_read: {e}", exc_info=True)
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(acp_tool_call_id, status="failed"),
+        )
+        return f"Error reading orchestrator tasks: {str(e)}"
+
+
+async def execute_orchestration_orchestrator_task_write(
+    conn: Client,
+    turn_id: str,
+    agent_id: str,
+    tool_call_id: str,
+    args: dict[str, Any],
+    logger: Logger,
+) -> str:
+    """Wholesale-replace the orchestrator task list via _task/orchestrator/write ext_method."""
+    session_id = route_to_session_id(agent_id)
+    acp_tool_call_id = f"{turn_id}/{tool_call_id}"
+    todos = args.get("todos", [])
+
+    try:
+        await conn.session_update(
+            session_id=session_id,
+            update=ToolCallStart(
+                session_update="tool_call",
+                tool_call_id=acp_tool_call_id,
+                title=f"Write {len(todos)} orchestrator todos",
+                kind="other",
+                status="pending",
+            ),
+        )
+
+        logger.info(f"Routing _task/orchestrator/write to client: {len(todos)} todos")
+        result = await conn.ext_method(
+            method="task/orchestrator/write",
+            params={"todos": todos}
+        )
+
+        tasks = result.get("tasks", [])
+        message = f"Updated orchestrator task list: {len(tasks)} task(s)"
+
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(
+                tool_call_id=acp_tool_call_id,
+                status="completed",
+                content=[tool_content(text_block(message))],
+            ),
+        )
+
+        return message
+
+    except Exception as e:
+        logger.error(f"Error in orchestrator_task_write: {e}", exc_info=True)
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(acp_tool_call_id, status="failed"),
+        )
+        return f"Error writing orchestrator tasks: {str(e)}"

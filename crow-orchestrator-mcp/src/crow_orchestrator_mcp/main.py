@@ -18,6 +18,46 @@ mcp = FastMCP("crow-orchestrator-mcp")
 
 
 @mcp.tool()
+def orchestrator_task_read() -> dict:
+    """Read the orchestrator task list for the current session.
+
+    Returns:
+        Dictionary with tasks array and summary string
+    """
+    raise NotImplementedError(
+        "Orchestration tools are executed by crow-cli via ACP ext_method. "
+        "This schema is for LLM tool selection only."
+    )
+
+
+@mcp.tool()
+def orchestrator_task_write(todos: list[dict]) -> dict:
+    """Wholesale-replace the session's orchestrator task list.
+
+    This is the orchestrator's own task tracker. It supports the same
+    statuses as the worker task_write plus a special "delegated" status.
+    When the current non-completed task is marked "delegated", the
+    orchestration loop pauses and waits for the worker to finish before
+    nagging the orchestrator again.
+
+    Args:
+        todos: Array of todo objects, each with:
+            - content (required): Brief description of the task
+            - status: "pending", "in_progress", "delegated", "completed",
+                "failed", "cancelled"
+            - priority: "high", "medium", "low"
+            Pass an empty array to clear the list when all work is done.
+
+    Returns:
+        Dictionary with the updated orchestrator tasks array
+    """
+    raise NotImplementedError(
+        "Orchestration tools are executed by crow-cli via ACP ext_method. "
+        "This schema is for LLM tool selection only."
+    )
+
+
+@mcp.tool()
 def task_send(to_session_id: str, tasks: list[dict]) -> dict:
     """Delegate a batch of tasks to another agent session.
 
@@ -26,8 +66,9 @@ def task_send(to_session_id: str, tasks: list[dict]) -> dict:
     first Pending task and prompts the target with it, then advances
     through the list. When the loop exits normally (all tasks done or the
     list is empty), the backend sends a canned completion message back to
-    this session telling you to call query_memory for the target's final
-    summary.
+    this session telling you to call
+    `query_memory(session_id=<worker_session_id>, limit=1)` for the
+    target's final summary.
 
     Orchestrator-only: use this to delegate work to worker agents. Workers
     do not advertise it. Load this server alongside crow-task-mcp (which

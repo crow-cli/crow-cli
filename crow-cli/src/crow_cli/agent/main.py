@@ -733,6 +733,12 @@ class AcpAgent(Agent):
                     elif chunk_type == "tool_args":
                         self._logger.debug("Tool args: %s", chunk["token"])
 
+                    elif chunk_type == "compaction":
+                        await self._conn.session_update(
+                            session_id=session.session_id,
+                            update=update_agent_message(text_block(chunk["token"])),
+                        )
+
                     elif chunk_type == "final_history":
                         break
 

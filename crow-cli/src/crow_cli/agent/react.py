@@ -31,6 +31,8 @@ from crow_cli.agent.tools import (
     execute_orchestration_task_read,
     execute_orchestration_task_write,
     execute_orchestration_task_send,
+    execute_orchestration_orchestrator_task_read,
+    execute_orchestration_orchestrator_task_write,
 )
 
 
@@ -508,6 +510,24 @@ async def execute_tool_calls(
                     args=arg_dict,
                     logger=logger,
                 )
+            elif tool_name == "orchestrator_task_read":
+                result_content = await execute_orchestration_orchestrator_task_read(
+                    conn=conn,
+                    turn_id=turn_id,
+                    agent_id=agent_id,
+                    tool_call_id=llm_tool_call_id,
+                    args=arg_dict,
+                    logger=logger,
+                )
+            elif tool_name == "orchestrator_task_write":
+                result_content = await execute_orchestration_orchestrator_task_write(
+                    conn=conn,
+                    turn_id=turn_id,
+                    agent_id=agent_id,
+                    tool_call_id=llm_tool_call_id,
+                    args=arg_dict,
+                    logger=logger,
+                )
             else:
                 result_content = await execute_acp_tool(
                     conn=conn,
@@ -645,6 +665,11 @@ async def react_loop(
         # 1. Check your token threshold
         if usage and usage["total_tokens"] > config.MAX_COMPACT_TOKENS:
             logger.info("Token threshold crossed. Initiating compaction...")
+
+            yield {
+                "type": "compaction",
+                "token": f"\n\nCompaction threshold of {config.MAX_COMPACT_TOKENS} reached — compacting conversation history...\n\n",
+            }
 
             old_agent_id = agent_id
             logger.info(f"Pre-compacted session length: {len(session.messages)}")
