@@ -36,9 +36,21 @@ def orchestrator_task_write(todos: list[dict]) -> dict:
 
     This is the orchestrator's own task tracker. It supports the same
     statuses as the worker task_write plus a special "delegated" status.
-    When the current non-completed task is marked "delegated", the
-    orchestration loop pauses and waits for the worker to finish before
-    nagging the orchestrator again.
+
+    The orchestration loop promotes the FIRST non-completed task in list
+    order as the "current" task and nags the orchestrator to act on it.
+    Task order matters: you control which task is current by reordering
+    the list (todos are processed top-to-bottom, completed items skipped).
+    If the current task is `pending` or `in_progress`, the loop nags you
+    to make progress on it. If the current task is marked `delegated`, the
+    loop pauses and waits for the worker to finish before nagging again.
+
+    Practical implication: the nag keeps firing as long as the first
+    non-completed task is NOT `delegated` — even if a `delegated` task
+    exists further down the list. So while waiting on a delegated task,
+    reorder so the `delegated` task is the first non-completed task (move
+    it ahead of any `in_progress`/`pending` items), or the loop will keep
+    nagging about a different task that sits ahead of it.
 
     Args:
         todos: Array of todo objects, each with:
