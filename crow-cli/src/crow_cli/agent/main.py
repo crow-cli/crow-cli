@@ -61,6 +61,7 @@ from acp import (
     LoadSessionResponse,
     NewSessionResponse,
     PromptResponse,
+    RequestError,
     SetSessionModeResponse,
     run_agent,
     text_block,
@@ -762,7 +763,14 @@ class AcpAgent(Agent):
             return PromptResponse(stop_reason="cancelled")
         except Exception as e:
             self._session_logger.error("Error in prompt handling: %s", e, exc_info=True)
-            return PromptResponse(stop_reason="end_turn")
+            # Surface the failure as an ACP JSON-RPC error (code -32603) instead
+            # of a clean end_turn. A clean end_turn made the client think the
+            # turn finished normally and re-fire the task/nag loop — so a
+            # failing agent (e.g. LLM context overflow) got nagged thousands
+            # of times. The acp SDK serializes a raised RequestError into an
+            # error response; the client gates its task loop on that Err and
+            # broadcasts the message to the user.
+            raise RequestError.internal_error({"error": str(e)})
         finally:
             # 4. Cleanup the task reference when done
             self._prompt_tasks.pop(session_id, None)
