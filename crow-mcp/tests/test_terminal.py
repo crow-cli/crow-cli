@@ -1,7 +1,10 @@
-"""Tests for the terminal tool (spawns a real shell; bounded by timeout).
+"""Tests for the terminal tool stub.
 
-Commands are chosen to be stateless and to never kill the persistent shell
-session (e.g. `false` for a non-zero exit instead of a bare `exit`).
+The terminal tool is a schema-only docstring holder: the model sees its
+docstring for tool selection, but execution happens client-side (the Crow ACP
+client owns a real PTY — see crow-cli's tests/unit/test_client_terminal.py).
+Calling the MCP tool directly therefore raises NotImplementedError. These
+tests lock in that contract and guard the docstring, which IS the product.
 """
 
 import pytest
@@ -11,25 +14,32 @@ import pytest
 from crow_mcp.terminal.main import terminal
 
 
-class TestTerminalTool:
-    async def test_echo(self):
-        out = await terminal(command="echo hello-crow", timeout=20)
-        assert "hello-crow" in out
-        assert "exit code 0" in out
+class TestTerminalStub:
+    async def test_raises_not_implemented(self):
+        """The tool is a schema holder; direct execution is delegated to the client."""
+        with pytest.raises(NotImplementedError):
+            await terminal(command="echo hello")
 
-    async def test_stderr_is_captured(self):
-        """stderr is merged into the returned output (an agent needs it to debug)."""
-        out = await terminal(command="bash -c 'echo oops >&2'", timeout=20)
-        assert "oops" in out
+    async def test_raises_regardless_of_args(self):
+        """No argument combination executes locally."""
+        with pytest.raises(NotImplementedError):
+            await terminal(command="ls", timeout=5, reset=True)
 
-    async def test_command_error_text_captured(self):
-        """A failing command surfaces its error text in the output."""
-        out = await terminal(command="ls /definitely/not/here", timeout=20)
-        assert "No such file or directory" in out
+    async def test_error_points_to_client_execution(self):
+        """The error explains where execution actually happens."""
+        with pytest.raises(NotImplementedError) as excinfo:
+            await terminal(command="x")
+        msg = str(excinfo.value)
+        assert "client-side terminal" in msg
+        assert "LLM tool selection" in msg
 
-    async def test_chained_commands(self):
-        out = await terminal(command="echo alpha && echo beta", timeout=20)
-        assert "alpha" in out and "beta" in out
+    def test_docstring_is_the_schema(self):
+        """The docstring is what the model sees — guard the key contract lines."""
+        doc = terminal.__doc__
+        assert doc is not None
+        assert "bash command" in doc
+        assert "FRESH shell" in doc
+        assert "chain commands" in doc
 
 
 if __name__ == "__main__":
