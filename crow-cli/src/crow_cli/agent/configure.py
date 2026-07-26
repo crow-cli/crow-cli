@@ -96,6 +96,7 @@ class Config:
     max_retries_per_step: int = 3
     MAX_COMPACT_TOKENS: int = 190000
     MAX_TOKENS: int = 38192
+    TEMPERATURE: float = 0.6
     chunk_log: bool = False  # Write every raw chunk to JSONL for debugging
     system_prompt: str = SYSTEM_PROMPT
     system_prompt_path: Path | None = None
@@ -169,6 +170,7 @@ class Config:
             ("max_retries_per_step", int),
             ("MAX_COMPACT_TOKENS", int),
             ("MAX_TOKENS", int),
+            ("TEMPERATURE", float),
         ):
             if key in parsed:
                 overrides[key] = typ(parsed[key])

@@ -1,26 +1,40 @@
-"""Unit tests for compaction without LLM calls."""
+"""Unit tests for compaction (no live LLM — the summarization call is mocked).
 
-from unittest.mock import AsyncMock, MagicMock, patch
+``compact()`` (crow_cli.agent.compact) is async and takes a ``Config``. It
+summarizes the conversation into a NEW agent record (``agent_idx + 1``) whose
+history is ``[system, user(summary + last_messages)]``, and leaves the
+ORIGINAL session untouched. The ``on_compact`` callback receives the original
+``agent_id`` and the new session.
+"""
+
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from crow_cli.agent.compact import compact, get_middle_message
-from crow_cli.agent.session import Session, lookup_or_create_prompt
+from crow_cli.agent.compact import compact
+from crow_cli.agent.configure import Config
+from crow_cli.agent.session import AgentSession, lookup_or_create_prompt
 
 
 class TestCompaction:
-    """Test compaction logic without actual LLM calls."""
+    """Test the new-agent-record compaction contract without live LLM calls."""
+
+    @pytest.fixture
+    def compact_config(self, temp_db_uri):
+        """Real config, but redirect agent-record creation to the temp DB."""
+        config = Config.load()
+        config.db_uri = temp_db_uri
+        return config
 
     @pytest.fixture
     def setup_session(self, temp_db_uri, sample_prompt_template):
-        """Create a session with multiple messages."""
+        """Create a 1-positioned session with a long conversation."""
         prompt_id = lookup_or_create_prompt(
             sample_prompt_template,
             name="test-prompt",
             db_uri=temp_db_uri,
         )
-
-        session = Session.create(
+        session = AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Crow", "workspace": "/tmp", "display_tree": "test/"},
             tool_definitions=[],
@@ -28,160 +42,116 @@ class TestCompaction:
             model_identifier="test-model",
             db_uri=temp_db_uri,
             cwd="/tmp",
+            agent_idx=1,
         )
-
-        # Add many messages to simulate a long conversation
         for i in range(20):
             session.add_message({"role": "user", "content": f"User message {i}"})
             session.add_message(
                 {"role": "assistant", "content": f"Assistant response {i}"}
             )
-
         return session, temp_db_uri
 
     @pytest.fixture
     def mock_llm(self):
-        """Create a mock LLM client."""
+        """Mock LLM whose summarization call returns a fixed summary."""
         llm = AsyncMock()
-        # Mock response with compacted summary
         mock_response = MagicMock()
         mock_response.choices = [MagicMock()]
-        mock_response.choices[
-            0
-        ].message.content = "This is a compacted summary of the conversation."
-        mock_response.usage = {
-            "prompt_tokens": 100,
-            "completion_tokens": 50,
-            "total_tokens": 150,
-        }
+        mock_response.choices[0].message.content = "COMPACTED SUMMARY"
+        mock_response.usage = MagicMock(
+            prompt_tokens=100, completion_tokens=50, total_tokens=150
+        )
         llm.chat.completions.create = AsyncMock(return_value=mock_response)
         return llm
 
-    def test_compact_calls_llm(self, setup_session, mock_llm):
-        """Verify compact calls the LLM."""
-        session, _ = setup_session
-
-        # Call compact
-        result = compact(session, mock_llm, "/tmp", logger=MagicMock())
-
-        # Verify LLM was called
-        mock_llm.chat.completions.create.assert_called_once()
-
-    def test_compact_reduces_message_count(self, setup_session, mock_llm):
-        """Verify compaction reduces message count."""
-        session, _ = setup_session
-        original_count = len(session.messages)
-
-        # Call compact
-        result = compact(session, mock_llm, "/tmp", logger=MagicMock())
-
-        # Verify message count is reduced
-        assert len(result.messages) < original_count
-
-    def test_compact_preserves_first_and_last_user_message(
-        self, setup_session, mock_llm
+    @pytest.mark.asyncio
+    async def test_compact_calls_llm_with_tool_choice_none(
+        self, setup_session, mock_llm, compact_config
     ):
-        """Verify first user message and last user message are preserved."""
+        """Compaction summarizes via a single non-tool-calling request."""
         session, _ = setup_session
-        original_first = session.messages[1]  # Skip system
-        original_last_user = None
-        for i in range(len(session.messages) - 1, 0, -1):
-            if session.messages[i].get("role") == "user":
-                original_last_user = session.messages[i]
-                break
+        await compact(session, mock_llm, compact_config, logger=MagicMock())
 
-        # Call compact
-        result = compact(session, mock_llm, "/tmp", logger=MagicMock())
+        mock_llm.chat.completions.create.assert_called_once()
+        kwargs = mock_llm.chat.completions.create.call_args.kwargs
+        assert kwargs["tool_choice"] == "none"
+        assert kwargs["model"] == "test-model"
 
-        # Verify first user message is preserved
-        assert result.messages[1] == original_first
-
-        # Verify last user message is preserved
-        result_last_user = None
-        for i in range(len(result.messages) - 1, 0, -1):
-            if result.messages[i].get("role") == "user":
-                result_last_user = result.messages[i]
-                break
-
-        assert result_last_user == original_last_user
-
-    def test_compact_creates_new_db_session(self, setup_session, mock_llm):
-        """Verify compaction creates new session in database."""
+    @pytest.mark.asyncio
+    async def test_compact_creates_new_agent_record(
+        self, setup_session, mock_llm, compact_config
+    ):
+        """Compaction creates a NEW agent record at agent_idx + 1."""
         session, db_uri = setup_session
-        original_id = session.session_id
+        result = await compact(session, mock_llm, compact_config, logger=MagicMock())
 
-        # Call compact
-        result = compact(session, mock_llm, "/tmp", logger=MagicMock())
+        assert result.agent_idx == session.agent_idx + 1
+        assert result.agent_id == f"{session.session_id}-{session.agent_idx + 1}"
+        assert result.agent_id != session.agent_id
 
-        # Verify session can be reloaded
-        reloaded = Session.load(original_id, db_uri=db_uri)
-        assert reloaded is not None
-        assert len(reloaded.messages) < len(result.messages) + 10  # Should be compacted
+        # The new record is persisted and loadable.
+        reloaded = AgentSession.load(result.agent_id, db_uri=db_uri)
+        assert reloaded.agent_id == result.agent_id
 
-    def test_compact_update_from_persists_changes(self, setup_session, mock_llm):
-        """Verify update_from properly updates session state."""
+    @pytest.mark.asyncio
+    async def test_compact_new_session_is_summarized(
+        self, setup_session, mock_llm, compact_config
+    ):
+        """The new session's history is [system, user(summary + last messages)]."""
+        session, _ = setup_session
+        result = await compact(session, mock_llm, compact_config, logger=MagicMock())
+
+        assert len(result.messages) == 2
+        assert result.messages[0]["role"] == "system"
+        assert result.messages[1]["role"] == "user"
+        assert "COMPACTED SUMMARY" in result.messages[1]["content"]
+
+    @pytest.mark.asyncio
+    async def test_compact_preserves_original_session(
+        self, setup_session, mock_llm, compact_config
+    ):
+        """The original session is left completely untouched."""
         session, db_uri = setup_session
         original_count = len(session.messages)
+        original_agent_id = session.agent_id
 
-        # Call compact
-        result = compact(session, mock_llm, "/tmp", logger=MagicMock())
+        await compact(session, mock_llm, compact_config, logger=MagicMock())
 
-        # Verify original session object was updated in-place
-        assert len(session.messages) < original_count
-        assert len(session.messages) == len(result.messages)
+        # In-memory object unchanged.
+        assert len(session.messages) == original_count
+        # Persisted original record unchanged.
+        reloaded = AgentSession.load(original_agent_id, db_uri=db_uri)
+        assert len(reloaded.messages) == original_count
 
-        # Verify the updated state persists after reload
-        reloaded = Session.load(session.session_id, db_uri=db_uri)
-        assert len(reloaded.messages) == len(session.messages)
-
-    def test_compact_with_no_tool_calls(self, setup_session, mock_llm):
-        """Test compaction when no tools are defined."""
+    @pytest.mark.asyncio
+    async def test_compact_on_compact_callback(
+        self, setup_session, mock_llm, compact_config
+    ):
+        """on_compact receives the original agent_id and the new session."""
         session, _ = setup_session
+        calls = []
 
-        # Session already has no tools
-        assert session.tools == []
+        def on_compact(old_agent_id, new_session):
+            calls.append((old_agent_id, new_session))
 
-        # Call compact
-        result = compact(session, mock_llm, "/tmp", logger=MagicMock())
-
-        # Should still work
-        assert result is not None
-        assert len(result.messages) < len(session.messages)
-
-    def test_compact_with_tools(self, setup_session, mock_llm):
-        """Test compaction when tools are defined."""
-        session, _ = setup_session
-
-        # Add tools
-        session.tools = [
-            {"name": "read_file", "description": "Read a file"},
-            {"name": "write_file", "description": "Write a file"},
-        ]
-        session.request_params = {"temperature": 0.7, "max_tokens": 1000}
-
-        # Call compact
-        result = compact(session, mock_llm, "/tmp", logger=MagicMock())
-
-        # Verify tools are preserved
-        assert result.tools == session.tools
-        assert result.request_params == session.request_params
-
-    def test_compact_on_compact_callback(self, setup_session, mock_llm):
-        """Test on_compact callback is called."""
-        session, _ = setup_session
-        callback_called = False
-        callback_session_id = None
-
-        def on_compact(session_id, compacted_session):
-            nonlocal callback_called, callback_session_id
-            callback_called = True
-            callback_session_id = session_id
-
-        # Call compact with callback
-        result = compact(
-            session, mock_llm, "/tmp", on_compact=on_compact, logger=MagicMock()
+        result = await compact(
+            session, mock_llm, compact_config, on_compact=on_compact, logger=MagicMock()
         )
 
-        # Verify callback was called
-        assert callback_called
-        assert callback_session_id == session.session_id
+        assert len(calls) == 1
+        old_agent_id, new_session = calls[0]
+        assert old_agent_id == session.agent_id  # agent_id, not session_id
+        assert new_session is result
+
+    @pytest.mark.asyncio
+    async def test_compact_preserves_tools_and_model(
+        self, setup_session, mock_llm, compact_config
+    ):
+        """Tools and model identifier carry over to the new session."""
+        session, _ = setup_session
+        session.tools = [{"name": "read_file", "description": "Read a file"}]
+
+        result = await compact(session, mock_llm, compact_config, logger=MagicMock())
+
+        assert result.tools == session.tools
+        assert result.model_identifier == session.model_identifier

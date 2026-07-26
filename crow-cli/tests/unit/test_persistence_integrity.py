@@ -164,7 +164,7 @@ class TestMessageSerializationIntegrity:
         session.add_message(original_msg)
 
         # Reload and compare
-        loaded = AgentSession.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.agent_id, temp_db_uri)
         loaded_msg = loaded.messages[1]  # First message after system
 
         assert loaded_msg == original_msg, (
@@ -200,7 +200,7 @@ class TestMessageSerializationIntegrity:
         session.add_message(original_msg)
 
         # Reload and compare
-        loaded = AgentSession.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.agent_id, temp_db_uri)
         loaded_msg = loaded.messages[1]
 
         assert loaded_msg == original_msg, (
@@ -237,7 +237,7 @@ class TestMessageSerializationIntegrity:
         session.add_message(original_msg)
 
         # Reload and compare
-        loaded = AgentSession.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.agent_id, temp_db_uri)
         loaded_msg = loaded.messages[1]
 
         assert loaded_msg == original_msg, (
@@ -265,7 +265,7 @@ class TestMessageSerializationIntegrity:
         session.add_message(original_msg)
 
         # Reload and compare
-        loaded = AgentSession.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.agent_id, temp_db_uri)
         loaded_msg = loaded.messages[1]
 
         assert loaded_msg == original_msg, (
@@ -320,7 +320,7 @@ class TestMessageSerializationIntegrity:
         session.add_message(original_msg)
 
         # Reload and compare
-        loaded = AgentSession.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.agent_id, temp_db_uri)
         loaded_msg = loaded.messages[1]
 
         assert loaded_msg == original_msg, (
@@ -358,7 +358,7 @@ class TestInMemoryVsPersistedConsistency:
         try:
             db_msg = (
                 db_session.query(Message)
-                .filter_by(session_id=session.session_id)
+                .filter_by(agent_id=session.agent_id)
                 .order_by(Message.id)
                 .all()[-1]
             )
@@ -408,7 +408,7 @@ class TestInMemoryVsPersistedConsistency:
         try:
             db_messages = (
                 db_session.query(Message)
-                .filter_by(session_id=session.session_id)
+                .filter_by(agent_id=session.agent_id)
                 .order_by(Message.id)
                 .all()
             )
@@ -464,7 +464,7 @@ class TestInMemoryVsPersistedConsistency:
         try:
             db_messages = (
                 db_session.query(Message)
-                .filter_by(session_id=session.session_id)
+                .filter_by(agent_id=session.agent_id)
                 .order_by(Message.id)
                 .all()
             )
@@ -528,7 +528,7 @@ class TestReactLoopBoundaryIntegrity:
         )
 
         # Reload and verify
-        loaded = AgentSession.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.agent_id, temp_db_uri)
 
         # Check message count
         assert len(loaded.messages) == 2, (
@@ -584,7 +584,7 @@ class TestReactLoopBoundaryIntegrity:
         session.add_tool_response([tool_result], logger=logger)
 
         # Reload and verify
-        loaded = AgentSession.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.agent_id, temp_db_uri)
 
         # Should have: system, assistant, tool
         assert len(loaded.messages) == 3, (
@@ -661,7 +661,7 @@ class TestReactLoopBoundaryIntegrity:
         in_memory_tokens = calculate_total_tokens(session.messages)
 
         # Reload and compare
-        loaded = AgentSession.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.agent_id, temp_db_uri)
         persisted_tokens = calculate_total_tokens(loaded.messages)
 
         # Verify
@@ -709,7 +709,7 @@ class TestUsageTrackingIntegrity:
         try:
             db_msg = (
                 db_session.query(Message)
-                .filter_by(session_id=session.session_id)
+                .filter_by(agent_id=session.agent_id)
                 .order_by(Message.id)
                 .all()[-1]
             )
@@ -760,7 +760,7 @@ class TestUsageTrackingIntegrity:
         try:
             db_messages = (
                 db_session.query(Message)
-                .filter_by(session_id=session.session_id)
+                .filter_by(agent_id=session.agent_id)
                 .order_by(Message.id)
                 .all()
             )
@@ -802,7 +802,7 @@ class TestEdgeCases:
         session.add_message({"role": "user", "content": ""})
 
         # Reload and verify
-        loaded = AgentSession.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.agent_id, temp_db_uri)
         assert loaded.messages[1]["content"] == ""
 
     def test_unicode_content_handling(self, temp_db_uri, sample_prompt_template):
@@ -822,7 +822,7 @@ class TestEdgeCases:
         session.add_message(unicode_msg)
 
         # Reload and verify
-        loaded = AgentSession.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.agent_id, temp_db_uri)
         assert loaded.messages[1] == unicode_msg
 
     def test_very_long_single_message(self, temp_db_uri, sample_prompt_template):
@@ -844,7 +844,7 @@ class TestEdgeCases:
         session.add_message(long_msg)
 
         # Reload and verify
-        loaded = AgentSession.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.agent_id, temp_db_uri)
         assert loaded.messages[1]["content"] == long_content
         assert len(loaded.messages[1]["content"]) == 10000
 
@@ -881,7 +881,7 @@ class TestEdgeCases:
         session.add_message(tool_msg)
 
         # Reload and verify
-        loaded = AgentSession.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.agent_id, temp_db_uri)
         loaded_msg = loaded.messages[1]
 
         assert loaded_msg == tool_msg, (

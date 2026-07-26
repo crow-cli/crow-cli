@@ -47,6 +47,8 @@ async def send_request(
     max_tokens: int,
     max_retries: int = 3,
     retry_delay: float = 1.0,
+    temperature: float = 0.6,
+    request_log_path: str | None = None,
 ):
     """
     Send request to LLM with error handling and retry logic.
@@ -66,26 +68,45 @@ async def send_request(
         RateLimitError: If rate limit is exceeded.
         APIConnectionError: If connection to API fails.
     """
+    # Normalize messages once — deterministic, no need to redo per retry.
+    # Handles both list format (multimodal) and string format.
+    normalized_messages = []
+    for msg in session.messages:
+        normalized_msg = dict(msg)
+        content = msg.get("content")
+        # If content is a list of content blocks, keep it as-is (for multimodal)
+        # but if it's a list with only text blocks in the wrong format, fix it.
+        if isinstance(content, list):
+            normalized_msg["content"] = normalize_blocks(content)
+        normalized_messages.append(normalized_msg)
+
+    # Under --debug, dump the exact request payload (the append-only chat
+    # history + params) so immutable-history analysis can diff consecutive
+    # turns. Sits beside the response chunk log in the same chunk_log_dir.
+    if request_log_path:
+        request_payload = {
+            "model": session.model_identifier,
+            "messages": normalized_messages,
+            "tools": tools,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "parallel_tool_calls": True,
+            "stream_options": {"include_usage": True},
+        }
+        Path(request_log_path).write_text(
+            json.dumps(request_payload, ensure_ascii=False, indent=2)
+        )
+
     last_exception = None
 
     for attempt in range(max_retries):
         try:
-            # Normalize messages - handle both list format (multimodal) and string format
-            normalized_messages = []
-            for msg in session.messages:
-                normalized_msg = dict(msg)
-                content = msg.get("content")
-                # If content is a list of content blocks, keep it as-is (for multimodal)
-                # But if it's a list with only text blocks and they're in the wrong format, fix it
-                if isinstance(content, list):
-                    normalized_msg["content"] = normalize_blocks(content)
-                normalized_messages.append(normalized_msg)
-
             return await llm.chat.completions.create(
                 model=session.model_identifier,
                 messages=normalized_messages,
                 tools=tools,
                 stream=True,
+                temperature=temperature,
                 max_tokens=max_tokens,
                 parallel_tool_calls=True,
                 stream_options={"include_usage": True},  # Get usage in final chunk
@@ -600,20 +621,26 @@ async def react_loop(
     session_id = session_from_agent_id(agent_id)
     chunk_index = 0
     for turn in range(max_turns):
+        # Under --debug, log both the request payload and the response chunks
+        # for this turn into the same chunk_log_dir (sibling filenames).
+        chunk_log_path = None
+        request_log_path = None
+        if chunk_log_dir:
+            chunk_log_path = str(Path(chunk_log_dir) / f"turn-{turn_id}.jsonl")
+            request_log_path = str(Path(chunk_log_dir) / f"turn-{turn_id}-request.json")
+
         response = await send_request(
             llm,
             session,
             tools,
             config.MAX_TOKENS,
+            temperature=config.TEMPERATURE,
+            request_log_path=request_log_path,
         )
         state_accumulator = state_accumulators.get(
             session_id, {"thinking": [], "content": [], "tool_calls": {}}
         )
         thinking, content, tool_call_inputs, usage = [], [], [], None
-
-        chunk_log_path = None
-        if chunk_log_dir:
-            chunk_log_path = str(Path(chunk_log_dir) / f"turn-{turn_id}.jsonl")
 
         try:
             async for msg_type, token in process_response(

@@ -254,7 +254,8 @@ def run_auth_check(
 
 def test_auth_validation():
     """Test that crow-cli agent returns valid auth methods."""
-    project_path = Path("/home/thomas/src/backup/nid-backup/crow-cli")
+    # crow-cli package root (has pyproject.toml) — two levels up from tests/integration/
+    project_path = Path(__file__).resolve().parents[2]
 
     result = run_auth_check(
         cmd=["uv", "--project", str(project_path), "run", "crow-cli", "acp"],

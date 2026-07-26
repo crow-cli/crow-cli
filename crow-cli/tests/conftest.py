@@ -110,3 +110,53 @@ def sample_workspace(tmp_path):
     (subdir / "file3.txt").write_text("File 3 content")
 
     return str(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Test tiers
+#
+#   tests/unit/         fast, hermetic — always run
+#   tests/integration/  spawn the agent / real environment — opt-in
+#   tests/e2e/          make live LLM calls via the configured provider — opt-in
+#
+# Default `pytest` runs only the unit tier so the suite is green and fast.
+# Run the real tests with:
+#   pytest --run-integration        (or CROW_RUN_INTEGRATION=1)
+#   pytest --run-e2e                (or CROW_RUN_E2E=1)  [live LLM: cost/slow]
+# ---------------------------------------------------------------------------
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--run-integration",
+        action="store_true",
+        default=False,
+        help="run integration tests (spawn the agent / real environment)",
+    )
+    parser.addoption(
+        "--run-e2e",
+        action="store_true",
+        default=False,
+        help="run end-to-end tests (make live LLM calls via the configured provider)",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    run_integration = config.getoption("--run-integration") or os.environ.get(
+        "CROW_RUN_INTEGRATION"
+    )
+    run_e2e = config.getoption("--run-e2e") or os.environ.get("CROW_RUN_E2E")
+
+    skip_integration = pytest.mark.skip(
+        reason="integration tier: pass --run-integration (or CROW_RUN_INTEGRATION=1)"
+    )
+    skip_e2e = pytest.mark.skip(
+        reason="e2e tier: pass --run-e2e (or CROW_RUN_E2E=1) — makes live LLM calls"
+    )
+
+    for item in items:
+        path = str(item.path)
+        if "/integration/" in path and not run_integration:
+            item.add_marker(skip_integration)
+        elif "/e2e/" in path and not run_e2e:
+            item.add_marker(skip_e2e)

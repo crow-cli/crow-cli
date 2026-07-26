@@ -52,7 +52,9 @@ def get_live_llm_client():
             pytest.skip("No LLM providers configured in ~/.crow/config.yaml")
 
         provider = next(iter(config.llm.providers.values()))
-        llm = configure_llm(provider=provider, debug=False)
+        llm = configure_llm(
+            provider=provider, debug=False, logger=logging.getLogger(__name__)
+        )
 
         return llm, config
     except Exception as e:
@@ -113,11 +115,10 @@ class TestLiveLLMPersistence:
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
             request_params={"temperature": 0.7, "max_tokens": 200},
-            model_identifier=config.llm.models["default"].model_id
-            if "default" in config.llm.models
-            else "test-model",
+            model_identifier=next(iter(config.llm.models.values())).model_id,
             db_uri=temp_db_uri,
             cwd="/tmp",
+            agent_idx=1,
         )
 
         # Add user message
@@ -159,7 +160,7 @@ class TestLiveLLMPersistence:
         assert chars_after > chars_before, "No content added"
 
         # Reload from database
-        loaded = AgentSession.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.agent_id, temp_db_uri)
 
         # Verify persisted state
         assert len(loaded.messages) == len(session.messages), (
@@ -201,11 +202,10 @@ class TestLiveLLMPersistence:
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
             request_params={"temperature": 0.7, "max_tokens": 200},
-            model_identifier=config.llm.models["default"].model_id
-            if "default" in config.llm.models
-            else "test-model",
+            model_identifier=next(iter(config.llm.models.values())).model_id,
             db_uri=temp_db_uri,
             cwd="/tmp",
+            agent_idx=1,
         )
 
         num_turns = 5
@@ -241,7 +241,7 @@ class TestLiveLLMPersistence:
         total_chars_in_memory = precise_char_count(session.messages)
 
         # Reload and compare
-        loaded = AgentSession.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.agent_id, temp_db_uri)
         total_chars_persisted = precise_char_count(loaded.messages)
 
         # Verify
@@ -279,11 +279,10 @@ class TestLiveLLMPersistence:
             prompt_args={"name": "Test", "workspace": "/tmp", "display_tree": ""},
             tool_definitions=[],
             request_params={"temperature": 0.7, "max_tokens": 500},
-            model_identifier=config.llm.models["default"].model_id
-            if "default" in config.llm.models
-            else "test-model",
+            model_identifier=next(iter(config.llm.models.values())).model_id,
             db_uri=temp_db_uri,
             cwd="/tmp",
+            agent_idx=1,
         )
 
         # Add user message
@@ -333,7 +332,7 @@ class TestLiveLLMPersistence:
         in_memory_chars_after = precise_char_count(session.messages)
 
         # Reload and compare
-        loaded = AgentSession.load(session.session_id, temp_db_uri)
+        loaded = AgentSession.load(session.agent_id, temp_db_uri)
         persisted_chars = precise_char_count(loaded.messages)
 
         # Verify

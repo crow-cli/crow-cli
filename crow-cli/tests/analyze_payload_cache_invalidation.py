@@ -11,23 +11,39 @@ import hashlib
 import json
 import os
 import sys
+from pathlib import Path
 
 
-def load_payloads(session_prefix: str) -> list[tuple[str, list]]:
-    """Load all payload files for a session, sorted chronologically."""
-    log_dir = os.path.expanduser("~/.crow/logs")
-    files = sorted(
-        f
-        for f in os.listdir(log_dir)
-        if f.startswith(f"payload-{session_prefix}-") and f.endswith(".json")
+def find_session_dir(session: str | None = None):
+    """Resolve the --debug log dir for a session (or the most recent one)."""
+    logs = Path(os.path.expanduser("~/.crow/logs"))
+    if session:
+        d = logs / session
+        return d if d.is_dir() else None
+    # Auto-detect: most recent session dir that has request logs.
+    candidates = sorted(
+        logs.glob("*/turn-*-request.json"), key=lambda p: p.stat().st_mtime
     )
+    return candidates[-1].parent if candidates else None
+
+
+def load_payloads(session: str | None = None) -> list[tuple[str, float, list]]:
+    """Load per-turn request payloads for a session, sorted chronologically.
+
+    Reads the --debug request logs (``turn-*-request.json``); each holds the
+    exact request sent to the LLM. We analyze its ``messages`` — the
+    append-only chat history that must stay frozen across turns.
+    """
+    session_dir = find_session_dir(session)
+    if session_dir is None:
+        return []
     payloads = []
-    for fname in files:
-        path = os.path.join(log_dir, fname)
-        mtime = os.path.getmtime(path)
+    for path in session_dir.glob("turn-*-request.json"):
+        mtime = path.stat().st_mtime
         with open(path) as fh:
-            msgs = json.load(fh)
-        payloads.append((fname, mtime, msgs))
+            request = json.load(fh)
+        msgs = request.get("messages", [])
+        payloads.append((path.name, mtime, msgs))
     # sort by modification time (chronological order)
     payloads.sort(key=lambda x: x[1])
     return payloads
@@ -141,13 +157,17 @@ def show_full_diff(prev_msgs: list, curr_msgs: list, modified_idx: int):
 
 
 def main():
-    session_prefix = "inventive-innocent-manatee-of-focus-f29a9d"
+    session = sys.argv[1] if len(sys.argv) > 1 else None
+    session_dir = find_session_dir(session)
+    if session_dir is None:
+        print("No --debug request logs found (run the agent with --debug first).")
+        sys.exit(1)
 
-    print(f"Loading payloads for session: {session_prefix}")
-    payloads = load_payloads(session_prefix)
+    print(f"Loading request payloads for session: {session_dir.name}")
+    payloads = load_payloads(session)
 
     if not payloads:
-        print("No payload files found!")
+        print("No turn-*-request.json files found!")
         sys.exit(1)
 
     print(f"Found {len(payloads)} payload files (chronological order):\n")

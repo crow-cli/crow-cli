@@ -258,7 +258,7 @@ class AgentSession:
         model_identifier: str,
         db_uri: str = "sqlite:///crow.db",
         cwd: str = "/tmp",
-        agent_idx: int = 0,
+        agent_idx: int = 1,
         session_id: str | None = None,
         initial_messages: list[dict[str, Any]] | None = None,
     ) -> "AgentSession":
@@ -378,6 +378,46 @@ class AgentSession:
         self._model = None
 
 
+def get_skills_catalog(skills_dir: Path) -> str:
+    """Scan skills dir, parse SKILL.md frontmatter, return brief catalog."""
+    if not skills_dir.exists():
+        return ""
+    entries = []
+    for skill_dir in sorted(skills_dir.iterdir()):
+        skill_md = skill_dir / "SKILL.md"
+        if not skill_md.exists():
+            continue
+        try:
+            text = skill_md.read_text()
+            # Parse YAML frontmatter between --- markers
+            if not text.startswith("---"):
+                continue
+            end = text.index("---", 3)
+            frontmatter = text[3:end]
+            name = None
+            desc_lines = []
+            in_desc = False
+            for line in frontmatter.splitlines():
+                if line.startswith("name:"):
+                    name = line[5:].strip()
+                    in_desc = False
+                elif line.startswith("description:"):
+                    desc_lines.append(line[12:].strip())
+                    in_desc = True
+                elif in_desc and line.startswith("  "):
+                    desc_lines.append(line.strip())
+                else:
+                    in_desc = False
+            if name and desc_lines:
+                description = " ".join(desc_lines)
+                entries.append(f"- **{name}**: {description}")
+        except (ValueError, OSError):
+            continue
+    if not entries:
+        return ""
+    return "Available skills (~/.crow/skills/):\n" + "\n".join(entries)
+
+
 def make_agent_session(
     config: Config,
     tools: list[dict],
@@ -397,6 +437,7 @@ def make_agent_session(
         template, name="crow-default", db_uri=config.db_uri
     )
     display_tree = get_directory_tree(cwd)
+    skills_catalog = get_skills_catalog(config.config_dir / "skills")
     agent_path = os.path.join(cwd, "AGENTS.typ")
     if os.path.exists(agent_path):
         with open(agent_path, "r") as f:
@@ -420,6 +461,7 @@ def make_agent_session(
             "display_tree": display_tree,
             "agents_content": agents_content,
             "session_id": session_id,
+            "skills_catalog": skills_catalog,
         },
         tool_definitions=tools,
         request_params={"temperature": 0.2},

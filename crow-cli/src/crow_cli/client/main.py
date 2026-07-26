@@ -44,18 +44,25 @@ from acp.schema import (
     AgentThoughtChunk,
     AudioContentBlock,
     ClientCapabilities,
+    CreateTerminalResponse,
     EmbeddedResourceContentBlock,
     ImageContentBlock,
     Implementation,
+    KillTerminalResponse,
     PermissionOption,
     ReadTextFileResponse,
+    ReleaseTerminalResponse,
     ResourceContentBlock,
+    TerminalExitStatus,
+    TerminalOutputResponse,
     TextContentBlock,
     ToolCall,
     ToolCallProgress,
     ToolCallStart,
+    WaitForTerminalExitResponse,
     WriteTextFileResponse,
 )
+from crow_cli.client.terminal import TerminalManager
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -75,6 +82,7 @@ class CrowClient(Client):
     def __init__(self, console: Console):
         self._console = console
         self._task_list = []
+        self._terminals = TerminalManager()
 
     async def request_permission(
         self,
@@ -213,6 +221,67 @@ class CrowClient(Client):
         self._task_list = tasks
         return {"tasks": tasks}
 
+    # ─── Client-side terminal (ACP terminal/* methods) ────────────────────
+    # The agent routes its `terminal` tool here once we advertise the
+    # `terminal` capability (see connect_client). Commands run in a real PTY
+    # so exit codes are correct and behavior roughly matches the IDE's
+    # client-side terminals (lapce/zed).
+
+    async def create_terminal(
+        self,
+        command: str,
+        session_id: str,
+        args: list[str] | None = None,
+        cwd: str | None = None,
+        env: list | None = None,
+        output_byte_limit: int | None = None,
+        **kwargs: Any,
+    ) -> CreateTerminalResponse:
+        env_dict = {e.name: e.value for e in (env or [])}
+        terminal_id = self._terminals.create(
+            command, cwd, env_dict, output_byte_limit
+        )
+        return CreateTerminalResponse(terminal_id=terminal_id)
+
+    async def terminal_output(
+        self, session_id: str, terminal_id: str, **kwargs: Any
+    ) -> TerminalOutputResponse:
+        term = self._terminals.get(terminal_id)
+        if term is None:
+            return TerminalOutputResponse(output="", truncated=False)
+        output, truncated = term.output()
+        exit_status = None
+        if term.exited():
+            exit_status = TerminalExitStatus(
+                exit_code=term.exit_code, signal=term.signal_name
+            )
+        return TerminalOutputResponse(
+            output=output, truncated=truncated, exit_status=exit_status
+        )
+
+    async def wait_for_terminal_exit(
+        self, session_id: str, terminal_id: str, **kwargs: Any
+    ) -> WaitForTerminalExitResponse:
+        term = self._terminals.get(terminal_id)
+        if term is None:
+            return WaitForTerminalExitResponse(exit_code=None, signal=None)
+        exit_code, signal_name = await term.wait_exit()
+        return WaitForTerminalExitResponse(exit_code=exit_code, signal=signal_name)
+
+    async def kill_terminal(
+        self, session_id: str, terminal_id: str, **kwargs: Any
+    ) -> KillTerminalResponse:
+        term = self._terminals.get(terminal_id)
+        if term is not None:
+            term.kill()
+        return KillTerminalResponse()
+
+    async def release_terminal(
+        self, session_id: str, terminal_id: str, **kwargs: Any
+    ) -> ReleaseTerminalResponse:
+        self._terminals.release(terminal_id)
+        return ReleaseTerminalResponse()
+
     async def spawn_agent(self, cwd: str) -> asyncio.subprocess.Process:
         """Spawn the crow-acp agent subprocess."""
         # Check if running in PyInstaller frozen build
@@ -344,7 +413,7 @@ async def connect_client(
 
         await conn.initialize(
             protocol_version=PROTOCOL_VERSION,
-            client_capabilities=ClientCapabilities(),
+            client_capabilities=ClientCapabilities(terminal=True),
             client_info=Implementation(
                 name="crow-client",
                 title="Crow Client",

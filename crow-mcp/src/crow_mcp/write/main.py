@@ -13,8 +13,8 @@ async def write(
     """Writes content to a file, creating it if it doesn't exist or overwriting if it does.
 
     Args:
-        file_path: The absolute path to the file to write
-        content: The content to write to the file
+        file_path: The absolute path to the file to write. NOT OPTIONAL.
+        content: The content to write to the file.
 
     Returns:
         Success message or error message

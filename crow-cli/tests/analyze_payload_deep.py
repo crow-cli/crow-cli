@@ -11,21 +11,33 @@ import hashlib
 import json
 import os
 import sys
+from pathlib import Path
 
 
-def load_payloads(session_prefix: str) -> list[tuple[str, list]]:
-    log_dir = os.path.expanduser("~/.crow/logs")
-    files = sorted(
-        f
-        for f in os.listdir(log_dir)
-        if f.startswith(f"payload-{session_prefix}-") and f.endswith(".json")
+def find_session_dir(session: str | None = None):
+    """Resolve the --debug log dir for a session (or the most recent one)."""
+    logs = Path(os.path.expanduser("~/.crow/logs"))
+    if session:
+        d = logs / session
+        return d if d.is_dir() else None
+    candidates = sorted(
+        logs.glob("*/turn-*-request.json"), key=lambda p: p.stat().st_mtime
     )
+    return candidates[-1].parent if candidates else None
+
+
+def load_payloads(session: str | None = None) -> list[tuple[str, list]]:
+    """Load per-turn request payloads (--debug) chronologically; extract messages."""
+    session_dir = find_session_dir(session)
+    if session_dir is None:
+        return []
     payloads = []
-    for fname in files:
-        path = os.path.join(log_dir, fname)
+    for path in sorted(
+        session_dir.glob("turn-*-request.json"), key=lambda p: p.stat().st_mtime
+    ):
         with open(path) as fh:
-            msgs = json.load(fh)
-        payloads.append((fname, msgs))
+            request = json.load(fh)
+        payloads.append((path.name, request.get("messages", [])))
     return payloads
 
 
@@ -216,10 +228,17 @@ def check_json_encoding_issues(payloads):
 
 
 def main():
-    session_prefix = "inventive-innocent-manatee-of-focus-f29a9d"
-    payloads = load_payloads(session_prefix)
+    session = sys.argv[1] if len(sys.argv) > 1 else None
+    session_dir = find_session_dir(session)
+    if session_dir is None:
+        print("No --debug request logs found (run the agent with --debug first).")
+        sys.exit(1)
 
-    print(f"Deep analysis of {len(payloads)} payloads\n")
+    payloads = load_payloads(session)
+    print(
+        f"Deep analysis of {len(payloads)} request payloads "
+        f"(session: {session_dir.name})\n"
+    )
 
     # 1. System message consistency
     print("=== SYSTEM MESSAGE CONSISTENCY ===")

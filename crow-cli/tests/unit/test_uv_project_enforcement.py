@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import pytest_asyncio
 
+from crow_cli.agent.hooks import uv_project_hook
 from crow_cli.agent.tools import execute_acp_terminal
 
 
@@ -39,7 +40,7 @@ async def test_reject_uv_without_project(mock_conn, mock_sessions, mock_logger):
         tool_call_id="123",
         args={"command": "uv run test.py"},
         logger=mock_logger,
-                hooks=[],
+        hooks=[uv_project_hook],
     )
     assert "REJECTED" in result
     assert "--project" in result
@@ -57,15 +58,23 @@ async def test_reject_uv_chained_without_project(mock_conn, mock_sessions, mock_
         tool_call_id="123",
         args={"command": "cd /tmp && uv run test.py"},
         logger=mock_logger,
-                hooks=[],
+        hooks=[uv_project_hook],
     )
     assert "REJECTED" in result
     mock_conn.create_terminal.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_reject_uv_sync_without_project(mock_conn, mock_sessions, mock_logger):
-    """Test that 'uv sync' without --project is rejected."""
+async def test_allow_uv_sync_exempt_from_project_flag(
+    mock_conn, mock_sessions, mock_logger
+):
+    """'uv sync' is exempt from the --project requirement (it targets the cwd project)."""
+    mock_conn.create_terminal.return_value = AsyncMock(terminal_id="term_1")
+    mock_conn.wait_for_terminal_exit.return_value = AsyncMock(exit_code=0, signal=None)
+    mock_conn.terminal_output.return_value = AsyncMock(
+        output="success", truncated=False
+    )
+
     result = await execute_acp_terminal(
         conn=mock_conn,
         sessions=mock_sessions,
@@ -74,9 +83,10 @@ async def test_reject_uv_sync_without_project(mock_conn, mock_sessions, mock_log
         tool_call_id="123",
         args={"command": "uv sync"},
         logger=mock_logger,
-                hooks=[],
+        hooks=[uv_project_hook],
     )
-    assert "REJECTED" in result
+    assert "REJECTED" not in result
+    mock_conn.create_terminal.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -97,7 +107,7 @@ async def test_allow_uv_with_project(mock_conn, mock_sessions, mock_logger):
         tool_call_id="123",
         args={"command": "uv --project . run test.py"},
         logger=mock_logger,
-                hooks=[],
+        hooks=[uv_project_hook],
     )
     assert "REJECTED" not in result
     mock_conn.create_terminal.assert_called_once()
@@ -120,7 +130,7 @@ async def test_allow_uv_chained_with_project(mock_conn, mock_sessions, mock_logg
         tool_call_id="123",
         args={"command": "cd /tmp && uv --project . run test.py"},
         logger=mock_logger,
-                hooks=[],
+        hooks=[uv_project_hook],
     )
     assert "REJECTED" not in result
     mock_conn.create_terminal.assert_called_once()
@@ -143,7 +153,7 @@ async def test_allow_uvx_without_project(mock_conn, mock_sessions, mock_logger):
         tool_call_id="123",
         args={"command": "uvx some-package"},
         logger=mock_logger,
-                hooks=[],
+        hooks=[uv_project_hook],
     )
     assert "REJECTED" not in result
     mock_conn.create_terminal.assert_called_once()
