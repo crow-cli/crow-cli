@@ -105,7 +105,10 @@ class SearchRequest(BaseModel):
 
 
 class MessageHit(BaseModel):
+    id: int
     agent_id: str
+    session_id: str
+    agent_idx: int
     role: str
     created_at: str
     data: dict

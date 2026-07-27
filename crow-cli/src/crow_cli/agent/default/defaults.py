@@ -170,16 +170,18 @@ COMPOSE_YAML = """services:
       - CROW_MEMORY_PATH=/data/memory.lance
       - CROW_MEMORY_HOST=0.0.0.0
       - CROW_MEMORY_PORT=8901
-      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      - CUDA_VISIBLE_DEVICES=
     volumes:
       - ./memory.lance:/data/memory.lance
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+    # GPU acceleration — uncomment when you want hardware-accelerated embeddings.
+    # CPU mode is ~100ms text / ~2-3s image, which is fine for background agents.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
 
   litellm:
     image: ghcr.io/berriai/litellm:main-v1.82.6-nightly

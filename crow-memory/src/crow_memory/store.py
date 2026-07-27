@@ -376,8 +376,14 @@ class MemoryStore:
     # ---- search (unified MaxSim) ------------------------------------------
 
     def _where(self, filters: dict) -> str | None:
+        """Build a LanceDB WHERE clause from filters.
+
+        Only includes columns that exist on the *messages* table.
+        session_id is NOT a messages column — callers must resolve it
+        to agent_ids before calling this method.
+        """
         clauses = []
-        for key in ("agent_id", "role", "session_id"):
+        for key in ("agent_id", "role"):
             if filters.get(key):
                 clauses.append(f"{key} = '{filters[key]}'")
         if filters.get("after"):
@@ -386,20 +392,66 @@ class MemoryStore:
             clauses.append(f"created_at <= '{filters['before']}'")
         return " AND ".join(clauses) if clauses else None
 
+    def _agent_meta(self) -> dict[str, tuple[str, int]]:
+        """Build agent_id → (session_id, agent_idx) lookup."""
+        adf = self.agents.search().limit(1_000_000).to_pandas()
+        return {r["agent_id"]: (r["session_id"], int(r["agent_idx"]))
+                for _, r in adf.iterrows()}
+
     def search_messages(self, query: str, filters: dict | None = None,
                         limit: int = 10) -> list[dict]:
-        """Text -> text search over the messages table (ColBERT MaxSim)."""
+        """Text -> text search over the messages table (ColBERT MaxSim).
+
+        Returns hits enriched with id, session_id, agent_idx so callers
+        (query_memory) can build context windows and discovery tables
+        without extra round-trips.
+        """
+        filters = filters or {}
+        meta = self._agent_meta()
+
+        # Resolve session_id / agent_idx → agent_id IN (...) clause
+        extra_clauses = []
+        if filters.get("session_id") or filters.get("agent_idx") is not None:
+            adf = self.agents.search().limit(1_000_000).to_pandas()
+            if filters.get("session_id"):
+                adf = adf[adf["session_id"] == filters["session_id"]]
+            if filters.get("agent_idx") is not None:
+                adf = adf[adf["agent_idx"] == filters["agent_idx"]]
+            ids = list(adf["agent_id"])
+            if not ids:
+                return []
+            extra_clauses.append(
+                "agent_id IN (" + ",".join(f"'{i}'" for i in ids) + ")"
+            )
+
         qmv = self.emb.embed_text_query(query)
-        q = self.messages.search(qmv).limit(limit)
-        where = self._where(filters or {})
+        # Over-fetch to compensate for post-filter losses
+        fetch_limit = limit * 3 if extra_clauses else limit
+        q = self.messages.search(qmv).limit(fetch_limit)
+        where = self._where(filters)
+        if extra_clauses:
+            parts = ([where] if where else []) + extra_clauses
+            where = " AND ".join(parts)
         if where:
             q = q.where(where)
         df = q.to_pandas()
+
         out = []
         for _, r in df.iterrows():
-            out.append({"agent_id": r["agent_id"], "role": r["role"],
-                        "created_at": r["created_at"], "data": json.loads(r["data"]),
-                        "score": float(r.get("_distance", 0.0))})
+            aid = r["agent_id"]
+            sess, idx = meta.get(aid, ("?", -1))
+            out.append({
+                "id": int(r["id"]),
+                "agent_id": aid,
+                "session_id": sess,
+                "agent_idx": idx,
+                "role": r["role"],
+                "created_at": r["created_at"],
+                "data": json.loads(r["data"]),
+                "score": float(r.get("_distance", 0.0)),
+            })
+            if len(out) >= limit:
+                break
         return out
 
     def search_images(self, query: str | None = None, query_image: bytes | None = None,
