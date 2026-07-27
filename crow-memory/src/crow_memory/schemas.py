@@ -32,6 +32,7 @@ class AgentResponse(BaseModel):
     request_params: dict[str, Any]
     model_identifier: str
     status: str
+    created_at: str = ""
 
 
 class LoadResponse(BaseModel):
@@ -49,6 +50,28 @@ class BatchMessagesRequest(BaseModel):
     messages: list[dict]
 
 
+class MessageQueryRequest(BaseModel):
+    session_id: str | None = None
+    agent_id: str | None = None
+    agent_idx: int | None = None
+    roles: list[str] | None = None
+    after: str | None = None
+    before: str | None = None
+    order: Literal["asc", "desc"] = "asc"
+    limit: int = 1_000_000
+    offset: int = 0
+
+
+class MessageRecord(BaseModel):
+    id: int
+    agent_id: str
+    session_id: str
+    agent_idx: int
+    role: str
+    created_at: str
+    data: dict
+
+
 class AddMessageResponse(BaseModel):
     id: int
     agent_id: str
@@ -57,10 +80,9 @@ class AddMessageResponse(BaseModel):
 
 
 # ---- prompts ----
-class UpsertPromptRequest(BaseModel):
-    id: str
-    name: str
+class LookupPromptRequest(BaseModel):
     template: str
+    name: str = "crow-default"
 
 
 class PromptResponse(BaseModel):

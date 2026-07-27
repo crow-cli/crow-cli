@@ -5,12 +5,14 @@ messages) PLUS the images table that gets base64 blobs out of message records.
 """
 
 import base64
+import hashlib
 import json
 import re
 from datetime import datetime, timezone
 
 import lancedb
 import pyarrow as pa
+from coolname import generate_slug
 
 from .embed import EMBED_DIM, Embedders
 
@@ -22,6 +24,7 @@ PROMPTS_SCHEMA = pa.schema([
     pa.field("id", pa.string()),
     pa.field("name", pa.string()),
     pa.field("template", pa.string()),
+    pa.field("template_hash", pa.string()),   # sha256 of template, for content lookup
     pa.field("created_at", pa.string()),
 ])
 
@@ -258,13 +261,17 @@ class MemoryStore:
             "tool_definitions": json.loads(rec["tool_definitions"]),
             "request_params": json.loads(rec["request_params"]),
             "model_identifier": rec["model_identifier"], "status": rec["status"],
+            "created_at": rec["created_at"],
         }
 
     def get_agent(self, agent_id: str) -> dict | None:
         df = self.agents.search().where(f"agent_id = '{agent_id}'").limit(1).to_pandas()
         if len(df) == 0:
             return None
-        r = df.iloc[0]
+        return self._parse_agent_row(df.iloc[0])
+
+    @staticmethod
+    def _parse_agent_row(r) -> dict:
         return {
             "agent_id": r["agent_id"], "session_id": r["session_id"],
             "agent_idx": int(r["agent_idx"]), "cwd": r["cwd"],
@@ -273,7 +280,14 @@ class MemoryStore:
             "tool_definitions": json.loads(r["tool_definitions"]),
             "request_params": json.loads(r["request_params"]),
             "model_identifier": r["model_identifier"], "status": r["status"],
+            "created_at": r["created_at"],
         }
+
+    def list_agents(self, session_id: str | None = None) -> list[dict]:
+        df = self.agents.search().limit(1_000_000).to_pandas()
+        if session_id:
+            df = df[df["session_id"] == session_id]
+        return [self._parse_agent_row(r) for _, r in df.iterrows()]
 
     def get_max_agent_idx(self, session_id: str) -> int:
         df = self.agents.search().where(f"session_id = '{session_id}'").limit(1_000_000).to_pandas()
@@ -281,13 +295,74 @@ class MemoryStore:
             return -1
         return int(df["agent_idx"].max())
 
+    def query_messages(self, *, session_id: str | None = None, agent_id: str | None = None,
+                       agent_idx: int | None = None, roles: list[str] | None = None,
+                       after: str | None = None, before: str | None = None,
+                       order: str = "asc", limit: int = 1_000_000, offset: int = 0) -> list[dict]:
+        """General filtered message list (no semantic search). Links messages to
+        agents in code (LanceDB has no joins). Backs query_memory's browse mode
+        and get_session_by_cwd. Filters pushed to LanceDB via WHERE; sort/slice
+        in pandas."""
+        adf = self.agents.search().limit(1_000_000).to_pandas()
+        all_meta = {r["agent_id"]: (r["session_id"], int(r["agent_idx"])) for _, r in adf.iterrows()}
+
+        clauses = []
+        if session_id or agent_idx is not None or agent_id:
+            fdf = adf
+            if session_id:
+                fdf = fdf[fdf["session_id"] == session_id]
+            if agent_idx is not None:
+                fdf = fdf[fdf["agent_idx"] == agent_idx]
+            if agent_id:
+                fdf = fdf[fdf["agent_id"] == agent_id]
+            ids = list(fdf["agent_id"])
+            if not ids:
+                return []
+            clauses.append("agent_id IN (" + ",".join(f"'{i}'" for i in ids) + ")")
+        if roles:
+            clauses.append("role IN (" + ",".join(f"'{r}'" for r in roles) + ")")
+        if after:
+            clauses.append(f"created_at >= '{after}'")
+        if before:
+            clauses.append(f"created_at <= '{before}'")
+
+        q = self.messages.search()
+        if clauses:
+            q = q.where(" AND ".join(clauses))
+        df = q.limit(1_000_000).to_pandas()
+        df = df.sort_values("id", ascending=(order == "asc"))
+        df = df.iloc[offset:offset + limit]
+
+        out = []
+        for _, r in df.iterrows():
+            sess, idx = all_meta.get(r["agent_id"], ("?", -1))
+            out.append({
+                "id": int(r["id"]), "agent_id": r["agent_id"], "session_id": sess,
+                "agent_idx": idx, "role": r["role"], "created_at": r["created_at"],
+                "data": json.loads(r["data"]),
+            })
+        return out
+
     # ---- prompts -----------------------------------------------------------
 
-    def upsert_prompt(self, prompt_id: str, name: str, template: str) -> dict:
-        existing = self.prompts.search().where(f"id = '{prompt_id}'").limit(1).to_pandas()
+    @staticmethod
+    def _template_hash(template: str) -> str:
+        return "sha256:" + hashlib.sha256(template.encode()).hexdigest()
+
+    def lookup_or_create_prompt(self, template: str, name: str) -> dict:
+        """Find a prompt by template content, else mint a coolname id and create.
+
+        Faithful port of session.py's lookup_or_create_prompt: prompts are
+        content-addressed by template hash, ids are coolnames.
+        """
+        th = self._template_hash(template)
+        existing = self.prompts.search().where(f"template_hash = '{th}'").limit(1).to_pandas()
         if len(existing) > 0:
-            return {"id": prompt_id, "name": name, "template": template, "created": False}
-        rec = {"id": prompt_id, "name": name, "template": template, "created_at": _now()}
+            r = existing.iloc[0]
+            return {"id": r["id"], "name": r["name"], "template": r["template"], "created": False}
+        prompt_id = generate_slug(4)
+        rec = {"id": prompt_id, "name": name, "template": template,
+               "template_hash": th, "created_at": _now()}
         self.prompts.add([rec])
         return {"id": prompt_id, "name": name, "template": template, "created": True}
 

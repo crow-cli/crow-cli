@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import JSONResponse
 
 from .embed import Embedders
+from .logger import logger
 from .schemas import (
     AddMessageRequest,
     AddMessageResponse,
@@ -17,10 +18,12 @@ from .schemas import (
     BatchMessagesRequest,
     CreateAgentRequest,
     LoadResponse,
+    LookupPromptRequest,
+    MessageQueryRequest,
+    MessageRecord,
     PromptResponse,
     SearchRequest,
     SearchResponse,
-    UpsertPromptRequest,
 )
 from .store import MemoryStore
 
@@ -32,9 +35,12 @@ def build_app(store_path: str | None = None, image_max_dim: int = 1024) -> FastA
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        logger.info("crow-memory starting: loading embedders (ColBERT + ColQwen2)...")
         embedders = Embedders(image_max_dim=image_max_dim)
         app.state.store = MemoryStore(path, embedders)
+        logger.info(f"crow-memory ready: store={path}")
         yield
+        logger.info("crow-memory shutting down")
 
     app = FastAPI(title="crow-memory", version="0.1.26", lifespan=lifespan)
 
@@ -54,6 +60,10 @@ def build_app(store_path: str | None = None, image_max_dim: int = 1024) -> FastA
             if m.get("role") != "system":
                 s.add_message(req.agent_id, m)
         return agent
+
+    @app.get("/agents", response_model=list[AgentResponse])
+    def list_agents(session_id: str | None = None):
+        return store().list_agents(session_id=session_id)
 
     @app.get("/agents/{agent_id}", response_model=LoadResponse)
     def load_agent(agent_id: str, hydrate: bool = False):
@@ -77,6 +87,10 @@ def build_app(store_path: str | None = None, image_max_dim: int = 1024) -> FastA
         ids = [s.add_message(agent_id, m)["id"] for m in req.messages]
         return {"agent_id": agent_id, "ids": ids, "count": len(ids)}
 
+    @app.post("/messages/query", response_model=list[MessageRecord])
+    def query_messages(req: MessageQueryRequest):
+        return store().query_messages(**req.model_dump())
+
     # ---- sessions ----
     @app.get("/sessions/{session_id}/max-idx")
     def max_idx(session_id: str):
@@ -84,8 +98,15 @@ def build_app(store_path: str | None = None, image_max_dim: int = 1024) -> FastA
 
     # ---- prompts ----
     @app.post("/prompts", response_model=PromptResponse)
-    def upsert_prompt(req: UpsertPromptRequest):
-        return store().upsert_prompt(req.id, req.name, req.template)
+    def lookup_or_create_prompt(req: LookupPromptRequest):
+        return store().lookup_or_create_prompt(req.template, req.name)
+
+    @app.get("/prompts/{prompt_id}", response_model=PromptResponse)
+    def get_prompt(prompt_id: str):
+        p = store().get_prompt(prompt_id)
+        if p is None:
+            raise HTTPException(404, f"prompt '{prompt_id}' not found")
+        return p
 
     # ---- images ----
     @app.get("/images/{image_id}")

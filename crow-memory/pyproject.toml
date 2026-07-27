@@ -15,6 +15,7 @@ dependencies = [
     "pillow>=12.0.0",
     "pylate>=1.6.0",
     "colpali-engine>=0.3.17",
+    "coolname>=2.2.0",
 ]
 
 [project.urls]

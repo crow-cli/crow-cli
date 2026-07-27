@@ -185,8 +185,8 @@ mcpServers:
     args:
       - crow-mcp
 
-# DEFAULT LOCATION
-db_uri: sqlite:///${HOME}/.crow/crow.db
+# DEFAULT crow-memory service URL
+memory_url: http://localhost:8901
 
 # EXAMPLE PROVIDER
 # providers:

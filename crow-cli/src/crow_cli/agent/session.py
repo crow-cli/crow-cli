@@ -8,7 +8,6 @@ Agent owns the session. agent_id = "{session_id}-{agent_idx}" is the PK.
 session_id is derived from agent_id for ACP upstream routing.
 """
 
-import json
 import os
 from logging import Logger
 from pathlib import Path
@@ -16,84 +15,61 @@ from typing import Any
 
 import yaml
 from coolname import generate_slug
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import Session as SQLAlchemySession
 
-from crow_cli.agent.db import Agent as AgentModel
-from crow_cli.agent.db import (
-    Message,
-    Prompt,
-    create_database,
-    get_schemas,
-)
+from crow_cli.agent.memory import DEFAULT_MEMORY_URL, MemoryClient, MemoryServiceError
 from crow_cli.agent.prompt import render_template
 from crow_cli.agent.context import get_directory_tree
 
 from crow_cli.agent.configure import Config
 
-def get_session_by_cwd(cwd, db_uri):
+def get_session_by_cwd(cwd, memory_url=DEFAULT_MEMORY_URL):
     """
-    Lookup agents by working directory.
+    Lookup agents by working directory via the crow-memory service.
 
     Returns list of session info dicts with session_id, title, updated_at.
     """
-    db = SQLAlchemySession(create_engine(db_uri))
+    client = MemoryClient(memory_url)
     try:
-        agents = db.query(AgentModel).all()
         result = []
-        for agent in agents:
-            # Parse prompt_args from JSON string to dict
-            prompt_args = agent.prompt_args
-            if isinstance(prompt_args, str):
-                try:
-                    prompt_args = json.loads(prompt_args)
-                except json.JSONDecodeError, TypeError:
-                    prompt_args = {}
-
-            # Check if workspace matches
-            if not prompt_args or prompt_args.get("workspace") != cwd:
+        for agent in client.list_agents():
+            prompt_args = agent.get("prompt_args") or {}
+            if prompt_args.get("workspace") != cwd:
                 continue
 
-            # Get message count and title
-            msgs = (
-                db.query(Message)
-                .filter_by(agent_id=agent.agent_id)
-                .order_by(Message.id)
-                .all()
+            # Title from the second message (index 1, after the system message).
+            # Fetch the first three records so len > 2 tells us a title exists.
+            title = "Untitled Chat"
+            recs = client.query_messages(
+                agent_id=agent["agent_id"], order="asc", limit=3
             )
-            if len(msgs) > 2:
-                # Get content from second message (index 1, after system message)
+            if len(recs) > 2:
                 try:
-                    data = msgs[1].data
-                    if isinstance(data, str):
-                        data = json.loads(data)
-                    content = data.get("content", "") if data else ""
-                    # Handle content blocks (list of dicts) vs plain string
+                    content = recs[1]["data"].get("content", "")
                     if isinstance(content, list):
                         title = "".join(
-                            block.get("text", "") for block in content if block.get("type") == "text"
+                            b.get("text", "")
+                            for b in content
+                            if b.get("type") == "text"
                         )[:50]
                     else:
                         title = str(content)[:50]
                     if not title:
                         title = "Untitled Chat"
-                except (json.JSONDecodeError, AttributeError, TypeError):
+                except (AttributeError, TypeError):
                     title = "Untitled Chat"
-            else:
-                title = "Untitled Chat"
 
             result.append(
                 {
                     "cwd": cwd,
-                    "session_id": agent.session_id,
-                    "agent_id": agent.agent_id,
+                    "session_id": agent["session_id"],
+                    "agent_id": agent["agent_id"],
                     "title": title,
-                    "updated_at": agent.created_at.isoformat(),
+                    "updated_at": agent.get("created_at", ""),
                 }
             )
         return result
     finally:
-        db.close()
+        client.close()
 
 
 def get_coolname() -> str:
@@ -104,38 +80,24 @@ def get_coolname() -> str:
 def lookup_or_create_prompt(
     template: str,
     name: str,
-    db_uri: str = "sqlite:///crow.db",
+    memory_url: str = DEFAULT_MEMORY_URL,
 ) -> str:
     """
     Lookup existing prompt by template content, or create new one if not found.
     """
-    # Ensure database tables exist
-    create_database(db_uri)
-
-    db = SQLAlchemySession(create_engine(db_uri))
+    client = MemoryClient(memory_url)
     try:
-        existing = db.query(Prompt).filter_by(template=template).first()
-        if existing:
-            return existing.id
-
-        prompt_id = get_coolname()
-        new_prompt = Prompt(id=prompt_id, name=name, template=template)
-        db.add(new_prompt)
-        db.commit()
-        return prompt_id
+        return client.lookup_or_create_prompt(template, name)
     finally:
-        db.close()
+        client.close()
 
 
 class AgentSession:
     """
-    Manages conversation state and persistence.
+    Manages conversation state and persistence via the crow-memory service.
 
-    agent_id = "{session_id}-{agent_idx}" is the DB key.
+    agent_id = "{session_id}-{agent_idx}" is the key.
     session_id is derived for ACP upstream routing only.
-
-    Two databases:
-    - db_uri: session data (agents, messages, prompts)
     """
 
     def __init__(
@@ -143,35 +105,24 @@ class AgentSession:
         agent_id: str,
         session_id: str,
         agent_idx: int = 0,
-        db_uri: str = "sqlite:///crow.db",
+        memory_url: str = DEFAULT_MEMORY_URL,
         cwd: str = "/tmp",
     ):
         self.agent_id = agent_id
         self.session_id = session_id
         self.agent_idx = agent_idx
-        self.db_uri = db_uri
+        self.memory_url = memory_url
         self.cwd = cwd
         self.messages: list[dict] = []
-        self._db = None
-        self._model = None
+        self._client = None
         self.model_identifier = None
 
     @property
-    def db(self) -> SQLAlchemySession:
-        """Lazy-load database connection with WAL mode for concurrent reads."""
-        if self._db is None:
-            engine = create_engine(self.db_uri)
-            self._db = SQLAlchemySession(engine)
-        return self._db
-
-    @property
-    def model(self) -> AgentModel:
-        """Lazy-load agent model from database"""
-        if self._model is None:
-            self._model = (
-                self.db.query(AgentModel).filter_by(agent_id=self.agent_id).first()
-            )
-        return self._model
+    def client(self) -> MemoryClient:
+        """Lazy-load the HTTP client to the crow-memory service."""
+        if self._client is None:
+            self._client = MemoryClient(self.memory_url)
+        return self._client
 
     def add_message(self, msg: dict, usage: dict | None = None):
         """
@@ -182,18 +133,7 @@ class AgentSession:
             usage: Token usage dict with prompt_tokens, completion_tokens, total_tokens
         """
         self.messages.append(msg)
-
-        # Persist - one row = one message
-        db_msg = Message(
-            agent_id=self.agent_id,
-            data=msg,
-            role=msg.get("role", "unknown"),
-            prompt_tokens=usage.get("prompt_tokens") if usage else None,
-            completion_tokens=usage.get("completion_tokens") if usage else None,
-            total_tokens=usage.get("total_tokens") if usage else None,
-        )
-        self.db.add(db_msg)
-        self.db.commit()
+        self.client.add_message(self.agent_id, msg, usage)
 
     def add_tool_response(
         self,
@@ -239,15 +179,8 @@ class AgentSession:
             self.add_message(msg, usage)
 
     def _save_messages(self, messages: list[dict]):
-        """Batch save messages to database."""
-        for msg in messages:
-            db_msg = Message(
-                agent_id=self.agent_id,
-                data=msg,
-                role=msg.get("role", "unknown"),
-            )
-            self.db.add(db_msg)
-        self.db.commit()
+        """Batch save messages to the service."""
+        self.client.save_messages(self.agent_id, messages)
 
     @classmethod
     def create(
@@ -257,31 +190,30 @@ class AgentSession:
         tool_definitions: list[dict],
         request_params: dict[str, Any],
         model_identifier: str,
-        db_uri: str = "sqlite:///crow.db",
+        memory_url: str = DEFAULT_MEMORY_URL,
         cwd: str = "/tmp",
         agent_idx: int = 1,
         session_id: str | None = None,
         initial_messages: list[dict[str, Any]] | None = None,
     ) -> "AgentSession":
         """Factory method to create a new agent session."""
-        # Ensure both databases exist
-        create_database(db_uri)
-
-        db = SQLAlchemySession(create_engine(db_uri))
+        client = MemoryClient(memory_url)
 
         # Load and render prompt
-        prompt = db.query(Prompt).filter_by(id=prompt_id).first()
-        if not prompt:
-            db.close()
-            raise ValueError(f"Prompt '{prompt_id}' not found")
+        try:
+            prompt = client.get_prompt(prompt_id)
+        except MemoryServiceError as e:
+            if e.status == 404:
+                raise ValueError(f"Prompt '{prompt_id}' not found") from e
+            raise
 
-        system_prompt = render_template(prompt.template, **prompt_args)
+        system_prompt = render_template(prompt["template"], **prompt_args)
         if session_id is None:
             session_id = get_coolname()
         agent_id = f"{session_id}-{agent_idx}"
 
         # Create agent record
-        agent_model = AgentModel(
+        client.create_agent(
             agent_id=agent_id,
             session_id=session_id,
             agent_idx=agent_idx,
@@ -293,12 +225,10 @@ class AgentSession:
             request_params=request_params,
             model_identifier=model_identifier,
         )
-        db.add(agent_model)
-        db.commit()
-        db.close()
+        client.close()
 
         # Build session instance
-        session = cls(agent_id, session_id, agent_idx, db_uri, cwd=cwd)
+        session = cls(agent_id, session_id, agent_idx, memory_url, cwd=cwd)
         session.model_identifier = model_identifier
         session.tools = tool_definitions
         session.request_params = request_params
@@ -321,62 +251,53 @@ class AgentSession:
     def get_max_agent_idx(
         cls,
         session_id: str,
-        db_uri: str = "sqlite:///crow.db",
+        memory_url: str = DEFAULT_MEMORY_URL,
     ) -> int:
         """Return the highest agent_idx for a given session_id."""
-        db = SQLAlchemySession(create_engine(db_uri))
+        client = MemoryClient(memory_url)
         try:
-            result = (
-                db.query(AgentModel.agent_idx)
-                .filter_by(session_id=session_id)
-                .order_by(AgentModel.agent_idx.desc())
-                .first()
-            )
-            return result[0] if result else -1
+            return client.get_max_agent_idx(session_id)
         finally:
-            db.close()
+            client.close()
 
     @classmethod
     def load(
         cls,
         agent_id: str,
-        db_uri: str = "sqlite:///crow.db",
+        memory_url: str = DEFAULT_MEMORY_URL,
     ) -> "AgentSession":
-        """Factory method to load existing agent session from database."""
-        db = SQLAlchemySession(create_engine(db_uri))
-        agent_model = db.query(AgentModel).filter_by(agent_id=agent_id).first()
-        if not agent_model:
-            db.close()
-            raise ValueError(f"Agent '{agent_id}' not found")
+        """Factory method to load existing agent session from the service."""
+        client = MemoryClient(memory_url)
+        try:
+            agent, messages = client.load(agent_id)
+        except MemoryServiceError as e:
+            if e.status == 404:
+                raise ValueError(f"Agent '{agent_id}' not found") from e
+            raise
+        finally:
+            client.close()
 
         session = cls(
-            agent_id=agent_model.agent_id,
-            session_id=agent_model.session_id,
-            agent_idx=agent_model.agent_idx,
-            db_uri=db_uri,
-            cwd=agent_model.cwd,
+            agent_id=agent["agent_id"],
+            session_id=agent["session_id"],
+            agent_idx=agent["agent_idx"],
+            memory_url=memory_url,
+            cwd=agent["cwd"],
         )
-        session.model_identifier = agent_model.model_identifier
-        session.tools = agent_model.tool_definitions
-        session.request_params = agent_model.request_params
-        session.prompt_id = agent_model.prompt_id
-        session.prompt_args = agent_model.prompt_args
-
-        # Load messages - just deserialize the data column
-        messages = (
-            db.query(Message).filter_by(agent_id=agent_id).order_by(Message.id).all()
-        )
-        db.close()
-        session.messages = [m.data for m in messages]
+        session.model_identifier = agent["model_identifier"]
+        session.tools = agent["tool_definitions"]
+        session.request_params = agent["request_params"]
+        session.prompt_id = agent["prompt_id"]
+        session.prompt_args = agent["prompt_args"]
+        session.messages = messages
 
         return session
 
     def close(self):
-        """Close database connections."""
-        if self._db is not None:
-            self._db.close()
-        self._db = None
-        self._model = None
+        """Close the HTTP client."""
+        if self._client is not None:
+            self._client.close()
+        self._client = None
 
 
 def _parse_frontmatter(text: str) -> dict | None:
@@ -511,7 +432,7 @@ def make_agent_session(
     else:
         template = config.system_prompt
     prompt_id = lookup_or_create_prompt(
-        template, name="crow-default", db_uri=config.db_uri
+        template, name="crow-default", memory_url=config.memory_url
     )
     skills = get_skills(config.config_dir / "skills")
 
@@ -536,7 +457,7 @@ def make_agent_session(
         tool_definitions=tools,
         request_params={"temperature": 0.2},
         model_identifier=model_id,
-        db_uri=config.db_uri,
+        memory_url=config.memory_url,
         cwd=cwd,
         agent_idx=agent_idx,
         session_id=session_id,

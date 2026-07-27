@@ -56,6 +56,10 @@ class MemoryClient:
         data = self._get(f"/agents/{agent_id}", params={"hydrate": hydrate})
         return data["agent"], data["messages"]
 
+    def list_agents(self, session_id: str | None = None) -> list[dict]:
+        params = {"session_id": session_id} if session_id else None
+        return self._get("/agents", params=params)
+
     # ---- messages (replaces add_message / _save_messages) ----
     def add_message(self, agent_id: str, message: dict, usage: dict | None = None) -> dict:
         return self._post(f"/agents/{agent_id}/messages", {"message": message, "usage": usage})
@@ -63,13 +67,28 @@ class MemoryClient:
     def save_messages(self, agent_id: str, messages: list[dict]) -> dict:
         return self._post(f"/agents/{agent_id}/messages/batch", {"messages": messages})
 
+    def query_messages(self, *, session_id: str | None = None, agent_id: str | None = None,
+                       agent_idx: int | None = None, roles: list[str] | None = None,
+                       after: str | None = None, before: str | None = None,
+                       order: str = "asc", limit: int = 1_000_000, offset: int = 0) -> list[dict]:
+        """General filtered message list (browse, no semantic search)."""
+        return self._post("/messages/query", {
+            "session_id": session_id, "agent_id": agent_id, "agent_idx": agent_idx,
+            "roles": roles, "after": after, "before": before, "order": order,
+            "limit": limit, "offset": offset,
+        })
+
     # ---- sessions ----
     def get_max_agent_idx(self, session_id: str) -> int:
         return self._get(f"/sessions/{session_id}/max-idx")["max_agent_idx"]
 
     # ---- prompts (replaces lookup_or_create_prompt) ----
-    def upsert_prompt(self, prompt_id: str, name: str, template: str) -> dict:
-        return self._post("/prompts", {"id": prompt_id, "name": name, "template": template})
+    def lookup_or_create_prompt(self, template: str, name: str = "crow-default") -> str:
+        """Look up a prompt by template content, else mint one. Returns the id."""
+        return self._post("/prompts", {"template": template, "name": name})["id"]
+
+    def get_prompt(self, prompt_id: str) -> dict:
+        return self._get(f"/prompts/{prompt_id}")
 
     # ---- images ----
     def get_image(self, image_id: str) -> tuple[bytes, str]:

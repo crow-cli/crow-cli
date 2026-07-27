@@ -167,7 +167,7 @@ class AcpAgent(Agent):
             hooks if hooks is not None else [uv_project_hook]
         )
         self._logger = setup_logger(self._config.config_dir / "logs" / "crow-cli.log")
-        self._db_uri = self._config.db_uri
+        self._memory_url = self._config.memory_url
         self._exit_stack = AsyncExitStack()
         self._agent_id: str | None = None
         self._session_id: str | None = None  # stripped version for ACP upstream
@@ -452,14 +452,14 @@ class AcpAgent(Agent):
 
         try:
             # Find the highest-indexed agent for this session
-            max_idx = AgentSession.get_max_agent_idx(session_id, db_uri=self._db_uri)
+            max_idx = AgentSession.get_max_agent_idx(session_id, memory_url=self._memory_url)
             agent_id = f"{session_id}-{max_idx}"
             self._logger.info(
                 "LOAD_SESSION: Step 1: Loading agent %s from DB", agent_id
             )
             session = AgentSession.load(
                 agent_id,
-                db_uri=self._db_uri,
+                memory_url=self._memory_url,
             )
             self._logger.info("LOAD_SESSION: Step 1 complete: Agent loaded from DB")
 
@@ -543,7 +543,7 @@ class AcpAgent(Agent):
         if self._session_id == session_id and self._agent_id:
             agent_id = self._agent_id
         else:
-            max_idx = AgentSession.get_max_agent_idx(session_id, db_uri=self._db_uri)
+            max_idx = AgentSession.get_max_agent_idx(session_id, memory_url=self._memory_url)
             agent_id = f"{session_id}-{max_idx}"
 
         # Initialize if not set
@@ -595,7 +595,7 @@ class AcpAgent(Agent):
         if self._session_id == session_id and self._agent_id:
             agent_id = self._agent_id
         else:
-            max_idx = AgentSession.get_max_agent_idx(session_id, db_uri=self._db_uri)
+            max_idx = AgentSession.get_max_agent_idx(session_id, memory_url=self._memory_url)
             agent_id = f"{session_id}-{max_idx}"
 
         async def _execute_turn() -> PromptResponse:
@@ -816,7 +816,7 @@ class AcpAgent(Agent):
         self._logger.info("Listing sessions for working directory: %s", cwd)
         if cwd is None:
             return ListSessionsResponse(sessions=[], next_cursor=None)
-        sessions_info = get_session_by_cwd(cwd, self._db_uri)
+        sessions_info = get_session_by_cwd(cwd, self._memory_url)
         sessions = [SessionInfo(**session) for session in sessions_info]
         return ListSessionsResponse(sessions=sessions, next_cursor=None)
 

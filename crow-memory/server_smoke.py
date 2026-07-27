@@ -24,12 +24,15 @@ def main():
     with TestClient(app) as c:
         check("health", c.get("/health").json()["status"] == "ok")
 
-        # prompt + agent
-        pr = c.post("/prompts", json={"id": "p1", "name": "sys", "template": "You are {{ name }}"}).json()
+        # prompt lookup-or-create (content-addressed by template, coolname id)
+        pr = c.post("/prompts", json={"name": "sys", "template": "You are {{ name }}"}).json()
         check("prompt created", pr["created"] is True)
+        check("prompt got a coolname id", bool(pr["id"]))
+        pr2 = c.post("/prompts", json={"name": "sys", "template": "You are {{ name }}"}).json()
+        check("same template -> same id, not recreated", pr2["id"] == pr["id"] and pr2["created"] is False)
         ag = c.post("/agents", json={
             "agent_id": "http-agent-1", "session_id": "http-sess", "agent_idx": 1,
-            "cwd": "/tmp", "prompt_id": "p1", "system_prompt": "You are crow",
+            "cwd": "/tmp", "prompt_id": pr["id"], "system_prompt": "You are crow",
             "tool_definitions": [{"name": "read"}], "model_identifier": "test-model",
         }).json()
         check("agent created", ag["agent_id"] == "http-agent-1")
@@ -74,6 +77,26 @@ def main():
         # search: image -> image
         s_i2i = c.post("/search", json={"modality": "image", "query_image_b64": b64, "limit": 3}).json()
         check("image->image search hits itself", len(s_i2i["images"]) >= 1 and s_i2i["images"][0]["image_id"] == image_id)
+
+        # ---- new endpoints for the crow-cli/query_memory integration ----
+        # GET /prompts/{id}
+        gp = c.get(f"/prompts/{pr['id']}").json()
+        check("get_prompt by id", gp["id"] == pr["id"] and "You are" in gp["template"])
+
+        # GET /agents (list) + session filter
+        agents = c.get("/agents").json()
+        check("list_agents returns our agent", any(a["agent_id"] == "http-agent-1" for a in agents))
+        agents_filt = c.get("/agents", params={"session_id": "http-sess"}).json()
+        check("list_agents session filter", len(agents_filt) == 1 and agents_filt[0]["session_id"] == "http-sess")
+
+        # POST /messages/query — the browse primitive query_memory rides on
+        mq = c.post("/messages/query", json={"session_id": "http-sess"}).json()
+        check("query_messages by session returns the message", len(mq) == 1 and mq[0]["role"] == "user")
+        check("query_messages attaches session/agent meta", mq[0]["session_id"] == "http-sess" and mq[0]["agent_idx"] == 1)
+        mq_role = c.post("/messages/query", json={"session_id": "http-sess", "roles": ["assistant"]}).json()
+        check("query_messages role filter (no assistant -> empty)", len(mq_role) == 0)
+        mq_desc = c.post("/messages/query", json={"session_id": "http-sess", "order": "desc"}).json()
+        check("query_messages desc order works", len(mq_desc) == 1)
 
     print("\nALL HTTP CHECKS PASSED ✔")
     shutil.rmtree(tmp, ignore_errors=True)

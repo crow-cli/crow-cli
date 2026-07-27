@@ -106,8 +106,8 @@ def run_agentmain(
             overrides = yaml.safe_load(f) or {}
         if "system_prompt_path" in overrides:
             config.system_prompt_path = Path(overrides["system_prompt_path"])
-        if "db_uri" in overrides:
-            config.db_uri = overrides["db_uri"]
+        if "memory_url" in overrides:
+            config.memory_url = overrides["memory_url"]
         if "max_retries_per_step" in overrides:
             config.max_retries_per_step = int(overrides["max_retries_per_step"])
         if "MAX_COMPACT_TOKENS" in overrides:
@@ -192,7 +192,7 @@ def inspect_db(
     """Inspect the Crow database - see session state, messages, etc."""
     if config_dir is None:
         config_dir = Path.home() / ".crow"
-    db_uri = f"sqlite:///{config_dir / 'crow.db'}"
+    sqlite_uri = f"sqlite:///{config_dir / 'crow.db'}"
     db_path = str(config_dir / "crow.db")
 
     if not os.path.exists(db_path):
@@ -204,7 +204,7 @@ def inspect_db(
 
     if session_id:
         # Use existing AgentSession methods to get the latest agent for this session
-        max_idx = AgentSession.get_max_agent_idx(session_id, db_uri=db_uri)
+        max_idx = AgentSession.get_max_agent_idx(session_id)
         if max_idx < 0:
             if json_output:
                 print(json.dumps({"error": f"Session '{session_id}' not found"}))
@@ -213,7 +213,7 @@ def inspect_db(
             raise SystemExit(1)
 
         agent_id = f"{session_id}-{max_idx}"
-        session_obj = AgentSession.load(agent_id, db_uri=db_uri)
+        session_obj = AgentSession.load(agent_id)
 
         session_data = {
             "agent_id": session_obj.agent_id,
@@ -255,7 +255,7 @@ def inspect_db(
                 client._console.print(msg_table)
     else:
         # List all sessions — use AgentSession.get_max_agent_idx to enumerate
-        engine = create_engine(db_uri)
+        engine = create_engine(sqlite_uri)
         db = SQLAlchemySession(engine)
         agents = db.query(AgentModel).order_by(AgentModel.created_at.desc()).all()
 

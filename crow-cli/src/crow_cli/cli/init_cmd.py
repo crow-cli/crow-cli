@@ -285,8 +285,8 @@ def run_init(config_dir: Path, yes: bool = False):
     # =========================================================================
     console.print("\n[bold cyan]═══ Step 3: Review ═══[/bold cyan]\n")
 
-    db_uri = f"sqlite:///{config_dir / 'crow.db'}"
-    console.print(f"[dim]Using SQLite at {config_dir / 'crow.db'}[/dim]")
+    memory_url = "http://localhost:8901"
+    console.print(f"[dim]Using crow-memory service at {memory_url}[/dim]")
 
     if providers:
         p_table = Table(title="Providers", show_header=True)
@@ -309,11 +309,11 @@ def run_init(config_dir: Path, yes: bool = False):
     s_table.add_column("Service", style="cyan")
     s_table.add_column("Status", style="green")
     s_table.add_row("SearXNG", "✓ Docker" if setup_searxng else "✗ Skip")
-    s_table.add_row("Database", "SQLite")
+    s_table.add_row("Memory", "crow-memory service")
     console.print(s_table)
 
     console.print(f"\n[dim]Config directory: {config_dir}[/dim]")
-    console.print(f"[dim]Database: {db_uri}[/dim]")
+    console.print(f"[dim]Memory service: {memory_url}[/dim]")
 
     if not yes and not Confirm.ask("\nLooks good?", default=True):
         console.print("[red]Aborted. No files were written.[/red]")
@@ -345,7 +345,7 @@ def run_init(config_dir: Path, yes: bool = False):
                 "args": ["crow-mcp"],
             }
         },
-        "db_uri": db_uri,
+        "memory_url": memory_url,
         "providers": providers,
         "models": models,
         "MAX_COMPACT_TOKENS": 190000,
