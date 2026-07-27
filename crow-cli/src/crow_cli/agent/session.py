@@ -269,7 +269,7 @@ class AgentSession:
         """Factory method to load existing agent session from the service."""
         client = MemoryClient(memory_url)
         try:
-            agent, messages = client.load(agent_id)
+            agent, messages = client.load(agent_id, hydrate=True)
         except MemoryServiceError as e:
             if e.status == 404:
                 raise ValueError(f"Agent '{agent_id}' not found") from e

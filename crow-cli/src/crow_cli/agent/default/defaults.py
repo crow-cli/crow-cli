@@ -157,6 +157,30 @@ COMPOSE_YAML = """services:
     volumes:
       - ./searxng/:/etc/searxng
 
+  crow-memory:
+    image: ghcr.io/crow-cli/crow-memory:latest
+    # For local development, replace image with build:
+    #   build:
+    #     context: /path/to/crow-cli/crow-memory
+    #     dockerfile: Dockerfile
+    restart: always
+    ports:
+      - "8901:8901"
+    environment:
+      - CROW_MEMORY_PATH=/data/memory.lance
+      - CROW_MEMORY_HOST=0.0.0.0
+      - CROW_MEMORY_PORT=8901
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+    volumes:
+      - ./memory.lance:/data/memory.lance
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
   litellm:
     image: ghcr.io/berriai/litellm:main-v1.82.6-nightly
     restart: always
