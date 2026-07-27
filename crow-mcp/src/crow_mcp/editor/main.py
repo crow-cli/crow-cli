@@ -30,27 +30,23 @@ def _get_working_dir() -> Path:
 
 
 def _resolve_path(path: str) -> Path:
-    """Resolve and validate a path."""
+    """Resolve a path to its canonical absolute form.
+
+    Relative paths are resolved against the current working directory. There is
+    no working-directory sandbox here: access control is delegated to the
+    operating system. The agent runs as the local user, so it can edit exactly
+    the files that user's Unix permissions allow (and nothing else). This keeps
+    ``edit`` consistent with ``read``, ``write``, and ``terminal``, none of
+    which impose a cwd restriction.
+    """
     working_dir = _get_working_dir()
     requested = Path(path)
-    if requested.is_absolute():
-        full_path = requested
-    else:
-        full_path = working_dir / requested
+    full_path = requested if requested.is_absolute() else working_dir / requested
 
     try:
-        canonical = full_path.resolve()
+        return full_path.resolve()
     except OSError as e:
         raise ValueError(f"Cannot resolve path: {e}")
-
-    try:
-        canonical.relative_to(working_dir)
-    except ValueError:
-        # Allow /tmp paths for testing
-        if not str(canonical).startswith("/tmp/"):
-            raise ValueError(f"Path is outside working directory: {path}")
-
-    return canonical
 
 
 def levenshtein(a: str, b: str) -> int:

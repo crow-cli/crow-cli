@@ -413,7 +413,10 @@ async def connect_client(
 
         await conn.initialize(
             protocol_version=PROTOCOL_VERSION,
-            client_capabilities=ClientCapabilities(terminal=True),
+            # terminal=False: don't advertise the client-side PTY, so the agent's
+            # `terminal` tool falls through to the crow-mcp MCP terminal tool
+            # (agent-owned execution) instead of routing to create_terminal below.
+            client_capabilities=ClientCapabilities(terminal=False),
             client_info=Implementation(
                 name="crow-client",
                 title="Crow Client",

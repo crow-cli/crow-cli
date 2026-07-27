@@ -1,1 +1,4 @@
 ex_lancedb/
+test_images/
+bench_lancedb/
+bench_colpali_lancedb/

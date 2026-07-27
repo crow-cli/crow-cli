@@ -14,6 +14,7 @@ from logging import Logger
 from pathlib import Path
 from typing import Any
 
+import yaml
 from coolname import generate_slug
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session as SQLAlchemySession
@@ -378,44 +379,120 @@ class AgentSession:
         self._model = None
 
 
-def get_skills_catalog(skills_dir: Path) -> str:
-    """Scan skills dir, parse SKILL.md frontmatter, return brief catalog."""
+def _parse_frontmatter(text: str) -> dict | None:
+    """Parse a leading YAML frontmatter block (between ``---`` markers).
+
+    Returns the parsed mapping, or None when there is no frontmatter, it is
+    unterminated, it is not valid YAML, or it is not a mapping. Uses PyYAML —
+    already a project dependency (see configure.py / cli/main.py) — so
+    multi-line descriptions, arbitrary indentation, comments, and extra keys
+    are all handled for free instead of by a hand-rolled parser.
+    """
+    if not text.startswith("---"):
+        return None
+    try:
+        end = text.index("---", 3)
+        data = yaml.safe_load(text[3:end])
+    except (ValueError, yaml.YAMLError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def get_skills(skills_dir: Path) -> list[dict]:
+    """Scan skills dir, parse SKILL.md frontmatter, return structured skills.
+
+    Returns a list of ``{"name", "description", "path"}`` dicts so prompt
+    templates can iterate over skills with Jinja (``{% for skill in skills %}``)
+    instead of rendering a pre-baked catalog string. ``path`` is the absolute
+    path to the skill's SKILL.md so the agent can read it on demand.
+    """
     if not skills_dir.exists():
-        return ""
-    entries = []
+        return []
+    skills = []
     for skill_dir in sorted(skills_dir.iterdir()):
         skill_md = skill_dir / "SKILL.md"
         if not skill_md.exists():
             continue
         try:
             text = skill_md.read_text()
-            # Parse YAML frontmatter between --- markers
-            if not text.startswith("---"):
-                continue
-            end = text.index("---", 3)
-            frontmatter = text[3:end]
-            name = None
-            desc_lines = []
-            in_desc = False
-            for line in frontmatter.splitlines():
-                if line.startswith("name:"):
-                    name = line[5:].strip()
-                    in_desc = False
-                elif line.startswith("description:"):
-                    desc_lines.append(line[12:].strip())
-                    in_desc = True
-                elif in_desc and line.startswith("  "):
-                    desc_lines.append(line.strip())
-                else:
-                    in_desc = False
-            if name and desc_lines:
-                description = " ".join(desc_lines)
-                entries.append(f"- **{name}**: {description}")
-        except (ValueError, OSError):
+        except OSError:
             continue
-    if not entries:
-        return ""
-    return "Available skills (~/.crow/skills/):\n" + "\n".join(entries)
+        meta = _parse_frontmatter(text)
+        if not meta:
+            continue
+        name = meta.get("name")
+        description = meta.get("description")
+        if name and description:
+            skills.append(
+                {
+                    "name": str(name).strip(),
+                    "description": str(description).strip(),
+                    "path": str(skill_md),
+                }
+            )
+    return skills
+
+
+def _read_agents_file(directory: str) -> str | None:
+    """Read AGENTS.typ (preferred) or AGENTS.md from a directory.
+
+    Returns None when neither exists, so callers can decide whether to include
+    a section rather than emitting a placeholder.
+    """
+    for name in ("AGENTS.typ", "AGENTS.md"):
+        path = os.path.join(directory, name)
+        if os.path.exists(path):
+            with open(path, "r") as f:
+                return f.read()
+    return None
+
+
+def build_display_tree(cwd: str) -> str:
+    """Build the directory-tree context block shown to an agent.
+
+    Every agent sees the two shared workspaces — ``~/.crow/notes`` and
+    ``~/.crow/skills`` — because the edit tool no longer sandboxes to cwd, so
+    any agent can read and edit them. Agents working inside a real project also
+    get their own cwd tree. The notes agent (cwd == $HOME) is the exception: it
+    skips the cwd tree, since treeing $HOME is dominated by logs, the db, and
+    VSCode-extension noise.
+    """
+    home = str(Path.home())
+    notes_dir = os.path.join(home, ".crow", "notes")
+    skills_dir = os.path.join(home, ".crow", "skills")
+    trees = [get_directory_tree(notes_dir), get_directory_tree(skills_dir)]
+    if os.path.realpath(cwd) != os.path.realpath(home):
+        trees.append(get_directory_tree(cwd))
+    # Drop any tree that failed to generate (get_directory_tree returns "" in
+    # that case) so we don't emit stray blank sections.
+    return "\n\n".join(t for t in trees if t)
+
+
+def build_agents_content(cwd: str) -> str:
+    """Build the persistent-memory (AGENTS.md) context block for a session.
+
+    Two memory files are in play:
+
+    * the **global** one at ``~/.crow/notes/AGENTS.md`` — cross-cutting rules
+      that carry across every agent, and
+    * the **local** one at ``<cwd>/AGENTS.md`` — project-specific knowledge.
+
+    At ``cwd == $HOME`` there is no separate local file (``~/AGENTS.md`` never
+    exists — that is all the kicker is for), so only the global memory loads.
+    Anywhere else, the global memory loads first and the cwd's own AGENTS.md is
+    appended when present.
+    """
+    home = str(Path.home())
+    notes_dir = os.path.join(home, ".crow", "notes")
+    parts = []
+    global_agents = _read_agents_file(notes_dir)
+    if global_agents:
+        parts.append(global_agents)
+    if os.path.realpath(cwd) != os.path.realpath(home):
+        local_agents = _read_agents_file(cwd)
+        if local_agents:
+            parts.append(local_agents)
+    return "\n\n".join(parts) if parts else "No AGENTS.md found"
 
 
 def make_agent_session(
@@ -436,20 +513,13 @@ def make_agent_session(
     prompt_id = lookup_or_create_prompt(
         template, name="crow-default", db_uri=config.db_uri
     )
-    display_tree = get_directory_tree(cwd)
-    skills_catalog = get_skills_catalog(config.config_dir / "skills")
-    agent_path = os.path.join(cwd, "AGENTS.typ")
-    if os.path.exists(agent_path):
-        with open(agent_path, "r") as f:
-            agents_content = f.read()
-    else:
-        # Fallback to markdown
-        agent_path = os.path.join(cwd, "AGENTS.md")
-        if os.path.exists(agent_path):
-            with open(agent_path, "r") as f:
-                agents_content = f.read()
-        else:
-            agents_content = "No AGENTS.md found"
+    skills = get_skills(config.config_dir / "skills")
+
+    # Context blocks: the directory tree (notes + skills, plus cwd unless cwd
+    # is $HOME) and the persistent-memory AGENTS.md (global, plus the cwd's own
+    # when cwd is not $HOME). See build_display_tree / build_agents_content.
+    display_tree = build_display_tree(cwd)
+    agents_content = build_agents_content(cwd)
     if session_id is None:
         session_id = get_coolname()
     if agent_idx is None:
@@ -461,7 +531,7 @@ def make_agent_session(
             "display_tree": display_tree,
             "agents_content": agents_content,
             "session_id": session_id,
-            "skills_catalog": skills_catalog,
+            "skills": skills,
         },
         tool_definitions=tools,
         request_params={"temperature": 0.2},

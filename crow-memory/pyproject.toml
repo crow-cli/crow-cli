@@ -1,0 +1,46 @@
+[project]
+name = "crow-memory"
+version = "0.1.26"
+description = "Crow memory service: LanceDB store + ColBERT/ColPali multivector embeddings for text and images"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "httpx>=0.28.0",
+    "pydantic>=2.12.5",
+    "lancedb>=0.30.0",
+    "pyarrow>=23.0.1",
+    "numpy>=2.0.0",
+    "pillow>=12.0.0",
+    "pylate>=1.6.0",
+    "colpali-engine>=0.3.17",
+]
+
+[project.urls]
+Homepage = "https://github.com/crow-cli/crow-cli"
+Repository = "https://github.com/crow-cli/crow-cli"
+Issues = "https://github.com/crow-cli/crow-cli/issues"
+Documentation = "https://github.com/crow-cli/crow-cli#readme"
+
+[project.scripts]
+crow-memory = "crow_memory.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-asyncio>=0.23.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-v --strict-markers"

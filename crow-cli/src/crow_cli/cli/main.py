@@ -27,7 +27,13 @@ from sqlalchemy.orm import Session as SQLAlchemySession
 
 app = typer.Typer(
     name="crow-cli",
-    help="Transparent CLI for Crow agent - full observability into agent state",
+    help=(
+        "Transparent CLI for the Crow agent — full observability into agent state.\n\n"
+        "Talk to an agent with `crow-cli run \"prompt\"` and continue a session with "
+        "`-s <session-id>`. This is also how agents delegate to subagents: launch a "
+        "worker with `run`, then read its thoughts via the query_memory MCP tool. "
+        "See `crow-cli run --help` for the full delegation recipe."
+    ),
 )
 
 # Register command groups
@@ -306,7 +312,13 @@ def inspect_db(
 @app.command()
 def run(
     prompt: str = typer.Argument(
-        None, help="Prompt to send (optional in interactive mode)"
+        None, help="Prompt to send (optional in interactive mode; '-' reads stdin)"
+    ),
+    prompt_file: Path | None = typer.Option(
+        None,
+        "--prompt-file",
+        "-f",
+        help="Read the prompt from a file (useful for long subagent delegation prompts)",
     ),
     interactive: bool = typer.Option(
         False, "--interactive", "-i", help="Run in interactive mode"
@@ -326,15 +338,60 @@ def run(
     ),
 ):
     """
-    Run the Crow client.
+    Run the Crow client — send a prompt to an agent (one-shot) or start a REPL.
 
-    Default mode: Send a single prompt and exit after response.
-    Interactive mode (-i): Start a REPL loop.
+    MODES: default sends one prompt, prints the response, and exits;
+    -i/--interactive starts a REPL loop.
+
+    PROMPT SOURCES: the prompt can be a positional argument, a file
+    (--prompt-file/-f), or stdin (pass '-' as the prompt).
+
+    DELEGATION — this command is also how agents launch subagents. Every
+    session persists in the shared sqlite memory, so you can launch a worker,
+    keep talking to it by session id, and read its thoughts from any other
+    agent. The loop:
+
+    1. Launch a worker (it gets a coolname session id):
+
+        crow-cli run "refactor the parser into its own module"
+
+    2. Continue that session with -s (give it a hellacious timeout if the
+    prompt is big):
+
+        crow-cli run -s <session-id> "now add tests"
+
+    3. Send a long, pre-written delegation prompt from a file or stdin:
+
+        crow-cli run -f delegation.md -s <session-id>
+        cat delegation.md | crow-cli run -
+
+    4. From another agent, read what the worker did with the query_memory MCP
+    tool: query_memory(session_id="<session-id>", limit=1).
+
+    That's the whole mechanism: delegate with `run -s`, read thoughts with
+    query_memory, verify artifacts on disk. No bespoke agent-to-agent protocol
+    — just a shared database and a read query.
     """
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
     else:
         logging.basicConfig(level=logging.WARNING)
+
+    # Resolve the prompt source: --prompt-file > stdin ('-') > positional arg.
+    if prompt_file is not None:
+        if prompt is not None:
+            client._console.print(
+                "[red]Error: provide a prompt OR --prompt-file, not both[/red]"
+            )
+            raise SystemExit(1)
+        if not prompt_file.exists():
+            client._console.print(
+                f"[red]Error: prompt file not found: {prompt_file}[/red]"
+            )
+            raise SystemExit(1)
+        prompt = prompt_file.read_text()
+    elif prompt == "-":
+        prompt = sys.stdin.read()
 
     # Validate arguments
     if not interactive and prompt is None:
@@ -342,9 +399,11 @@ def run(
             "[red]Error: Either provide a prompt or use -i for interactive mode[/red]"
         )
         client._console.print("\n[yellow]Examples:[/yellow]")
-        client._console.print("  crow-client 'list the files'")
-        client._console.print("  crow-client -i")
-        client._console.print("  crow-client -s <session-id> -i")
+        client._console.print("  crow-cli run 'list the files'")
+        client._console.print("  crow-cli run -i")
+        client._console.print("  crow-cli run -s <session-id> -i")
+        client._console.print("  crow-cli run -f prompt.md -s <session-id>")
+        client._console.print("  cat prompt.md | crow-cli run -")
         raise SystemExit(1)
 
     # Run the async main

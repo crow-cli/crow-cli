@@ -1,7 +1,30 @@
 """Terminal MCP tool for Crow."""
 
+import os
+from logging import getLogger
+
 from crow_mcp.server.main import mcp
 
+from .session import TerminalSession
+
+logger = getLogger(__name__)
+
+# Global terminal instance
+_terminal: TerminalSession | None = None
+
+
+def get_terminal() -> TerminalSession:
+    """Get or create the global terminal instance."""
+    global _terminal
+    if _terminal is None or _terminal.closed:
+        work_dir = os.getcwd()
+        logger.info(f"Creating new terminal session in {work_dir}")
+        _terminal = TerminalSession(
+            work_dir=work_dir,
+            no_change_timeout_seconds=30,
+        )
+        _terminal.initialize()
+    return _terminal
 
 
 @mcp.tool
@@ -58,7 +81,55 @@ async def terminal(
         # Reset terminal
         terminal("", reset=True)
     """
-    raise NotImplementedError(
-        "Terminal tool is executed by crow-cli via the client-side terminal. "
-        "This schema is for LLM tool selection only."
-    )
+    try:
+        # Validate parameters
+        if reset and is_input:
+            return "Error: Cannot use reset=True with is_input=True"
+
+        # Handle reset
+        if reset:
+            global _terminal
+            if _terminal:
+                old_work_dir = _terminal.work_dir
+                _terminal.close()
+                _terminal = None
+
+            # Create fresh terminal
+            term = get_terminal()
+
+            if not command.strip():
+                return "Terminal reset successfully. All previous state lost."
+
+        # Get terminal instance
+        term = get_terminal()
+
+        # Execute command
+        result = term.execute(
+            command=command,
+            is_input=is_input,
+            timeout=timeout,
+        )
+
+        # Format output
+        output = result["output"]
+
+        if result.get("working_dir"):
+            output += f"\n[Current working directory: {result['working_dir']}]"
+
+        if result.get("py_interpreter"):
+            output += f"\n[Python interpreter: {result['py_interpreter']}]"
+
+        exit_code = result.get("exit_code", 0)
+        if exit_code != -1:
+            if exit_code == 0:
+                output += f"\n[Command completed with exit code {exit_code}]"
+            else:
+                output += f"\n[Command failed with exit code {exit_code}]"
+        else:
+            output += "\n[Process still running (soft timeout)]"
+
+        return output
+
+    except Exception as e:
+        logger.error(f"Terminal error: {e}", exc_info=True)
+        return f"Error: {e}"

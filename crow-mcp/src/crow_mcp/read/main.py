@@ -76,7 +76,7 @@ async def read(
     offset: int = 1,
     limit: int = 2000,
 ) -> str:
-    """Reads files from the local filesystem with line numbers. Cannot read directories. Files must be under current working directory as this tool is usually owned by client.
+    """Reads files from the local filesystem with line numbers. Cannot read directories. Access is governed by the operating system's file permissions for the user the agent runs as (no working-directory restriction).
 
     Args:
         file_path: Absolute path of the file to read - REQUIRED

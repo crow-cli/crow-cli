@@ -12,7 +12,6 @@ import os
 
 import pytest
 from fastmcp import Client
-from fastmcp.exceptions import ToolError
 
 # crow-mcp project root: tests/integration/<this file> -> up two -> crow-mcp
 CROW_MCP_DIR = os.path.dirname(
@@ -72,11 +71,15 @@ class TestServerOverStdio:
         assert not getattr(read_back, "isError", False)
         assert marker in read_back.content[0].text  # and comes back over stdio
 
-    async def test_terminal_stub_errors_cleanly_on_wire(self, client):
-        """The terminal tool is a schema-only stub; over the wire it surfaces as
-        a ToolError rather than crashing the server or hanging the session."""
-        with pytest.raises(ToolError) as excinfo:
-            await client.call_tool("terminal", {"command": "echo x"})
-        msg = str(excinfo.value)
-        assert "client-side terminal" in msg
-        assert "LLM tool selection" in msg
+    async def test_terminal_executes_over_wire(self, client):
+        """The terminal tool runs a real shell command on the agent side and
+        returns its output over stdio. Agent-owned terminal execution is the
+        direction ACP v2 is heading (it removes the v1 client-side execution
+        surface), so this locks in that the published server really executes."""
+        result = await client.call_tool(
+            "terminal", {"command": "echo crow-e2e-terminal-marker", "timeout": 20}
+        )
+        assert not getattr(result, "isError", False)
+        text = result.content[0].text
+        assert "crow-e2e-terminal-marker" in text
+        assert "exit code 0" in text

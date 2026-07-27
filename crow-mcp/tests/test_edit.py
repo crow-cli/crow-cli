@@ -318,6 +318,39 @@ class TestEditFileIntegration:
             os.chdir(old_cwd)
 
 
+class TestResolvePath:
+    """Path resolution has no working-directory sandbox; Unix permissions govern."""
+
+    def test_relative_resolves_against_cwd(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        from crow_mcp.editor.main import _resolve_path
+
+        (tmp_path / "f.txt").write_text("x")
+        assert _resolve_path("f.txt") == (tmp_path / "f.txt").resolve()
+
+    def test_absolute_outside_cwd_is_allowed(self, tmp_path, monkeypatch):
+        cwd = tmp_path / "cwd"
+        cwd.mkdir()
+        monkeypatch.chdir(cwd)
+
+        outside = tmp_path / "elsewhere" / "note.md"
+        outside.parent.mkdir()
+        outside.write_text("hi")
+
+        from crow_mcp.editor.main import _resolve_path
+
+        assert _resolve_path(str(outside)) == outside.resolve()
+
+    def test_crow_skills_path_is_allowed(self, tmp_path, monkeypatch):
+        # The motivating case: any agent, regardless of its cwd, may edit
+        # skills/notes under ~/.crow. Resolution must not raise.
+        monkeypatch.chdir(tmp_path)
+        from crow_mcp.editor.main import _resolve_path
+
+        target = Path.home() / ".crow" / "skills" / "new-skill" / "SKILL.md"
+        assert _resolve_path(str(target)) == target.resolve()
+
+
 class TestEdgeCases:
     """Test edge cases that commonly cause bugs."""
 
