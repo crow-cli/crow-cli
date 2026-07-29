@@ -1,62 +1,66 @@
-<p align="center">
-    <img src="https://github.com/odellus/crow/raw/v0.1.0/assets/crow-logo-crop.png" description="crow logo"width=500/>
+# crow-mcp
+
+<p>
+  <a href="https://pypi.org/project/crow-mcp/"><img src="https://img.shields.io/pypi/v/crow-mcp" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/crow-mcp/"><img src="https://img.shields.io/pypi/pyversions/crow-mcp" alt="Python versions"></a>
+  <a href="#license"><img src="https://img.shields.io/pypi/l/crow-mcp" alt="License"></a>
 </p>
 
+The built-in [MCP](https://modelcontextprotocol.io/) tool server for [crow-cli](../crow-cli/README.md). Provides filesystem, terminal, web, vision, and memory tools over stdio.
 
-# `crow-mcp`
+## Tools
 
-## Configuration
+| Tool | Module | What it does |
+|------|--------|--------------|
+| `read` | read | Read files with line numbers |
+| `write` | write | Create or overwrite files |
+| `edit` | editor | Precise string replacement with fuzzy matching |
+| `terminal` | terminal | Shell commands in a persistent PTY session |
+| `web_search` | web_search | Search the web via SearXNG (parallel queries) |
+| `web_fetch` | web_fetch | Fetch a URL and extract content as markdown |
+| `capture_webcam` | vision | Capture a frame from a webcam |
+| `read_image_file` | vision | Read an image file for vision analysis |
+| `list_sessions` | memory | List agent sessions by recent activity |
+| `query_memory` | memory | Semantic search across all sessions |
+| `query_session` | memory | Read or search within one session |
 
-```python
-import os
+> ⚠️ Tool names are **not namespaced** — `read`, not `crow-mcp_read`. Watch for collisions when registering additional MCP servers.
 
-from fastmcp import Client
+## Usage
 
-CROW_MCP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-print("=" * 60)
-print(f"CROW_MCP_DIR: {CROW_MCP_DIR}")
-print("=" * 60)
-config = {
-    "mcpServers": {
-        "crow_mcp": {
-            "transport": "stdio",
-            "command": "uv",
-            "args": ["--project", CROW_MCP_DIR, "run", "crow-mcp"],
-            "cwd": CROW_MCP_DIR,
-        }
-    }
-}
+crow-mcp is started automatically by crow-cli as a child process. You don't normally run it directly.
 
-async def test():
-    client = Client(config)
+To use it standalone:
 
-    print("Connecting to MCP server...")
-    async with client:
-        print("✅ Connected\n")
-
-        # Test 1: Basic command
-        print("=" * 60)
-        print("TEST 1: Basic command")
-        print("=" * 60)
-        result = await client.call_tool(
-            "terminal", {"command": "echo 'Hello terminal!'"}
-        )
-        print(result.content[0].text)
-
-        # Test 2: Directory persistence
-        print("\n" + "=" * 60)
-        print("TEST 2: CD persistence")
-        print("=" * 60)
-        result1 = await client.call_tool("terminal", {"command": "pwd"})
-        print(f"Before: {result1.content[0].text}")
-
-        result2 = await client.call_tool("terminal", {"command": "cd /tmp"})
-        print(f"CD: {result2.content[0].text}")
-
-        result3 = await client.call_tool("terminal", {"command": "pwd"})
-        print(f"After: {result3.content[0].text}")
-
+```bash
+uv --project crow-mcp run crow-mcp
 ```
 
+Or register it in any MCP client config:
 
-hey
+```json
+{
+  "mcpServers": {
+    "crow-mcp": {
+      "transport": "stdio",
+      "command": "uv",
+      "args": ["--project", "/path/to/crow-mcp", "run", "crow-mcp"]
+    }
+  }
+}
+```
+
+## Memory tools
+
+The memory tools (`list_sessions`, `query_memory`, `query_session`) talk to the [crow-memory](../crow-memory/README.md) service over HTTP (default: `http://localhost:8901`).
+
+## Development
+
+```bash
+uv sync --project crow-mcp
+uv run --project crow-mcp pytest crow-mcp/tests
+```
+
+## License
+
+MIT

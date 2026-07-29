@@ -430,7 +430,7 @@ def run_init(config_dir: Path, yes: bool = False):
             Panel.fit(
                 "[bold green]✓ Configuration complete![/bold green]\n\n"
                 f"Config:   [cyan]{config_file}[/cyan]\n"
-                f"Database: [cyan]{config_dir / 'crow.db'}[/cyan]\n"
+                f"Memory:   [cyan]{config_dir / 'memory.lance'}[/cyan]\n"
                 f"Logs:     [cyan]{config_logs}[/cyan]\n"
                 f"Prompt:   [cyan]{system_prompt_dir}/system_prompt.jinja2[/cyan]\n"
                 f"Secrets:  [cyan]{env_file}[/cyan]\n"
@@ -447,7 +447,7 @@ def run_init(config_dir: Path, yes: bool = False):
             Panel.fit(
                 "[bold green]✓ Configuration complete![/bold green]\n\n"
                 f"Config:   [cyan]{config_file}[/cyan]\n"
-                f"Database: [cyan]{config_dir / 'crow.db'}[/cyan]\n"
+                f"Memory:   [cyan]{config_dir / 'memory.lance'}[/cyan]\n"
                 f"Logs:     [cyan]{config_logs}[/cyan]\n"
                 f"Prompt:   [cyan]{system_prompt_dir}/system_prompt.jinja2[/cyan]\n"
                 f"Secrets:  [cyan]{env_file}[/cyan]\n\n"

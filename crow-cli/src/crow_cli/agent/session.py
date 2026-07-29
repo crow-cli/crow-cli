@@ -261,6 +261,20 @@ class AgentSession:
             client.close()
 
     @classmethod
+    def list_sessions(
+        cls,
+        limit: int = 50,
+        offset: int = 0,
+        memory_url: str = DEFAULT_MEMORY_URL,
+    ) -> list[dict]:
+        """List sessions ordered by most-recent message activity (desc)."""
+        client = MemoryClient(memory_url)
+        try:
+            return client.list_sessions(limit=limit, offset=offset)
+        finally:
+            client.close()
+
+    @classmethod
     def load(
         cls,
         agent_id: str,

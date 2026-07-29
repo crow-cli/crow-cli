@@ -97,7 +97,6 @@ from fastmcp import Client as MCPClient
 from crow_cli.agent.compact import compact
 from crow_cli.agent.configure import Config, get_default_config_dir
 from crow_cli.agent.context import get_directory_tree
-from crow_cli.agent.db import get_schemas
 from crow_cli.agent.hooks import (
     CommandHook,
     uv_project_hook,
@@ -224,9 +223,6 @@ class AcpAgent(Agent):
             )
         ]
 
-        # Ensure DB tables exist and crow-v1 prompt is seeded
-        # ensure_database(self._db_uri)
-
     def on_connect(self, conn: Client) -> None:
         """Store connection for sending updates"""
         self._conn = conn
@@ -345,7 +341,7 @@ class AcpAgent(Agent):
             logger=self._logger,
         )
         self._logger.info("new_session merged config from create_mcp_client_from_acp: %s", config)
-        self._config.mcp_servers = config
+        self._config.mcp_servers = config["mcpServers"]
         # CRITICAL: Use AsyncExitStack for lifecycle management
         mcp_client = await self._exit_stack.enter_async_context(mcp_client)
 
@@ -357,38 +353,6 @@ class AcpAgent(Agent):
             self._default_model_identifier(),
             cwd,
         )
-        # # Load prompt template and get or create prompt_id
-        # template_path = self._config.config_dir / "prompts" / "system_prompt.jinja2"
-        # template = template_path.read_text()
-        # prompt_id = lookup_or_create_prompt(
-        #     template, name="crow-default", db_uri=self._db_uri
-        # )
-        # display_tree = get_directory_tree(cwd)
-        # agent_path = os.path.join(cwd, "AGENTS.md")
-        # if os.path.exists(agent_path):
-        #     with open(agent_path, "r") as f:
-        #         agents_content = f.read()
-        # else:
-        #     agents_content = "No AGENTS.md found"
-        # session_id = get_coolname()
-        # session = AgentSession.create(
-        #     prompt_id=prompt_id,
-        #     prompt_args={
-        #         "workspace": cwd,
-        #         "display_tree": display_tree,
-        #         "agents_content": agents_content,
-        #         "db_uri": self._config.db_uri,
-        #         "table_schemas": get_schemas(),
-        #         "session_id": session_id,
-        #     },
-        #     tool_definitions=tools,
-        #     request_params={"temperature": 0.2},
-        #     model_identifier=self._default_model_identifier(),
-        #     db_uri=self._db_uri,
-        #     cwd=cwd,
-        #     agent_idx=1,
-        #     session_id=session_id,
-        # )
 
         # Store in-memory references keyed on agent_id
         self._sessions[session.agent_id] = session

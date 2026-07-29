@@ -24,6 +24,7 @@ from .schemas import (
     PromptResponse,
     SearchRequest,
     SearchResponse,
+    SessionSummary,
 )
 from .store import MemoryStore
 
@@ -42,7 +43,7 @@ def build_app(store_path: str | None = None, image_max_dim: int = 1024) -> FastA
         yield
         logger.info("crow-memory shutting down")
 
-    app = FastAPI(title="crow-memory", version="0.1.26", lifespan=lifespan)
+    app = FastAPI(title="crow-memory", version="0.1.27", lifespan=lifespan)
 
     def store() -> MemoryStore:
         return app.state.store
@@ -92,6 +93,10 @@ def build_app(store_path: str | None = None, image_max_dim: int = 1024) -> FastA
         return store().query_messages(**req.model_dump())
 
     # ---- sessions ----
+    @app.get("/sessions", response_model=list[SessionSummary])
+    def list_sessions(limit: int = 50, offset: int = 0):
+        return store().list_sessions(limit=limit, offset=offset)
+
     @app.get("/sessions/{session_id}/max-idx")
     def max_idx(session_id: str):
         return {"session_id": session_id, "max_agent_idx": store().get_max_agent_idx(session_id)}

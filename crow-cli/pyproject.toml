@@ -1,6 +1,6 @@
 [project]
 name = "crow-cli"
-version = "0.1.26"
+version = "0.1.27"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -16,7 +16,6 @@ dependencies = [
     "openai>=2.21.0",
     "pyyaml>=6.0.3",
     "rich>=14.3.3",
-    "sqlalchemy>=2.0.46",
     "typer>=0.24.1",
 ]
 

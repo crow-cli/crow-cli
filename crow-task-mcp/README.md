@@ -7,7 +7,7 @@ Per-session orchestration tools — the "manage your own session" toolset that
 
 | Tool | Backend ext_method | Purpose |
 |------|-------------------|---------|
-| `send_prompt` | `_send` | Fire-and-forget prompt to another session. Returns immediately; retrieve the response later via `query_memory(session_id, limit=1)`. |
+| `send_prompt` | `_send` | Fire-and-forget prompt to another session. Returns immediately; retrieve the response later via `query_session(session_id)`. |
 | `task_read` | `_task/read` | Read this session's task list. |
 | `task_write` | `_task/write` | Create / update / delete tasks in this session's task list. |
 

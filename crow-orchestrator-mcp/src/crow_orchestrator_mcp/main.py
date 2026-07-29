@@ -79,7 +79,7 @@ def task_send(to_session_id: str, tasks: list[dict]) -> dict:
     through the list. When the loop exits normally (all tasks done or the
     list is empty), the backend sends a canned completion message back to
     this session telling you to call
-    `query_memory(session_id=<worker_session_id>, limit=1)` for the
+    `query_session(session_id=<worker_session_id>)` for the
     target's final summary.
 
     Orchestrator-only: use this to delegate work to worker agents. Workers

@@ -295,6 +295,101 @@ class MemoryStore:
             return -1
         return int(df["agent_idx"].max())
 
+    def list_sessions(self, limit: int = 50, offset: int = 0) -> list[dict]:
+        """Sessions ordered by most-recent MESSAGE activity (desc).
+
+        A session aggregates all of its agents (delegation => many agents per
+        session). Ordering is by last message time, not agent creation, so this
+        answers "who has been working, and when." Returns per-session stats plus
+        the latest message (role + data) for the requested page only, so callers
+        can show a snippet without a second round-trip or pulling the whole
+        messages table (data/mv columns are never scanned in bulk).
+        """
+        adf = self.agents.search().limit(1_000_000).to_pandas()
+        if len(adf) == 0:
+            return []
+
+        # agent_id -> (session_id, agent_idx, cwd, model, created_at)
+        agent_info = {
+            r["agent_id"]: (r["session_id"], int(r["agent_idx"]), r["cwd"],
+                            r["model_identifier"], r["created_at"])
+            for _, r in adf.iterrows()
+        }
+        # all registered agents grouped by session
+        sess_agents: dict[str, list] = {}
+        for _, r in adf.iterrows():
+            sess_agents.setdefault(r["session_id"], []).append(r)
+
+        # lightweight message scan (no data / mv columns)
+        msg_stats: dict[str, dict] = {}
+        mdf = self.messages.search().select(
+            ["id", "agent_id", "created_at", "role"]
+        ).limit(1_000_000).to_pandas()
+        if len(mdf) > 0:
+            mdf = mdf[mdf["agent_id"].isin(agent_info)]
+            mdf["session_id"] = mdf["agent_id"].map(lambda a: agent_info[a][0])
+            for sid, g in mdf.groupby("session_id"):
+                last_row = g.loc[g["created_at"].idxmax()]
+                msg_stats[sid] = {
+                    "last_activity": last_row["created_at"],
+                    "first_activity": g["created_at"].min(),
+                    "message_count": len(g),
+                    "last_role": last_row["role"],
+                    "_last_message_id": int(last_row["id"]),
+                }
+
+        out = []
+        for sid, agents in sess_agents.items():
+            idxs = sorted({int(a["agent_idx"]) for a in agents})
+            newest_agent = max(agents, key=lambda a: a["created_at"])
+            stats = msg_stats.get(sid)
+            if stats:
+                last_activity = stats["last_activity"]
+                first_activity = stats["first_activity"]
+                message_count = stats["message_count"]
+                last_role = stats["last_role"]
+                last_msg_id = stats["_last_message_id"]
+            else:  # agents registered but no messages yet
+                last_activity = newest_agent["created_at"]
+                first_activity = min(a["created_at"] for a in agents)
+                message_count = 0
+                last_role = None
+                last_msg_id = None
+            out.append({
+                "session_id": sid,
+                "last_activity": last_activity,
+                "first_activity": first_activity,
+                "message_count": message_count,
+                "agent_count": len(idxs),
+                "agent_idxs": idxs,
+                "last_role": last_role,
+                "cwd": newest_agent["cwd"],
+                "model_identifier": newest_agent["model_identifier"],
+                "_last_message_id": last_msg_id,
+            })
+
+        out.sort(key=lambda s: s["last_activity"], reverse=True)
+        page = out[offset:offset + limit]
+
+        # attach the latest message data for the page (one targeted fetch)
+        ids = [s["_last_message_id"] for s in page if s["_last_message_id"] is not None]
+        latest: dict[int, dict] = {}
+        if ids:
+            id_list = ",".join(str(i) for i in ids)
+            ldf = self.messages.search().where(f"id IN ({id_list})").select(
+                ["id", "role", "data", "created_at"]
+            ).limit(len(ids)).to_pandas()
+            for _, r in ldf.iterrows():
+                latest[int(r["id"])] = {
+                    "role": r["role"],
+                    "data": json.loads(r["data"]),
+                    "created_at": r["created_at"],
+                }
+        for s in page:
+            mid = s.pop("_last_message_id")
+            s["last_message"] = latest.get(mid) if mid is not None else None
+        return page
+
     def query_messages(self, *, session_id: str | None = None, agent_id: str | None = None,
                        agent_idx: int | None = None, roles: list[str] | None = None,
                        after: str | None = None, before: str | None = None,

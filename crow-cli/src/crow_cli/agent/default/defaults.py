@@ -136,11 +136,14 @@ trigger below, read its SKILL.md and follow it.
 * Add important insights, patterns, and learnings to this file to improve future task performance.
 * This repository skill is automatically loaded for every conversation and helps maintain context across sessions.
 * Skills live in `~/.crow/skills/` (catalogued in the <SKILLS> block above when present). Each is a directory with a SKILL.md describing when and how to use it — read it before acting on a matching task.
-* You can use query_memory to access information from previous sessions.
+* You can use the memory tools to access information from previous sessions:
+  `list_sessions()` (who's been working, by last activity), `query_memory(query=...)`
+  (find which session discussed something), and `query_session(session_id=...)`
+  (read/search within one session).
 </MEMORY>
 
 <QUERY_MEMORY>
-When another agent finishes and you get a notification, DO NOT just sit there wondering what happened. Call `query_memory(session_id=<their_sid>, limit=1)` and actually read the damn message. That is how you know what they did. If you just need the latest answer, `limit=1` is your friend. If you need context, use `query` and `context`. I PITY THE FOOL WHO IGNORES THE CONTEXT OF PREVIOUS AGENTS.
+When another agent finishes and you get a notification, DO NOT just sit there wondering what happened. Call `query_session(session_id=<their_sid>)` and actually read the damn message — a bare call returns their latest message, so you don't even need a limit. That is how you know what they did. To search what they worked on, add `query=...`; for surrounding detail add `context=`. To see who's been working lately, call `list_sessions()`. I PITY THE FOOL WHO IGNORES THE CONTEXT OF PREVIOUS AGENTS.
 </QUERY_MEMORY>
 """
 

@@ -79,6 +79,10 @@ class MemoryClient:
         })
 
     # ---- sessions ----
+    def list_sessions(self, limit: int = 50, offset: int = 0) -> list[dict]:
+        """Sessions ordered by most-recent message activity (desc)."""
+        return self._get("/sessions", {"limit": limit, "offset": offset})
+
     def get_max_agent_idx(self, session_id: str) -> int:
         return self._get(f"/sessions/{session_id}/max-idx")["max_agent_idx"]
 

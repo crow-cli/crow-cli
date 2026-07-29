@@ -8,7 +8,9 @@ from crow_mcp.memory.main import (
     _build_excerpt,
     _extract_display_text,
     _extract_searchable_text,
+    _fmt_when,
     _format_message,
+    _snippet,
 )
 
 
@@ -93,6 +95,16 @@ class TestFormatMessage:
             is None
         )
 
+    def test_agent_idx_tagged_in_prefix(self):
+        data = {"role": "assistant", "content": "hi", "_created_at": "03:42:27", "_agent_idx": 2}
+        out = _format_message(data, ContentMode.CONVERSATION)
+        assert "[03:42:27 · a2]" in out
+
+    def test_agent_idx_without_timestamp(self):
+        data = {"role": "assistant", "content": "hi", "_agent_idx": 3}
+        out = _format_message(data, ContentMode.CONVERSATION)
+        assert "[a3]" in out
+
 
 class TestBuildExcerpt:
     def test_highlight_centered(self):
@@ -120,6 +132,35 @@ class TestApplyContextWindow:
 
     def test_empty_matches(self):
         assert _apply_context_window(list(range(5)), set(), context=2) == []
+
+
+class TestFmtWhen:
+    def test_trims_to_minute(self):
+        assert _fmt_when("2026-07-08T03:42:27.123456+00:00") == "2026-07-08 03:42"
+
+    def test_empty(self):
+        assert _fmt_when("") == "—"
+
+
+class TestSnippet:
+    def test_assistant_text(self):
+        assert _snippet({"role": "assistant", "content": "hello world"}, "assistant") == "hello world"
+
+    def test_collapses_whitespace(self):
+        assert _snippet({"role": "assistant", "content": "a\n\n  b"}, "assistant") == "a b"
+
+    def test_truncates_long(self):
+        out = _snippet({"role": "assistant", "content": "x" * 100}, "assistant", max_len=10)
+        assert out == "x" * 10 + "…"
+
+    def test_escapes_pipes(self):
+        assert _snippet({"role": "assistant", "content": "a | b"}, "assistant") == "a \\| b"
+
+    def test_none_data(self):
+        assert _snippet(None, None) == "—"
+
+    def test_empty_falls_back_to_role(self):
+        assert _snippet({"role": "tool", "content": ""}, "tool") == "(tool)"
 
 
 if __name__ == "__main__":

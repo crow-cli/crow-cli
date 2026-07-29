@@ -1,14 +1,18 @@
-"""query_memory MCP tool — backed by the crow-memory service (LanceDB + ColBERT).
+"""Memory MCP tools — backed by the crow-memory service (LanceDB + ColBERT).
 
-Semantic search is the primary discovery mechanism. Keyword (substring) search
-is available via search_type="keyword" or "both". Browse mode (session_id only,
-no query) uses the filtered message endpoint — this is the critical
-message-passing path that must stay fast and correct.
+Three tools, split along the backend's own seams:
+
+- list_sessions: sessions ordered by last message activity (who's working now).
+- query_memory:  semantic discovery ACROSS all sessions (query required).
+- query_session: read/search WITHIN one session, across all its agents by
+  default so delegated agents' history is never lost.
+
+query_session's browse path (no query) is the critical message-passing path
+that must stay fast and correct.
 """
 
 import json
 import os
-from datetime import datetime
 from enum import Enum
 
 import httpx
@@ -32,7 +36,7 @@ def _get(path: str, params: dict | None = None) -> dict | list:
 
 
 # ---------------------------------------------------------------------------
-# Content modes (unchanged)
+# Content modes
 # ---------------------------------------------------------------------------
 
 class ContentMode(str, Enum):
@@ -49,7 +53,7 @@ class SearchType(str, Enum):
 
 
 # ---------------------------------------------------------------------------
-# Formatting helpers (unchanged — pure Python over message dicts)
+# Formatting helpers (pure Python over message dicts)
 # ---------------------------------------------------------------------------
 
 def _extract_searchable_text(data: dict) -> str:
@@ -111,7 +115,15 @@ def _format_message(data: dict, mode: ContentMode) -> str | None:
     """Format a single message for display. Returns None if skipped."""
     role = data.get("role")
     ts = data.get("_created_at", "")
-    prefix = f"**[{ts}]** " if ts else ""
+    aidx = data.get("_agent_idx")
+    if ts and aidx is not None:
+        prefix = f"**[{ts} · a{aidx}]** "
+    elif ts:
+        prefix = f"**[{ts}]** "
+    elif aidx is not None:
+        prefix = f"**[a{aidx}]** "
+    else:
+        prefix = ""
 
     if role == "user":
         text = _extract_display_text(data)
@@ -181,6 +193,52 @@ def _apply_context_window(
     return [messages[i] for i in sorted(included)]
 
 
+def _fmt_when(iso: str) -> str:
+    """Trim an ISO timestamp to 'YYYY-MM-DD HH:MM' for compact tables."""
+    return iso[:16].replace("T", " ") if iso else "—"
+
+
+def _snippet(data: dict | None, role: str | None, max_len: int = 60) -> str:
+    """One-line, pipe-escaped snippet of a message for the sessions table."""
+    if not data:
+        return "—"
+    text = _extract_display_text(data)
+    if not text and isinstance(data.get("content"), str):
+        text = data["content"]
+    text = " ".join(text.split())
+    if not text:
+        return f"({role or '?'})"
+    if len(text) > max_len:
+        text = text[:max_len] + "…"
+    return text.replace("|", "\\|")
+
+
+def _render_transcript(
+    session_id: str,
+    agent_idx: int | None,
+    recs: list[dict],
+    mode: ContentMode,
+    note: str,
+) -> str:
+    """Render message records as a markdown transcript, tagged by agent_idx."""
+    header = f"## Session: {session_id}"
+    if agent_idx is not None:
+        header += f" | Agent: {agent_idx}"
+    lines = [header, ""]
+    for rec in recs:
+        data = rec["data"]
+        data["_created_at"] = (
+            rec.get("created_at", "")[:19].split("T")[-1] if rec.get("created_at") else ""
+        )
+        data["_agent_idx"] = rec.get("agent_idx")
+        formatted = _format_message(data, mode)
+        if formatted:
+            lines.append(formatted)
+            lines.append("")
+    lines.append(note)
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Role filters per mode
 # ---------------------------------------------------------------------------
@@ -194,141 +252,215 @@ _MODE_ROLES = {
 
 
 # ---------------------------------------------------------------------------
-# The tool
+# Tool 1: list_sessions
+# ---------------------------------------------------------------------------
+
+@mcp.tool
+async def list_sessions(limit: int = 50, offset: int = 0) -> str:
+    """List agent sessions, most-recently-active first.
+
+    A session can contain multiple agents (delegation). Sessions are ordered by
+    their most recent MESSAGE (last activity), not creation time — so this
+    answers "who has been working, and when." Dig into one with
+    query_session(session_id).
+
+    Args:
+        limit: Max sessions to return (default 50, hard cap 200).
+        offset: Pagination offset.
+
+    Returns:
+        Markdown table: session_id, last active, agent count, message count,
+        a snippet of the most recent message, and model / cwd.
+    """
+    limit = min(max(limit, 1), 200)
+    offset = max(offset, 0)
+    sessions = _get("/sessions", {"limit": limit, "offset": offset})
+    if not sessions:
+        return "No sessions found."
+
+    lines = [
+        "| session_id | last active | agents | msgs | last message | model / cwd |",
+        "|---|---|---|---|---|---|",
+    ]
+    for s in sessions:
+        idxs = s.get("agent_idxs") or []
+        if len(idxs) > 1:
+            agents = f"{s['agent_count']} (a{idxs[0]}–a{idxs[-1]})"
+        else:
+            agents = str(s["agent_count"])
+        lm = s.get("last_message") or {}
+        snippet = _snippet(lm.get("data"), lm.get("role") or s.get("last_role"))
+        model_cwd = f"{s.get('model_identifier') or '—'} / {s.get('cwd') or '—'}"
+        lines.append(
+            f"| {s['session_id']} | {_fmt_when(s['last_activity'])} | {agents} "
+            f"| {s['message_count']} | {snippet} | {model_cwd} |"
+        )
+    lines.append(f"\n*Showing {len(sessions)} sessions*")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Tool 2: query_memory (cross-session discovery)
 # ---------------------------------------------------------------------------
 
 @mcp.tool
 async def query_memory(
-    query: str | None = None,
-    session_id: str | None = None,
-    agent_idx: int | None = None,
+    query: str,
     mode: ContentMode = ContentMode.CONVERSATION,
-    context: int = 0,
-    after: str | None = None,
-    before: str | None = None,
-    limit: int = 50,
-    offset: int = 0,
     search_type: SearchType = SearchType.SEMANTIC,
+    limit: int = 20,
+    offset: int = 0,
 ) -> str:
-    """Query agent conversation history from the crow database.
+    """Search conversation history ACROSS all sessions (discovery).
 
-    Results are returned newest-first (most recent messages at the top).
-    Use `limit` to get the N most recent messages for a session — this is
-    the common case for an agent checking what just happened.
-
-    Progressive disclosure:
-    - query only (no session_id): discovery mode — search across all sessions
-    - session_id only: browse mode — most recent messages in that session
-    - session_id + query: deep dive — search within session with context window
+    Semantic (ColBERT) search over every session. Use this to find WHICH session
+    discussed something, then dig in with query_session(session_id). To browse a
+    known session or search within one, use query_session.
 
     Args:
-        query: Search term. None means no text filter.
-        session_id: Filter to a specific session. None = search all sessions.
-        agent_idx: Filter to a specific agent within a session. If omitted with
-            a session_id, defaults to the most recent agent_idx (highest). Pass
-            None explicitly to search all agents.
-        mode: ContentMode enum controlling what message types to show.
-        context: Number of messages around each match (like grep -C). Only applies with session_id.
-        after: ISO datetime string. Only messages after this time.
-        before: ISO datetime string. Only messages before this time.
-        limit: Max results to return (default 50, hard cap 200). Since results
-            are newest-first, this is effectively "the N most recent messages."
-        offset: Pagination offset (into the past). offset=50 skips the 50 most
-            recent messages and returns the next batch.
-        search_type: How to match `query`. "semantic" (default) uses ColBERT
-            MaxSim embedding similarity. "keyword" does substring matching.
-            "both" merges semantic + keyword results (deduplicated).
+        query: Search term (required).
+        mode: ContentMode controlling which message types match and display.
+        search_type: "semantic" (default, ColBERT MaxSim) or "both". Pure
+            "keyword" is not supported across all sessions — use query_session
+            for keyword search within a session.
+        limit: Max matches (default 20, hard cap 200).
+        offset: Pagination offset.
 
     Returns:
-        Markdown-formatted results — table for discovery, transcript for deep dive.
+        Markdown table of matches: session_id, agent, time, role, score, excerpt.
     """
     limit = min(max(limit, 1), 200)
     offset = max(offset, 0)
 
-    # Resolve agent_idx default (most recent) when session_id given
-    if session_id and agent_idx is None:
-        try:
-            max_idx = _get(f"/sessions/{session_id}/max-idx")["max_agent_idx"]
-            if max_idx >= 0:
-                agent_idx = max_idx
-        except Exception:
-            pass
+    if search_type == SearchType.KEYWORD:
+        return (
+            "Keyword search across all sessions is not supported. Use semantic "
+            "search here, or query_session(session_id, search_type='keyword') "
+            "for keyword search within a session."
+        )
 
     roles = _MODE_ROLES.get(mode)
+    hits = _post("/search", {
+        "query": query,
+        "modality": "text",
+        "limit": limit + offset,
+    })["messages"]
+    if roles:
+        hits = [h for h in hits if h["role"] in roles]
+    hits = hits[offset:offset + limit]
+    if not hits:
+        return "No matches found."
 
-    # ------------------------------------------------------------------
-    # BROWSE MODE: session_id, no query
-    # ------------------------------------------------------------------
-    if session_id and not query:
-        recs = _post("/messages/query", {
-            "session_id": session_id,
-            "agent_idx": agent_idx,
-            "roles": roles,
-            "after": after,
-            "before": before,
-            "order": "desc",
-            "limit": limit,
-            "offset": offset,
-        })
-        if not recs:
-            return "No messages found."
+    lines = [
+        "| session_id | agent | time | role | score | excerpt |",
+        "|---|---|---|---|---|---|",
+    ]
+    for h in hits:
+        ts = h.get("created_at", "")[:19].replace("T", " ")
+        excerpt = _build_excerpt(h["data"], query).replace("|", "\\|")
+        lines.append(
+            f"| {h['session_id']} | {h['agent_idx']} | {ts} | {h['role']} "
+            f"| {h['score']:.2f} | {excerpt} |"
+        )
+    lines.append(f"\n*Showing {len(hits)} semantic matches*")
+    return "\n".join(lines)
 
-        lines = [f"## Session: {session_id}"]
-        if agent_idx is not None:
-            lines[0] += f" | Agent: {agent_idx}"
-        lines.append("")
 
-        for rec in recs:
-            data = rec["data"]
-            data["_created_at"] = rec.get("created_at", "")[:19].split("T")[-1] if rec.get("created_at") else ""
-            formatted = _format_message(data, mode)
-            if formatted:
-                lines.append(formatted)
-                lines.append("")
+# ---------------------------------------------------------------------------
+# Tool 3: query_session (read/search within one session)
+# ---------------------------------------------------------------------------
 
-        lines.append(f"*Showing {len(recs)} messages*")
-        return "\n".join(lines)
+@mcp.tool
+async def query_session(
+    session_id: str,
+    query: str | None = None,
+    agent_idx: int | None = None,
+    mode: ContentMode = ContentMode.CONVERSATION,
+    order: str = "desc",
+    context: int = 0,
+    after: str | None = None,
+    before: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+    search_type: SearchType = SearchType.SEMANTIC,
+) -> str:
+    """Read or search a single session's conversation history.
 
-    # ------------------------------------------------------------------
-    # DISCOVERY MODE: query, no session_id
-    # ------------------------------------------------------------------
-    if query and not session_id:
-        if search_type == SearchType.KEYWORD:
-            return "Keyword search without session_id is not supported yet. Use semantic search or provide a session_id."
+    Spans ALL agents in the session by default (delegation means a session can
+    have many agents) — so older agents' messages are never lost. agent_idx is
+    shown on every message in the output; pass it as input only to narrow to one
+    agent.
 
-        # Semantic search across all sessions
-        hits = _post("/search", {
-            "query": query,
-            "modality": "text",
-            "limit": limit + offset,
-        })["messages"]
+    Two ways to use it:
+    - Browse (no query): returns recent messages. A bare call returns just the
+      tail (the latest message) so you aren't drowned — raise `limit` for more,
+      or set order="asc" to start from the first message of the session. Use
+      `offset` / `after` / `before` to dig backwards in time.
+    - Search (query given): semantic / keyword search within the session across
+      all agents, with an optional context window.
 
-        # Apply role filter
-        if roles:
-            hits = [h for h in hits if h["role"] in roles]
+    Args:
+        session_id: The session to read (required).
+        query: Optional search term. None = browse recent messages.
+        agent_idx: Optional — narrow to one agent. Default None = all agents.
+        mode: ContentMode controlling what message types to show.
+        order: "desc" (default) = newest-first (tail); "asc" = oldest-first (head).
+        context: Messages around each search match (like grep -C). Search only.
+        after: ISO datetime — only messages after this time.
+        before: ISO datetime — only messages before this time.
+        limit: Max messages. Browse default = 1 (the tail); search default = 20.
+            Hard cap 200.
+        offset: Pagination offset (into the past when order="desc").
+        search_type: "semantic" (default), "keyword", or "both". Search only.
 
-        hits = hits[offset:offset + limit]
-        if not hits:
-            return "No matches found."
+    Returns:
+        Markdown transcript (newest-first by default), each message tagged with
+        its agent_idx.
+    """
+    order = "asc" if order == "asc" else "desc"
+    offset = max(offset, 0)
+    roles = _MODE_ROLES.get(mode)
 
-        lines = [
-            "| session_id | agent | time | role | score | excerpt |",
-            "|---|---|---|---|---|---|",
-        ]
-        for h in hits:
-            ts = h.get("created_at", "")[:19].replace("T", " ")
-            excerpt = _build_excerpt(h["data"], query).replace("|", "\\|")
-            lines.append(
-                f"| {h['session_id']} | {h['agent_idx']} | {ts} | {h['role']} "
-                f"| {h['score']:.2f} | {excerpt} |"
-            )
-        lines.append(f"\n*Showing {len(hits)} semantic matches*")
-        return "\n".join(lines)
+    if query:
+        return _search_session(
+            session_id, query, agent_idx, mode, roles, order,
+            context, after, before, limit, offset, search_type,
+        )
+    return _browse_session(
+        session_id, agent_idx, mode, roles, order, after, before, limit, offset,
+    )
 
-    # ------------------------------------------------------------------
-    # DEEP DIVE MODE: session_id + query
-    # ------------------------------------------------------------------
-    # Fetch the full ordered message list for context window + keyword
+
+def _browse_session(session_id, agent_idx, mode, roles, order,
+                    after, before, limit, offset) -> str:
+    if limit is None:
+        limit = 1  # bare call = the tail peek, don't drown the agent
+    limit = min(max(limit, 1), 200)
+    recs = _post("/messages/query", {
+        "session_id": session_id,
+        "agent_idx": agent_idx,
+        "roles": roles,
+        "after": after,
+        "before": before,
+        "order": order,
+        "limit": limit,
+        "offset": offset,
+    })
+    if not recs:
+        return "No messages found."
+    return _render_transcript(
+        session_id, agent_idx, recs, mode,
+        note=f"*Showing {len(recs)} messages*",
+    )
+
+
+def _search_session(session_id, query, agent_idx, mode, roles, order,
+                    context, after, before, limit, offset, search_type) -> str:
+    if limit is None:
+        limit = 20
+    limit = min(max(limit, 1), 200)
+
+    # Full ordered list for the context window + keyword matching.
     all_recs = _post("/messages/query", {
         "session_id": session_id,
         "agent_idx": agent_idx,
@@ -342,67 +474,49 @@ async def query_memory(
 
     match_indices: set[int] = set()
 
-    # Semantic search
     if search_type in (SearchType.SEMANTIC, SearchType.BOTH):
+        filters = {"session_id": session_id}
+        if agent_idx is not None:
+            filters["agent_idx"] = agent_idx
         sem_hits = _post("/search", {
             "query": query,
             "modality": "text",
-            "filters": {
-                "session_id": session_id,
-                **({"agent_idx": agent_idx} if agent_idx is not None else {}),
-            },
+            "filters": filters,
             "limit": limit * 2,
         })["messages"]
         if roles:
             sem_hits = [h for h in sem_hits if h["role"] in roles]
-        # Map semantic hits to positions in all_recs by message id
         id_to_idx = {r["id"]: i for i, r in enumerate(all_recs)}
         for h in sem_hits:
             idx = id_to_idx.get(h["id"])
             if idx is not None:
                 match_indices.add(idx)
 
-    # Keyword search
     if search_type in (SearchType.KEYWORD, SearchType.BOTH):
         q_lower = query.lower()
         for i, rec in enumerate(all_recs):
-            text = _extract_searchable_text(rec["data"])
-            if q_lower in text.lower():
+            if q_lower in _extract_searchable_text(rec["data"]).lower():
                 match_indices.add(i)
 
     if not match_indices:
         return "No matches found."
 
-    # Apply context window
     if context > 0:
         messages = _apply_context_window(all_recs, match_indices, context)
     else:
         messages = [all_recs[i] for i in sorted(match_indices)]
 
-    # Reverse for newest-first, then paginate
-    messages.reverse()
+    if order == "desc":
+        messages.reverse()
     total = len(messages)
     messages = messages[offset:offset + limit]
-
     if not messages:
         return "No messages found."
 
-    # Format as transcript
-    lines = [f"## Session: {session_id}"]
-    if agent_idx is not None:
-        lines[0] += f" | Agent: {agent_idx}"
-    lines.append("")
-
-    for rec in messages:
-        data = rec["data"]
-        data["_created_at"] = rec.get("created_at", "")[:19].split("T")[-1] if rec.get("created_at") else ""
-        formatted = _format_message(data, mode)
-        if formatted:
-            lines.append(formatted)
-            lines.append("")
-
-    lines.append(f"*Showing {len(messages)} of {total} messages*")
-    return "\n".join(lines)
+    return _render_transcript(
+        session_id, agent_idx, messages, mode,
+        note=f"*Showing {len(messages)} of {total} matches*",
+    )
 
 
 if __name__ == "__main__":

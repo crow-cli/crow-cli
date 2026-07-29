@@ -92,6 +92,20 @@ class PromptResponse(BaseModel):
     created: bool = False
 
 
+# ---- sessions ----
+class SessionSummary(BaseModel):
+    session_id: str
+    last_activity: str          # most recent message time (or agent creation if none)
+    first_activity: str
+    message_count: int
+    agent_count: int
+    agent_idxs: list[int]
+    last_role: str | None = None
+    cwd: str = ""
+    model_identifier: str = ""
+    last_message: dict[str, Any] | None = None  # {role, data, created_at}
+
+
 # ---- search ----
 Modality = Literal["text", "image", "both"]
 

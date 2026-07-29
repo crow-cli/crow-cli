@@ -15,15 +15,12 @@ from rich.table import Table
 from rich.text import Text
 
 from crow_cli.agent.configure import Config
-from crow_cli.agent.db import Agent as AgentModel
-from crow_cli.agent.db import Message
 from crow_cli.agent.main import main as agent_main
+from crow_cli.agent.memory import MemoryServiceError
 from crow_cli.agent.session import AgentSession
 from crow_cli.cli.init_cmd import init_command
 from crow_cli.cli.install import app as install_app
 from crow_cli.client.main import CrowClient, connect_client
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session as SQLAlchemySession
 
 app = typer.Typer(
     name="crow-cli",
@@ -31,7 +28,7 @@ app = typer.Typer(
         "Transparent CLI for the Crow agent — full observability into agent state.\n\n"
         "Talk to an agent with `crow-cli run \"prompt\"` and continue a session with "
         "`-s <session-id>`. This is also how agents delegate to subagents: launch a "
-        "worker with `run`, then read its thoughts via the query_memory MCP tool. "
+        "worker with `run`, then read its thoughts via the query_session MCP tool. "
         "See `crow-cli run --help` for the full delegation recipe."
     ),
 )
@@ -170,7 +167,7 @@ def run_auth():
 
 
 # ============================================================================
-# Database Inspection
+# Session Inspection
 # ============================================================================
 
 
@@ -182,26 +179,8 @@ def inspect_db(
     messages: bool = typer.Option(False, "--messages", "-m", help="Show messages"),
     limit: int = typer.Option(20, "--limit", "-l", help="Limit number of rows"),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
-    config_dir: Path = typer.Option(
-        None,
-        "--config-dir",
-        "-d",
-        help="Configuration directory (default: ~/.crow)",
-    ),
 ):
-    """Inspect the Crow database - see session state, messages, etc."""
-    if config_dir is None:
-        config_dir = Path.home() / ".crow"
-    sqlite_uri = f"sqlite:///{config_dir / 'crow.db'}"
-    db_path = str(config_dir / "crow.db")
-
-    if not os.path.exists(db_path):
-        if json_output:
-            print(json.dumps({"error": f"Database not found at {db_path}"}))
-        else:
-            client._console.print(f"[red]Database not found at {db_path}[/red]")
-        raise SystemExit(1)
-
+    """Inspect Crow sessions — state, messages, etc. (via the crow-memory service)."""
     if session_id:
         # Use existing AgentSession methods to get the latest agent for this session
         max_idx = AgentSession.get_max_agent_idx(session_id)
@@ -254,27 +233,15 @@ def inspect_db(
                     msg_table.add_row(str(i), msg["role"], preview.replace("\n", " "))
                 client._console.print(msg_table)
     else:
-        # List all sessions — use AgentSession.get_max_agent_idx to enumerate
-        engine = create_engine(sqlite_uri)
-        db = SQLAlchemySession(engine)
-        agents = db.query(AgentModel).order_by(AgentModel.created_at.desc()).all()
-
-        # Deduplicate by session_id, keep highest idx
-        seen: dict[str, dict] = {}
-        for agent in agents:
-            sid = agent.session_id
-            if sid not in seen or agent.agent_idx > seen[sid]["agent_idx"]:
-                msg_count = db.query(Message).filter_by(agent_id=agent.agent_id).count()
-                seen[sid] = {
-                    "session_id": sid,
-                    "created_at": agent.created_at.isoformat(),
-                    "model_identifier": agent.model_identifier,
-                    "agent_idx": agent.agent_idx,
-                    "message_count": msg_count,
-                }
-        db.close()
-
-        sessions_list = list(seen.values())[:limit]
+        # List all sessions via the crow-memory service, most-recently-active first.
+        try:
+            sessions_list = AgentSession.list_sessions(limit=limit)
+        except MemoryServiceError as e:
+            if json_output:
+                print(json.dumps({"error": f"crow-memory service error: {e.detail}"}))
+            else:
+                client._console.print(f"[red]crow-memory service error: {e.detail}[/red]")
+            raise SystemExit(1)
 
         if not sessions_list:
             if json_output:
@@ -288,14 +255,16 @@ def inspect_db(
         else:
             table = Table(title="Crow Sessions")
             table.add_column("Session ID", style="cyan")
-            table.add_column("Created", style="dim")
+            table.add_column("Last active", style="dim")
             table.add_column("Model", style="green")
+            table.add_column("Agents", style="magenta")
             table.add_column("Messages", style="yellow")
             for sess in sessions_list:
                 table.add_row(
                     sess["session_id"],
-                    sess["created_at"][:19],
-                    sess["model_identifier"] or "",
+                    sess["last_activity"][:19],
+                    sess.get("model_identifier") or "",
+                    str(sess["agent_count"]),
                     str(sess["message_count"]),
                 )
             client._console.print(table)
@@ -347,7 +316,7 @@ def run(
     (--prompt-file/-f), or stdin (pass '-' as the prompt).
 
     DELEGATION — this command is also how agents launch subagents. Every
-    session persists in the shared sqlite memory, so you can launch a worker,
+    session persists in the shared crow-memory service, so you can launch a worker,
     keep talking to it by session id, and read its thoughts from any other
     agent. The loop:
 
@@ -365,11 +334,12 @@ def run(
         crow-cli run -f delegation.md -s <session-id>
         cat delegation.md | crow-cli run -
 
-    4. From another agent, read what the worker did with the query_memory MCP
-    tool: query_memory(session_id="<session-id>", limit=1).
+    4. From another agent, read what the worker did with the query_session MCP
+    tool: query_session(session_id="<session-id>") — a bare call returns the
+    worker's latest message.
 
     That's the whole mechanism: delegate with `run -s`, read thoughts with
-    query_memory, verify artifacts on disk. No bespoke agent-to-agent protocol
+    query_session, verify artifacts on disk. No bespoke agent-to-agent protocol
     — just a shared database and a read query.
     """
     if verbose:

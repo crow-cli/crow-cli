@@ -8,16 +8,118 @@ import pytest
 import yaml
 
 from crow_cli.agent.configure import Config
-from crow_cli.agent.db import Base, create_database
+from crow_cli.agent.memory import MemoryServiceError
+
+
+class FakeMemoryClient:
+    """In-memory stand-in for the crow-memory service.
+
+    The agent is fully decoupled from persistence: AgentSession talks to a
+    MemoryClient over HTTP. For hermetic unit tests we swap that client for
+    this fake (patched over ``crow_cli.agent.session.MemoryClient``) instead of
+    standing up the real service. Storage is class-level so every instance the
+    code constructs shares one dataset — writes via one client are readable via
+    the next, exactly like the real service.
+    """
+
+    _agents: dict = {}
+    _messages: dict = {}
+    _prompts: dict = {}
+    _pid = [0]
+
+    def __init__(self, base_url: str | None = None, *args, **kwargs):
+        pass
+
+    @classmethod
+    def _reset(cls):
+        cls._agents.clear()
+        cls._messages.clear()
+        cls._prompts.clear()
+        cls._pid[0] = 0
+
+    def close(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        pass
+
+    def health(self):
+        return {"status": "ok"}
+
+    # ---- prompts ----
+    def lookup_or_create_prompt(self, template: str, name: str = "crow-default") -> str:
+        for pid, p in self._prompts.items():
+            if p["template"] == template:
+                return pid
+        self._pid[0] += 1
+        pid = f"prompt-{self._pid[0]}"
+        self._prompts[pid] = {"id": pid, "name": name, "template": template, "created": True}
+        return pid
+
+    def get_prompt(self, prompt_id: str) -> dict:
+        if prompt_id not in self._prompts:
+            raise MemoryServiceError(404, f"prompt '{prompt_id}' not found")
+        return self._prompts[prompt_id]
+
+    # ---- agents ----
+    def create_agent(self, *, agent_id, session_id, agent_idx=1, cwd="/tmp",
+                     prompt_id=None, prompt_args=None, system_prompt="",
+                     tool_definitions=None, request_params=None,
+                     model_identifier="", **kwargs) -> dict:
+        self._agents[agent_id] = {
+            "agent_id": agent_id, "session_id": session_id, "agent_idx": agent_idx,
+            "cwd": cwd, "prompt_id": prompt_id or "", "prompt_args": prompt_args or {},
+            "system_prompt": system_prompt, "tool_definitions": tool_definitions or [],
+            "request_params": request_params or {}, "model_identifier": model_identifier,
+            "status": "active", "created_at": "2026-01-01T00:00:00+00:00",
+        }
+        self._messages.setdefault(agent_id, [])
+        return self._agents[agent_id]
+
+    def load(self, agent_id: str, hydrate: bool = False) -> tuple[dict, list[dict]]:
+        if agent_id not in self._agents:
+            raise MemoryServiceError(404, f"agent '{agent_id}' not found")
+        return self._agents[agent_id], list(self._messages.get(agent_id, []))
+
+    def list_agents(self, session_id: str | None = None) -> list[dict]:
+        return [
+            a for a in self._agents.values()
+            if session_id is None or a["session_id"] == session_id
+        ]
+
+    def get_max_agent_idx(self, session_id: str) -> int:
+        idxs = [a["agent_idx"] for a in self._agents.values() if a["session_id"] == session_id]
+        return max(idxs) if idxs else -1
+
+    def list_sessions(self, limit: int = 50, offset: int = 0) -> list[dict]:
+        return []
+
+    # ---- messages ----
+    def add_message(self, agent_id: str, message: dict, usage: dict | None = None) -> dict:
+        self._messages.setdefault(agent_id, []).append(message)
+        return {"id": len(self._messages[agent_id]), "agent_id": agent_id,
+                "role": message.get("role"), "image_ids": []}
+
+    def save_messages(self, agent_id: str, messages: list[dict]) -> dict:
+        self._messages.setdefault(agent_id, []).extend(messages)
+        return {"agent_id": agent_id, "count": len(messages)}
 
 
 @pytest.fixture
-def temp_db_uri(tmp_path):
-    """Create a temporary SQLite database."""
-    db_path = tmp_path / "test.db"
-    db_uri = f"sqlite:///{db_path}"
-    create_database(db_uri)
-    return db_uri
+def memory_service(monkeypatch):
+    """Patch the persistence client with the in-memory fake; reset per test.
+
+    Persistence itself is tested in crow-memory. crow-cli unit tests that touch
+    sessions use this fake so they stay hermetic (no running service required).
+    """
+    FakeMemoryClient._reset()
+    import crow_cli.agent.session as session_mod
+
+    monkeypatch.setattr(session_mod, "MemoryClient", FakeMemoryClient)
+    return FakeMemoryClient
 
 
 @pytest.fixture
@@ -42,7 +144,6 @@ def test_config_dir(tmp_path):
         "models": {
             "test-model": {"provider": "test-provider", "model": "test-model-id"}
         },
-        "db_uri": f"sqlite:///{tmp_path}/test.db",
     }
     config_file.write_text(yaml.dump(config_data))
 
@@ -115,9 +216,17 @@ def sample_workspace(tmp_path):
 # ---------------------------------------------------------------------------
 # Test tiers
 #
-#   tests/unit/         fast, hermetic — always run
+#   tests/unit/         fast, hermetic — always run. Tests that touch sessions
+#                       use the `memory_service` fake (see above), so no running
+#                       crow-memory service is required.
 #   tests/integration/  spawn the agent / real environment — opt-in
 #   tests/e2e/          make live LLM calls via the configured provider — opt-in
+#
+# Persistence itself is tested in crow-memory (crow-memory/src + its smoke
+# tests), not here. The agent is fully decoupled from persistence: it talks to
+# the crow-memory service over HTTP. The long-term direction is a always-on
+# daemon/service (ACP v2), at which point service-backed tests would run against
+# a dedicated instance on a test port rather than a fake.
 #
 # Default `pytest` runs only the unit tier so the suite is green and fast.
 # Run the real tests with:

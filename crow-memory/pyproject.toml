@@ -1,6 +1,6 @@
 [project]
 name = "crow-memory"
-version = "0.1.26"
+version = "0.1.27"
 description = "Crow memory service: LanceDB store + ColBERT/ColPali multivector embeddings for text and images"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -16,6 +16,9 @@ dependencies = [
     "pylate>=1.6.0",
     "colpali-engine>=0.3.17",
     "coolname>=2.2.0",
+    # Pinned as direct deps so [tool.uv.sources] can route them to CPU-only wheels.
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
 ]
 
 [project.urls]
@@ -45,3 +48,13 @@ python_functions = ["test_*"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-v --strict-markers"
+
+# CPU-only torch: no GPU in compose.yaml, no nvidia wheels in the image.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu" }]
+torchvision = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
