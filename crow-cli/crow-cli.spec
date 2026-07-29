@@ -15,7 +15,6 @@ a = Analysis(
       + copy_metadata('rich')
       + copy_metadata('openai')
       + copy_metadata('httpx')
-      + copy_metadata('sqlalchemy')
       + copy_metadata('jinja2')
       + copy_metadata('pyyaml')
       + copy_metadata('coolname')
@@ -42,7 +41,6 @@ a = Analysis(
         'fastmcp',
         'openai',
         'httpx',
-        'sqlalchemy',
         'jinja2',
         'yaml',
         'coolname',
