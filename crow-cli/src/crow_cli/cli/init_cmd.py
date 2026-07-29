@@ -384,6 +384,10 @@ def run_init(config_dir: Path, yes: bool = False):
     available_services = compose_template.get("services", {})
     active_services: dict[str, Any] = {}
 
+    # crow-memory is always included — it's the persistence layer
+    if "crow-memory" in available_services:
+        active_services["crow-memory"] = available_services["crow-memory"]
+
     if setup_searxng and "searxng" in available_services:
         active_services["searxng"] = available_services["searxng"]
 
@@ -403,20 +407,20 @@ def run_init(config_dir: Path, yes: bool = False):
     # =========================================================================
     # STEP 5: Start services (just instructions)
     # =========================================================================
-    docker_services = []
+    console.print("\n[bold cyan]═══ Step 5: Start Services ═══[/bold cyan]\n")
+
+    services_list = ["crow-memory"]
     if setup_searxng:
-        docker_services.append("SearXNG")
+        services_list.append("SearXNG")
 
-    if docker_services:
-        console.print("\n[bold cyan]═══ Step 5: Start Services ═══[/bold cyan]\n")
-
-        console.print(
-            Panel(
-                f"[bold white]cd {config_dir} && docker compose up -d[/bold white]",
-                title="[yellow]Start " + " + ".join(docker_services) + "[/yellow]",
-                border_style="yellow",
-            )
+    console.print(
+        Panel(
+            f"[bold white]cd {config_dir} && docker compose up -d[/bold white]\n\n"
+            f"[dim]Starts: {', '.join(services_list)}[/dim]",
+            title="[yellow]Start " + " + ".join(services_list) + "[/yellow]",
+            border_style="yellow",
         )
+    )
 
     # =========================================================================
     # Done
@@ -425,37 +429,22 @@ def run_init(config_dir: Path, yes: bool = False):
     system_prompt_dir = config_dir / "prompts"
 
     console.print()
-    if setup_searxng:
-        console.print(
-            Panel.fit(
-                "[bold green]✓ Configuration complete![/bold green]\n\n"
-                f"Config:   [cyan]{config_file}[/cyan]\n"
-                f"Memory:   [cyan]{config_dir / 'memory.lance'}[/cyan]\n"
-                f"Logs:     [cyan]{config_logs}[/cyan]\n"
-                f"Prompt:   [cyan]{system_prompt_dir}/system_prompt.jinja2[/cyan]\n"
-                f"Secrets:  [cyan]{env_file}[/cyan]\n"
-                f"Compose:  [cyan]{compose_file}[/cyan]\n\n"
-                "[dim]Start services with:[/dim]\n"
-                f"    [bold red]cd {config_dir} && docker compose up -d[/bold red]\n"
-                f"[dim]Then to test:\n"
-                f'    [bold white]crow-cli run "hey"[/bold white]',
-                border_style="green",
-            )
+    console.print(
+        Panel.fit(
+            "[bold green]✓ Configuration complete![/bold green]\n\n"
+            f"Config:   [cyan]{config_file}[/cyan]\n"
+            f"Memory:   [cyan]{config_dir / 'memory.lance'}[/cyan]\n"
+            f"Logs:     [cyan]{config_logs}[/cyan]\n"
+            f"Prompt:   [cyan]{system_prompt_dir}/system_prompt.jinja2[/cyan]\n"
+            f"Secrets:  [cyan]{env_file}[/cyan]\n"
+            f"Compose:  [cyan]{compose_file}[/cyan]\n\n"
+            "[dim]Start services with:[/dim]\n"
+            f"    [bold red]cd {config_dir} && docker compose up -d[/bold red]\n"
+            f"[dim]Then to test:\n"
+            f'    [bold white]crow-cli run "hey"[/bold white]',
+            border_style="green",
         )
-    else:
-        console.print(
-            Panel.fit(
-                "[bold green]✓ Configuration complete![/bold green]\n\n"
-                f"Config:   [cyan]{config_file}[/cyan]\n"
-                f"Memory:   [cyan]{config_dir / 'memory.lance'}[/cyan]\n"
-                f"Logs:     [cyan]{config_logs}[/cyan]\n"
-                f"Prompt:   [cyan]{system_prompt_dir}/system_prompt.jinja2[/cyan]\n"
-                f"Secrets:  [cyan]{env_file}[/cyan]\n\n"
-                f"[dim][bold red]Web Search tool will not work! Reconsider setting up searxng![/bold red][/dim]\n"
-                f'[dim]Run to test: crow-cli run "hey"',
-                border_style="green",
-            )
-        )
+    )
 
 
 # For typer integration

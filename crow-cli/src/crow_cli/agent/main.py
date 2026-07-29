@@ -31,14 +31,20 @@ ollama pull qwen3.5:0.8b
 By default ollama's `API_KEY` is `empty` and the base url is [http://localhost:11434/v1](http://localhost:11434/v1)
 
 # Configure `crow-cli`
-Now you're guaranteed to have an API key and a base url to acces an LLM, run the following and throw your url and keys in there.
+Now you're guaranteed to have an API key and a base url to access an LLM, run the following and throw your url and keys in there.
 ```bash
 uvx crow-cli init
 ```
 
-Then restart your agent.
+# Start the memory service
+crow-cli persists every session to a local [crow-memory](https://github.com/crow-cli/crow-cli/tree/main/crow-memory) service (LanceDB + ColBERT embeddings) running in Docker. The init wizard writes a `compose.yaml` for you:
+```bash
+cd ~/.crow && docker compose up -d
+```
+This starts crow-memory (port 8901) and optionally SearXNG for web search. Without it, sessions won't persist and the memory tools (`list_sessions`, `query_memory`, `query_session`) won't work.
 
-Don't forget to `cd ~/.crow && docker compose up -d` afterwards!"""
+Then restart your agent.
+"""
 
 import asyncio
 import base64

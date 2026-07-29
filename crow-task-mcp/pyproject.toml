@@ -1,6 +1,6 @@
 [project]
 name = "crow-task-mcp"
-version = "0.1.27"
+version = "0.1.28"
 description = "Orchestration tools for agent-to-agent communication via ACP protocol"
 readme = "README.md"
 requires-python = ">=3.14"
