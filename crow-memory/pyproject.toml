@@ -1,6 +1,6 @@
 [project]
 name = "crow-memory"
-version = "0.1.28"
+version = "0.1.29"
 description = "Crow memory service: LanceDB store + ColBERT/ColPali multivector embeddings for text and images"
 readme = "README.md"
 requires-python = ">=3.14"

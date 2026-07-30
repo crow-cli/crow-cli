@@ -6,7 +6,7 @@ Dual tables (messages + images), two resident multivector embedders
 Used in-process by crow-cli and crow-mcp — no service, no HTTP.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.1.29"
 
 _store = None
 
