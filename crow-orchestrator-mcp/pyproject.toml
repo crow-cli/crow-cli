@@ -1,6 +1,6 @@
 [project]
 name = "crow-orchestrator-mcp"
-version = "0.1.29"
+version = "0.1.30"
 description = "Orchestrator MCP server for sending batches of tasks to agent sessions"
 readme = "README.md"
 requires-python = ">=3.14"

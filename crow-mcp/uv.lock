@@ -368,7 +368,7 @@ wheels = [
 
 [[package]]
 name = "crow-mcp"
-version = "0.1.29"
+version = "0.1.30"
 source = { editable = "." }
 dependencies = [
     { name = "binaryornot" },
@@ -413,7 +413,7 @@ dev = [
 
 [[package]]
 name = "crow-memory"
-version = "0.1.29"
+version = "0.1.30"
 source = { editable = "../crow-memory" }
 dependencies = [
     { name = "colpali-engine" },
