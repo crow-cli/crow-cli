@@ -40,9 +40,10 @@ _RETRYABLE = (
     OSError,
 )
 
-DEFAULT_TIMEOUT = 10.0  # per-attempt; total budget = timeout * retries
-DEFAULT_RETRIES = 3
-RETRY_BACKOFF = 0.25  # seconds; doubles each attempt
+DEFAULT_TIMEOUT = 10.0  # per-attempt
+DEFAULT_RETRIES = 10_000_000  # effectively never give up; service may be down for hours
+RETRY_BACKOFF = 1.0  # seconds; doubles each attempt up to the cap
+RETRY_BACKOFF_CAP = 3600.0  # seconds; once we hit hourly polling, stay there forever
 
 
 class MemoryServiceError(Exception):
@@ -135,7 +136,7 @@ class MemoryClient:
                 self._rebuild()
                 if attempt < self._retries:
                     time.sleep(backoff)
-                    backoff *= 2
+                    backoff = min(backoff * 2, RETRY_BACKOFF_CAP)
 
         raise ConnectionError(
             f"crow-memory service unreachable after {self._retries} attempts: {last_exc}"
