@@ -91,7 +91,7 @@ class LLMConfig:
 class Config:
     config_dir: Path
     llm: LLMConfig = field(default_factory=LLMConfig)
-    memory_url: str = ""
+    memory_path: str = ""
     mcp_servers: dict[str, Any] = field(default_factory=dict)
     max_retries_per_step: int = 3
     MAX_COMPACT_TOKENS: int = 190000
@@ -134,7 +134,7 @@ class Config:
             _logger.info("No config.yaml found, returning bare Config")
             return cls(
                 config_dir=target_dir,
-                memory_url="http://localhost:8901",
+                memory_path=str(Path.home() / ".crow" / "memory.lance"),
             )
 
         with open(config_file) as f:
@@ -162,7 +162,7 @@ class Config:
             )
 
         # Parse overrides
-        memory_url = parsed.get("memory_url") or "http://localhost:8901"
+        memory_path = os.path.expanduser(parsed.get("memory_path") or "~/.crow/memory.lance")
         overrides = {}
         for key, typ in (
             ("max_retries_per_step", int),
@@ -184,7 +184,7 @@ class Config:
         return cls(
             config_dir=target_dir,
             llm=llm,
-            memory_url=memory_url,
+            memory_path=memory_path,
             mcp_servers=mcp_servers,
             system_prompt_path=system_prompt_path,
             **overrides,

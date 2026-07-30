@@ -1,4 +1,4 @@
-"""Memory MCP tools — backed by the crow-memory service (LanceDB + ColBERT).
+"""Memory MCP tools — in-process LanceDB + ColBERT via crow-memory.
 
 Three tools, split along the backend's own seams:
 
@@ -15,24 +15,15 @@ import json
 import os
 from enum import Enum
 
-import httpx
+from crow_memory import get_store
 
 from crow_mcp.server.main import mcp
 
-MEMORY_URL = os.environ.get("CROW_MEMORY_URL", "http://localhost:8901")
-_http = httpx.Client(base_url=MEMORY_URL, timeout=120.0)
+MEMORY_PATH = os.environ.get("CROW_MEMORY_PATH", os.path.expanduser("~/.crow/memory.lance"))
 
 
-def _post(path: str, payload: dict) -> dict | list:
-    r = _http.post(path, json=payload)
-    r.raise_for_status()
-    return r.json()
-
-
-def _get(path: str, params: dict | None = None) -> dict | list:
-    r = _http.get(path, params=params)
-    r.raise_for_status()
-    return r.json()
+def _store():
+    return get_store(MEMORY_PATH)
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +265,7 @@ async def list_sessions(limit: int = 50, offset: int = 0) -> str:
     """
     limit = min(max(limit, 1), 200)
     offset = max(offset, 0)
-    sessions = _get("/sessions", {"limit": limit, "offset": offset})
+    sessions = _store().list_sessions(limit=limit, offset=offset)
     if not sessions:
         return "No sessions found."
 
@@ -340,11 +331,7 @@ async def query_memory(
         )
 
     roles = _MODE_ROLES.get(mode)
-    hits = _post("/search", {
-        "query": query,
-        "modality": "text",
-        "limit": limit + offset,
-    })["messages"]
+    hits = _store().search_messages(query, filters=None, limit=limit + offset)
     if roles:
         hits = [h for h in hits if h["role"] in roles]
     hits = hits[offset:offset + limit]
@@ -436,16 +423,16 @@ def _browse_session(session_id, agent_idx, mode, roles, order,
     if limit is None:
         limit = 1  # bare call = the tail peek, don't drown the agent
     limit = min(max(limit, 1), 200)
-    recs = _post("/messages/query", {
-        "session_id": session_id,
-        "agent_idx": agent_idx,
-        "roles": roles,
-        "after": after,
-        "before": before,
-        "order": order,
-        "limit": limit,
-        "offset": offset,
-    })
+    recs = _store().query_messages(
+        session_id=session_id,
+        agent_idx=agent_idx,
+        roles=roles,
+        after=after,
+        before=before,
+        order=order,
+        limit=limit,
+        offset=offset,
+    )
     if not recs:
         return "No messages found."
     return _render_transcript(
@@ -461,16 +448,16 @@ def _search_session(session_id, query, agent_idx, mode, roles, order,
     limit = min(max(limit, 1), 200)
 
     # Full ordered list for the context window + keyword matching.
-    all_recs = _post("/messages/query", {
-        "session_id": session_id,
-        "agent_idx": agent_idx,
-        "roles": roles,
-        "after": after,
-        "before": before,
-        "order": "asc",
-        "limit": 1_000_000,
-        "offset": 0,
-    })
+    all_recs = _store().query_messages(
+        session_id=session_id,
+        agent_idx=agent_idx,
+        roles=roles,
+        after=after,
+        before=before,
+        order="asc",
+        limit=1_000_000,
+        offset=0,
+    )
 
     match_indices: set[int] = set()
 
@@ -478,12 +465,7 @@ def _search_session(session_id, query, agent_idx, mode, roles, order,
         filters = {"session_id": session_id}
         if agent_idx is not None:
             filters["agent_idx"] = agent_idx
-        sem_hits = _post("/search", {
-            "query": query,
-            "modality": "text",
-            "filters": filters,
-            "limit": limit * 2,
-        })["messages"]
+        sem_hits = _store().search_messages(query, filters=filters, limit=limit * 2)
         if roles:
             sem_hits = [h for h in sem_hits if h["role"] in roles]
         id_to_idx = {r["id"]: i for i, r in enumerate(all_recs)}

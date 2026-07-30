@@ -8,6 +8,7 @@ dependencies = [
     "binaryornot>=0.4.4",
     "cachetools>=7.0.0",
     "charset-normalizer>=3.4.4",
+    "crow-memory",
     "fastmcp>=3.4.2",
     "httpx>=0.28.0",
     "markdownify>=0.14.0",
@@ -16,6 +17,16 @@ dependencies = [
     "opencv-python>=4.13.0.92",
     "ipython>=9.15.0",
 ]
+
+[tool.uv.sources]
+crow-memory = { path = "../crow-memory", editable = true }
+torch = [{ index = "pytorch-cpu" }]
+torchvision = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 
 [project.urls]

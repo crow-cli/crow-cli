@@ -1,7 +1,7 @@
 """Manual smoke script for the three memory tools.
 
 Runs against a live crow-mcp server (which must be reachable) and a live
-crow-memory service. Not part of pytest — run directly:
+crow-memory store. Not part of pytest — run directly:
 
     uv --project crow-mcp run python src/crow_mcp/memory/client.py [session_id]
 """

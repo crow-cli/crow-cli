@@ -160,32 +160,6 @@ COMPOSE_YAML = """services:
     volumes:
       - ./searxng/:/etc/searxng
 
-  crow-memory:
-    image: ghcr.io/crow-cli/crow-memory:latest
-    # For local development, replace image with build:
-    #   build:
-    #     context: /path/to/crow-cli/crow-memory
-    #     dockerfile: Dockerfile
-    restart: always
-    ports:
-      - "8901:8901"
-    environment:
-      - CROW_MEMORY_PATH=/data/memory.lance
-      - CROW_MEMORY_HOST=0.0.0.0
-      - CROW_MEMORY_PORT=8901
-      - CUDA_VISIBLE_DEVICES=
-    volumes:
-      - ./memory.lance:/data/memory.lance
-    # GPU acceleration — uncomment when you want hardware-accelerated embeddings.
-    # CPU mode is ~100ms text / ~2-3s image, which is fine for background agents.
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
-
   litellm:
     image: ghcr.io/berriai/litellm:main-v1.82.6-nightly
     restart: always
@@ -214,8 +188,8 @@ mcpServers:
     args:
       - crow-mcp
 
-# DEFAULT crow-memory service URL
-memory_url: http://localhost:8901
+# Memory store path (LanceDB, in-process)
+memory_path: ~/.crow/memory.lance
 
 # EXAMPLE PROVIDER
 # providers:

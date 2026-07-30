@@ -103,8 +103,8 @@ def run_agentmain(
             overrides = yaml.safe_load(f) or {}
         if "system_prompt_path" in overrides:
             config.system_prompt_path = Path(overrides["system_prompt_path"])
-        if "memory_url" in overrides:
-            config.memory_url = overrides["memory_url"]
+        if "memory_path" in overrides:
+            config.memory_path = overrides["memory_path"]
         if "max_retries_per_step" in overrides:
             config.max_retries_per_step = int(overrides["max_retries_per_step"])
         if "MAX_COMPACT_TOKENS" in overrides:
@@ -180,7 +180,7 @@ def inspect_db(
     limit: int = typer.Option(20, "--limit", "-l", help="Limit number of rows"),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ):
-    """Inspect Crow sessions — state, messages, etc. (via the crow-memory service)."""
+    """Inspect Crow sessions — state, messages, etc."""
     if session_id:
         # Use existing AgentSession methods to get the latest agent for this session
         max_idx = AgentSession.get_max_agent_idx(session_id)
@@ -233,14 +233,14 @@ def inspect_db(
                     msg_table.add_row(str(i), msg["role"], preview.replace("\n", " "))
                 client._console.print(msg_table)
     else:
-        # List all sessions via the crow-memory service, most-recently-active first.
+        # List all sessions, most-recently-active first.
         try:
             sessions_list = AgentSession.list_sessions(limit=limit)
         except MemoryServiceError as e:
             if json_output:
-                print(json.dumps({"error": f"crow-memory service error: {e.detail}"}))
+                print(json.dumps({"error": f"memory error: {e.detail}"}))
             else:
-                client._console.print(f"[red]crow-memory service error: {e.detail}[/red]")
+                client._console.print(f"[red]memory error: {e.detail}[/red]")
             raise SystemExit(1)
 
         if not sessions_list:
@@ -316,7 +316,7 @@ def run(
     (--prompt-file/-f), or stdin (pass '-' as the prompt).
 
     DELEGATION — this command is also how agents launch subagents. Every
-    session persists in the shared crow-memory service, so you can launch a worker,
+    session persists in the shared LanceDB store, so you can launch a worker,
     keep talking to it by session id, and read its thoughts from any other
     agent. The loop:
 

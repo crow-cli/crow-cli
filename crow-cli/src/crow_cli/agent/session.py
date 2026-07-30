@@ -16,19 +16,19 @@ from typing import Any
 import yaml
 from coolname import generate_slug
 
-from crow_cli.agent.memory import DEFAULT_MEMORY_URL, MemoryClient, MemoryServiceError
+from crow_cli.agent.memory import DEFAULT_MEMORY_PATH, MemoryClient, MemoryServiceError
 from crow_cli.agent.prompt import render_template
 from crow_cli.agent.context import get_directory_tree
 
 from crow_cli.agent.configure import Config
 
-def get_session_by_cwd(cwd, memory_url=DEFAULT_MEMORY_URL):
+def get_session_by_cwd(cwd, memory_path=DEFAULT_MEMORY_PATH):
     """
-    Lookup agents by working directory via the crow-memory service.
+    Lookup agents by working directory via the in-process memory store.
 
     Returns list of session info dicts with session_id, title, updated_at.
     """
-    client = MemoryClient(memory_url)
+    client = MemoryClient(memory_path)
     try:
         result = []
         for agent in client.list_agents():
@@ -80,12 +80,12 @@ def get_coolname() -> str:
 def lookup_or_create_prompt(
     template: str,
     name: str,
-    memory_url: str = DEFAULT_MEMORY_URL,
+    memory_path: str = DEFAULT_MEMORY_PATH,
 ) -> str:
     """
     Lookup existing prompt by template content, or create new one if not found.
     """
-    client = MemoryClient(memory_url)
+    client = MemoryClient(memory_path)
     try:
         return client.lookup_or_create_prompt(template, name)
     finally:
@@ -94,7 +94,7 @@ def lookup_or_create_prompt(
 
 class AgentSession:
     """
-    Manages conversation state and persistence via the crow-memory service.
+    Manages conversation state and persistence via the in-process memory store (LanceDB).
 
     agent_id = "{session_id}-{agent_idx}" is the key.
     session_id is derived for ACP upstream routing only.
@@ -105,13 +105,13 @@ class AgentSession:
         agent_id: str,
         session_id: str,
         agent_idx: int = 0,
-        memory_url: str = DEFAULT_MEMORY_URL,
+        memory_path: str = DEFAULT_MEMORY_PATH,
         cwd: str = "/tmp",
     ):
         self.agent_id = agent_id
         self.session_id = session_id
         self.agent_idx = agent_idx
-        self.memory_url = memory_url
+        self.memory_path = memory_path
         self.cwd = cwd
         self.messages: list[dict] = []
         self._client = None
@@ -119,9 +119,9 @@ class AgentSession:
 
     @property
     def client(self) -> MemoryClient:
-        """Lazy-load the HTTP client to the crow-memory service."""
+        """Lazy-load the in-process memory client."""
         if self._client is None:
-            self._client = MemoryClient(self.memory_url)
+            self._client = MemoryClient(self.memory_path)
         return self._client
 
     def add_message(self, msg: dict, usage: dict | None = None):
@@ -190,14 +190,14 @@ class AgentSession:
         tool_definitions: list[dict],
         request_params: dict[str, Any],
         model_identifier: str,
-        memory_url: str = DEFAULT_MEMORY_URL,
+        memory_path: str = DEFAULT_MEMORY_PATH,
         cwd: str = "/tmp",
         agent_idx: int = 1,
         session_id: str | None = None,
         initial_messages: list[dict[str, Any]] | None = None,
     ) -> "AgentSession":
         """Factory method to create a new agent session."""
-        client = MemoryClient(memory_url)
+        client = MemoryClient(memory_path)
 
         # Load and render prompt
         try:
@@ -228,7 +228,7 @@ class AgentSession:
         client.close()
 
         # Build session instance
-        session = cls(agent_id, session_id, agent_idx, memory_url, cwd=cwd)
+        session = cls(agent_id, session_id, agent_idx, memory_path, cwd=cwd)
         session.model_identifier = model_identifier
         session.tools = tool_definitions
         session.request_params = request_params
@@ -251,10 +251,10 @@ class AgentSession:
     def get_max_agent_idx(
         cls,
         session_id: str,
-        memory_url: str = DEFAULT_MEMORY_URL,
+        memory_path: str = DEFAULT_MEMORY_PATH,
     ) -> int:
         """Return the highest agent_idx for a given session_id."""
-        client = MemoryClient(memory_url)
+        client = MemoryClient(memory_path)
         try:
             return client.get_max_agent_idx(session_id)
         finally:
@@ -265,10 +265,10 @@ class AgentSession:
         cls,
         limit: int = 50,
         offset: int = 0,
-        memory_url: str = DEFAULT_MEMORY_URL,
+        memory_path: str = DEFAULT_MEMORY_PATH,
     ) -> list[dict]:
         """List sessions ordered by most-recent message activity (desc)."""
-        client = MemoryClient(memory_url)
+        client = MemoryClient(memory_path)
         try:
             return client.list_sessions(limit=limit, offset=offset)
         finally:
@@ -278,10 +278,10 @@ class AgentSession:
     def load(
         cls,
         agent_id: str,
-        memory_url: str = DEFAULT_MEMORY_URL,
+        memory_path: str = DEFAULT_MEMORY_PATH,
     ) -> "AgentSession":
         """Factory method to load existing agent session from the service."""
-        client = MemoryClient(memory_url)
+        client = MemoryClient(memory_path)
         try:
             agent, messages = client.load(agent_id, hydrate=True)
         except MemoryServiceError as e:
@@ -295,7 +295,7 @@ class AgentSession:
             agent_id=agent["agent_id"],
             session_id=agent["session_id"],
             agent_idx=agent["agent_idx"],
-            memory_url=memory_url,
+            memory_path=memory_path,
             cwd=agent["cwd"],
         )
         session.model_identifier = agent["model_identifier"]
@@ -446,7 +446,7 @@ def make_agent_session(
     else:
         template = config.system_prompt
     prompt_id = lookup_or_create_prompt(
-        template, name="crow-default", memory_url=config.memory_url
+        template, name="crow-default", memory_path=config.memory_path
     )
     skills = get_skills(config.config_dir / "skills")
 
@@ -471,7 +471,7 @@ def make_agent_session(
         tool_definitions=tools,
         request_params={"temperature": 0.2},
         model_identifier=model_id,
-        memory_url=config.memory_url,
+        memory_path=config.memory_path,
         cwd=cwd,
         agent_idx=agent_idx,
         session_id=session_id,

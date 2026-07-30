@@ -285,8 +285,8 @@ def run_init(config_dir: Path, yes: bool = False):
     # =========================================================================
     console.print("\n[bold cyan]═══ Step 3: Review ═══[/bold cyan]\n")
 
-    memory_url = "http://localhost:8901"
-    console.print(f"[dim]Using crow-memory service at {memory_url}[/dim]")
+    memory_path = str(Path.home() / ".crow" / "memory.lance")
+    console.print(f"[dim]Memory store: {memory_path}[/dim]")
 
     if providers:
         p_table = Table(title="Providers", show_header=True)
@@ -309,11 +309,11 @@ def run_init(config_dir: Path, yes: bool = False):
     s_table.add_column("Service", style="cyan")
     s_table.add_column("Status", style="green")
     s_table.add_row("SearXNG", "✓ Docker" if setup_searxng else "✗ Skip")
-    s_table.add_row("Memory", "crow-memory service")
+    s_table.add_row("Memory", "in-process LanceDB")
     console.print(s_table)
 
     console.print(f"\n[dim]Config directory: {config_dir}[/dim]")
-    console.print(f"[dim]Memory service: {memory_url}[/dim]")
+    console.print(f"[dim]Memory store: {memory_path}[/dim]")
 
     if not yes and not Confirm.ask("\nLooks good?", default=True):
         console.print("[red]Aborted. No files were written.[/red]")
@@ -345,7 +345,7 @@ def run_init(config_dir: Path, yes: bool = False):
                 "args": ["crow-mcp"],
             }
         },
-        "memory_url": memory_url,
+        "memory_path": memory_path,
         "providers": providers,
         "models": models,
         "MAX_COMPACT_TOKENS": 190000,
@@ -384,19 +384,15 @@ def run_init(config_dir: Path, yes: bool = False):
     available_services = compose_template.get("services", {})
     active_services: dict[str, Any] = {}
 
-    # crow-memory is always included — it's the persistence layer
-    if "crow-memory" in available_services:
-        active_services["crow-memory"] = available_services["crow-memory"]
-
     if setup_searxng and "searxng" in available_services:
         active_services["searxng"] = available_services["searxng"]
 
+    compose_file = config_dir / "compose.yaml"
     if active_services:
         compose_data: dict[str, Any] = {
             "services": active_services,
             "volumes": compose_template.get("volumes", {}),
         }
-        compose_file = config_dir / "compose.yaml"
         with open(compose_file, "w") as f:
             yaml.dump(compose_data, f, default_flow_style=False, sort_keys=False)
         console.print(f"[green]✓[/green] Written {compose_file}")
@@ -407,20 +403,17 @@ def run_init(config_dir: Path, yes: bool = False):
     # =========================================================================
     # STEP 5: Start services (just instructions)
     # =========================================================================
-    console.print("\n[bold cyan]═══ Step 5: Start Services ═══[/bold cyan]\n")
-
-    services_list = ["crow-memory"]
-    if setup_searxng:
-        services_list.append("SearXNG")
-
-    console.print(
-        Panel(
-            f"[bold white]cd {config_dir} && docker compose up -d[/bold white]\n\n"
-            f"[dim]Starts: {', '.join(services_list)}[/dim]",
-            title="[yellow]Start " + " + ".join(services_list) + "[/yellow]",
-            border_style="yellow",
+    if active_services:
+        console.print("\n[bold cyan]═══ Step 5: Start Services ═══[/bold cyan]\n")
+        services_list = list(active_services.keys())
+        console.print(
+            Panel(
+                f"[bold white]cd {config_dir} && docker compose up -d[/bold white]\n\n"
+                f"[dim]Starts: {', '.join(services_list)}[/dim]",
+                title="[yellow]Start " + " + ".join(services_list) + "[/yellow]",
+                border_style="yellow",
+            )
         )
-    )
 
     # =========================================================================
     # Done
@@ -429,22 +422,19 @@ def run_init(config_dir: Path, yes: bool = False):
     system_prompt_dir = config_dir / "prompts"
 
     console.print()
-    console.print(
-        Panel.fit(
-            "[bold green]✓ Configuration complete![/bold green]\n\n"
-            f"Config:   [cyan]{config_file}[/cyan]\n"
-            f"Memory:   [cyan]{config_dir / 'memory.lance'}[/cyan]\n"
-            f"Logs:     [cyan]{config_logs}[/cyan]\n"
-            f"Prompt:   [cyan]{system_prompt_dir}/system_prompt.jinja2[/cyan]\n"
-            f"Secrets:  [cyan]{env_file}[/cyan]\n"
-            f"Compose:  [cyan]{compose_file}[/cyan]\n\n"
-            "[dim]Start services with:[/dim]\n"
-            f"    [bold red]cd {config_dir} && docker compose up -d[/bold red]\n"
-            f"[dim]Then to test:\n"
-            f'    [bold white]crow-cli run "hey"[/bold white]',
-            border_style="green",
-        )
-    )
+    done_lines = [
+        "[bold green]✓ Configuration complete![/bold green]\n",
+        f"Config:   [cyan]{config_file}[/cyan]",
+        f"Memory:   [cyan]{config_dir / 'memory.lance'}[/cyan] [dim](in-process, no service)[/dim]",
+        f"Logs:     [cyan]{config_logs}[/cyan]",
+        f"Prompt:   [cyan]{system_prompt_dir}/system_prompt.jinja2[/cyan]",
+        f"Secrets:  [cyan]{env_file}[/cyan]",
+    ]
+    if active_services:
+        done_lines.append(f"Compose:  [cyan]{compose_file}[/cyan]")
+        done_lines.append(f"\n[dim]Start services:[/dim] [bold red]cd {config_dir} && docker compose up -d[/bold red]")
+    done_lines.append(f'\n[dim]Test:[/dim] [bold white]crow-cli run "hey"[/bold white]')
+    console.print(Panel.fit("\n".join(done_lines), border_style="green"))
 
 
 # For typer integration

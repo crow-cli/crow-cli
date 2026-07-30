@@ -36,13 +36,6 @@ Now you're guaranteed to have an API key and a base url to access an LLM, run th
 uvx crow-cli init
 ```
 
-# Start the memory service
-crow-cli persists every session to a local [crow-memory](https://github.com/crow-cli/crow-cli/tree/main/crow-memory) service (LanceDB + ColBERT embeddings) running in Docker. The init wizard writes a `compose.yaml` for you:
-```bash
-cd ~/.crow && docker compose up -d
-```
-This starts crow-memory (port 8901) and optionally SearXNG for web search. Without it, sessions won't persist and the memory tools (`list_sessions`, `query_memory`, `query_session`) won't work.
-
 Then restart your agent.
 """
 
@@ -172,7 +165,7 @@ class AcpAgent(Agent):
             hooks if hooks is not None else [uv_project_hook]
         )
         self._logger = setup_logger(self._config.config_dir / "logs" / "crow-cli.log")
-        self._memory_url = self._config.memory_url
+        self._memory_path = self._config.memory_path
         self._exit_stack = AsyncExitStack()
         self._agent_id: str | None = None
         self._session_id: str | None = None  # stripped version for ACP upstream
@@ -422,14 +415,14 @@ class AcpAgent(Agent):
 
         try:
             # Find the highest-indexed agent for this session
-            max_idx = AgentSession.get_max_agent_idx(session_id, memory_url=self._memory_url)
+            max_idx = AgentSession.get_max_agent_idx(session_id, memory_path=self._memory_path)
             agent_id = f"{session_id}-{max_idx}"
             self._logger.info(
                 "LOAD_SESSION: Step 1: Loading agent %s from DB", agent_id
             )
             session = AgentSession.load(
                 agent_id,
-                memory_url=self._memory_url,
+                memory_path=self._memory_path,
             )
             self._logger.info("LOAD_SESSION: Step 1 complete: Agent loaded from DB")
 
@@ -513,7 +506,7 @@ class AcpAgent(Agent):
         if self._session_id == session_id and self._agent_id:
             agent_id = self._agent_id
         else:
-            max_idx = AgentSession.get_max_agent_idx(session_id, memory_url=self._memory_url)
+            max_idx = AgentSession.get_max_agent_idx(session_id, memory_path=self._memory_path)
             agent_id = f"{session_id}-{max_idx}"
 
         # Initialize if not set
@@ -565,7 +558,7 @@ class AcpAgent(Agent):
         if self._session_id == session_id and self._agent_id:
             agent_id = self._agent_id
         else:
-            max_idx = AgentSession.get_max_agent_idx(session_id, memory_url=self._memory_url)
+            max_idx = AgentSession.get_max_agent_idx(session_id, memory_path=self._memory_path)
             agent_id = f"{session_id}-{max_idx}"
 
         async def _execute_turn() -> PromptResponse:
@@ -786,7 +779,7 @@ class AcpAgent(Agent):
         self._logger.info("Listing sessions for working directory: %s", cwd)
         if cwd is None:
             return ListSessionsResponse(sessions=[], next_cursor=None)
-        sessions_info = get_session_by_cwd(cwd, self._memory_url)
+        sessions_info = get_session_by_cwd(cwd, self._memory_path)
         sessions = [SessionInfo(**session) for session in sessions_info]
         return ListSessionsResponse(sessions=sessions, next_cursor=None)
 
