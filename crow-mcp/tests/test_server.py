@@ -17,7 +17,9 @@ EXPECTED_TOOLS = {
     "terminal",
     "web_fetch",
     "web_search",
+    "list_sessions",
     "query_memory",
+    "query_session",
     "capture_webcam",
     "read_image_file",
 }

@@ -7,7 +7,7 @@ requires-python = ">=3.14"
 dependencies = [
     "agent-client-protocol>=0.9.0",
     "coolname>=2.2.0",
-    "crow-memory>=0.1.30",
+    "crow-memory>=0.1.31",
     "directory-tree>=1.0.0",
     "fastmcp>=2.14.5",
     "httpx>=0.28.1",
@@ -22,13 +22,6 @@ dependencies = [
 
 [tool.uv.sources]
 crow-memory = { path = "../crow-memory", editable = true }
-torch = [{ index = "pytorch-cpu" }]
-torchvision = [{ index = "pytorch-cpu" }]
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
 
 
 [project.urls]

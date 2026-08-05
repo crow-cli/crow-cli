@@ -83,9 +83,11 @@ from acp.schema import (
     McpServerStdio,
     PromptCapabilities,
     ResourceContentBlock,
+    SessionCapabilities,
     SessionConfigOptionSelect,
     SessionConfigSelectOption,
     SessionInfo,
+    SessionListCapabilities,
     SetSessionConfigOptionResponse,
     SetSessionModeResponse,
     SseMcpServer,
@@ -270,7 +272,9 @@ class AcpAgent(Agent):
             protocol_version=PROTOCOL_VERSION,
             agent_capabilities=AgentCapabilities(
                 load_session=True,  # We support session loading
-                list_sessions=True,  # We support listing sessions
+                session_capabilities=SessionCapabilities(
+                    list=SessionListCapabilities(),  # We support session/list
+                ),
                 prompt_capabilities=PromptCapabilities(
                     image=True,  # We support image content blocks for vision models
                     audio=False,  # Not yet implemented

@@ -8,7 +8,7 @@ import base64
 import hashlib
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import lancedb
 import pyarrow as pa
@@ -76,7 +76,12 @@ class MemoryStore:
     """Owns the LanceDB connection, the four tables, and the embedders."""
 
     def __init__(self, path: str, embedders: Embedders):
-        self.db = lancedb.connect(path)
+        # read_consistency_interval=0 => every read checks for the latest
+        # committed version. Without it (the default), a long-lived process
+        # (e.g. the crow-mcp server) opens its tables once and NEVER sees
+        # writes committed by other processes (crow-cli agents), so sessions
+        # created after startup appear empty. timedelta(0) = strong freshness.
+        self.db = lancedb.connect(path, read_consistency_interval=timedelta(0))
         self.emb = embedders
         self.prompts = self._table("prompts", PROMPTS_SCHEMA)
         self.agents = self._table("agents", AGENTS_SCHEMA)
