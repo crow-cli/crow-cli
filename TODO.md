@@ -1,34 +1,25 @@
-# crow-cli TODO
+# TODO — crow-cli v2
 
-## [v2] Retry + capability-aware fallback on transient provider 400s
+## **DO NOT ASK USER FOR FEEDBACK — THIS IS THE USER FEEDBACK.**
+## **DO NOT ASK USER FOR NEXT STEPS — THESE ARE THE NEXT STEPS.**
 
-**Symptom (user-visible):** `Internal error: {"error":"data: {\"error\":{\"code\":\"invalid_parameter_error\",...,\"message\":\"Download multimodal file timed out\",...}}"}` — sporadic, mid-turn, kills the react loop.
+Unordered. PLAN.md has the numbered ship list. Everything from the crow-rs
+eras is done or dropped; history is in git.
 
-**Diagnosis (from `~/.crow/logs/crow-cli-successful-wild-fulmar-of-awe.log:40-72`, 5 occurrences):**
-- It is a provider-side **HTTP 400** (`openai.BadRequestError`), NOT a local network error.
-  Stack: `main.py:725 await task` → `main.py:667 _execute_turn` → `react.py:632 send_request` → `openai/_base_client.py:1669` raises.
-- The openai SDK auto-retries 429 / 5xx / connection resets, but **never 4xx**. So a
-  transient server error propagates straight out of `react_loop` and aborts the turn.
-- `Download multimodal file timed out` is DashScope/Alibaba's **server-side** multimodal
-  ingest step timing out while processing the image payload. Sporadic ⇒ transient, not
-  deterministic. Correlates with the lance image split: hydration now re-inlines full
-  base64 images every turn (observed 130k-token prompts carrying image blocks), so the
-  multimodal payload is large and occasionally exceeds their ingest deadline.
-- **Not a correctness bug on our side.** It's a missing retry on a transient 400 plus,
-  longer-term, no fallback when a model chokes on multimodal content.
-
-**Plan — DEFERRED to crow-cli v2 (v1 react loop / store.py are FROZEN, do not patch here):**
-1. **Retry this error class.** Treat `invalid_parameter_error` / `Download multimodal file timed out`
-   (and sibling transient ingest errors) as retryable *despite* the 400 status: bounded
-   exponential backoff inside `send_request`, distinct from the SDK's own retry policy.
-2. **Capability-aware model registry.** Tag each model with capabilities (vision, audio,
-   tool-use, context window). A fallback chain must NEVER land on a text-only model while
-   the conversation carries image/audio blocks.
-3. **Auto-strip on downgrade.** If we do fall back to a model lacking a modality, strip the
-   unsupported content blocks (image/audio → `[image omitted: model has no vision]` placeholder)
-   automatically instead of hard-failing. Bans on image/audio data are derived from capabilities,
-   not hardcoded per provider.
-4. **Round-robin / fallback chain, no litellm.** We don't run litellm today; keep it out of the
-   stack. Build the retry+fallback+capability routing in-process (Rust in v2).
-
-**Status:** not fixing in v1. Revisit when the v2 ACP client/agent is built.
+- 1.x ollama-mv provisioning behind `crow-cli daemon install ollama-mv`:
+  clone forks → build (Go+cmake) → systemd unit → start → pull ColBERT
+  model → verify embed. Fresh-machine path for crates.io distribution.
+- crow-cli services up/down/pull/logs/status (docker compose shellout);
+  searxng first; migrate live searxng from ~/.crow to ~/.agents/crow.
+- crow-cli daemon watch (health poll → restart, flap guard/budget).
+- crates.io publish of crow-cli + GH Releases + curl install from
+  crow-ai.dev.
+- verify tool → separate MCP server; daemon agents rendering
+  verifier-flavored system prompts (investigate).
+- coolname → own crate + python coolname attribution + dictionary
+  additions.
+- swiss-army: daemon start --port, crow-cli memory surface, crow-cli
+  ports table.
+- later: container fleet (compose healthchecks) → k3s when multi-node.
+- housekeeping: stale ~/.cargo/bin/crowctl binary can be deleted once
+  nothing references it.

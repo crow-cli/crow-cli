@@ -1,0 +1,51 @@
+[package]
+name = "crow-memory"
+version = "0.2.0"
+edition = "2021"
+description = "crow-memory HTTP server — axum + LanceDB + embeddings (single writer)"
+repository = "https://github.com/crow-cli/crow-cli"
+license = "MIT"
+
+[lib]
+name = "crow_memory"
+path = "src/lib.rs"
+
+[[bin]]
+name = "crow-memory"
+path = "src/main.rs"
+
+[dependencies]
+crow-memory-types = { path = "../crow-memory-types", version = "0.2.0" }
+axum = "0.8"
+clap = { version = "4", features = ["derive"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dirs = "6"
+lancedb = "0.33"
+# lancedb does not forward the lance stack's `protoc` feature, so enable it
+# here directly (feature unification applies it graph-wide). protobuf-src
+# then compiles protoc from vendored source — no PROTOC env var, no system
+# protobuf, plain `cargo build` / `cargo install --path` just work.
+lance = { version = "=9.0.0", default-features = false, features = ["protoc"] }
+lance-datafusion = { version = "=9.0.0", default-features = false, features = ["protoc"] }
+lance-encoding = { version = "=9.0.0", default-features = false, features = ["protoc"] }
+lance-file = { version = "=9.0.0", default-features = false, features = ["protoc"] }
+lance-index = { version = "=9.0.0", default-features = false, features = ["protoc"] }
+lance-table = { version = "=9.0.0", default-features = false, features = ["protoc"] }
+arrow-array = "58"
+arrow-schema = "58"
+arrow-buffer = "58"
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+dotenvy = "0.15"
+reqwest = { version = "0.12", features = ["json"] }
+sha2 = "0.10"
+chrono = "0.4"
+rand = "0.9"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "signal"] }
+tracing = "0.1"
+anyhow = "1"
+
+[dev-dependencies]
+crow-memory-sdk = { path = "../crow-memory-sdk", version = "0.2.0" }

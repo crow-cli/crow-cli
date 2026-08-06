@@ -1,0 +1,23 @@
+[package]
+name = "crow-server"
+version = "0.2.0"
+edition = "2021"
+description = "crow ACP agent server — serves CrowAgent over HTTP/SSE"
+repository = "https://github.com/crow-cli/crow-cli"
+license = "MIT"
+
+[[bin]]
+name = "crow-server"
+path = "src/main.rs"
+
+[dependencies]
+crow-cli = { path = "../crow-cli", version = "0.2.0" }
+crow-memory-sdk = { path = "../crow-memory-sdk", version = "0.2.0" }
+agent-client-protocol = { git = "https://github.com/agentclientprotocol/rust-sdk.git", rev = "7d21931823e9515465794aaf000b61f427c6a595", features = ["unstable_protocol_v2"] }
+agent-client-protocol-http = { git = "https://github.com/agentclientprotocol/rust-sdk.git", rev = "7d21931823e9515465794aaf000b61f427c6a595", features = ["server"] }
+axum = { version = "0.8", features = ["ws", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"

@@ -1,36 +1,7 @@
-# Python-generated files
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-
-# Virtual environments
-.venv
-
-# keys
-.env
-
-# test database
-*.db
-*.db*
-
-# MyST build output
-docs/_build/
-_site/
-
-crow-editor/frontend/node_modules
-
+/target
+crow-cli/target
+crow-mcp/target
+crow-memory/target
+*.swp
+*.swo
 *.log
-*.log*
-
-
-crow-mcp/.venv
-crow-task-mcp/.venv
-crow-task-mcp/src/crow_task_mcp/__pycache__/
-crow-orchestrator-mcp/.venv
-crow-orchestrator-mcp/src/crow_orchestrator_mcp/__pycache__
-
-
-sandbox/lancedb-testing/pylate_lancedb/

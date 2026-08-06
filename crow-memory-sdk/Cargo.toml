@@ -1,0 +1,16 @@
+[package]
+name = "crow-memory-sdk"
+version = "0.2.0"
+edition = "2021"
+description = "reqwest client for the crow-memory HTTP server"
+repository = "https://github.com/crow-cli/crow-cli"
+license = "MIT"
+
+[dependencies]
+crow-memory-types = { path = "../crow-memory-types", version = "0.2.0" }
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+tracing = "0.1"
+tokio = { version = "1", features = ["time"] }
