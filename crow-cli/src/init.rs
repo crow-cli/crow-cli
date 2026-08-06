@@ -13,6 +13,7 @@ use serde::Serialize;
 
 const SYSTEM_PROMPT: &str = include_str!("../assets/system_prompt.hbs");
 const SEARXNG_SETTINGS_YML: &str = include_str!("../assets/searxng_settings.yml");
+const CLIENT_SETTINGS_YAML: &str = include_str!("../assets/client_settings.yaml");
 
 /// compose.yaml written when SearXNG is requested (faithful to v1: searxng
 /// service only, volumes block preserved).
@@ -106,6 +107,30 @@ fn parse_selection(input: &str, count: usize) -> Option<Vec<usize>> {
 /// Default friendly name: model id after the last '/'.
 fn friendly_default(model_id: &str) -> &str {
     model_id.rsplit('/').next().unwrap_or(model_id)
+}
+
+/// Render the bundled client_settings.yaml asset: {{HOME}} → the home dir,
+/// {{CONFIG_DIR}} → the config dir, {{DEFAULT_MODEL}} → the first configured
+/// model (no models → the default_config_options blocks are dropped).
+fn render_client_settings(config_dir: &Path, default_model: &str) -> anyhow::Result<String> {
+    let home = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+    let rendered = CLIENT_SETTINGS_YAML
+        .replace("{{HOME}}", &home.display().to_string())
+        .replace("{{CONFIG_DIR}}", &config_dir.display().to_string())
+        .replace("{{DEFAULT_MODEL}}", default_model);
+    if !default_model.is_empty() {
+        return Ok(rendered);
+    }
+    Ok(rendered
+        .lines()
+        .filter(|l| {
+            let t = l.trim();
+            t != "default_config_options:" && !t.starts_with("model:")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n")
 }
 
 fn ask(label: &str) -> anyhow::Result<String> {
@@ -391,11 +416,11 @@ pub async fn run(config_dir: Option<&Path>, yes: bool) -> anyhow::Result<()> {
         println!("✓ Wrote prompt template to {}", prompt_file.display());
     }
 
-    // mcpServers points at the Rust crow-mcp binary next to crow-cli.
-    let mcp_bin = std::env::current_exe()?
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("current_exe has no parent"))?
-        .join("crow-mcp");
+    // mcpServers points at the installed crow-mcp binary. Absolute path —
+    // config.yaml does not expand ~.
+    let home = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("cannot determine home directory"))?;
+    let mcp_bin = home.join(".cargo/bin/crow-mcp");
     let mut mcp_servers = IndexMap::new();
     mcp_servers.insert(
         "crow-mcp".into(),
@@ -406,6 +431,7 @@ pub async fn run(config_dir: Option<&Path>, yes: bool) -> anyhow::Result<()> {
         },
     );
 
+    let default_model = models.keys().next().cloned().unwrap_or_default();
     let init_config = InitConfig {
         mcp_servers,
         memory_port: crow_memory_sdk::DEFAULT_MEMORY_PORT,
@@ -416,6 +442,16 @@ pub async fn run(config_dir: Option<&Path>, yes: bool) -> anyhow::Result<()> {
     };
     std::fs::write(&config_file, serde_yaml::to_string(&init_config)?)?;
     println!("✓ Written {}", config_file.display());
+
+    // client_settings.yaml: the daemon topology crow-cli run/daemon resolve
+    // against. Without it crow-memory never comes up.
+    let settings_file = config_dir.join("client_settings.yaml");
+    if settings_file.exists() {
+        println!("⊘ {} already exists, skipping", settings_file.display());
+    } else {
+        std::fs::write(&settings_file, render_client_settings(&config_dir, &default_model)?)?;
+        println!("✓ Written {}", settings_file.display());
+    }
 
     let env_lines: Vec<String> = env_vars.iter().map(|(k, v)| format!("{k}={v}")).collect();
     std::fs::write(&env_file, env_lines.join("\n") + "\n")?;
@@ -442,6 +478,7 @@ pub async fn run(config_dir: Option<&Path>, yes: bool) -> anyhow::Result<()> {
 
     println!("✓ Configuration complete!\n");
     println!("Config:   {}", config_file.display());
+    println!("Agents:   {}", settings_file.display());
     println!("Memory:   {memory_url} (crow-memory service)");
     println!("Logs:     {}", config_dir.join("logs").display());
     println!("Prompt:   {}", prompt_file.display());
@@ -481,6 +518,33 @@ mod tests {
         assert_eq!(parse_selection(" 2 ", 3), Some(vec![1]));
         assert_eq!(parse_selection("5", 3), Some(vec![]));
         assert_eq!(parse_selection("x", 3), None);
+    }
+
+    #[test]
+    fn render_client_settings_substitutes_and_drops_model() {
+        let dir = std::path::PathBuf::from("/tmp/crow-test");
+        let home = dirs::home_dir().unwrap();
+        let home_s = home.display().to_string();
+
+        let with_model = render_client_settings(&dir, "qwen3.8-max-preview").unwrap();
+        assert!(with_model.contains(&format!("command: {home_s}/.cargo/bin/crow-memory")));
+        assert!(with_model.contains("args: [--config, /tmp/crow-test/config.yaml]"));
+        assert!(with_model.contains("model: qwen3.8-max-preview"));
+        assert!(!with_model.contains("{{"));
+        // parses as valid client settings
+        let s: crate::client_settings::ClientSettings =
+            serde_yaml::from_str(&with_model).unwrap();
+        assert_eq!(s.default.as_deref(), Some("crow"));
+        assert_eq!(s.agent_servers["crow-memory"].port, Some(27697));
+        assert_eq!(s.agent_servers["crow-daemon"].requires, vec!["crow-memory"]);
+        assert!(s.chains.contains_key("verifier"));
+
+        let no_models = render_client_settings(&dir, "").unwrap();
+        assert!(!no_models.contains("default_config_options"));
+        assert!(!no_models.contains("model:"));
+        let s: crate::client_settings::ClientSettings =
+            serde_yaml::from_str(&no_models).unwrap();
+        assert!(s.agent_servers["crow"].default_config_options.model.is_none());
     }
 
     #[test]
