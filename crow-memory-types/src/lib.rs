@@ -42,6 +42,10 @@ pub struct MessageRecord {
     pub created_at: String,
     pub data: serde_json::Value,
     pub role: String,
+    /// Search relevance (lower = better, LanceDB `_distance`); only set on
+    /// semantic search hits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub score: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,6 +57,12 @@ pub struct SessionInfo {
     pub last_role: String,
     pub cwd: String,
     pub model_identifier: String,
+    /// Sorted distinct agent_idx values in this session.
+    #[serde(default)]
+    pub agent_idxs: Vec<i64>,
+    /// The most recent message in the session, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_message: Option<MessageRecord>,
 }
 
 // ---- Requests / responses (write side) -------------------------------------
@@ -148,11 +158,17 @@ mod tests {
             created_at: "2026-08-05T00:00:00Z".into(),
             data: serde_json::json!({"role": "user", "content": "hi"}),
             role: "user".into(),
+            score: None,
         };
-        let back: MessageRecord =
-            serde_json::from_str(&serde_json::to_string(&rec).unwrap()).unwrap();
+        let json = serde_json::to_string(&rec).unwrap();
+        assert!(!json.contains("score"));
+        let back: MessageRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(back.id, 17);
         assert_eq!(back.data["role"], "user");
+        let scored: MessageRecord =
+            serde_json::from_str(r#"{"id":1,"agent_id":"a","created_at":"t","data":{},"role":"user","score":0.42}"#)
+                .unwrap();
+        assert_eq!(scored.score, Some(0.42));
     }
 
     #[test]
@@ -174,9 +190,20 @@ mod tests {
             last_role: "assistant".into(),
             cwd: "/x".into(),
             model_identifier: "m".into(),
+            agent_idxs: vec![0, 1],
+            last_message: None,
         };
         let back: SessionInfo =
             serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
         assert_eq!(back.message_count, 5);
+        assert_eq!(back.agent_idxs, vec![0, 1]);
+        // Old servers (no new fields) must still deserialize.
+        let old: SessionInfo = serde_json::from_str(
+            r#"{"session_id":"s","last_activity":"t","message_count":1,"agent_count":1,
+                "last_role":"user","cwd":"/x","model_identifier":"m"}"#,
+        )
+        .unwrap();
+        assert!(old.agent_idxs.is_empty());
+        assert!(old.last_message.is_none());
     }
 }

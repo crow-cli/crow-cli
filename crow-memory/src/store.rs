@@ -411,6 +411,7 @@ impl MemoryStore {
                     created_at: created_ats.value(i).to_string(),
                     data: serde_json::from_str(data.value(i)).unwrap_or_default(),
                     role: roles.value(i).to_string(),
+                    score: None,
                 });
             }
         }
@@ -476,6 +477,9 @@ impl MemoryStore {
             let roles = batch
                 .column_by_name("role")
                 .and_then(|c| c.as_any().downcast_ref::<StringArray>());
+            let distances = batch
+                .column_by_name("_distance")
+                .and_then(|c| c.as_any().downcast_ref::<Float32Array>());
             if let (Some(ids), Some(aids), Some(cas), Some(dat), Some(rol)) =
                 (ids, agent_ids, created_ats, data, roles)
             {
@@ -486,6 +490,7 @@ impl MemoryStore {
                         created_at: cas.value(i).to_string(),
                         data: serde_json::from_str(dat.value(i)).unwrap_or_default(),
                         role: rol.value(i).to_string(),
+                        score: distances.map(|d| d.value(i)),
                     });
                 }
             }
@@ -521,6 +526,7 @@ impl MemoryStore {
                     created_at: created_ats.value(i).to_string(),
                     data: serde_json::from_str(data.value(i)).unwrap_or_default(),
                     role: roles.value(i).to_string(),
+                    score: None,
                 });
             }
         }
@@ -546,8 +552,23 @@ impl MemoryStore {
             sess_map.entry(a.session_id.clone()).or_default().push(a);
         }
 
+        // Per-session message stats + the max-timestamp row (last_message),
+        // tracked in one pass over the scan. `data` kept as a string; parsed
+        // once per session at the end, not once per message.
+        struct LastMsg {
+            id: i64,
+            agent_id: String,
+            created_at: String,
+            data: String,
+            role: String,
+        }
+        struct MsgStats {
+            count: usize,
+            last: LastMsg,
+        }
+
         let all_msgs = query_all(&self.messages, "id >= 0").await?;
-        let mut msg_stats: std::collections::HashMap<String, (String, usize, String)> =
+        let mut msg_stats: std::collections::HashMap<String, MsgStats> =
             std::collections::HashMap::new();
 
         let agent_to_sess: std::collections::HashMap<&str, &str> = agents
@@ -556,8 +577,14 @@ impl MemoryStore {
             .collect();
 
         for batch in &all_msgs {
+            let ids = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .unwrap();
             let agent_ids = col_str(batch, 1);
             let created_ats = col_str(batch, 2);
+            let data = col_str(batch, 3);
             let roles = col_str(batch, 4);
             for i in 0..batch.num_rows() {
                 let aid = agent_ids.value(i);
@@ -565,14 +592,26 @@ impl MemoryStore {
                     continue;
                 };
                 let ts = created_ats.value(i).to_string();
-                let role = roles.value(i).to_string();
-                let entry = msg_stats
-                    .entry(sid.to_string())
-                    .or_insert_with(|| (ts.clone(), 0, role.clone()));
-                entry.1 += 1;
-                if ts > entry.0 {
-                    entry.0 = ts;
-                    entry.2 = role;
+                let sid = sid.to_string();
+                let entry = msg_stats.entry(sid).or_insert_with(|| MsgStats {
+                    count: 0,
+                    last: LastMsg {
+                        id: ids.value(i),
+                        agent_id: aid.to_string(),
+                        created_at: ts.clone(),
+                        data: data.value(i).to_string(),
+                        role: roles.value(i).to_string(),
+                    },
+                });
+                entry.count += 1;
+                if ts > entry.last.created_at {
+                    entry.last = LastMsg {
+                        id: ids.value(i),
+                        agent_id: aid.to_string(),
+                        created_at: ts,
+                        data: data.value(i).to_string(),
+                        role: roles.value(i).to_string(),
+                    };
                 }
             }
         }
@@ -581,10 +620,25 @@ impl MemoryStore {
             .iter()
             .map(|(sid, agents)| {
                 let newest = agents.iter().max_by_key(|a| &a.created_at).unwrap();
-                let (last_activity, message_count, last_role) = msg_stats
-                    .get(sid.as_str())
-                    .cloned()
-                    .unwrap_or_else(|| (newest.created_at.clone(), 0, String::new()));
+                let mut idxs: Vec<i64> = agents.iter().map(|a| a.agent_idx).collect();
+                idxs.sort_unstable();
+                idxs.dedup();
+                let (last_activity, message_count, last_role, last_message) =
+                    match msg_stats.get(sid.as_str()) {
+                        Some(st) => {
+                            let lm = MessageRecord {
+                                id: st.last.id,
+                                agent_id: st.last.agent_id.clone(),
+                                created_at: st.last.created_at.clone(),
+                                data: serde_json::from_str(&st.last.data)
+                                    .unwrap_or_default(),
+                                role: st.last.role.clone(),
+                                score: None,
+                            };
+                            (lm.created_at.clone(), st.count, lm.role.clone(), Some(lm))
+                        }
+                        None => (newest.created_at.clone(), 0, String::new(), None),
+                    };
                 SessionInfo {
                     session_id: sid.clone(),
                     last_activity,
@@ -593,6 +647,8 @@ impl MemoryStore {
                     last_role,
                     cwd: newest.cwd.clone(),
                     model_identifier: newest.model_identifier.clone(),
+                    agent_idxs: idxs,
+                    last_message,
                 }
             })
             .collect();
@@ -626,6 +682,8 @@ impl MemoryStore {
                 last_role: String::new(),
                 cwd: cwd.to_string(),
                 model_identifier: agent.model_identifier.clone(),
+                agent_idxs: vec![agent.agent_idx],
+                last_message: None,
             });
         }
         Ok(out)
