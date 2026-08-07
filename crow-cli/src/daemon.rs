@@ -303,14 +303,30 @@ pub fn start(config_dir: &Path, name: &str, cfg: &AgentServerConfig) -> anyhow::
     if let Some(port) = cfg.port {
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
-            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                break;
-            }
             if !alive(pid) {
+                if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                    anyhow::bail!(
+                        "daemon '{name}' died right after startup — port {port} may already be in use by another process (see {})",
+                        log_path.display()
+                    );
+                }
                 anyhow::bail!(
                     "daemon '{name}' exited during startup (see {})",
                     log_path.display()
                 );
+            }
+            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                // A pre-existing squatter on the port answers connects too, so
+                // settle, then require our child to still be alive before
+                // claiming success.
+                std::thread::sleep(Duration::from_millis(300));
+                if !alive(pid) {
+                    anyhow::bail!(
+                        "daemon '{name}' died right after startup — port {port} may already be in use by another process (see {})",
+                        log_path.display()
+                    );
+                }
+                break;
             }
             if Instant::now() > deadline {
                 anyhow::bail!("daemon '{name}' did not open port {port} within 30s");
