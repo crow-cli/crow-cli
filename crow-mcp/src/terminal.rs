@@ -242,7 +242,7 @@ impl PersistentTerminal {
         while rx.try_recv().is_ok() {} // drain stale chunks from earlier commands
         self.buffer.lock().unwrap().clear();
 
-        let full_cmd = format!("{command}; echo \"{SENTINEL}$?{SENTINEL}\"\n");
+        let full_cmd = build_full_cmd(command);
         self.write_pty(full_cmd.as_bytes())?;
 
         let start = Instant::now();
@@ -305,8 +305,10 @@ impl PersistentTerminal {
 
             if start.elapsed() >= timeout {
                 let safe = acc.len().saturating_sub(SENTINEL_HOLD);
-                if safe > emitted {
-                    on_chunk(safe as u64, &acc[emitted..safe]);
+                let lo = emitted.max(echo_end.unwrap_or(0));
+                if safe > lo {
+                    on_chunk(safe as u64, &acc[lo..safe]);
+                    emitted = safe;
                 }
                 let raw_start = acc
                     .iter()
@@ -365,6 +367,30 @@ impl Drop for PersistentTerminal {
     fn drop(&mut self) {
         self.close();
     }
+}
+
+/// Build the full PTY input line for a command.
+///
+/// Multi-line commands are base64-wrapped and `eval`'d so the whole script
+/// is ONE readline cycle: interactive bash otherwise re-prompts (PS1) and
+/// re-echoes between lines, and those prompt bytes leaked into the capture —
+/// reading like crow-cli had dropped to a shell. `eval` runs in the current
+/// shell, so persistence (cwd, env) is preserved; heredoc terminators now
+/// work too (they never did line-by-line). Single-line commands go through
+/// verbatim — readable echo, zero behavior change.
+fn build_full_cmd(command: &str) -> String {
+    let suffix = format!("; echo \"{SENTINEL}$?{SENTINEL}\"\n");
+    if command.contains('\n') {
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(command.as_bytes());
+        // PTY canonical-mode input lines top out near 4 KiB; huge commands
+        // fall back to raw multi-line (rare — prompts can leak there).
+        let wrapped = format!("eval \"$(echo '{b64}' | base64 -d)\"{suffix}");
+        if wrapped.len() <= 3500 {
+            return wrapped;
+        }
+    }
+    format!("{command}{suffix}")
 }
 
 /// Find a REAL sentinel — `__CROW_DONE_<digits>__`. Skips the command echo.
@@ -432,4 +458,72 @@ impl TerminalManager {
         Ok((term, rx))
     }
 
+}
+
+#[cfg(test)]
+mod terminal_capture_tests {
+    use super::*;
+
+    /// Multi-line failing command: no PS1 prompt bytes may reach the live
+    /// stream or the snapshot (regression — bash re-prompted between lines
+    /// and the prompt leaked, reading like crow-cli had dropped to a shell).
+    #[test]
+    fn multiline_command_never_leaks_prompt() {
+        let (term, rx) = PersistentTerminal::new("t2", "/tmp").unwrap();
+        let mut streamed: Vec<u8> = Vec::new();
+        let r = term
+            .execute_streaming("cd /tmp\nls /nonexistent-xyz-123", None, &rx, |_, c| {
+                streamed.extend_from_slice(c)
+            })
+            .unwrap();
+        let txt = String::from_utf8_lossy(&streamed).to_string();
+        let raw = String::from_utf8_lossy(&r.raw_bytes).to_string();
+        assert_eq!(r.exit_code, 2);
+        assert!(raw.contains("cannot access"), "error output kept: {raw:?}");
+        assert!(!txt.contains('$'), "prompt leaked into live stream: {txt:?}");
+        assert!(!raw.contains('$'), "prompt leaked into snapshot: {raw:?}");
+        assert!(!raw.contains(SENTINEL), "sentinel leaked: {raw:?}");
+    }
+
+    /// eval runs in the current shell: state set on line 1 is visible on
+    /// line 2, and the exit code is the last line's.
+    #[test]
+    fn multiline_eval_preserves_shell_state() {
+        let (term, rx) = PersistentTerminal::new("t3", "/tmp").unwrap();
+        let r = term
+            .execute_streaming("export CROW_TEST_VAR=hello\necho $CROW_TEST_VAR", None, &rx, |_, _| {})
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stripped_text, "hello");
+
+        // State persists into the NEXT call too (same shell, not a subshell).
+        let r2 = term
+            .execute_streaming("echo $CROW_TEST_VAR", None, &rx, |_, _| {})
+            .unwrap();
+        assert_eq!(r2.stripped_text, "hello");
+    }
+
+    /// Heredocs work through the eval wrap (terminator on its own line).
+    #[test]
+    fn multiline_heredoc_works() {
+        let (term, rx) = PersistentTerminal::new("t4", "/tmp").unwrap();
+        let r = term
+            .execute_streaming("cat <<'EOF'\nheredoc body\nEOF", None, &rx, |_, _| {})
+            .unwrap();
+        assert_eq!(r.exit_code, 0);
+        assert_eq!(r.stripped_text, "heredoc body");
+    }
+
+    /// Single-line commands keep the plain form (readable echo).
+    #[test]
+    fn build_full_cmd_shapes() {
+        let single = build_full_cmd("ls -la");
+        assert_eq!(single, format!("ls -la; echo \"{SENTINEL}$?{SENTINEL}\"\n"));
+        let multi = build_full_cmd("a\nb");
+        assert!(multi.starts_with("eval \"$(echo '"), "{multi:?}");
+        assert!(multi.contains("| base64 -d)\""));
+        // Huge multi-line commands fall back to the raw form.
+        let huge = format!("echo start\n{}\necho end", "x".repeat(4000));
+        assert!(build_full_cmd(&huge).starts_with("echo start\n"));
+    }
 }

@@ -243,12 +243,26 @@ impl CliRenderer {
         match update {
             acp::SessionUpdate::AgentMessageChunk(chunk) => {
                 if let acp::ContentBlock::Text(text) = &chunk.content {
+                    let new_doc =
+                        self.md_msg_id.as_deref() != Some(chunk.message_id.0.as_ref());
+                    // Thinking just ended and the agent starts actually
+                    // responding — a markdown --- divider between the two.
+                    if new_doc && self.last_was_thought {
+                        self.md_feed(&mut out, chunk.message_id.0.as_ref(), "---\n");
+                    }
                     self.md_feed(&mut out, chunk.message_id.0.as_ref(), &text.text);
                 }
             }
 
             acp::SessionUpdate::AgentThoughtChunk(chunk) => {
                 if let acp::ContentBlock::Text(text) = &chunk.content {
+                    let new_doc =
+                        self.md_msg_id.as_deref() != Some(chunk.message_id.0.as_ref());
+                    // Start of a thinking phase (first thought after
+                    // non-thought output): a brain above the thinking content.
+                    if new_doc && !self.last_was_thought {
+                        let _ = writeln!(out, "🧠");
+                    }
                     self.md_feed(&mut out, chunk.message_id.0.as_ref(), &text.text);
                     self.last_was_thought = true;
                 }
@@ -780,6 +794,81 @@ mod tests {
         render_terminal_emulated(&mut buf, raw, &long, true, GREEN);
         let out = String::from_utf8(buf).unwrap();
         assert!(!out.contains("┌─"), "header suppressed: {out:?}");
+    }
+
+    #[test]
+    fn thought_brain_and_response_divider() {
+        let mut r = CliRenderer::new();
+        let mut buf: Vec<u8> = Vec::new();
+
+        // Thinking phase: brain above the thinking content.
+        r.handle_update_to(
+            &mut buf,
+            &acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk::new(
+                acp::ContentBlock::Text(acp::TextContent::new("let me think")),
+                "thought_1",
+            )),
+        );
+        // Same phase continues: no second brain.
+        r.handle_update_to(
+            &mut buf,
+            &acp::SessionUpdate::AgentThoughtChunk(acp::ContentChunk::new(
+                acp::ContentBlock::Text(acp::TextContent::new(" some more")),
+                "thought_1",
+            )),
+        );
+        // The actual response: markdown --- divider between thought and answer.
+        r.handle_update_to(
+            &mut buf,
+            &acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                acp::ContentBlock::Text(acp::TextContent::new("here is my answer")),
+                "msg_1",
+            )),
+        );
+        // Idle finalizes the streamed document (as in live flow).
+        r.handle_update_to(
+            &mut buf,
+            &acp::SessionUpdate::StateUpdate(acp::StateUpdate::Idle(
+                acp::IdleStateUpdate::default(),
+            )),
+        );
+
+        let out = String::from_utf8(buf).unwrap();
+        let brain = out
+            .find('🧠')
+            .unwrap_or_else(|| panic!("brain rendered: {out:?}"));
+        let thought = out.find("let me think").expect("thought rendered");
+        let divider = out
+            .find("─".repeat(10).as_str())
+            .unwrap_or_else(|| panic!("hr divider rendered: {out:?}"));
+        let answer = out.find("here is my answer").expect("answer rendered");
+        assert!(brain < thought, "brain above thinking: {out:?}");
+        assert!(thought < divider, "divider after thinking: {out:?}");
+        assert!(divider < answer, "divider before response: {out:?}");
+        assert_eq!(out.matches('🧠').count(), 1, "one brain per phase: {out:?}");
+    }
+
+    #[test]
+    fn no_brain_no_divider_without_thought() {
+        let mut r = CliRenderer::new();
+        let mut buf: Vec<u8> = Vec::new();
+        r.handle_update_to(
+            &mut buf,
+            &acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new(
+                acp::ContentBlock::Text(acp::TextContent::new("straight answer")),
+                "msg_1",
+            )),
+        );
+        r.handle_update_to(
+            &mut buf,
+            &acp::SessionUpdate::StateUpdate(acp::StateUpdate::Idle(
+                acp::IdleStateUpdate::default(),
+            )),
+        );
+        let out = String::from_utf8(buf).unwrap();
+        assert!(!out.contains('🧠'), "no brain: {out:?}");
+        assert!(!out.contains("─".repeat(10).as_str()), "no divider: {out:?}");
+        assert!(out.contains("straight answer"));
     }
 
     #[test]

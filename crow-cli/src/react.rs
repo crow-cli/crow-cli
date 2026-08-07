@@ -341,12 +341,14 @@ pub async fn react_loop(
             // a synthetic result per call id so the persisted history stays a
             // valid OpenAI sequence (every tool_call needs a tool response).
             if hard_cancelled {
+                let args: serde_json::Value =
+                    serde_json::from_str(&tc.function.arguments).unwrap_or(serde_json::json!({}));
                 let _ = send_update(
                     updates,
                     session_id,
                     acp::SessionUpdate::ToolCallUpdate(
                         acp::ToolCallUpdate::new(tc.id.as_str())
-                            .title(format!("{}(...)", tc.function.name))
+                            .title(tool_title(&tc.function.name, &args))
                             .kind(tool_kind(&tc.function.name))
                             .status(acp::ToolCallStatus::Failed)
                             .content(vec![acp::ToolCallContent::from(
@@ -372,7 +374,7 @@ pub async fn react_loop(
                 session_id,
                 acp::SessionUpdate::ToolCallUpdate(
                     acp::ToolCallUpdate::new(tc.id.as_str())
-                        .title(format!("{}(...)", tc.function.name))
+                        .title(tool_title(&tc.function.name, &args))
                         .kind(tool_kind(&tc.function.name))
                         .status(acp::ToolCallStatus::Pending)
                         .raw_input(args.clone()),
@@ -878,9 +880,52 @@ fn tool_kind(name: &str) -> acp::ToolKind {
     }
 }
 
+/// Box title bar: `name(~/path/to/file)` when the args carry a file_path —
+/// the file being read/edited must be visible in the title — else `name(...)`.
+fn tool_title(name: &str, args: &serde_json::Value) -> String {
+    let Some(path) = args.get("file_path").and_then(|v| v.as_str()) else {
+        return format!("{name}(...)");
+    };
+    let short = match dirs::home_dir() {
+        Some(home) => {
+            let home = home.to_string_lossy();
+            let home_slash = format!("{home}/");
+            if path == home.as_ref() {
+                "~".to_string()
+            } else if let Some(rest) = path.strip_prefix(&home_slash) {
+                format!("~/{rest}")
+            } else {
+                path.to_string()
+            }
+        }
+        None => path.to_string(),
+    };
+    format!("{name}({short})")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_title_shows_file_path() {
+        let args = serde_json::json!({"file_path": "/tmp/some/file.rs"});
+        assert_eq!(tool_title("read", &args), "read(/tmp/some/file.rs)");
+        let args = serde_json::json!({"command": "ls"});
+        assert_eq!(tool_title("terminal", &args), "terminal(...)");
+        let args = serde_json::json!({});
+        assert_eq!(tool_title("web_search", &args), "web_search(...)");
+        if let Some(home) = dirs::home_dir() {
+            let args = serde_json::json!({"file_path": format!("{}/x/y.rs", home.display())});
+            assert_eq!(tool_title("edit", &args), "edit(~/x/y.rs)");
+            // Prefix trap: a sibling dir sharing the home prefix stays absolute.
+            let args = serde_json::json!({"file_path": format!("{}2/x.rs", home.display())});
+            assert_eq!(
+                tool_title("edit", &args),
+                format!("edit({}2/x.rs)", home.display())
+            );
+        }
+    }
 
     #[test]
     fn repair_valid_json() {
