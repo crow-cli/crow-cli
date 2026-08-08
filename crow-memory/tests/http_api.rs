@@ -244,3 +244,39 @@ async fn backoff_fails_fast_on_4xx() {
     assert!(resp.is_ok());
     assert!(start.elapsed().as_secs() < 2);
 }
+
+#[tokio::test]
+async fn wedged_server_times_out() {
+    // A server that accepts TCP but never answers — the exact wedge that
+    // used to hang every persist/memory call forever.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (sock, _) = match listener.accept().await {
+                Ok(s) => s,
+                Err(_) => return,
+            };
+            // Hold the connection open, never write a byte.
+            tokio::spawn(async move {
+                let _sock = sock;
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+            });
+        }
+    });
+
+    let client = crow_memory_sdk::MemoryClient::connect_with_timeout(
+        format!("http://{addr}"),
+        std::time::Duration::from_millis(250),
+    );
+    let start = std::time::Instant::now();
+    let err = client
+        .health()
+        .await
+        .expect_err("silent server must error, not hang");
+    // 250ms timeout + 5 retries with backoff caps out well under this.
+    // Without the client timeout this never returns.
+    assert!(start.elapsed() < std::time::Duration::from_secs(15));
+    let msg = format!("{err:#}");
+    assert!(msg.contains("timeout"), "expected a timeout error, got: {msg}");
+}
