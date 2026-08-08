@@ -84,20 +84,20 @@ async fn full_api_round_trip() {
         .await
         .unwrap();
     assert!(id2 > id1);
-    let msgs = client.load_messages("a-1").await.unwrap();
+    let msgs = client.load_messages("a-1", false).await.unwrap();
     assert_eq!(msgs.len(), 2);
     assert_eq!(msgs[0]["role"], "user");
     assert_eq!(msgs[1]["content"], "yes it is");
 
     // query by agent with role filter
     let users: Vec<_> = client
-        .query_messages_by_agent("a-1", true, 10, Some("user"))
+        .query_messages_by_agent("a-1", true, 10, Some("user"), false)
         .await
         .unwrap();
     assert_eq!(users.len(), 1);
     assert_eq!(users[0].role, "user");
     let all = client
-        .query_messages_by_agent("a-1", false, 10, None)
+        .query_messages_by_agent("a-1", false, 10, None, false)
         .await
         .unwrap();
     assert_eq!(all.len(), 2);
@@ -163,7 +163,7 @@ async fn concurrent_add_message_unique_ids() {
     assert_eq!(ids.len(), N, "concurrent add_message handed out duplicate ids");
 
     // Every message landed and is readable.
-    let msgs = client.load_messages("race-agent-1").await.unwrap();
+    let msgs = client.load_messages("race-agent-1", false).await.unwrap();
     assert_eq!(msgs.len(), N);
 }
 

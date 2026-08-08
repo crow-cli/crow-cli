@@ -15,7 +15,14 @@ use lancedb::query::{ExecutableQuery, QueryBase};
 use lancedb::table::Table;
 use tokio::sync::Mutex;
 
+use sha2::{Digest, Sha256};
+
+use crate::api::{base64_decode, base64_encode};
 use crate::embed::{self, EmbedConfig};
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
 
 fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339()
@@ -304,16 +311,21 @@ impl MemoryStore {
         // recreate it from the cached manifest, diverging from history.
         probe_messages_table(&self.messages).await?;
 
+        // Pull inline images into the images table BEFORE embed + persist:
+        // the stored `data` carries small image_ref blocks instead of megabyte
+        // base64 strings, and the embedding sees the cleaned message.
+        let message = self.extract_images(message).await?;
+
         // Embedding happens BEFORE the id lock — the network round-trip is
         // the slow part, and it doesn't depend on the id.
-        let text = embed::text_for_embedding(message);
+        let text = embed::text_for_embedding(&message);
         let mv = self.embed_config.embed_text(&self.http, &text).await;
 
         let role = message
             .get("role")
             .and_then(|r| r.as_str())
             .unwrap_or("unknown");
-        let data_json = serde_json::to_string(message)?;
+        let data_json = serde_json::to_string(&message)?;
 
         let pt = usage
             .and_then(|u| u.get("prompt_tokens"))
@@ -357,6 +369,7 @@ impl MemoryStore {
     pub async fn load_messages(
         &self,
         agent_id: &str,
+        hydrate_images: bool,
     ) -> anyhow::Result<Vec<serde_json::Value>> {
         let rows = query_all(
             &self.messages,
@@ -378,7 +391,15 @@ impl MemoryStore {
             }
         }
         msgs.sort_by_key(|(id, _)| *id);
-        Ok(msgs.into_iter().map(|(_, v)| v).collect())
+        let mut out = Vec::with_capacity(msgs.len());
+        for (_, v) in msgs {
+            out.push(if hydrate_images {
+                self.hydrate_message(v).await
+            } else {
+                v
+            });
+        }
+        Ok(out)
     }
 
     pub async fn query_messages_by_agent(
@@ -387,6 +408,7 @@ impl MemoryStore {
         order_asc: bool,
         limit: usize,
         role: Option<&str>,
+        hydrate_images: bool,
     ) -> anyhow::Result<Vec<MessageRecord>> {
         // Project away the multivector column — full-row scans read gigabytes.
         use futures::TryStreamExt;
@@ -438,6 +460,11 @@ impl MemoryStore {
             out.sort_by(|a, b| b.id.cmp(&a.id));
         }
         out.truncate(limit);
+        if hydrate_images {
+            for m in &mut out {
+                m.data = self.hydrate_message(std::mem::take(&mut m.data)).await;
+            }
+        }
         Ok(out)
     }
 
@@ -709,6 +736,122 @@ impl MemoryStore {
     }
 
     // ---- images ----
+
+    /// Pull inline images out of a message; replace with image_ref blocks.
+    ///
+    /// Handles OpenAI (`{type: image_url, image_url: {url: "data:<mime>;base64,<b64>"}}`)
+    /// and ACP (`{type: image, data, mimeType}`) blocks. Content-addressed:
+    /// `image_id = "sha256:" + hex(bytes)`, so identical bytes dedupe to one
+    /// row. Existing image_ref blocks pass through untouched.
+    async fn extract_images(
+        &self,
+        message: &serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        let Some(arr) = message.get("content").and_then(|c| c.as_array()) else {
+            return Ok(message.clone());
+        };
+
+        let mut cleaned = Vec::with_capacity(arr.len());
+        for block in arr {
+            let Some(obj) = block.as_object() else {
+                cleaned.push(block.clone());
+                continue;
+            };
+            let btype = obj.get("type").and_then(|t| t.as_str()).unwrap_or("");
+            let mut payload: Option<(Vec<u8>, String)> = None;
+            match btype {
+                "image" => {
+                    if let Some(b64) = obj.get("data").and_then(|d| d.as_str()) {
+                        if let Ok(bytes) = base64_decode(b64) {
+                            let mime = obj
+                                .get("mimeType")
+                                .and_then(|m| m.as_str())
+                                .unwrap_or("image/png")
+                                .to_string();
+                            payload = Some((bytes, mime));
+                        }
+                    }
+                }
+                "image_url" => {
+                    let url = obj
+                        .get("image_url")
+                        .and_then(|i| i.get("url"))
+                        .and_then(|u| u.as_str())
+                        .unwrap_or("");
+                    if let Some((mime, b64)) = url.split_once(";base64,") {
+                        if let (Some(mime), Ok(bytes)) =
+                            (mime.strip_prefix("data:"), base64_decode(b64))
+                        {
+                            payload = Some((bytes, mime.to_string()));
+                        }
+                    }
+                }
+                "image_ref" => {
+                    // Already extracted — pass through.
+                    cleaned.push(block.clone());
+                    continue;
+                }
+                _ => {}
+            }
+
+            match payload {
+                Some((bytes, mime)) => {
+                    let image_id = format!("sha256:{}", hex_sha256(&bytes));
+                    // Content-addressed dedupe: only insert if unseen.
+                    if self.get_image(&image_id).await?.is_none() {
+                        self.add_image(&image_id, &mime, &bytes, 0, 0).await?;
+                    }
+                    cleaned.push(serde_json::json!({
+                        "type": "image_ref",
+                        "image_id": image_id,
+                        "mime": mime,
+                        "w": 0,
+                        "h": 0,
+                    }));
+                }
+                None => cleaned.push(block.clone()),
+            }
+        }
+
+        let mut out = message.clone();
+        out["content"] = serde_json::Value::Array(cleaned);
+        Ok(out)
+    }
+
+    /// Swap image_ref blocks back to inline base64 data URLs (for the LLM).
+    /// Unknown refs pass through as-is; non-array content is returned unchanged.
+    async fn hydrate_message(&self, message: serde_json::Value) -> serde_json::Value {
+        let Some(arr) = message.get("content").and_then(|c| c.as_array()) else {
+            return message;
+        };
+        let mut out_blocks = Vec::with_capacity(arr.len());
+        for block in arr {
+            let replaced = if let Some(id) = block
+                .get("type")
+                .filter(|t| t.as_str() == Some("image_ref"))
+                .and_then(|_| block.get("image_id"))
+                .and_then(|i| i.as_str())
+            {
+                match self.get_image(id).await {
+                    Ok(Some(img)) => Some(serde_json::json!({
+                        "type": "image_url",
+                        "image_url": {"url": format!(
+                            "data:{};base64,{}",
+                            img.mime,
+                            base64_encode(&img.data)
+                        )},
+                    })),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            out_blocks.push(replaced.unwrap_or_else(|| block.clone()));
+        }
+        let mut out = message;
+        out["content"] = serde_json::Value::Array(out_blocks);
+        out
+    }
 
     pub async fn add_image(
         &self,

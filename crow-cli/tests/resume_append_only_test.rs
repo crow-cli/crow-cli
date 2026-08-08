@@ -22,7 +22,7 @@ async fn resume_load(
     assert!(!agents.is_empty(), "no agent records for session {sid}");
     let rec = crow_cli::session::pick_resume_agent(&agents).clone();
     let rows = store
-        .query_messages_by_agent(&rec.agent_id, true, 100_000, None)
+        .query_messages_by_agent(&rec.agent_id, true, 100_000, None, false)
         .await
         .unwrap();
     let stored: Vec<serde_json::Value> = rows.into_iter().map(|m| m.data).collect();
@@ -143,7 +143,7 @@ async fn resume_message_ids_strictly_increase_across_resumes() {
         // Simulate death + resume between every append: the ids already on
         // disk must come back in the same strictly-increasing order.
         let rows = store
-            .query_messages_by_agent("append-only-ids-1", true, 100_000, None)
+            .query_messages_by_agent("append-only-ids-1", true, 100_000, None, false)
             .await
             .unwrap();
         let ids: Vec<i64> = rows.iter().map(|r| r.id).collect();

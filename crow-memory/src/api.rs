@@ -149,11 +149,18 @@ async fn add_message(
     Ok(Json(AddMessageResponse { id }))
 }
 
+#[derive(serde::Deserialize)]
+struct LoadMessagesQuery {
+    #[serde(default)]
+    hydrate: bool,
+}
+
 async fn load_messages(
     State(s): State<Arc<MemoryStore>>,
     Path(agent_id): Path<String>,
+    Query(q): Query<LoadMessagesQuery>,
 ) -> Result<Json<Vec<serde_json::Value>>, ApiError> {
-    Ok(Json(s.load_messages(&agent_id).await?))
+    Ok(Json(s.load_messages(&agent_id, q.hydrate).await?))
 }
 
 #[derive(serde::Deserialize)]
@@ -163,6 +170,8 @@ struct QueryMessagesQuery {
     #[serde(default = "default_query_limit")]
     limit: usize,
     role: Option<String>,
+    #[serde(default)]
+    hydrate: bool,
 }
 
 fn default_query_limit() -> usize {
@@ -175,8 +184,14 @@ async fn query_messages(
     Query(q): Query<QueryMessagesQuery>,
 ) -> Result<Json<Vec<MessageRecord>>, ApiError> {
     Ok(Json(
-        s.query_messages_by_agent(&agent_id, q.order_asc, q.limit, q.role.as_deref())
-            .await?,
+        s.query_messages_by_agent(
+            &agent_id,
+            q.order_asc,
+            q.limit,
+            q.role.as_deref(),
+            q.hydrate,
+        )
+        .await?,
     ))
 }
 
@@ -281,7 +296,7 @@ async fn get_image(
 const B64_ALPHABET: &[u8; 64] =
     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-fn base64_encode(data: &[u8]) -> String {
+pub(crate) fn base64_encode(data: &[u8]) -> String {
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
         let b = [
@@ -306,7 +321,7 @@ fn base64_encode(data: &[u8]) -> String {
     out
 }
 
-fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
     let bytes: Vec<u8> = s
         .bytes()
         .filter(|&b| !b.is_ascii_whitespace())

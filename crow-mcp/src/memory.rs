@@ -451,7 +451,7 @@ impl CrowMcpServer {
         for agent in agents {
             let msgs = self
                 .memory
-                .query_messages_by_agent(&agent.agent_id, true, usize::MAX, None)
+                .query_messages_by_agent(&agent.agent_id, true, usize::MAX, None, false)
                 .await
                 .map_err(|e| McpError::internal_error(format!("memory error: {e}"), None))?;
             for m in msgs {

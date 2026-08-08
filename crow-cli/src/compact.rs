@@ -244,33 +244,83 @@ fn unroll_content(content: Option<&serde_json::Value>, max_chars: usize) -> Stri
     text.chars().take(max_chars).collect()
 }
 
+/// One array-content block → multimodal part for a user message.
+/// Text and image_url blocks map 1:1; anything else is dropped.
+fn user_content_part(
+    block: &serde_json::Value,
+) -> Option<async_openai_thinking::types::chat::ChatCompletionRequestUserMessageContentPart> {
+    use async_openai_thinking::types::chat::*;
+    match block.get("type").and_then(|t| t.as_str())? {
+        "text" => Some(
+            ChatCompletionRequestMessageContentPartText {
+                text: block.get("text")?.as_str()?.to_string(),
+            }
+            .into(),
+        ),
+        "image_url" => Some(
+            ChatCompletionRequestMessageContentPartImage {
+                image_url: ImageUrl {
+                    url: block.get("image_url")?.get("url")?.as_str()?.to_string(),
+                    detail: None,
+                },
+            }
+            .into(),
+        ),
+        _ => None,
+    }
+}
+
 /// Convert a JSON message dict to an async-openai ChatCompletionRequestMessage.
+///
+/// Array content (multimodal tool results, image user messages) survives:
+/// user messages become multimodal requests (text + image parts); assistant
+/// and tool roles only accept text parts, so those are kept (tool-result
+/// images are covered by the adjacent `[image: ...]` text marker).
 pub fn json_to_openai_message(
     msg: &serde_json::Value,
 ) -> Option<async_openai_thinking::types::chat::ChatCompletionRequestMessage> {
     use async_openai_thinking::types::chat::*;
 
     let role = msg.get("role")?.as_str()?;
-    let content_str = match msg.get("content") {
-        Some(serde_json::Value::String(s)) => Some(s.as_str()),
-        _ => None,
-    };
+    let content = msg.get("content");
 
     match role {
         "system" | "developer" => {
             let mut builder = ChatCompletionRequestSystemMessageArgs::default();
-            builder.content(content_str.unwrap_or(""));
+            builder.content(unroll_content(content, usize::MAX));
             Some(builder.build().ok()?.into())
         }
         "user" => {
             let mut builder = ChatCompletionRequestUserMessageArgs::default();
-            builder.content(content_str.unwrap_or(""));
+            match content {
+                Some(serde_json::Value::Array(arr)) => {
+                    let parts: Vec<ChatCompletionRequestUserMessageContentPart> =
+                        arr.iter().filter_map(user_content_part).collect();
+                    if parts.is_empty() {
+                        builder.content("");
+                    } else {
+                        builder.content(parts);
+                    }
+                }
+                _ => {
+                    builder.content(content.and_then(|c| c.as_str()).unwrap_or(""));
+                }
+            }
             Some(builder.build().ok()?.into())
         }
         "assistant" => {
             let mut builder = ChatCompletionRequestAssistantMessageArgs::default();
-            if let Some(c) = content_str {
-                builder.content(c);
+            match content {
+                Some(serde_json::Value::String(s)) => {
+                    builder.content(s.as_str());
+                }
+                Some(serde_json::Value::Array(_)) => {
+                    let text = unroll_content(content, usize::MAX);
+                    if !text.is_empty() {
+                        builder.content(text);
+                    }
+                }
+                _ => {}
             }
             if let Some(tcs) = msg.get("tool_calls").and_then(|t| t.as_array()) {
                 let tool_calls: Vec<ChatCompletionMessageToolCalls> = tcs
@@ -301,7 +351,7 @@ pub fn json_to_openai_message(
             let tool_call_id = msg.get("tool_call_id")?.as_str()?;
             let mut builder = ChatCompletionRequestToolMessageArgs::default();
             builder.tool_call_id(tool_call_id);
-            builder.content(content_str.unwrap_or(""));
+            builder.content(unroll_content(content, usize::MAX));
             Some(builder.build().ok()?.into())
         }
         _ => None,
@@ -385,5 +435,64 @@ mod tests {
     fn json_to_openai_unknown_role() {
         let msg = serde_json::json!({"role": "alien", "content": "????"});
         assert!(json_to_openai_message(&msg).is_none());
+    }
+
+    /// Regression: array content with an image must survive conversion —
+    /// pre-fix, any non-string content was silently dropped (message became
+    /// an empty string), eating images out of the API request.
+    #[test]
+    fn json_to_openai_user_multimodal() {
+        use async_openai_thinking::types::chat::*;
+        let msg = serde_json::json!({
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "what is this?"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}},
+            ],
+        });
+        let result = json_to_openai_message(&msg).expect("multimodal user message converts");
+        let ChatCompletionRequestMessage::User(user) = result else {
+            panic!("expected user message");
+        };
+        let ChatCompletionRequestUserMessageContent::Array(parts) = user.content else {
+            panic!("expected array content, got {:?}", user.content);
+        };
+        assert_eq!(parts.len(), 2);
+        match &parts[0] {
+            ChatCompletionRequestUserMessageContentPart::Text(t) => {
+                assert_eq!(t.text, "what is this?")
+            }
+            p => panic!("expected text part, got {p:?}"),
+        }
+        match &parts[1] {
+            ChatCompletionRequestUserMessageContentPart::ImageUrl(i) => {
+                assert_eq!(i.image_url.url, "data:image/png;base64,QUJD")
+            }
+            p => panic!("expected image part, got {p:?}"),
+        }
+    }
+
+    /// Tool results with array content (the react.rs image path) keep their
+    /// text parts — including the `[image: ...]` marker — instead of being
+    /// dropped to an empty string.
+    #[test]
+    fn json_to_openai_tool_array_content() {
+        use async_openai_thinking::types::chat::*;
+        let msg = serde_json::json!({
+            "role": "tool",
+            "tool_call_id": "tc1",
+            "content": [
+                {"type": "text", "text": "[image: image/png]"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}},
+            ],
+        });
+        let result = json_to_openai_message(&msg).expect("tool message converts");
+        let ChatCompletionRequestMessage::Tool(tool) = result else {
+            panic!("expected tool message");
+        };
+        let ChatCompletionRequestToolMessageContent::Text(text) = tool.content else {
+            panic!("expected text content");
+        };
+        assert!(text.contains("[image: image/png]"));
     }
 }

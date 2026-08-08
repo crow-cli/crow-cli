@@ -96,7 +96,7 @@ impl AgentSession {
             .get_agent(agent_id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("agent '{agent_id}' not found"))?;
-        let messages = store.load_messages(agent_id).await?;
+        let messages = store.load_messages(agent_id, false).await?;
         Ok(Self {
             agent_id: agent.agent_id,
             session_id: agent.session_id,
@@ -120,8 +120,11 @@ pub async fn load_resume_messages(
     store: &MemoryClient,
     agent_id: &str,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
+    // Hydrate on the way in: resumed history carries inline image data URLs,
+    // so the model sees the same images the original turn saw. The stored
+    // rows keep their image_ref blocks — hydration is read-side only.
     let rows = store
-        .query_messages_by_agent(agent_id, true, 100_000, None)
+        .query_messages_by_agent(agent_id, true, 100_000, None, true)
         .await?;
     Ok(crate::compact::fill_missing_tool_responses(
         &rows.into_iter().map(|m| m.data).collect::<Vec<_>>(),

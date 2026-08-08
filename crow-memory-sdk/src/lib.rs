@@ -186,14 +186,17 @@ impl MemoryClient {
         Ok(r.id)
     }
 
+    /// Load a generation's raw messages. With `hydrate_images`, image_ref
+    /// blocks come back as inline base64 data URLs (what the LLM needs).
     pub async fn load_messages(
         &self,
         agent_id: &str,
+        hydrate_images: bool,
     ) -> anyhow::Result<Vec<serde_json::Value>> {
         self.send(
             Method::GET,
             &format!("/v1/agents/{agent_id}/messages"),
-            &[],
+            &[("hydrate", hydrate_images.to_string())],
             None::<&()>,
         )
         .await
@@ -205,10 +208,12 @@ impl MemoryClient {
         order_asc: bool,
         limit: usize,
         role: Option<&str>,
+        hydrate_images: bool,
     ) -> anyhow::Result<Vec<MessageRecord>> {
         let mut query: Vec<(&str, String)> = vec![
             ("order_asc", order_asc.to_string()),
             ("limit", limit.to_string()),
+            ("hydrate", hydrate_images.to_string()),
         ];
         if let Some(r) = role {
             query.push(("role", r.to_string()));
