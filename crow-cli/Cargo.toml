@@ -30,7 +30,7 @@ agent-client-protocol-http = { git = "https://github.com/agentclientprotocol/rus
 axum = "0.8"
 
 # LLM
-async-openai-thinking = { package = "async-openai-thinking", version = "0.41.3", features = ["chat-completion"] }
+async-openai-thinking = { package = "async-openai-thinking", version = "0.41.5", features = ["chat-completion"] }
 
 # MCP
 rmcp = { version = "2.2", features = ["client", "transport-child-process", "schemars"] }

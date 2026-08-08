@@ -270,12 +270,39 @@ fn user_content_part(
     }
 }
 
+/// One array-content block → part for a tool message. Text and image_url
+/// blocks map 1:1 (crow fork async-openai-thinking: tool parts accept
+/// images — vision tool results); anything else is dropped.
+fn tool_content_part(
+    block: &serde_json::Value,
+) -> Option<async_openai_thinking::types::chat::ChatCompletionRequestToolMessageContentPart> {
+    use async_openai_thinking::types::chat::*;
+    match block.get("type").and_then(|t| t.as_str())? {
+        "text" => Some(
+            ChatCompletionRequestMessageContentPartText {
+                text: block.get("text")?.as_str()?.to_string(),
+            }
+            .into(),
+        ),
+        "image_url" => Some(
+            ChatCompletionRequestMessageContentPartImage {
+                image_url: ImageUrl {
+                    url: block.get("image_url")?.get("url")?.as_str()?.to_string(),
+                    detail: None,
+                },
+            }
+            .into(),
+        ),
+        _ => None,
+    }
+}
+
 /// Convert a JSON message dict to an async-openai ChatCompletionRequestMessage.
 ///
 /// Array content (multimodal tool results, image user messages) survives:
-/// user messages become multimodal requests (text + image parts); assistant
-/// and tool roles only accept text parts, so those are kept (tool-result
-/// images are covered by the adjacent `[image: ...]` text marker).
+/// user and tool messages become multimodal requests (text + image parts);
+/// assistant messages unroll to text parts (assistant content never carries
+/// images — only text + tool_calls).
 pub fn json_to_openai_message(
     msg: &serde_json::Value,
 ) -> Option<async_openai_thinking::types::chat::ChatCompletionRequestMessage> {
@@ -351,7 +378,20 @@ pub fn json_to_openai_message(
             let tool_call_id = msg.get("tool_call_id")?.as_str()?;
             let mut builder = ChatCompletionRequestToolMessageArgs::default();
             builder.tool_call_id(tool_call_id);
-            builder.content(unroll_content(content, usize::MAX));
+            match content {
+                Some(serde_json::Value::Array(arr)) => {
+                    let parts: Vec<ChatCompletionRequestToolMessageContentPart> =
+                        arr.iter().filter_map(tool_content_part).collect();
+                    if parts.is_empty() {
+                        builder.content("");
+                    } else {
+                        builder.content(parts);
+                    }
+                }
+                _ => {
+                    builder.content(unroll_content(content, usize::MAX));
+                }
+            }
             Some(builder.build().ok()?.into())
         }
         _ => None,
@@ -472,9 +512,9 @@ mod tests {
         }
     }
 
-    /// Tool results with array content (the react.rs image path) keep their
-    /// text parts — including the `[image: ...]` marker — instead of being
-    /// dropped to an empty string.
+    /// Tool results with array content (the react.rs image path) keep BOTH
+    /// text and image parts — the image must reach the LLM, not just the
+    /// `[image: ...]` marker.
     #[test]
     fn json_to_openai_tool_array_content() {
         use async_openai_thinking::types::chat::*;
@@ -490,9 +530,51 @@ mod tests {
         let ChatCompletionRequestMessage::Tool(tool) = result else {
             panic!("expected tool message");
         };
-        let ChatCompletionRequestToolMessageContent::Text(text) = tool.content else {
-            panic!("expected text content");
+        let ChatCompletionRequestToolMessageContent::Array(parts) = tool.content else {
+            panic!("expected array content, got {:?}", tool.content);
         };
-        assert!(text.contains("[image: image/png]"));
+        assert_eq!(parts.len(), 2);
+        match &parts[0] {
+            ChatCompletionRequestToolMessageContentPart::Text(t) => {
+                assert_eq!(t.text, "[image: image/png]")
+            }
+            p => panic!("expected text part, got {p:?}"),
+        }
+        match &parts[1] {
+            ChatCompletionRequestToolMessageContentPart::ImageUrl(i) => {
+                assert_eq!(i.image_url.url, "data:image/png;base64,QUJD")
+            }
+            p => panic!("expected image part, got {p:?}"),
+        }
+    }
+
+    /// Regression for the exact vision-tool failure: read_image_file returns
+    /// ONLY an image block (no text parts). Pre-fix, unroll_content kept only
+    /// text parts → the tool message arrived at the LLM as empty content and
+    /// the model saw nothing. The image part must survive on its own.
+    #[test]
+    fn json_to_openai_tool_image_only() {
+        use async_openai_thinking::types::chat::*;
+        let msg = serde_json::json!({
+            "role": "tool",
+            "tool_call_id": "tc1",
+            "content": [
+                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,QUJD"}},
+            ],
+        });
+        let result = json_to_openai_message(&msg).expect("tool message converts");
+        let ChatCompletionRequestMessage::Tool(tool) = result else {
+            panic!("expected tool message");
+        };
+        let ChatCompletionRequestToolMessageContent::Array(parts) = tool.content else {
+            panic!("expected array content, got {:?}", tool.content);
+        };
+        assert_eq!(parts.len(), 1);
+        match &parts[0] {
+            ChatCompletionRequestToolMessageContentPart::ImageUrl(i) => {
+                assert_eq!(i.image_url.url, "data:image/jpeg;base64,QUJD")
+            }
+            p => panic!("expected image part, got {p:?}"),
+        }
     }
 }
