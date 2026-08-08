@@ -16,6 +16,29 @@ pub struct CaptureWebcamParams {
 
 fn default_device_index() -> u32 { 6 }
 
+/// Vision payload cap: phone photos (4080x3060) encode to ~11MB of base64
+/// and blow past provider limits. Downscale in-process before encoding.
+const MAX_EDGE: u32 = 1568;
+
+/// Downscale (if needed) and encode for the LLM. JPEG unless the image has
+/// alpha (JPEG can't carry it), then PNG.
+fn encode_for_vision(img: image::DynamicImage) -> Result<(Vec<u8>, &'static str), String> {
+    let img = if img.width().max(img.height()) > MAX_EDGE {
+        img.resize(MAX_EDGE, MAX_EDGE, image::imageops::FilterType::Triangle)
+    } else {
+        img
+    };
+    let (format, mime) = if img.color().has_alpha() {
+        (image::ImageFormat::Png, "image/png")
+    } else {
+        (image::ImageFormat::Jpeg, "image/jpeg")
+    };
+    let mut buf = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut buf, format)
+        .map_err(|e| format!("failed to encode image: {e}"))?;
+    Ok((buf.into_inner(), mime))
+}
+
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ReadImageFileParams {
     /// Absolute path to the image file (jpg, jpeg, png, bmp, etc.)
@@ -52,20 +75,17 @@ impl CrowMcpServer {
                 .map_err(|e| format!("failed to decode frame: {e}"))?;
             drop(camera);
 
-            // Encode as JPEG
-            let mut buf = std::io::Cursor::new(Vec::new());
-            img.write_to(&mut buf, image::ImageFormat::Jpeg)
-                .map_err(|e| format!("failed to encode JPEG: {e}"))?;
-            Ok::<Vec<u8>, String>(buf.into_inner())
+            encode_for_vision(image::DynamicImage::ImageRgb8(img))
         })
         .await
         .map_err(|e| McpError::internal_error(format!("task join error: {e}"), None))?
         .map_err(|e| McpError::internal_error(e, None))?;
 
-        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &result);
+        let (bytes, mime) = result;
+        let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
 
         Ok(CallToolResult::success(vec![ContentBlock::Image(
-            ImageContent::new(b64, "image/jpeg"),
+            ImageContent::new(b64, mime),
         )]))
     }
 
@@ -92,20 +112,10 @@ impl CrowMcpServer {
             )
         })?;
 
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_lowercase())
-            .unwrap_or_default();
-        let (format, mime) = match ext.as_str() {
-            "png" => (image::ImageFormat::Png, "image/png"),
-            _ => (image::ImageFormat::Jpeg, "image/jpeg"),
-        };
-        let mut buf = std::io::Cursor::new(Vec::new());
-        img.write_to(&mut buf, format)
-            .map_err(|e| McpError::internal_error(format!("Failed to encode image: {e}"), None))?;
+        let (bytes, mime) = encode_for_vision(img)
+            .map_err(|e| McpError::internal_error(e, None))?;
         let b64 =
-            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, buf.into_inner());
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes);
         Ok(CallToolResult::success(vec![ContentBlock::Image(
             ImageContent::new(b64, mime),
         )]))
