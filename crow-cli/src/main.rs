@@ -929,7 +929,9 @@ async fn run_client(
 /// 12.5: fire-and-forget run. Re-exec ourselves with `--headless` stripped and
 /// `--json` forced (machine-parseable session line), detached with stdio into
 /// a log file; print session id + pid + log path once the child reports the
-/// session, then exit — the child keeps working.
+/// session, then exit — the child keeps working. Log naming follows the v1
+/// convention: `logs/crow-cli-{session_id}.log` (renamed from a temp name
+/// once the session id is known).
 fn run_headless(config_dir: Option<&std::path::Path>) -> anyhow::Result<()> {
     let exe = std::env::current_exe()?;
     let mut args: Vec<String> = std::env::args()
@@ -979,12 +981,21 @@ fn run_headless(config_dir: Option<&std::path::Path>) -> anyhow::Result<()> {
             {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
                     if v.get("session").is_some() {
+                        // v1 convention: logs/crow-cli-{session_id}.log —
+                        // rename now that the id is known (the child's open fd
+                        // follows the inode).
+                        let id = v["session"]["id"]
+                            .as_str()
+                            .ok_or_else(|| anyhow::anyhow!("session line missing id"))?;
+                        let final_path =
+                            dir.join("logs").join(format!("crow-cli-{id}.log"));
+                        std::fs::rename(&log_path, &final_path)?;
                         println!(
                             "{}",
                             serde_json::json!({
                                 "session": v["session"],
                                 "pid": pid,
-                                "log": log_path.display().to_string(),
+                                "log": final_path.display().to_string(),
                             })
                         );
                         return Ok(());
