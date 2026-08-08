@@ -76,6 +76,22 @@ struct SessionInner {
     state: tokio::sync::Mutex<SessionState>,
 }
 
+/// RAII release of `SessionInner.foreground`. Constructed as the first
+/// statement of the spawned turn task; `Drop` clears the flag on EVERY exit
+/// path — normal completion, early return, and panic unwind alike. Without
+/// this a panic in the turn task skips the clear and the session rejects
+/// every future prompt ("already has foreground work") until process
+/// restart.
+struct ForegroundGuard<'a> {
+    flag: &'a std::sync::atomic::AtomicBool,
+}
+
+impl Drop for ForegroundGuard<'_> {
+    fn drop(&mut self) {
+        self.flag.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
 struct SessionState {
     session: AgentSession,
     mcp_clients: Vec<McpClient>,
@@ -672,7 +688,12 @@ impl ConnectTo<Client> for CrowAgent {
                         // the session's fan-out (update_tx) and keeps running after a
                         // client disconnect; pumps on live connections forward updates.
                         let sid_watch = sid_key.clone();
+                        let agent_watch = agent.clone();
                         let handle = tokio::spawn(async move {
+                            // RAII: the flag is released on every exit path,
+                            // including panic unwind (see ForegroundGuard).
+                            let _foreground = ForegroundGuard { flag: &inner.foreground };
+
                             // Cancel token + user message under the per-session
                             // lock (brief section — no LLM calls).
                             let (cancel, user_msg_id) = {
@@ -757,21 +778,31 @@ impl ConnectTo<Client> for CrowAgent {
                                 }
                             };
 
-                            // Idle + clear foreground
+                            // Idle (foreground is released by the guard's Drop)
                             let _ = inner.update_tx.send(acp::SessionUpdate::StateUpdate(
                                 acp::StateUpdate::Idle(
                                     acp::IdleStateUpdate::new().stop_reason(stop),
                                 ),
                             ));
-
-                            inner
-                                .foreground
-                                .store(false, std::sync::atomic::Ordering::Release);
                         });
                         // Surface a silent death (panic) of the detached turn.
                         tokio::spawn(async move {
                             if let Err(e) = handle.await {
                                 tracing::error!("turn task for {sid_watch} died: {e}");
+                                // The guard already released the flag (Drop runs
+                                // during unwind); fix the client-visible half —
+                                // without an Idle update attached clients sit in
+                                // Running forever.
+                                if let Some(inner) =
+                                    agent_watch.state.lock().await.sessions.get(&sid_watch)
+                                {
+                                    let _ = inner.update_tx.send(acp::SessionUpdate::StateUpdate(
+                                        acp::StateUpdate::Idle(
+                                            acp::IdleStateUpdate::new()
+                                                .stop_reason(acp::StopReason::EndTurn),
+                                        ),
+                                    ));
+                                }
                             }
                         });
                         Ok(())
@@ -918,5 +949,38 @@ mod auth_tests {
         remove_env_var_file(dir.path(), "FOO_KEY");
         let content = std::fs::read_to_string(dir.path().join(".env")).unwrap();
         assert!(!content.contains("FOO_KEY") && content.contains("OTHER=x"));
+    }
+}
+
+#[cfg(test)]
+mod foreground_guard_tests {
+    use super::*;
+    use std::panic::AssertUnwindSafe;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn guard_clears_flag_on_normal_drop() {
+        let flag = AtomicBool::new(true);
+        {
+            let _guard = ForegroundGuard { flag: &flag };
+            assert!(flag.load(Ordering::Acquire), "flag held while the guard lives");
+        }
+        assert!(!flag.load(Ordering::Acquire), "drop must release the flag");
+    }
+
+    #[test]
+    fn guard_clears_flag_on_panic_unwind() {
+        // The exact brick scenario: the turn task panics while holding the
+        // foreground flag. Unwind must still release it.
+        let flag = AtomicBool::new(true);
+        let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            let _guard = ForegroundGuard { flag: &flag };
+            panic!("turn task died");
+        }));
+        assert!(result.is_err(), "the closure must actually panic");
+        assert!(
+            !flag.load(Ordering::Acquire),
+            "panic unwind must release the flag — otherwise the session is bricked"
+        );
     }
 }
