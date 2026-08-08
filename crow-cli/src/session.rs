@@ -24,6 +24,10 @@ pub struct AgentSession {
     pub prompt_id: String,
     #[allow(dead_code)]
     pub prompt_args: serde_json::Value,
+    /// Messages kept in memory but NOT persisted to LanceDB. Nonzero means
+    /// the DB is behind in-memory state — a resume rebuilds from the DB and
+    /// would lose these messages.
+    pub failed_persists: u64,
 }
 
 impl AgentSession {
@@ -39,7 +43,11 @@ impl AgentSession {
             .add_message(&self.agent_id, &msg, usage.as_ref())
             .await
         {
-            tracing::warn!("failed to persist message: {e}");
+            self.failed_persists += 1;
+            tracing::warn!(
+                "failed to persist message ({} behind): {e}",
+                self.failed_persists
+            );
         }
     }
 
@@ -100,8 +108,24 @@ impl AgentSession {
             request_params: agent.request_params,
             prompt_id: agent.prompt_id,
             prompt_args: agent.prompt_args,
+            failed_persists: 0,
         })
     }
+}
+
+/// Load a generation's messages for resume: full history in insertion order,
+/// tail repaired (`fill_missing_tool_responses`). Errors propagate — a failed
+/// load must abort the resume, never be laundered into an empty history.
+pub async fn load_resume_messages(
+    store: &MemoryClient,
+    agent_id: &str,
+) -> anyhow::Result<Vec<serde_json::Value>> {
+    let rows = store
+        .query_messages_by_agent(agent_id, true, 100_000, None)
+        .await?;
+    Ok(crate::compact::fill_missing_tool_responses(
+        &rows.into_iter().map(|m| m.data).collect::<Vec<_>>(),
+    ))
 }
 
 /// The session's CURRENT conversation generation for resume: the highest
@@ -197,6 +221,7 @@ pub async fn make_agent_session(
         request_params,
         prompt_id,
         prompt_args,
+        failed_persists: 0,
     };
 
     // Start with system message

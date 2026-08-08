@@ -232,21 +232,34 @@ pub async fn react_loop(
         // Assemble tool calls (sorted by index for deterministic order)
         let mut tool_calls: Vec<ChatCompletionMessageToolCall> = Vec::new();
         let mut tool_call_json: Vec<serde_json::Value> = Vec::new();
+        // tool_call_id → parse error for arguments that could not be repaired.
+        // Execution synthesizes an error result for these instead of running
+        // the tool with empty args.
+        let mut malformed_args: HashMap<String, String> = HashMap::new();
         let mut indices: Vec<u32> = tc_accum.keys().copied().collect();
         indices.sort();
         tracing::debug!("tc_accum: {} entries, indices={:?}", indices.len(), indices);
         for idx in indices {
             let (id, name, arguments) = tc_accum.remove(&idx).unwrap();
-            let arguments = repair_json_args(&arguments);
-            // Coerce stringified values to the schema's declared types BEFORE
-            // persistence + execution, so stored history, the ACP raw_input
-            // display, and the MCP call all agree.
-            let arguments = match serde_json::from_str::<serde_json::Value>(&arguments) {
-                Ok(mut v) => {
+            let arguments = match repair_json_args(&arguments) {
+                Ok(repaired) => {
+                    // Coerce stringified values to the schema's declared types
+                    // BEFORE persistence + execution, so stored history, the
+                    // ACP raw_input display, and the MCP call all agree.
+                    // Ok guarantees valid JSON.
+                    let mut v = serde_json::from_str::<serde_json::Value>(&repaired)
+                        .expect("repair_json_args guarantees valid JSON");
                     coerce_args_to_schema(&mut v, tool_schema(tools, &name));
                     v.to_string()
                 }
-                Err(_) => arguments,
+                Err(e) => {
+                    // Unrepairable garbage: keep the raw arguments in history
+                    // (the model sees what it sent) but mark the call so it is
+                    // never executed with silently-empty args.
+                    tracing::warn!("tool '{name}': malformed arguments: {e}");
+                    malformed_args.insert(id.clone(), e);
+                    arguments
+                }
             };
 
             tool_calls.push(ChatCompletionMessageToolCall {
@@ -360,6 +373,30 @@ pub async fn react_loop(
                     "role": "tool",
                     "tool_call_id": tc.id,
                     "content": "Error: cancelled",
+                }));
+                continue;
+            }
+            // Unrepairable arguments: never execute — tell the model its JSON
+            // was garbage so it can self-correct on the next turn.
+            if let Some(parse_err) = malformed_args.get(&tc.id) {
+                let err_text = format!("Error: malformed tool call arguments: {parse_err}");
+                let _ = send_update(
+                    updates,
+                    session_id,
+                    acp::SessionUpdate::ToolCallUpdate(
+                        acp::ToolCallUpdate::new(tc.id.as_str())
+                            .title(format!("{}(...)", tc.function.name))
+                            .kind(tool_kind(&tc.function.name))
+                            .status(acp::ToolCallStatus::Failed)
+                            .content(vec![acp::ToolCallContent::from(
+                                acp::ContentBlock::Text(acp::TextContent::new(&err_text)),
+                            )]),
+                    ),
+                );
+                tool_results.push(serde_json::json!({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": err_text,
                 }));
                 continue;
             }
@@ -758,14 +795,45 @@ async fn call_tool(
         )),
     ));
 
+    let mut last_real_error: Option<rmcp::ServiceError> = None;
     for client in clients {
         match client.peer().call_tool(params.clone()).await {
             Ok(result) => return Ok(result),
-            Err(_) => continue,
+            // This server doesn't have the tool — try the next one.
+            Err(e) if is_tool_not_found(&e) => continue,
+            // Real failure (timeout, bad args, server crash): record it and
+            // keep trying the other servers, but never let it masquerade as
+            // a missing tool at the end.
+            Err(e) => {
+                tracing::warn!("tool '{name}' failed on MCP server: {e}");
+                last_real_error = Some(e);
+            }
         }
     }
 
-    anyhow::bail!("tool '{name}' not found on any MCP server")
+    match last_real_error {
+        Some(e) => anyhow::bail!("tool '{name}' failed: {e}"),
+        None => anyhow::bail!("tool '{name}' not found on any MCP server"),
+    }
+}
+
+/// True when the error means "this server doesn't have that tool" (keep
+/// trying other servers). Anything else is a real failure that must reach
+/// the model and the log.
+fn is_tool_not_found(err: &rmcp::ServiceError) -> bool {
+    match err {
+        rmcp::ServiceError::McpError(data) => tool_not_found_error(data),
+        _ => false,
+    }
+}
+
+/// The two "unknown tool" shapes MCP servers actually emit: METHOD_NOT_FOUND
+/// (bare rmcp handler default) and INVALID_PARAMS "tool not found" (rmcp
+/// tool router — what crow-mcp uses).
+fn tool_not_found_error(data: &rmcp::ErrorData) -> bool {
+    data.code == rmcp::model::ErrorCode::METHOD_NOT_FOUND
+        || (data.code == rmcp::model::ErrorCode::INVALID_PARAMS
+            && data.message == "tool not found")
 }
 
 fn send_update(
@@ -781,9 +849,13 @@ fn send_update(
 }
 
 /// Validate and repair JSON arguments from LLM tool calls.
-fn repair_json_args(args: &str) -> String {
+///
+/// Ok when the arguments are — or can be repaired into — valid JSON. Err
+/// carries the parse error for unrepairable garbage: the caller must surface
+/// it to the model as a tool error, never execute the tool with empty args.
+fn repair_json_args(args: &str) -> Result<String, String> {
     if serde_json::from_str::<serde_json::Value>(args).is_ok() {
-        return args.to_string();
+        return Ok(args.to_string());
     }
     let mut repaired = args.to_string();
     let open_brackets = repaired.matches('[').count();
@@ -796,10 +868,10 @@ fn repair_json_args(args: &str) -> String {
     if open_braces > close_braces {
         repaired.push_str(&"}".repeat(open_braces - close_braces));
     }
-    if serde_json::from_str::<serde_json::Value>(&repaired).is_ok() {
-        return repaired;
+    match serde_json::from_str::<serde_json::Value>(&repaired) {
+        Ok(_) => Ok(repaired),
+        Err(e) => Err(e.to_string()),
     }
-    "{}".to_string()
 }
 
 /// Look up a tool's declared JSON schema (function parameters) by name.
@@ -929,27 +1001,46 @@ mod tests {
 
     #[test]
     fn repair_valid_json() {
-        assert_eq!(repair_json_args(r#"{"key": "value"}"#), r#"{"key": "value"}"#);
+        assert_eq!(
+            repair_json_args(r#"{"key": "value"}"#).unwrap(),
+            r#"{"key": "value"}"#
+        );
     }
 
     #[test]
     fn repair_missing_brace() {
-        assert_eq!(repair_json_args(r#"{"key": "value""#), r#"{"key": "value"}"#);
+        assert_eq!(
+            repair_json_args(r#"{"key": "value""#).unwrap(),
+            r#"{"key": "value"}"#
+        );
     }
 
     #[test]
     fn repair_missing_bracket() {
-        assert_eq!(repair_json_args(r#"{"arr": [1, 2"#), r#"{"arr": [1, 2]}"#);
+        assert_eq!(
+            repair_json_args(r#"{"arr": [1, 2"#).unwrap(),
+            r#"{"arr": [1, 2]}"#
+        );
     }
 
     #[test]
-    fn repair_garbage() {
-        assert_eq!(repair_json_args("not json at all"), "{}");
+    fn repair_garbage_is_an_error_not_empty_args() {
+        // Unrepairable args must surface as an error — never become "{}".
+        let err = repair_json_args("not json at all").unwrap_err();
+        assert!(!err.is_empty(), "parse error must carry a message");
     }
 
     #[test]
-    fn repair_empty() {
-        assert_eq!(repair_json_args(""), "{}");
+    fn repair_empty_is_an_error() {
+        assert!(repair_json_args("").is_err());
+    }
+
+    #[test]
+    fn repair_error_carries_parse_detail() {
+        // The surfaced error must be the actual parse failure, so the model
+        // can self-correct.
+        let err = repair_json_args(r#"{"key": }"#).unwrap_err();
+        assert!(err.contains("expected value"), "got: {err}");
     }
 
     // ---- schema type coercion (qwen sends "30" for an integer param) ----
@@ -1034,5 +1125,156 @@ mod tests {
         let tools = vec![terminal_tool()];
         assert!(tool_schema(&tools, "terminal").is_some());
         assert!(tool_schema(&tools, "nope").is_none());
+    }
+
+    // ---- call_tool error discrimination ----
+    //
+    // Real rmcp server over an in-memory duplex pipe (rmcp's own test
+    // pattern) — no mocks, no external process.
+
+    #[test]
+    fn tool_not_found_error_shapes() {
+        // Bare rmcp handler default for an unknown tool.
+        let mnf = rmcp::ErrorData::method_not_found::<rmcp::model::CallToolRequestMethod>();
+        assert!(tool_not_found_error(&mnf));
+        // rmcp tool router shape (what crow-mcp uses).
+        let router = rmcp::ErrorData::invalid_params("tool not found", None);
+        assert!(tool_not_found_error(&router));
+        // Real failures must NOT be classified as "not found".
+        assert!(!tool_not_found_error(&rmcp::ErrorData::internal_error("boom", None)));
+        assert!(!tool_not_found_error(&rmcp::ErrorData::invalid_params(
+            "failed to deserialize parameters: x",
+            None
+        )));
+        assert!(!tool_not_found_error(&rmcp::ErrorData::parse_error("oops", None)));
+    }
+
+    #[derive(Clone, Copy)]
+    enum ToolBehavior {
+        Ok,
+        ErrInternal,
+        NotFoundRouter,
+    }
+
+    struct TestMcpServer {
+        tools: std::collections::HashMap<&'static str, ToolBehavior>,
+    }
+
+    impl rmcp::ServerHandler for TestMcpServer {
+        async fn call_tool(
+            &self,
+            request: rmcp::model::CallToolRequestParams,
+            _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+        ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
+            match self.tools.get(request.name.as_ref()).copied() {
+                Some(ToolBehavior::Ok) => Ok(rmcp::model::CallToolResult::success(vec![
+                    rmcp::model::ContentBlock::text("hello from tool"),
+                ])),
+                Some(ToolBehavior::ErrInternal) => {
+                    Err(rmcp::ErrorData::internal_error("server exploded", None))
+                }
+                Some(ToolBehavior::NotFoundRouter) => {
+                    Err(rmcp::ErrorData::invalid_params("tool not found", None))
+                }
+                // Bare-handler default for an unknown tool.
+                None => Err(rmcp::ErrorData::method_not_found::<
+                    rmcp::model::CallToolRequestMethod,
+                >()),
+            }
+        }
+    }
+
+    /// Spawn a real in-process MCP server on one end of a duplex pipe and
+    /// return the production client type connected to the other end.
+    async fn spawn_test_server(tools: &[(&'static str, ToolBehavior)]) -> McpClient {
+        let tools = tools.iter().copied().collect();
+        let (server_io, client_io) = tokio::io::duplex(4096);
+        tokio::spawn(async move {
+            use rmcp::ServiceExt;
+            let server = TestMcpServer { tools }
+                .serve(server_io)
+                .await
+                .expect("test MCP server should initialize");
+            let _ = server.waiting().await;
+        });
+        let (progress_tx, _progress_rx) = tokio::sync::mpsc::unbounded_channel();
+        let client = rmcp::service::serve_client(
+            crate::agent::McpHandler { progress_tx },
+            client_io,
+        )
+        .await
+        .expect("test MCP client should initialize");
+        Arc::new(client)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn call_tool_success_and_missing() {
+        let client = spawn_test_server(&[("ok", ToolBehavior::Ok)]).await;
+
+        let result = call_tool(&[client.clone()], "ok", serde_json::json!({}), "tc-ok")
+            .await
+            .unwrap();
+        match &result.content[0] {
+            rmcp::model::ContentBlock::Text(t) => assert_eq!(t.text, "hello from tool"),
+            other => panic!("expected text block, got {other:?}"),
+        }
+
+        // No server has the tool → the classic "not found" message, for both
+        // wire shapes (bare-handler METHOD_NOT_FOUND and router INVALID_PARAMS).
+        let err = call_tool(&[client.clone()], "nope", serde_json::json!({}), "tc-nope")
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), "tool 'nope' not found on any MCP server");
+
+        let router_client =
+            spawn_test_server(&[("missing-router", ToolBehavior::NotFoundRouter)]).await;
+        let err = call_tool(
+            &[router_client],
+            "missing-router",
+            serde_json::json!({}),
+            "tc-mr",
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "tool 'missing-router' not found on any MCP server"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn call_tool_real_error_is_surfaced_not_not_found() {
+        let client = spawn_test_server(&[("boom", ToolBehavior::ErrInternal)]).await;
+        let err = call_tool(&[client], "boom", serde_json::json!({}), "tc-boom")
+            .await
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("server exploded"), "real error must surface: {msg}");
+        assert!(!msg.contains("not found"), "must not masquerade as missing: {msg}");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn call_tool_falls_through_not_found_and_keeps_last_real_error() {
+        // Server A errors for real on "boom-a" and lacks everything else;
+        // server B serves "ok" and lacks everything else.
+        let a = spawn_test_server(&[("boom-a", ToolBehavior::ErrInternal)]).await;
+        let b = spawn_test_server(&[("ok", ToolBehavior::Ok)]).await;
+
+        // "ok": A says not found → keep trying → B succeeds.
+        let result = call_tool(&[a.clone(), b.clone()], "ok", serde_json::json!({}), "tc-1")
+            .await
+            .unwrap();
+        assert!(matches!(&result.content[0], rmcp::model::ContentBlock::Text(t) if t.text == "hello from tool"));
+
+        // "boom-a": A's real error must win over B's "not found" — the bail
+        // carries the LAST REAL error, never "not found", in either order.
+        let err = call_tool(&[a.clone(), b.clone()], "boom-a", serde_json::json!({}), "tc-2")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("server exploded"), "got: {err}");
+        let err = call_tool(&[b.clone(), a.clone()], "boom-a", serde_json::json!({}), "tc-3")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("server exploded"), "got: {err}");
     }
 }

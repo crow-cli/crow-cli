@@ -518,14 +518,22 @@ impl ConnectTo<Client> for CrowAgent {
                         // abrupt death (Ctrl+C / kill) can leave an assistant
                         // message whose tool_calls never got responses, which
                         // is an invalid OpenAI sequence on the next request.
-                        let messages = match agent.store
-                            .query_messages_by_agent(&agent_record.agent_id, true, 100_000, None)
-                            .await
+                        let messages = match session::load_resume_messages(
+                            &agent.store,
+                            &agent_record.agent_id,
+                        )
+                        .await
                         {
-                            Ok(m) => crate::compact::fill_missing_tool_responses(
-                                &m.into_iter().map(|m| m.data).collect::<Vec<_>>(),
-                            ),
-                            Err(_) => Vec::new(),
+                            Ok(m) => m,
+                            // Do NOT launder this into an empty history: an
+                            // amnesiac agent that looks healthy is worse than
+                            // a failed resume.
+                            Err(e) => {
+                                return responder.respond_with_error(
+                                    agent_client_protocol::Error::internal_error()
+                                        .data(format!("failed to load session history: {e}")),
+                                );
+                            }
                         };
 
                         let agent_session = AgentSession {
@@ -539,6 +547,7 @@ impl ConnectTo<Client> for CrowAgent {
                             request_params: agent_record.request_params.clone(),
                             prompt_id: agent_record.prompt_id.clone(),
                             prompt_args: agent_record.prompt_args.clone(),
+                            failed_persists: 0,
                         };
 
                         // Replay history from stored messages
