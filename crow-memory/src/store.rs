@@ -12,6 +12,7 @@ use arrow_schema::{DataType, Field, Schema};
 use lancedb::connection::Connection;
 use lancedb::query::{ExecutableQuery, QueryBase};
 use lancedb::table::Table;
+use tokio::sync::Mutex;
 
 use crate::embed::{self, EmbedConfig};
 
@@ -118,6 +119,10 @@ pub struct MemoryStore {
     images: Table,
     http: reqwest::Client,
     embed_config: EmbedConfig,
+    /// Last allocated message id. Seeded once from max(id) at open; the
+    /// mutex makes id-allocation + insert atomic, so concurrent writes
+    /// can never hand out the same id.
+    next_msg_id: Mutex<i64>,
 }
 
 impl MemoryStore {
@@ -130,6 +135,7 @@ impl MemoryStore {
         let messages = open_or_create(&db, "messages", messages_schema()).await?;
         let images = open_or_create(&db, "images", images_schema()).await?;
         let http = embed_config.client();
+        let next_msg_id = Mutex::new(max_message_id(&messages).await?);
         Ok(Self {
             db,
             prompts,
@@ -138,6 +144,7 @@ impl MemoryStore {
             images,
             http,
             embed_config,
+            next_msg_id,
         })
     }
 
@@ -293,7 +300,12 @@ impl MemoryStore {
         message: &serde_json::Value,
         usage: Option<&serde_json::Value>,
     ) -> anyhow::Result<i64> {
-        let msg_id = self.next_message_id().await?;
+        // Fail fast if the table is broken: append would otherwise silently
+        // recreate it from the cached manifest, diverging from history.
+        probe_messages_table(&self.messages).await?;
+
+        // Embedding happens BEFORE the id lock — the network round-trip is
+        // the slow part, and it doesn't depend on the id.
         let text = embed::text_for_embedding(message);
         let mv = self.embed_config.embed_text(&self.http, &text).await;
 
@@ -319,6 +331,10 @@ impl MemoryStore {
         let schema = messages_schema();
         let mv_array = build_mv_array(&[mv]);
 
+        // Id allocation + insert under one lock: no scan per write, no
+        // duplicate ids under concurrent requests.
+        let mut next = self.next_msg_id.lock().await;
+        let msg_id = *next + 1;
         let batch = RecordBatch::try_new(
             schema,
             vec![
@@ -334,6 +350,7 @@ impl MemoryStore {
             ],
         )?;
         self.messages.add(batch).execute().await?;
+        *next = msg_id;
         Ok(msg_id)
     }
 
@@ -567,7 +584,9 @@ impl MemoryStore {
             last: LastMsg,
         }
 
-        let all_msgs = query_all(&self.messages, "id >= 0").await?;
+        // Project to the scalar columns only — query_all would pull the
+        // multi-KB mv multivector blob for every message row.
+        let all_msgs = query_columns(&self.messages, "id >= 0", MESSAGE_SCALAR_COLUMNS).await?;
         let mut msg_stats: std::collections::HashMap<String, MsgStats> =
             std::collections::HashMap::new();
 
@@ -688,34 +707,6 @@ impl MemoryStore {
         }
         Ok(out)
     }
-
-    async fn next_message_id(&self) -> anyhow::Result<i64> {
-        // Project to `id` only — scanning the multivector column reads gigabytes.
-        use futures::TryStreamExt;
-        use lancedb::query::Select;
-        let stream = self
-            .messages
-            .query()
-            .select(Select::columns(&["id"]))
-            .limit(1_000_000)
-            .execute()
-            .await?;
-        let rows: Vec<RecordBatch> = stream.try_collect().await?;
-        let mut max_id: i64 = 0;
-        for batch in &rows {
-            let ids = batch
-                .column(0)
-                .as_any()
-                .downcast_ref::<Int64Array>()
-                .unwrap();
-            for i in 0..batch.num_rows() {
-                if ids.value(i) > max_id {
-                    max_id = ids.value(i);
-                }
-            }
-        }
-        Ok(max_id + 1)
-    }
 }
 
 // ---- Records (wire types live in crow-memory-types) ------------------------
@@ -748,6 +739,66 @@ async fn query_all(table: &Table, filter: &str) -> anyhow::Result<Vec<RecordBatc
         .await?;
     let batches: Vec<RecordBatch> = stream.try_collect().await?;
     Ok(batches)
+}
+
+/// The messages columns every scan-based reader uses (id, agent_id,
+/// created_at, data, role) — everything except the multivector blob.
+const MESSAGE_SCALAR_COLUMNS: &[&str] = &["id", "agent_id", "created_at", "data", "role"];
+
+/// Like `query_all`, but projects to `columns` instead of selecting every
+/// column — full-row scans read gigabytes once the mv blobs are in play.
+async fn query_columns(
+    table: &Table,
+    filter: &str,
+    columns: &[&str],
+) -> anyhow::Result<Vec<RecordBatch>> {
+    use futures::TryStreamExt;
+    use lancedb::query::Select;
+    let stream = table
+        .query()
+        .only_if(filter)
+        .select(Select::columns(columns))
+        .limit(1_000_000)
+        .execute()
+        .await?;
+    let batches: Vec<RecordBatch> = stream.try_collect().await?;
+    Ok(batches)
+}
+
+/// Cheap read probe (limit 1, `id` only) — fails fast if the table is
+/// unreadable (e.g. its Lance directory was deleted), before we spend an
+/// embedding round-trip and let append silently recreate the table.
+async fn probe_messages_table(table: &Table) -> anyhow::Result<()> {
+    use futures::TryStreamExt;
+    use lancedb::query::Select;
+    let stream = table
+        .query()
+        .select(Select::columns(&["id"]))
+        .limit(1)
+        .execute()
+        .await?;
+    let _: Vec<RecordBatch> = stream.try_collect().await?;
+    Ok(())
+}
+
+/// max(id) over the messages table, projecting the `id` column only.
+/// Seeds the id counter once at store open.
+async fn max_message_id(table: &Table) -> anyhow::Result<i64> {
+    let rows = query_columns(table, "id >= 0", &["id"]).await?;
+    let mut max_id: i64 = 0;
+    for batch in &rows {
+        let ids = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        for i in 0..batch.num_rows() {
+            if ids.value(i) > max_id {
+                max_id = ids.value(i);
+            }
+        }
+    }
+    Ok(max_id)
 }
 
 fn col_str(batch: &RecordBatch, idx: usize) -> &StringArray {

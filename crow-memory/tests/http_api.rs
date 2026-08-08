@@ -123,6 +123,116 @@ async fn full_api_round_trip() {
     assert!(page2.is_empty());
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_add_message_unique_ids() {
+    let client = Arc::new(spawn_server().await);
+    let pid = client
+        .lookup_or_create_prompt("test", "race")
+        .await
+        .unwrap();
+    client
+        .create_agent(
+            "race-agent-1", "race-sess", 0, "/tmp", &pid,
+            &json!({}), "system prompt", &json!([]), &json!({}), "test-model",
+        )
+        .await
+        .unwrap();
+
+    // N concurrent add_message calls through the real axum server. Before
+    // the id-allocation mutex, every request scanned max(id) first, so
+    // concurrent requests computed the same id → duplicate message ids.
+    const N: usize = 20;
+    let mut handles = Vec::new();
+    for i in 0..N {
+        let c = Arc::clone(&client);
+        handles.push(tokio::spawn(async move {
+            c.add_message(
+                "race-agent-1",
+                &json!({"role": "user", "content": format!("concurrent message {i}")}),
+                None,
+            )
+            .await
+        }));
+    }
+    let mut ids: Vec<i64> = Vec::new();
+    for h in handles {
+        ids.push(h.await.unwrap().unwrap());
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), N, "concurrent add_message handed out duplicate ids");
+
+    // Every message landed and is readable.
+    let msgs = client.load_messages("race-agent-1").await.unwrap();
+    assert_eq!(msgs.len(), N);
+}
+
+#[tokio::test]
+async fn list_sessions_stats_across_sessions() {
+    let client = spawn_server().await;
+    let pid = client
+        .lookup_or_create_prompt("test", "sessions")
+        .await
+        .unwrap();
+    for (agent_id, sess, idx) in [
+        ("ls-a-1", "ls-sess-a", 0),
+        ("ls-b-1", "ls-sess-b", 0),
+        ("ls-b-2", "ls-sess-b", 1),
+        ("ls-c-1", "ls-sess-c", 0),
+    ] {
+        client
+            .create_agent(
+                agent_id, sess, idx, "/tmp/w", &pid,
+                &json!({}), "system prompt", &json!([]), &json!({}), "test-model",
+            )
+            .await
+            .unwrap();
+    }
+
+    // 3 messages to A, then 1 (newest) to B, none to C.
+    for content in ["a one", "a two", "a three"] {
+        client
+            .add_message("ls-a-1", &json!({"role": "user", "content": content}), None)
+            .await
+            .unwrap();
+    }
+    client
+        .add_message(
+            "ls-b-1",
+            &json!({"role": "assistant", "content": "b last"}),
+            None,
+        )
+        .await
+        .unwrap();
+
+    let sessions = client.list_sessions(50, 0).await.unwrap();
+    assert_eq!(sessions.len(), 3);
+
+    // Ordered by most-recent message activity: B (newest msg), A, then C.
+    assert_eq!(sessions[0].session_id, "ls-sess-b");
+    assert_eq!(sessions[0].message_count, 1);
+    assert_eq!(sessions[0].agent_count, 2);
+    assert_eq!(sessions[0].agent_idxs, vec![0, 1]);
+    assert_eq!(sessions[0].last_role, "assistant");
+    let last_b = sessions[0].last_message.as_ref().expect("last_message");
+    assert_eq!(last_b.data["content"], "b last");
+    assert_eq!(last_b.agent_id, "ls-b-1");
+
+    assert_eq!(sessions[1].session_id, "ls-sess-a");
+    assert_eq!(sessions[1].message_count, 3);
+    assert_eq!(sessions[1].agent_count, 1);
+    assert_eq!(sessions[1].last_role, "user");
+    assert_eq!(
+        sessions[1].last_message.as_ref().unwrap().data["content"],
+        "a three"
+    );
+
+    // Session with agents but no messages.
+    assert_eq!(sessions[2].session_id, "ls-sess-c");
+    assert_eq!(sessions[2].message_count, 0);
+    assert!(sessions[2].last_message.is_none());
+}
+
 #[tokio::test]
 async fn backoff_fails_fast_on_4xx() {
     let client = spawn_server().await;
