@@ -240,7 +240,7 @@ async fn add_message_tracks_failed_persists() {
 
     // The DB really is behind: only message "one" made it.
     let rows = store
-        .query_messages_by_agent("err-surf-3-1", true, 100, None)
+        .query_messages_by_agent("err-surf-3-1", true, 100, None, false)
         .await;
     assert!(rows.is_err(), "table is broken — reads must fail too");
 }

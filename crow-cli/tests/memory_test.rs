@@ -98,7 +98,7 @@ async fn test_memory_store_crud() {
     assert!(id3 > id2);
 
     // Load messages
-    let msgs = store.load_messages("test-session-1").await.unwrap();
+    let msgs = store.load_messages("test-session-1", false).await.unwrap();
     assert_eq!(msgs.len(), 3);
     assert_eq!(msgs[0]["role"], "system");
     assert_eq!(msgs[1]["role"], "user");
@@ -107,7 +107,7 @@ async fn test_memory_store_crud() {
 
     // Query messages
     let queried = store
-        .query_messages_by_agent("test-session-1", true, 10, None)
+        .query_messages_by_agent("test-session-1", true, 10, None, false)
         .await
         .unwrap();
     assert_eq!(queried.len(), 3);
@@ -173,20 +173,20 @@ async fn test_message_role_filter() {
 
     // query_messages_by_agent: role pre-filter in the SQL predicate
     let users = store
-        .query_messages_by_agent("role-sess-1", true, 100, Some("user"))
+        .query_messages_by_agent("role-sess-1", true, 100, Some("user"), false)
         .await
         .unwrap();
     assert_eq!(users.len(), 2);
     assert!(users.iter().all(|m| m.role == "user"));
 
     let tools = store
-        .query_messages_by_agent("role-sess-1", true, 100, Some("tool"))
+        .query_messages_by_agent("role-sess-1", true, 100, Some("tool"), false)
         .await
         .unwrap();
     assert_eq!(tools.len(), 1);
 
     let all = store
-        .query_messages_by_agent("role-sess-1", true, 100, None)
+        .query_messages_by_agent("role-sess-1", true, 100, None, false)
         .await
         .unwrap();
     assert_eq!(all.len(), 5);
