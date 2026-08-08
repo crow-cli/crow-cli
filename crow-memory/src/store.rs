@@ -6,7 +6,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use arrow_array::{
-    Array, FixedSizeListArray, Float32Array, Int64Array, ListArray, RecordBatch, StringArray,
+    Array, FixedSizeListArray, Float32Array, Int64Array, LargeBinaryArray, ListArray, RecordBatch,
+    StringArray,
 };
 use arrow_schema::{DataType, Field, Schema};
 use lancedb::connection::Connection;
@@ -115,7 +116,6 @@ pub struct MemoryStore {
     prompts: Table,
     agents: Table,
     messages: Table,
-    #[allow(dead_code)]
     images: Table,
     http: reqwest::Client,
     embed_config: EmbedConfig,
@@ -707,9 +707,91 @@ impl MemoryStore {
         }
         Ok(out)
     }
+
+    // ---- images ----
+
+    pub async fn add_image(
+        &self,
+        image_id: &str,
+        mime: &str,
+        data: &[u8],
+        w: i64,
+        h: i64,
+    ) -> anyhow::Result<()> {
+        // No text to embed: mv stays null (build_mv_array marks an empty
+        // multivector as a null list entry — same path add_message takes
+        // when the embedding server is down).
+        let schema = images_schema();
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(StringArray::from(vec![image_id])),
+                Arc::new(StringArray::from(vec![mime])),
+                Arc::new(LargeBinaryArray::from(vec![data])),
+                Arc::new(Int64Array::from(vec![w])),
+                Arc::new(Int64Array::from(vec![h])),
+                Arc::new(StringArray::from(vec![now_iso()])),
+                Arc::new(build_mv_array(&[Vec::new()])),
+            ],
+        )?;
+        self.images.add(batch).execute().await?;
+        Ok(())
+    }
+
+    pub async fn get_image(&self, image_id: &str) -> anyhow::Result<Option<ImageRecord>> {
+        // By-id fetch, but still project away the mv column — the blob is
+        // what we want, the multivector is not.
+        let rows = query_columns(
+            &self.images,
+            &format!("image_id = '{}'", escape_sql(image_id)),
+            &["image_id", "mime", "data", "w", "h", "created_at"],
+        )
+        .await?;
+        for batch in &rows {
+            if batch.num_rows() > 0 {
+                let ids = col_str(batch, 0);
+                let mimes = col_str(batch, 1);
+                let datas = batch
+                    .column(2)
+                    .as_any()
+                    .downcast_ref::<LargeBinaryArray>()
+                    .unwrap();
+                let ws = batch
+                    .column(3)
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .unwrap();
+                let hs = batch
+                    .column(4)
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .unwrap();
+                let created_ats = col_str(batch, 5);
+                return Ok(Some(ImageRecord {
+                    image_id: ids.value(0).to_string(),
+                    mime: mimes.value(0).to_string(),
+                    data: datas.value(0).to_vec(),
+                    w: ws.value(0),
+                    h: hs.value(0),
+                    created_at: created_ats.value(0).to_string(),
+                }));
+            }
+        }
+        Ok(None)
+    }
 }
 
 // ---- Records (wire types live in crow-memory-types) ------------------------
+
+/// One row of the images table (bytes + metadata, no mv).
+pub struct ImageRecord {
+    pub image_id: String,
+    pub mime: String,
+    pub data: Vec<u8>,
+    pub w: i64,
+    pub h: i64,
+    pub created_at: String,
+}
 
 pub use crow_memory_types::{AgentRecord, MessageRecord, PromptRecord, SessionInfo};
 
