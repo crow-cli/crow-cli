@@ -36,15 +36,12 @@ Commit at each item (`git add -A && git commit`). Never ask "want me to proceed"
     VERIFY: `grep -r "from crow_memory\b\|import crow_memory\b"` empty outside sdk;
     crow-cli + crow-mcp test suites pass. COMMIT per sub-item.
 
-## Phase 3 — ACP upgrade (0.9.x → 0.12.0, v1 schema only)
-3.1 Bump `agent-client-protocol` to 0.12.0 in crow-cli/pyproject.toml (and anywhere
-    else it appears), `uv lock`, `uv sync`.
-    VERIFY: lock resolves; import works.
-3.2 Diff old vs new SDK surface used by our agent/client; fix breakage
-    (schema models, transports, lifecycle helpers).
-    VERIFY: crow-cli unit tests pass.
-3.3 e2e: ACP initialize/handshake + one real turn through the agent.
-    VERIFY: e2e script/test passes; evidence noted. COMMIT.
+## Phase 3 — ACP upgrade — DONE 2026-08-09 (84634b3f)
+3.1 [x] Bumped to 0.12.0 (pinned >=0.12,<0.13); lock + sync clean.
+3.2 [x] No code fixes needed — schema v1.19 extensible unions + lenient
+        deserialization kept our usage intact; unit 69 green.
+3.3 [x] e2e: integration handshake 2/2, live-LLM e2e 5/5, full
+        `crow-cli-dev run` turn eyeballed (ACP-UPGRADE-OK).
 
 ## Phase 4 — Daemon management
 4.1 Design runstate layout (pid/port files under ~/.crow/run or similar) + service

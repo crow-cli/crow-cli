@@ -28,9 +28,11 @@ crow-memory service behind HTTP, spoken to by the PYTHON crow-memory-sdk.
   zero `crow_memory` imports remain outside the sdk)
 
 ## ACP upgrade
-- [ ] Bump `agent-client-protocol` >=0.9.0 → 0.12.0 (latest on PyPI, v1 schema;
-      v2 does not exist for Python and we are NOT using it)
-- [ ] Fix agent + client code against the new SDK; e2e ACP handshake + a real turn work
+- [x] Bump `agent-client-protocol` >=0.9.0 → 0.12.0 (latest on PyPI, v1 schema;
+      v2 does not exist for Python and we are NOT using it) — 2026-08-09, pinned >=0.12,<0.13
+- [x] Fix agent + client code against the new SDK; e2e ACP handshake + a real turn work
+      — 2026-08-09: no code changes needed (v1.19 extensible unions + lenient deser kept
+      our surface intact); unit 69 ✓, integration 2 ✓, e2e 5 live ✓, `crow-cli-dev run` full turn ✓
   (NOT in scope: HTTP agent daemons, conductors, proxies)
 
 ## Daemon management

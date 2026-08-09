@@ -9,6 +9,7 @@ dependencies = [
     "coolname>=2.2.0",
     "crow-memory-sdk>=0.1.0",
     "directory-tree>=1.0.0",
+    "docker>=7.2.0",
     "fastmcp>=2.14.5",
     "httpx>=0.28.1",
     "ipython>=9.10.0",
