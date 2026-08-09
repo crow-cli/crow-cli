@@ -127,14 +127,21 @@ critique means for the PYTHON code.
   exposed + fixed a real gap: ReadTimeout wasn't in the retry catch, now
   TimeoutException is, both clients), ensure_absolute path fabrication
   (Rust-only), non-hermetic load_from_real_config test (no Python equivalent;
-  checked all suites), skills-dir mismatch (Python consistently uses
-  {config_dir}/skills = v1 behavior; the actual ~/.crow→~/.agents move is the
-  deferred adoption item below).
+  checked all suites), skills-dir mismatch (Python's `{config_dir}/skills` is
+  the legacy v1 layout; the target is `~/.agents/skills` decoupled from the
+  config dir — see the deferred note below, not a critique miss).
 
 ### Noted, deferred (part of the ~/.agents adoption item)
-- Skills dir: Python reads {config_dir}/skills (~/.crow/skills today); thomas
-  already moved the real skills to ~/.agents/skills. The config-dir move
-  belongs to the deferred ~/.agents adoption item, not this pass.
+- Skills dir: the move is FROM `{config_dir}/skills` TO `~/.agents/skills` —
+  skills are DECOUPLED from the config dir, which itself becomes
+  `~/.agents/crow` (so `~/.agents/skills` is a SIBLING of the config dir, not
+  under it). thomas already moved the real skills to `~/.agents/skills`.
+  Code sites for when the adoption item lands: session.py `get_skills(
+  config.config_dir / "skills")` → `~/.agents/skills`; session.py context-tree
+  hardcoded `~/.crow/skills` + `~/.crow/notes`; defaults.py system-prompt text
+  ("skills available in ~/.crow/skills/"). Note: Rust's `~/.agents/skills`
+  scan (the critique's "wrong directory vs v1" item) was actually the FUTURE
+  layout — v1/Python behavior is the legacy one here.
 
 ## Tests — DONE 2026-08-09
 - [x] Full sweep green across all packages after every change:
@@ -152,7 +159,9 @@ critique means for the PYTHON code.
 ## Deferred — captured, explicitly out of this sprint
 - TASK-SYSTEM.md async long-running jobs / agent delegation (crow-task) — later
 - ACP-over-HTTP agents, conductor, proxies — later
-- ~/.agents directory adoption (skills → ~/.agents/skill, global AGENTS.md →
-  ~/.agents/AGENTS.md, notes → ~/.agents/notes) — layout being driven by thomas
+- ~/.agents directory adoption: CONFIG_DIR ~/.crow → ~/.agents/crow; skills
+  DECOUPLED from the config dir → ~/.agents/skills (sibling, already moved by
+  thomas); global AGENTS.md → ~/.agents/AGENTS.md; notes → ~/.agents/notes —
+  layout being driven by thomas
 - The Rust crow-cli / crow-mcp / crow-server / crow-verifier crates die with the
   experiment; only crow-memory + crow-memory-types survive
