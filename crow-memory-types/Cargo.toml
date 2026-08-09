@@ -1,6 +1,6 @@
 [package]
 name = "crow-memory-types"
-version = "0.2.0"
+version = "0.1.31"
 edition = "2021"
 description = "Wire types for the crow-memory HTTP API — shared by server and SDK"
 repository = "https://github.com/crow-cli/crow-cli"

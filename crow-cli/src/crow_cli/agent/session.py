@@ -168,8 +168,7 @@ class AgentSession:
             usage: Token usage dict with prompt_tokens, completion_tokens, total_tokens
         """
         # Build react message
-        # if it's just thinking tokens don't add that shit
-        if len(content) > 0 or len(tool_call_inputs) > 0:
+        if len(content) > 0 or len(tool_call_inputs) > 0 or len(thinking) > 0:
             thinking_text = "".join(thinking) if thinking else ""
             content_text = "".join(content) if content else ""
             msg = {"role": "assistant", "content": content_text}
