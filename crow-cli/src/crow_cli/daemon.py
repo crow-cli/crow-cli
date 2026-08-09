@@ -124,6 +124,9 @@ def default_registry(config_dir: Path) -> dict[str, DaemonSpec]:
             name="crow-mcp",
             command=mcp_bin,
             args=["--transport", "http", "--host", "127.0.0.1", "--port", str(mcp_port)],
+            # Point the memory tools at THIS config's crow-memory, not the
+            # compiled-in default (critique: memory_port was silently ignored).
+            env={"CROW_MEMORY_URL": f"http://127.0.0.1:{memory_port}"},
             tcp_port=mcp_port,
         ),
         "ollama-mv": DaemonSpec(

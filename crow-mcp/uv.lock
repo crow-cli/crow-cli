@@ -289,6 +289,12 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.12.5" },
 ]
 
+[package.metadata.requires-dev]
+dev = [
+    { name = "datamodel-code-generator", specifier = ">=0.72.2" },
+    { name = "pytest", specifier = ">=9.1.1" },
+]
+
 [[package]]
 name = "cryptography"
 version = "46.0.6"

@@ -363,10 +363,11 @@ def run_init(config_dir: Path, yes: bool = False):
         )
     console.print(f"[green]✓[/green] Written {config_file}")
 
-    # .env — secrets live here, not in config.yaml
+    # .env — secrets live here, not in config.yaml; keep them owner-only
     env_lines = [f"{k}={v}" for k, v in env_vars.items()]
     with open(env_file, "w") as f:
         f.write("\n".join(env_lines) + "\n")
+    os.chmod(env_file, 0o600)
     console.print(f"[green]✓[/green] Written {env_file}")
 
 

@@ -63,13 +63,13 @@ class SyncMemoryClient:
         for attempt in range(self._max_retries):
             try:
                 resp = self._http.request(method, path, json=json, params=params)
-            except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
                 last_exc = e
                 if attempt + 1 < self._max_retries:
                     time.sleep(delay)
                     delay *= 2
                     continue
-                raise MemoryApiError(0, f"cannot reach {self.base_url}: {e}") from e
+                raise MemoryApiError(0, f"cannot reach {self.base_url} ({type(e).__name__}: {e})") from e
             if resp.status_code in _RETRYABLE_STATUS and attempt + 1 < self._max_retries:
                 time.sleep(delay)
                 delay *= 2

@@ -13,7 +13,12 @@ from collections import deque
 from logging import getLogger
 from typing import Any
 
-from .constants import CMD_OUTPUT_PS1_BEGIN, CMD_OUTPUT_PS1_END, HISTORY_LIMIT
+from .constants import (
+    CMD_OUTPUT_PS1_BEGIN,
+    CMD_OUTPUT_PS1_END,
+    HISTORY_LIMIT,
+    STARTUP_TIMEOUT_SECONDS,
+)
 from .metadata import CmdOutputMetadata
 from .logging_config import setup_terminal_logging
 
@@ -114,15 +119,35 @@ class SubprocessTerminal:
         self.reader_thread = threading.Thread(target=self._read_output, daemon=True)
         self.reader_thread.start()
 
-        # Wait for bash to start
-        time.sleep(0.3)
-        
-        # Set PS1 after bash starts (env var doesn't work for interactive shells)
+        # Set PS1 (env var doesn't work for interactive bash). The pty queues
+        # the input until bash finishes its rc files, so no startup sleep:
+        # wait for bash to actually RENDER the new prompt instead.
         logger.debug(f"Setting PS1 to: {self.PS1!r}")
         ps1_command = f'PS1="{self.PS1}"\n'
         os.write(self._pty_master_fd, ps1_command.encode("utf-8"))
-        time.sleep(0.2)  # Let PS1 take effect
-        
+
+        # The echoed command contains the markers too, but with escaped
+        # quotes (\"); the rendered prompt is backslash-free expanded JSON.
+        # Fixed 300+200 ms sleeps used to leak rc-file output (nvm, conda)
+        # into the first command on slow startups and waste time on fast ones.
+        deadline = time.monotonic() + STARTUP_TIMEOUT_SECONDS
+        rendered = False
+        while time.monotonic() < deadline:
+            screen = self.read_screen()
+            if any(
+                "\\" not in m.group(1)
+                for m in CmdOutputMetadata.matches_ps1_metadata(screen)
+            ):
+                rendered = True
+                break
+            time.sleep(0.02)
+        if not rendered:
+            logger.warning(
+                "PS1 prompt not observed within %.1fs of shell startup; "
+                "continuing anyway",
+                STARTUP_TIMEOUT_SECONDS,
+            )
+
         # Clear the buffer (will contain the PS1 command we just sent)
         self.clear_screen()
         

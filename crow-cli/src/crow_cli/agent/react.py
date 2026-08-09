@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from asyncio import Event
 from logging import Logger
 from pathlib import Path
@@ -18,6 +19,11 @@ from crow_cli.agent.compact import compact
 from crow_cli.agent.configure import Config
 from crow_cli.agent.context import maximal_deserialize
 from crow_cli.agent.hooks import CommandHook, FileSnapshotHook
+from crow_cli.agent.model_routing import (
+    modalities_in_messages,
+    route_model,
+    strip_unsupported_blocks,
+)
 from crow_cli.agent.prompt import normalize_blocks
 from crow_cli.agent.session import AgentSession
 from crow_cli.agent.tools import (
@@ -35,9 +41,35 @@ from crow_cli.agent.tools import (
     execute_orchestration_orchestrator_task_write,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def session_from_agent_id(agent_id):
     return agent_id.rsplit("-", 1)[0]
+
+
+# Provider-side transient faults that surface as HTTP 400 and so are never
+# retried by the openai SDK (it only retries 429/5xx/connection). Observed
+# in the wild: DashScope's server-side multimodal ingest timing out while
+# processing a large image payload ("invalid_parameter_error" /
+# "Download multimodal file timed out"). Sporadic => retryable.
+_TRANSIENT_400_MARKERS = (
+    "download multimodal file timed out",
+    "multimodal file timed out",
+    "ingest timeout",
+    "ingest timed out",
+)
+
+
+def _is_transient_provider_400(e: APIError) -> bool:
+    if getattr(e, "status_code", None) != 400:
+        return False
+    try:
+        body = json.dumps(getattr(e, "body", None), ensure_ascii=False)
+    except (TypeError, ValueError):
+        body = ""
+    haystack = f"{e} {body}".lower()
+    return any(marker in haystack for marker in _TRANSIENT_400_MARKERS)
 
 
 async def send_request(
@@ -49,6 +81,7 @@ async def send_request(
     retry_delay: float = 1.0,
     temperature: float = 0.6,
     request_log_path: str | None = None,
+    config: Config | None = None,
 ):
     """
     Send request to LLM with error handling and retry logic.
@@ -80,12 +113,28 @@ async def send_request(
             normalized_msg["content"] = normalize_blocks(content)
         normalized_messages.append(normalized_msg)
 
+    # Capability-aware routing: if the selected model cannot handle the
+    # modalities present, fall back to a capable same-provider model, or
+    # strip the unsupported blocks (auto-strip on downgrade). Session
+    # history is never mutated — routing applies to this request only.
+    routed_model = session.model_identifier
+    if config is not None:
+        modalities = modalities_in_messages(normalized_messages)
+        if modalities:
+            routed_model, to_strip = route_model(
+                config, session.model_identifier, modalities
+            )
+            if to_strip:
+                normalized_messages = strip_unsupported_blocks(
+                    normalized_messages, to_strip
+                )
+
     # Under --debug, dump the exact request payload (the append-only chat
     # history + params) so immutable-history analysis can diff consecutive
     # turns. Sits beside the response chunk log in the same chunk_log_dir.
     if request_log_path:
         request_payload = {
-            "model": session.model_identifier,
+            "model": routed_model,
             "messages": normalized_messages,
             "tools": tools,
             "temperature": temperature,
@@ -102,7 +151,7 @@ async def send_request(
     for attempt in range(max_retries):
         try:
             return await llm.chat.completions.create(
-                model=session.model_identifier,
+                model=routed_model,
                 messages=normalized_messages,
                 tools=tools,
                 stream=True,
@@ -133,10 +182,28 @@ async def send_request(
             else:
                 raise
         except APIError as e:
-            # For other API errors, check if retryable
-            if hasattr(e, "status_code") and e.status_code in [429, 500, 502, 503, 504]:
+            # Retryable: rate limit / server errors, plus the transient
+            # provider-side multimodal ingest faults that arrive as a 400
+            # (openai SDK never retries 4xx, but these are sporadic).
+            retryable = hasattr(e, "status_code") and e.status_code in [
+                429,
+                500,
+                502,
+                503,
+                504,
+            ]
+            if not retryable:
+                retryable = _is_transient_provider_400(e)
+            if retryable:
+                last_exception = e
                 if attempt < max_retries - 1:
                     delay = retry_delay * (2**attempt)  # Exponential backoff
+                    logger.warning(
+                        "Retryable provider error (attempt %d/%d): %s",
+                        attempt + 1,
+                        max_retries,
+                        e,
+                    )
                     await asyncio.sleep(delay)
                 else:
                     raise
@@ -634,8 +701,10 @@ async def react_loop(
             session,
             tools,
             config.MAX_TOKENS,
+            max_retries=config.max_retries_per_step,
             temperature=config.TEMPERATURE,
             request_log_path=request_log_path,
+            config=config,
         )
         state_accumulator = state_accumulators.get(
             session_id, {"thinking": [], "content": [], "tool_calls": {}}

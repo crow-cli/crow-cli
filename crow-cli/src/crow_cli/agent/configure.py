@@ -56,14 +56,29 @@ def _write_defaults_if_missing(config_dir: Path) -> None:
             target.write_text(content)
 
 
-def resolve_env_vars(value: Any) -> Any:
-    """Recursively replace ${VAR} with environment variable values."""
+def resolve_env_vars(value: Any, missing: set[str] | None = None) -> Any:
+    """Recursively replace ${VAR} with environment variable values.
+
+    Unset variables expand to "" (parity with the Rust CLI), but their names
+    are collected in `missing` so the caller can warn instead of failing later
+    with an opaque provider error.
+    """
     if isinstance(value, str):
-        return ENV_PATTERN.sub(lambda m: os.getenv(m.group(1), ""), value)
+
+        def _sub(m: re.Match) -> str:
+            name = m.group(1)
+            val = os.getenv(name)
+            if val is None:
+                if missing is not None:
+                    missing.add(name)
+                return ""
+            return val
+
+        return ENV_PATTERN.sub(_sub, value)
     elif isinstance(value, dict):
-        return {k: resolve_env_vars(v) for k, v in value.items()}
+        return {k: resolve_env_vars(v, missing) for k, v in value.items()}
     elif isinstance(value, list):
-        return [resolve_env_vars(v) for v in value]
+        return [resolve_env_vars(v, missing) for v in value]
     return value
 
 
@@ -79,6 +94,12 @@ class LLModel:
     name: str
     provider_name: str
     model_id: str
+    # None = unknown → assume capable of everything (permissive default).
+    # A set restricts: e.g. set() is text-only, {"vision"} handles images.
+    capabilities: set[str] | None = None
+    # Ordered fallback chain (model NAMES from this config) used when this
+    # model cannot handle the modalities present in the conversation.
+    fallbacks: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -128,6 +149,8 @@ class Config:
         if env_file.exists():
             load_dotenv(env_file)
 
+
+
         # If no config.yaml, return a bare Config
         config_file = target_dir / "config.yaml"
         if not config_file.exists():
@@ -140,9 +163,23 @@ class Config:
         with open(config_file) as f:
             raw = yaml.safe_load(f) or {}
 
+        # memory_port in config.yaml is the source of truth for where the
+        # crow-memory service listens. Everything downstream (this CLI's own
+        # MemoryClient, stdio-spawned MCP servers, daemons) resolves the URL
+        # via CROW_MEMORY_URL, so export it here unless the user already set
+        # it explicitly (.env or shell wins).
+        if raw.get("memory_port") and not os.environ.get("CROW_MEMORY_URL"):
+            os.environ["CROW_MEMORY_URL"] = f"http://127.0.0.1:{int(raw['memory_port'])}"
+
         _logger.info("RAW config.yaml mcpServers: %s", raw.get("mcpServers", {}))
-        parsed = resolve_env_vars(raw)
+        missing_vars: set[str] = set()
+        parsed = resolve_env_vars(raw, missing_vars)
         _logger.info("PARSED config.yaml mcpServers after resolve_env_vars: %s", parsed.get("mcpServers", {}))
+        if missing_vars:
+            _logger.warning(
+                "config.yaml references unset environment variables (expanded to empty): %s",
+                ", ".join(f"${{{v}}}" for v in sorted(missing_vars)),
+            )
 
         # Parse providers
         llm = LLMConfig()
@@ -155,10 +192,14 @@ class Config:
 
         # Parse models
         for name, data in parsed.get("models", {}).items():
+            raw_caps = data.get("capabilities")
+            capabilities = set(raw_caps) if raw_caps is not None else None
             llm.models[name] = LLModel(
                 name=name,
                 provider_name=data.get("provider", ""),
                 model_id=data.get("model", ""),
+                capabilities=capabilities,
+                fallbacks=list(data.get("fallbacks") or []),
             )
 
         # Parse overrides

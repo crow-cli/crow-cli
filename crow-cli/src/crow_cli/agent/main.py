@@ -480,10 +480,25 @@ class AcpAgent(Agent):
                 # Resolve model_identifier to "provider_name:model_id" format
                 resolved = self._default_model_value()
                 if session.model_identifier:
-                    for m in self._config.llm.models.values():
-                        if m.model_id == session.model_identifier:
-                            resolved = f"{m.provider_name}:{m.model_id}"
-                            break
+                    match = next(
+                        (
+                            m
+                            for m in self._config.llm.models.values()
+                            if m.model_id == session.model_identifier
+                        ),
+                        None,
+                    )
+                    if match is not None:
+                        resolved = f"{match.provider_name}:{match.model_id}"
+                    else:
+                        # Don't fall back silently: the session's behavior
+                        # would change with no notice (critique item).
+                        self._logger.warning(
+                            "load_session: saved model %r is not in config.yaml; "
+                            "falling back to default %r",
+                            session.model_identifier,
+                            resolved,
+                        )
                 self._config_values[session.session_id] = {"model": resolved}
 
             # TODO: Replay conversation history to client
@@ -648,6 +663,14 @@ class AcpAgent(Agent):
                 provider = self._config.llm.providers.get(provider_name)
                 if not provider and self._config.llm.providers:
                     provider = next(iter(self._config.llm.providers.values()))
+                    if provider_name:
+                        self._logger.warning(
+                            "provider %r from model selection %r not found in "
+                            "config.yaml; falling back to %r",
+                            provider_name,
+                            current_model_value,
+                            provider.name,
+                        )
                 if not provider:
                     raise RuntimeError(
                         "No LLM providers configured. Check ~/.crow/config.yaml."

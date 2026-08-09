@@ -16,7 +16,7 @@ Commit at each item (`git add -A && git commit`). Never ask "want me to proceed"
 1.2 [x] crow-mcp → crow-mcp-dev; `crow-mcp-dev --help` exits 0 (eyeballed).
 1.3 [x] ~/.crow/config.yaml key crow-mcp → crow-mcp-dev; yaml intact.
 
-## Phase 2 — crow-memory consolidation — DONE 2026-08-09 (f917368d; service boot verify pending -j2 build)
+## Phase 2 — crow-memory consolidation — DONE 2026-08-09 (f917368d; 2.3 verified 2026-08-09 after -j2 build)
 2.1 Copy `crow-memory-types/` and `crow-memory/` crate sources from crow-cli main
     branch (~/src/crow-team/crow-cli) into this worktree root. Do NOT copy the Rust
     crow-memory-sdk. Create root `Cargo.toml` workspace with those members.
@@ -26,6 +26,9 @@ Commit at each item (`git add -A && git commit`). Never ask "want me to proceed"
     VERIFY: `cargo build --release -p crow-memory -p crow-memory-types` green.
 2.3 Boot the service, hit its health endpoint, kill it.
     VERIFY: HTTP 200 from health route (eyeball response).
+    DONE 2026-08-09: release build finished (-j2, 30m22s); booted on scratch
+    config/port 27698, `/healthz` -> {"ok":true}; wire-contract e2e
+    (test_wire_contract.py) 10/10 against the real binary.
 2.4 Type sharing: research options (schemars→JSON Schema→datamodel-code-generator,
     contract tests, etc.), pick one, implement: generate/validate the pydantic models
     in Python crow-memory-sdk from crow-memory-types, with a test that FAILS on drift.
@@ -55,7 +58,7 @@ Commit at each item (`git add -A && git commit`). Never ask "want me to proceed"
 4.4 e2e: `daemon start` everything, run a memory round-trip through crow-mcp-dev,
     `daemon stop` everything. COMMIT per sub-item.
 
-## Phase 5 — init
+## Phase 5 — init — DONE 2026-08-09 (808adc87)
 5.1 Extend `crow-cli-dev init`: keep config.yaml/prompts/searxng-defaults behavior;
     add ollama-mv fork build (~/src/crow-team/ollama) + llamacpp deps where needed
     (port the approach from crow-cli main's init).
@@ -63,17 +66,26 @@ Commit at each item (`git add -A && git commit`). Never ask "want me to proceed"
 5.2 init starts the daemons (crow-memory, crow-mcp, ollama-mv) after setup.
     VERIFY: after init, `crow-cli-dev daemon status` shows them running. COMMIT.
 
-## Phase 6 — Critique pass + test hardening
+## Phase 6 — Critique pass + test hardening — DONE 2026-08-09
 6.1 Read ~/src/crow-team/notes/dev/crow-cli-critique*.md (+ related notes); produce a
     triage list in TODO.md: applies → implement as sub-items; doesn't apply → why.
     VERIFY: triage written; each applies-item done or explicitly deferred w/ reason.
+    DONE: full triage in TODO.md ("Critique pass"); 7 applies-items implemented
+    (${VAR} warn, .env 0600, memory_port wiring, max_retries_per_step, silent
+    model-fallback warnings, terminal sentinel startup, SDK timeout retry gap).
 6.2 Implement the carried v1 item: retry transient provider 400s + capability-aware
     fallback + auto-strip on downgrade.
     VERIFY: unit test simulating the 400 class passes; fallback never lands on a
     text-only model with image blocks present.
+    DONE: react.py transient-400 retry (real BadRequestError objects in tests),
+    model_routing.py (capabilities + fallbacks config, same-provider chain,
+    auto-strip placeholders), 19 unit tests green.
 6.3 Test sweep: fix stale assumptions, delete meaningless tests, add e2e coverage for
     the true usage paths touched in phases 2–5.
     VERIFY: full suite green across all packages; e2e count increased. COMMIT.
+    DONE: crow-cli 88 unit / 90 w-integration / 5 live e2e ✓; crow-mcp 115 ✓;
+    crow-memory-sdk 10 ✓ incl. wire contract against the freshly built binary.
+    Stale-assumption scan clean (see TODO.md Tests section).
 
 Done = every box in TODO.md checked (or deferred with written reason) AND PLAN phases
 all marked with evidence. Then report.

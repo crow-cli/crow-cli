@@ -23,9 +23,10 @@ from .types import (
 class MemoryClient:
     """Async client for one crow-memory server.
 
-    Retry policy (ported from the Rust SDK): connect errors + 502/503/504
-    back off exponentially for up to `max_retries` attempts; every other error
-    fails fast. Use as a context manager, or call `close()` explicitly.
+    Retry policy (ported from the Rust SDK): connect errors, timeouts, and
+    502/503/504 back off exponentially for up to `max_retries` attempts;
+    every other error fails fast. Use as a context manager, or call
+    `close()` explicitly.
     """
 
     def __init__(
@@ -64,13 +65,13 @@ class MemoryClient:
         for attempt in range(self._max_retries):
             try:
                 resp = await self._http.request(method, path, json=json, params=params)
-            except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+            except (httpx.ConnectError, httpx.TimeoutException) as e:
                 last_exc = e
                 if attempt + 1 < self._max_retries:
                     await asyncio.sleep(delay)
                     delay *= 2
                     continue
-                raise MemoryApiError(0, f"cannot reach {self.base_url}: {e}") from e
+                raise MemoryApiError(0, f"cannot reach {self.base_url} ({type(e).__name__}: {e})") from e
             if resp.status_code in _RETRYABLE_STATUS and attempt + 1 < self._max_retries:
                 await asyncio.sleep(delay)
                 delay *= 2

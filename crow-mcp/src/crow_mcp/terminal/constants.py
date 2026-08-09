@@ -15,6 +15,10 @@ CMD_OUTPUT_METADATA_PS1_REGEX = re.compile(
 # Default max size for command output
 MAX_CMD_OUTPUT_SIZE: int = 30000
 
+# How long to wait for the shell to render our PS1 at startup before
+# giving up and continuing (slow rc files: nvm, conda, etc.)
+STARTUP_TIMEOUT_SECONDS = 10
+
 # How long to wait with no new output before asking user
 NO_CHANGE_TIMEOUT_SECONDS = 30
 
