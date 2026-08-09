@@ -1,4 +1,8 @@
-"""Memory MCP tools — in-process LanceDB + ColBERT via crow-memory.
+"""Memory MCP tools — client of the crow-memory HTTP service.
+
+Was: in-process LanceDB + ColBERT via the crow-memory package. Now: talks to
+the shared crow-memory service through crow-memory-sdk's async client, so the
+MCP server process carries no dataset state at all.
 
 Three tools, split along the backend's own seams:
 
@@ -12,18 +16,25 @@ that must stay fast and correct.
 """
 
 import json
-import os
 from enum import Enum
 
-from crow_memory import get_store
+from crow_memory_sdk import MemoryClient, MessageRecord
 
 from crow_mcp.server.main import mcp
 
-MEMORY_PATH = os.environ.get("CROW_MEMORY_PATH", os.path.expanduser("~/.crow/memory.lance"))
+#: One process-wide client; the service is local and the tools are chatty.
+_client: MemoryClient | None = None
 
 
-def _store():
-    return get_store(MEMORY_PATH)
+def client() -> MemoryClient:
+    global _client
+    if _client is None:
+        _client = MemoryClient()
+    return _client
+
+
+#: Client-side fetch cap; the server takes a limit, we filter above it.
+_FETCH_ALL = 1_000_000
 
 
 # ---------------------------------------------------------------------------
@@ -44,7 +55,7 @@ class SearchType(str, Enum):
 
 
 # ---------------------------------------------------------------------------
-# Formatting helpers (pure Python over message dicts)
+# Formatting helpers (pure Python over message data dicts)
 # ---------------------------------------------------------------------------
 
 def _extract_searchable_text(data: dict) -> str:
@@ -169,10 +180,10 @@ def _build_excerpt(data: dict, query: str, max_len: int = 120) -> str:
 
 
 def _apply_context_window(
-    messages: list[dict],
+    messages: list[MessageRecord],
     match_indices: set[int],
     context: int,
-) -> list[dict]:
+) -> list[MessageRecord]:
     """Return messages within `context` messages of any match index."""
     if not match_indices or context <= 0:
         return [messages[i] for i in sorted(match_indices)]
@@ -207,7 +218,7 @@ def _snippet(data: dict | None, role: str | None, max_len: int = 60) -> str:
 def _render_transcript(
     session_id: str,
     agent_idx: int | None,
-    recs: list[dict],
+    recs: list[MessageRecord],
     mode: ContentMode,
     note: str,
 ) -> str:
@@ -217,11 +228,10 @@ def _render_transcript(
         header += f" | Agent: {agent_idx}"
     lines = [header, ""]
     for rec in recs:
-        data = rec["data"]
-        data["_created_at"] = (
-            rec.get("created_at", "")[:19].split("T")[-1] if rec.get("created_at") else ""
-        )
-        data["_agent_idx"] = rec.get("agent_idx")
+        data = rec.data if isinstance(rec.data, dict) else {"content": str(rec.data)}
+        data = dict(data)  # never mutate the record's payload in place
+        data["_created_at"] = rec.created_at[:19].split("T")[-1] if rec.created_at else ""
+        data["_agent_idx"] = rec.agent_idx
         formatted = _format_message(data, mode)
         if formatted:
             lines.append(formatted)
@@ -240,6 +250,37 @@ _MODE_ROLES = {
     ContentMode.WITH_TOOLS: ["user", "assistant", "tool"],
     ContentMode.FULL: None,  # no filter
 }
+
+
+# ---------------------------------------------------------------------------
+# Session-scoped fetch (the service has no session-scoped query endpoint)
+# ---------------------------------------------------------------------------
+
+async def _session_records(
+    session_id: str,
+    agent_idx: int | None,
+    roles: list[str] | None,
+    after: str | None,
+    before: str | None,
+) -> list[MessageRecord]:
+    """All of a session's messages (ascending), filtered, across its agents."""
+    agents = await client().list_agents(session_id)
+    recs: list[MessageRecord] = []
+    for a in agents:
+        if agent_idx is not None and a.agent_idx != agent_idx:
+            continue
+        for r in await client().query_messages_by_agent(
+            a.agent_id, order_asc=True, limit=_FETCH_ALL
+        ):
+            if after is not None and r.created_at < after:
+                continue
+            if before is not None and r.created_at > before:
+                continue
+            if roles is not None and r.role not in roles:
+                continue
+            recs.append(r)
+    recs.sort(key=lambda r: r.created_at)
+    return recs
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +306,7 @@ async def list_sessions(limit: int = 50, offset: int = 0) -> str:
     """
     limit = min(max(limit, 1), 200)
     offset = max(offset, 0)
-    sessions = _store().list_sessions(limit=limit, offset=offset)
+    sessions = await client().list_sessions(limit=limit, offset=offset)
     if not sessions:
         return "No sessions found."
 
@@ -274,17 +315,16 @@ async def list_sessions(limit: int = 50, offset: int = 0) -> str:
         "|---|---|---|---|---|---|",
     ]
     for s in sessions:
-        idxs = s.get("agent_idxs") or []
-        if len(idxs) > 1:
-            agents = f"{s['agent_count']} (a{idxs[0]}–a{idxs[-1]})"
+        if len(s.agent_idxs) > 1:
+            agents = f"{s.agent_count} (a{s.agent_idxs[0]}–a{s.agent_idxs[-1]})"
         else:
-            agents = str(s["agent_count"])
-        lm = s.get("last_message") or {}
-        snippet = _snippet(lm.get("data"), lm.get("role") or s.get("last_role"))
-        model_cwd = f"{s.get('model_identifier') or '—'} / {s.get('cwd') or '—'}"
+            agents = str(s.agent_count)
+        lm = s.last_message
+        snippet = _snippet(lm.data if lm else None, lm.role if lm else s.last_role)
+        model_cwd = f"{s.model_identifier or '—'} / {s.cwd or '—'}"
         lines.append(
-            f"| {s['session_id']} | {_fmt_when(s['last_activity'])} | {agents} "
-            f"| {s['message_count']} | {snippet} | {model_cwd} |"
+            f"| {s.session_id} | {_fmt_when(s.last_activity)} | {agents} "
+            f"| {s.message_count} | {snippet} | {model_cwd} |"
         )
     lines.append(f"\n*Showing {len(sessions)} sessions*")
     return "\n".join(lines)
@@ -331,9 +371,9 @@ async def query_memory(
         )
 
     roles = _MODE_ROLES.get(mode)
-    hits = _store().search_messages(query, filters=None, limit=limit + offset)
+    hits = await client().search_messages(query, limit=limit + offset)
     if roles:
-        hits = [h for h in hits if h["role"] in roles]
+        hits = [h for h in hits if h.role in roles]
     hits = hits[offset:offset + limit]
     if not hits:
         return "No matches found."
@@ -343,11 +383,12 @@ async def query_memory(
         "|---|---|---|---|---|---|",
     ]
     for h in hits:
-        ts = h.get("created_at", "")[:19].replace("T", " ")
-        excerpt = _build_excerpt(h["data"], query).replace("|", "\\|")
+        ts = h.created_at[:19].replace("T", " ")
+        excerpt = _build_excerpt(h.data, query).replace("|", "\\|")
+        score = h.score if h.score is not None else 0.0
         lines.append(
-            f"| {h['session_id']} | {h['agent_idx']} | {ts} | {h['role']} "
-            f"| {h['score']:.2f} | {excerpt} |"
+            f"| {h.session_id} | {h.agent_idx} | {ts} | {h.role} "
+            f"| {score:.2f} | {excerpt} |"
         )
     lines.append(f"\n*Showing {len(hits)} semantic matches*")
     return "\n".join(lines)
@@ -409,30 +450,24 @@ async def query_session(
     roles = _MODE_ROLES.get(mode)
 
     if query:
-        return _search_session(
+        return await _search_session(
             session_id, query, agent_idx, mode, roles, order,
             context, after, before, limit, offset, search_type,
         )
-    return _browse_session(
+    return await _browse_session(
         session_id, agent_idx, mode, roles, order, after, before, limit, offset,
     )
 
 
-def _browse_session(session_id, agent_idx, mode, roles, order,
-                    after, before, limit, offset) -> str:
+async def _browse_session(session_id, agent_idx, mode, roles, order,
+                          after, before, limit, offset) -> str:
     if limit is None:
         limit = 1  # bare call = the tail peek, don't drown the agent
     limit = min(max(limit, 1), 200)
-    recs = _store().query_messages(
-        session_id=session_id,
-        agent_idx=agent_idx,
-        roles=roles,
-        after=after,
-        before=before,
-        order=order,
-        limit=limit,
-        offset=offset,
-    )
+    recs = await _session_records(session_id, agent_idx, roles, after, before)
+    if order == "desc":
+        recs.reverse()
+    recs = recs[offset:offset + limit]
     if not recs:
         return "No messages found."
     return _render_transcript(
@@ -441,43 +476,36 @@ def _browse_session(session_id, agent_idx, mode, roles, order,
     )
 
 
-def _search_session(session_id, query, agent_idx, mode, roles, order,
-                    context, after, before, limit, offset, search_type) -> str:
+async def _search_session(session_id, query, agent_idx, mode, roles, order,
+                          context, after, before, limit, offset, search_type) -> str:
     if limit is None:
         limit = 20
     limit = min(max(limit, 1), 200)
 
     # Full ordered list for the context window + keyword matching.
-    all_recs = _store().query_messages(
-        session_id=session_id,
-        agent_idx=agent_idx,
-        roles=roles,
-        after=after,
-        before=before,
-        order="asc",
-        limit=1_000_000,
-        offset=0,
-    )
+    all_recs = await _session_records(session_id, agent_idx, roles, after, before)
 
     match_indices: set[int] = set()
 
     if search_type in (SearchType.SEMANTIC, SearchType.BOTH):
-        filters = {"session_id": session_id}
-        if agent_idx is not None:
-            filters["agent_idx"] = agent_idx
-        sem_hits = _store().search_messages(query, filters=filters, limit=limit * 2)
+        # The service searches globally; scope to this session's agents
+        # client-side (overfetch x4, same trick as the Rust MCP tools).
+        agent_ids = {r.agent_id for r in all_recs}
+        sem_hits = await client().search_messages(query, limit=limit * 4)
         if roles:
-            sem_hits = [h for h in sem_hits if h["role"] in roles]
-        id_to_idx = {r["id"]: i for i, r in enumerate(all_recs)}
+            sem_hits = [h for h in sem_hits if h.role in roles]
+        id_to_idx = {r.id: i for i, r in enumerate(all_recs)}
         for h in sem_hits:
-            idx = id_to_idx.get(h["id"])
+            if h.agent_id not in agent_ids:
+                continue
+            idx = id_to_idx.get(h.id)
             if idx is not None:
                 match_indices.add(idx)
 
     if search_type in (SearchType.KEYWORD, SearchType.BOTH):
         q_lower = query.lower()
         for i, rec in enumerate(all_recs):
-            if q_lower in _extract_searchable_text(rec["data"]).lower():
+            if q_lower in _extract_searchable_text(rec.data).lower():
                 match_indices.add(i)
 
     if not match_indices:

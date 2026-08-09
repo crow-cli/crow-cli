@@ -32,7 +32,7 @@ def get_session_by_cwd(cwd, memory_path=DEFAULT_MEMORY_PATH):
     try:
         result = []
         for agent in client.list_agents():
-            prompt_args = agent.get("prompt_args") or {}
+            prompt_args = agent.prompt_args or {}
             if prompt_args.get("workspace") != cwd:
                 continue
 
@@ -40,11 +40,11 @@ def get_session_by_cwd(cwd, memory_path=DEFAULT_MEMORY_PATH):
             # Fetch the first three records so len > 2 tells us a title exists.
             title = "Untitled Chat"
             recs = client.query_messages(
-                agent_id=agent["agent_id"], order="asc", limit=3
+                agent_id=agent.agent_id, order="asc", limit=3
             )
             if len(recs) > 2:
                 try:
-                    content = recs[1]["data"].get("content", "")
+                    content = recs[1].data.get("content", "")
                     if isinstance(content, list):
                         title = "".join(
                             b.get("text", "")
@@ -61,10 +61,10 @@ def get_session_by_cwd(cwd, memory_path=DEFAULT_MEMORY_PATH):
             result.append(
                 {
                     "cwd": cwd,
-                    "session_id": agent["session_id"],
-                    "agent_id": agent["agent_id"],
+                    "session_id": agent.session_id,
+                    "agent_id": agent.agent_id,
                     "title": title,
-                    "updated_at": agent.get("created_at", ""),
+                    "updated_at": agent.created_at,
                 }
             )
         return result
@@ -207,7 +207,7 @@ class AgentSession:
                 raise ValueError(f"Prompt '{prompt_id}' not found") from e
             raise
 
-        system_prompt = render_template(prompt["template"], **prompt_args)
+        system_prompt = render_template(prompt.template, **prompt_args)
         if session_id is None:
             session_id = get_coolname()
         agent_id = f"{session_id}-{agent_idx}"
@@ -292,17 +292,17 @@ class AgentSession:
             client.close()
 
         session = cls(
-            agent_id=agent["agent_id"],
-            session_id=agent["session_id"],
-            agent_idx=agent["agent_idx"],
+            agent_id=agent.agent_id,
+            session_id=agent.session_id,
+            agent_idx=agent.agent_idx,
             memory_path=memory_path,
-            cwd=agent["cwd"],
+            cwd=agent.cwd,
         )
-        session.model_identifier = agent["model_identifier"]
-        session.tools = agent["tool_definitions"]
-        session.request_params = agent["request_params"]
-        session.prompt_id = agent["prompt_id"]
-        session.prompt_args = agent["prompt_args"]
+        session.model_identifier = agent.model_identifier
+        session.tools = agent.tool_definitions
+        session.request_params = agent.request_params
+        session.prompt_id = agent.prompt_id
+        session.prompt_args = agent.prompt_args
         session.messages = messages
 
         return session

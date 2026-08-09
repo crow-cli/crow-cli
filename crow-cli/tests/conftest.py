@@ -9,6 +9,7 @@ import yaml
 
 from crow_cli.agent.configure import Config
 from crow_cli.agent.memory import MemoryServiceError
+from crow_memory_sdk import AgentRecord, PromptRecord
 
 
 class FakeMemoryClient:
@@ -59,16 +60,16 @@ class FakeMemoryClient:
         self._prompts[pid] = {"id": pid, "name": name, "template": template, "created": True}
         return pid
 
-    def get_prompt(self, prompt_id: str) -> dict:
+    def get_prompt(self, prompt_id: str) -> PromptRecord:
         if prompt_id not in self._prompts:
             raise MemoryServiceError(404, f"prompt '{prompt_id}' not found")
-        return self._prompts[prompt_id]
+        return PromptRecord.model_validate(self._prompts[prompt_id])
 
     # ---- agents ----
     def create_agent(self, *, agent_id, session_id, agent_idx=1, cwd="/tmp",
                      prompt_id=None, prompt_args=None, system_prompt="",
                      tool_definitions=None, request_params=None,
-                     model_identifier="", **kwargs) -> dict:
+                     model_identifier="", **kwargs) -> AgentRecord:
         self._agents[agent_id] = {
             "agent_id": agent_id, "session_id": session_id, "agent_idx": agent_idx,
             "cwd": cwd, "prompt_id": prompt_id or "", "prompt_args": prompt_args or {},
@@ -77,16 +78,20 @@ class FakeMemoryClient:
             "status": "active", "created_at": "2026-01-01T00:00:00+00:00",
         }
         self._messages.setdefault(agent_id, [])
-        return self._agents[agent_id]
+        return AgentRecord.model_validate(self._agents[agent_id])
 
-    def load(self, agent_id: str, hydrate: bool = False) -> tuple[dict, list[dict]]:
+    def load(self, agent_id: str, hydrate: bool = False) -> tuple[AgentRecord, list[dict]]:
         if agent_id not in self._agents:
             raise MemoryServiceError(404, f"agent '{agent_id}' not found")
-        return self._agents[agent_id], list(self._messages.get(agent_id, []))
+        return (
+            AgentRecord.model_validate(self._agents[agent_id]),
+            list(self._messages.get(agent_id, [])),
+        )
 
-    def list_agents(self, session_id: str | None = None) -> list[dict]:
+    def list_agents(self, session_id: str | None = None) -> list[AgentRecord]:
         return [
-            a for a in self._agents.values()
+            AgentRecord.model_validate(a)
+            for a in self._agents.values()
             if session_id is None or a["session_id"] == session_id
         ]
 
@@ -98,14 +103,15 @@ class FakeMemoryClient:
         return []
 
     # ---- messages ----
-    def add_message(self, agent_id: str, message: dict, usage: dict | None = None) -> dict:
+    def add_message(self, agent_id: str, message: dict, usage: dict | None = None) -> int:
         self._messages.setdefault(agent_id, []).append(message)
-        return {"id": len(self._messages[agent_id]), "agent_id": agent_id,
-                "role": message.get("role"), "image_ids": []}
+        return len(self._messages[agent_id])
 
-    def save_messages(self, agent_id: str, messages: list[dict]) -> dict:
-        self._messages.setdefault(agent_id, []).extend(messages)
-        return {"agent_id": agent_id, "count": len(messages)}
+    def save_messages(self, agent_id: str, messages: list[dict]) -> list[int]:
+        existing = self._messages.setdefault(agent_id, [])
+        start = len(existing)
+        existing.extend(messages)
+        return list(range(start + 1, len(existing) + 1))
 
 
 @pytest.fixture

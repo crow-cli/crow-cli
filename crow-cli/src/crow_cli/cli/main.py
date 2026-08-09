@@ -251,7 +251,11 @@ def inspect_db(
             raise SystemExit(0)
 
         if json_output:
-            print(json.dumps({"sessions": sessions_list}, indent=2, default=str))
+            print(
+                json.dumps(
+                    {"sessions": [s.model_dump() for s in sessions_list]}, indent=2
+                )
+            )
         else:
             table = Table(title="Crow Sessions")
             table.add_column("Session ID", style="cyan")
@@ -261,11 +265,11 @@ def inspect_db(
             table.add_column("Messages", style="yellow")
             for sess in sessions_list:
                 table.add_row(
-                    sess["session_id"],
-                    sess["last_activity"][:19],
-                    sess.get("model_identifier") or "",
-                    str(sess["agent_count"]),
-                    str(sess["message_count"]),
+                    sess.session_id,
+                    sess.last_activity[:19],
+                    sess.model_identifier or "",
+                    str(sess.agent_count),
+                    str(sess.message_count),
                 )
             client._console.print(table)
             client._console.print(

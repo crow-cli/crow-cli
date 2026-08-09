@@ -8,7 +8,7 @@ dependencies = [
     "binaryornot>=0.4.4",
     "cachetools>=7.0.0",
     "charset-normalizer>=3.4.4",
-    "crow-memory>=0.1.31",
+    "crow-memory-sdk>=0.1.0",
     "fastmcp>=3.4.2",
     "httpx>=0.28.0",
     "markdownify>=0.14.0",
@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-crow-memory = { path = "../crow-memory", editable = true }
+crow-memory-sdk = { path = "../crow-memory-sdk", editable = true }
 
 
 [project.urls]
