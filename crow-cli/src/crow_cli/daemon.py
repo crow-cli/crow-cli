@@ -101,7 +101,11 @@ def default_registry(config_dir: Path) -> dict[str, DaemonSpec]:
     )
     memory_bin = (
         os.environ.get("CROW_MEMORY_BIN")
-        or str(root / "target" / "release" / "crow-memory")
+        or (
+            str(root / "target" / "release" / "crow-memory")
+            if (root / "target" / "release" / "crow-memory").exists()
+            else (shutil.which("crow-memory") or "crow-memory")
+        )
     )
     mcp_bin = shutil.which("crow-mcp-dev")
     if mcp_bin is None:
@@ -120,6 +124,10 @@ def default_registry(config_dir: Path) -> dict[str, DaemonSpec]:
         "crow-memory": DaemonSpec(
             name="crow-memory",
             command=memory_bin,
+            # Honor THIS config dir, not the server's built-in default —
+            # memory_path/memory_port/embedding all come from this file, and
+            # the server loads {config_dir}/.env itself for ports/secrets.
+            args=["--config", str(config_dir / "config.yaml")],
             health_url=f"http://127.0.0.1:{memory_port}/healthz",
         ),
         "crow-mcp": DaemonSpec(
