@@ -1,0 +1,6 @@
+model_list:
+  - model_name: qwen3.5-plus
+    litellm_params:
+      model: dashscope/qwen3.5-plus
+      api_base: https://coding-intl.dashscope.aliyuncs.com/v1
+      api_key: "os.environ/DASHSCOPE_API_KEY"

@@ -1,0 +1,19 @@
+version: 1
+project:
+  title: crow-cli
+  description: Minimal Native ACP Agent Framework
+  github: https://github.com/crow-ai/crow-cli
+  license: MIT
+
+site:
+  title: crow-cli Documentation
+  template: book-theme
+  options:
+    favicon: ../site/crow-icon-white.ico
+    logo: ../site/crow-icon-white.svg
+    logo_dark: ../site/crow-icon-white.svg
+    logo_text: crow-cli
+    logo_url: /
+    style: styles/purple.css
+    hide_outline: false
+    hide_search: false

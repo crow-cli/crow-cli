@@ -1,0 +1,7 @@
+.pytest_cache
+config/logs/*.log
+config-done
+
+# MyST build output
+docs/_build/
+_site/

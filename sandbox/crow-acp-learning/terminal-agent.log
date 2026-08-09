@@ -1,0 +1,91 @@
+2026-02-20 22:02:03,359 - __main__ - INFO - Starting TerminalAgent
+2026-02-20 22:02:03,359 - __main__ - INFO - Initializing TerminalAgent
+2026-02-20 22:02:03,359 - __main__ - INFO - Client capabilities: field_meta={'terminal_output': True, 'terminal-auth': True} fs=FileSystemCapability(field_meta=None, read_text_file=True, write_text_file=True) terminal=True
+2026-02-20 22:02:03,359 - __main__ - INFO - Client info: field_meta=None name='zed' title='Zed' version='0.224.8+stable.169.737ce190372e31ace8c0415146b1f827fb787336'
+2026-02-20 22:02:03,359 - __main__ - INFO - Client supports ACP terminals!
+2026-02-20 22:02:03,360 - __main__ - INFO - Created session d1a85cf9d7e741d1aae2ae64115c8ee7 with cwd=/home/thomas/src/projects/orchestrator-project/crow
+2026-02-20 22:02:09,341 - __main__ - INFO - Executing command: pwd
+2026-02-20 22:02:09,341 - __main__ - INFO - Creating terminal for command: pwd
+2026-02-20 22:02:09,500 - __main__ - INFO - Terminal created: ea8eaa6f-0553-49b4-bb10-be250a365f9c
+2026-02-20 22:02:09,501 - __main__ - ERROR - Error executing command: AgentSideConnection.wait_for_terminal_exit() missing 1 required positional argument: 'session_id'
+Traceback (most recent call last):
+  File "/home/thomas/src/projects/mcp-testing/sandbox/crow-acp-learning/terminal_agent.py", line 231, in prompt
+    exit_response = await self._conn.wait_for_terminal_exit(
+                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        terminal_id=terminal_id,
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+TypeError: AgentSideConnection.wait_for_terminal_exit() missing 1 required positional argument: 'session_id'
+2026-02-20 22:02:23,457 - __main__ - INFO - Starting TerminalAgent
+2026-02-20 22:02:23,457 - __main__ - INFO - Initializing TerminalAgent
+2026-02-20 22:02:23,458 - __main__ - INFO - Client capabilities: field_meta={'terminal_output': True, 'terminal-auth': True} fs=FileSystemCapability(field_meta=None, read_text_file=True, write_text_file=True) terminal=True
+2026-02-20 22:02:23,458 - __main__ - INFO - Client info: field_meta=None name='zed' title='Zed' version='0.224.8+stable.169.737ce190372e31ace8c0415146b1f827fb787336'
+2026-02-20 22:02:23,458 - __main__ - INFO - Client supports ACP terminals!
+2026-02-20 22:02:23,459 - __main__ - INFO - Created session 5df56409a21446ac8260f7404228a7aa with cwd=/home/thomas/src/projects/orchestrator-project/crow
+2026-02-20 22:02:26,692 - __main__ - INFO - Executing command: pwd
+2026-02-20 22:02:26,693 - __main__ - INFO - Creating terminal for command: pwd
+2026-02-20 22:02:26,842 - __main__ - INFO - Terminal created: e9bfda28-515e-45ac-8ee3-f98b832c95f6
+2026-02-20 22:02:26,842 - __main__ - ERROR - Error executing command: AgentSideConnection.wait_for_terminal_exit() missing 1 required positional argument: 'session_id'
+Traceback (most recent call last):
+  File "/home/thomas/src/projects/mcp-testing/sandbox/crow-acp-learning/terminal_agent.py", line 231, in prompt
+    exit_response = await self._conn.wait_for_terminal_exit(
+                          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        terminal_id=terminal_id,
+        ^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+TypeError: AgentSideConnection.wait_for_terminal_exit() missing 1 required positional argument: 'session_id'
+2026-02-20 22:18:41,617 - __main__ - INFO - Starting TerminalAgent
+2026-02-20 22:18:41,617 - __main__ - INFO - Initializing TerminalAgent
+2026-02-20 22:18:41,617 - __main__ - INFO - Client capabilities: field_meta={'terminal_output': True, 'terminal-auth': True} fs=FileSystemCapability(field_meta=None, read_text_file=True, write_text_file=True) terminal=True
+2026-02-20 22:18:41,617 - __main__ - INFO - Client info: field_meta=None name='zed' title='Zed' version='0.224.8+stable.169.737ce190372e31ace8c0415146b1f827fb787336'
+2026-02-20 22:18:41,617 - __main__ - INFO - Client supports ACP terminals!
+2026-02-20 22:18:41,618 - __main__ - INFO - Created session 90f422a13f044760992ebce35e8fbf91 with cwd=/home/thomas/src/projects/orchestrator-project/crow
+2026-02-20 22:18:44,707 - __main__ - INFO - Executing command: pwd
+2026-02-20 22:18:44,707 - __main__ - INFO - Creating terminal for command: pwd
+2026-02-20 22:18:44,858 - __main__ - INFO - Terminal created: a1582935-df8b-4d8f-89f1-487a2c520b33
+2026-02-20 22:18:44,894 - __main__ - ERROR - Error executing command: 'WaitForTerminalExitResponse' object has no attribute 'exit_status'
+Traceback (most recent call last):
+  File "/home/thomas/src/projects/mcp-testing/sandbox/crow-acp-learning/terminal_agent.py", line 238, in prompt
+    exit_status = exit_response.exit_status
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/thomas/src/projects/mcp-testing/sandbox/crow-acp-learning/.venv/lib/python3.14/site-packages/acp/schema.py", line 26, in __getattr__
+    raise AttributeError(f"'{type(self).__name__}' object has no attribute '{item}'")
+AttributeError: 'WaitForTerminalExitResponse' object has no attribute 'exit_status'
+2026-02-20 22:19:40,355 - __main__ - INFO - Starting TerminalAgent
+2026-02-20 22:19:40,355 - __main__ - INFO - Initializing TerminalAgent
+2026-02-20 22:19:40,355 - __main__ - INFO - Client capabilities: field_meta={'terminal_output': True, 'terminal-auth': True} fs=FileSystemCapability(field_meta=None, read_text_file=True, write_text_file=True) terminal=True
+2026-02-20 22:19:40,355 - __main__ - INFO - Client info: field_meta=None name='zed' title='Zed' version='0.224.8+stable.169.737ce190372e31ace8c0415146b1f827fb787336'
+2026-02-20 22:19:40,355 - __main__ - INFO - Client supports ACP terminals!
+2026-02-20 22:19:40,359 - __main__ - INFO - Created session 99161e2cd9ef4bd388805c91821864f6 with cwd=/home/thomas/src/projects/orchestrator-project/crow
+2026-02-20 22:19:43,084 - __main__ - INFO - Executing command: pwd
+2026-02-20 22:19:43,084 - __main__ - INFO - Creating terminal for command: pwd
+2026-02-20 22:19:43,236 - __main__ - INFO - Terminal created: 17bae58f-4fad-423f-a6ff-c05c5c9b3109
+2026-02-20 22:19:43,237 - __main__ - INFO - Exit response: field_meta=None exit_code=0 signal=None
+2026-02-20 22:19:43,237 - __main__ - ERROR - Error executing command: 'WaitForTerminalExitResponse' object has no attribute 'exit_status'
+Traceback (most recent call last):
+  File "/home/thomas/src/projects/mcp-testing/sandbox/crow-acp-learning/terminal_agent.py", line 239, in prompt
+    exit_status = exit_response.exit_status
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/thomas/src/projects/mcp-testing/sandbox/crow-acp-learning/.venv/lib/python3.14/site-packages/acp/schema.py", line 26, in __getattr__
+    raise AttributeError(f"'{type(self).__name__}' object has no attribute '{item}'")
+AttributeError: 'WaitForTerminalExitResponse' object has no attribute 'exit_status'
+2026-02-20 22:21:22,630 - __main__ - INFO - Starting TerminalAgent
+2026-02-20 22:21:22,630 - __main__ - INFO - Initializing TerminalAgent
+2026-02-20 22:21:22,630 - __main__ - INFO - Client capabilities: field_meta={'terminal_output': True, 'terminal-auth': True} fs=FileSystemCapability(field_meta=None, read_text_file=True, write_text_file=True) terminal=True
+2026-02-20 22:21:22,630 - __main__ - INFO - Client info: field_meta=None name='zed' title='Zed' version='0.224.8+stable.169.737ce190372e31ace8c0415146b1f827fb787336'
+2026-02-20 22:21:22,630 - __main__ - INFO - Client supports ACP terminals!
+2026-02-20 22:21:22,634 - __main__ - INFO - Created session 8c04a1c05cc24bdbba6bf3d37fdcc6d9 with cwd=/home/thomas/src/projects/orchestrator-project/crow
+2026-02-20 22:21:25,721 - __main__ - INFO - Executing command: pwd
+2026-02-20 22:21:25,721 - __main__ - INFO - Creating terminal for command: pwd
+2026-02-20 22:21:25,890 - __main__ - INFO - Terminal created: 293637cd-3b38-4f4e-ad26-22c560201764
+2026-02-20 22:21:25,932 - __main__ - INFO - Exit response: field_meta=None exit_code=0 signal=None
+2026-02-20 22:21:25,932 - __main__ - INFO - Terminal exited with exit code: 0
+and signal: None
+2026-02-22 07:22:41,058 - __main__ - INFO - Starting TerminalAgent
+2026-02-22 07:22:41,058 - __main__ - INFO - Initializing TerminalAgent
+2026-02-22 07:22:41,059 - __main__ - INFO - Client capabilities: field_meta={'terminal_output': True, 'terminal-auth': True} fs=FileSystemCapability(field_meta=None, read_text_file=True, write_text_file=True) terminal=True
+2026-02-22 07:22:41,059 - __main__ - INFO - Client info: field_meta=None name='zed' title='Zed' version='0.224.11+stable.175.e4cabf49a18ed03969d84ee15643e9ec81857e97'
+2026-02-22 07:22:41,059 - __main__ - INFO - Client supports ACP terminals!
+2026-02-22 07:22:41,060 - __main__ - INFO - Created session b71b8f96f6574ad1b152a5455c1e0bc5 with cwd=/home/thomas/src/nid

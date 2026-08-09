@@ -1,0 +1,39 @@
+name: Publish crow-cli to PyPI
+
+on:
+  release:
+    types: [published]
+    # Only trigger for releases tagged with crow-cli-* or v* if the release body mentions crow-cli
+    # Alternatively, you can use tags like "crow-cli-v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/crow-cli
+    permissions:
+      id-token: write  # Required for trusted publishing
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "crow-cli/pyproject.toml"
+
+      - name: Build package
+        working-directory: ./crow-cli
+        run: uv build
+
+      - name: Publish to PyPI
+        working-directory: ./crow-cli
+        run: uv publish

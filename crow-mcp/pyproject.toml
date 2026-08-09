@@ -1,0 +1,47 @@
+[project]
+name = "crow-mcp"
+version = "0.1.30"
+description = "Crow builtin MCP server"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "crow-memory-sdk>=0.1.0",
+    "fastmcp>=3.4.2",
+    "httpx>=0.28.0",
+    "markdownify>=0.14.0",
+    "readabilipy>=0.3.0",
+    "pydantic>=2.12.5",
+    "opencv-python>=4.13.0.92",
+]
+
+[tool.uv.sources]
+crow-memory-sdk = { path = "../crow-memory-sdk", editable = true }
+
+
+[project.urls]
+Homepage = "https://github.com/crow-cli/crow-cli"
+Repository = "https://github.com/crow-cli/crow-cli"
+Issues = "https://github.com/crow-cli/crow-cli/issues"
+Documentation = "https://github.com/crow-cli/crow-cli#readme"
+[project.scripts]
+crow-mcp-dev = "crow_mcp.server.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "ipython>=9.15.0",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=0.23.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-v --strict-markers"

@@ -1,6 +1,6 @@
 [package]
 name = "crow-memory"
-version = "0.2.0"
+version = "0.1.31"
 edition = "2021"
 description = "crow-memory HTTP server — axum + LanceDB + embeddings (single writer)"
 repository = "https://github.com/crow-cli/crow-cli"
@@ -46,6 +46,3 @@ rand = "0.9"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "signal"] }
 tracing = "0.1"
 anyhow = "1"
-
-[dev-dependencies]
-crow-memory-sdk = { path = "../crow-memory-sdk", version = "0.2.0" }

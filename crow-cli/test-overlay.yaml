@@ -1,5 +1,0 @@
-mcpServers:
-  crow-mcp-rs:
-    transport: stdio
-    command: /home/thomas/src/crow-team/crow-mcp-rs/target/debug/crow-mcp
-    args: []

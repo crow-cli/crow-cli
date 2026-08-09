@@ -1,9 +1,13 @@
 //! Wire types for the crow-memory HTTP API.
 //!
-//! The contract between the crow-memory server (axum + LanceDB) and
-//! crow-memory-sdk (reqwest client). Append-only chat history: create +
-//! read/search, no update, no delete.
+//! The SINGLE SOURCE OF TRUTH for the contract between the crow-memory
+//! server (axum + LanceDB) and its clients — the python crow-memory-sdk
+//! generates its pydantic models from this crate's JSON Schema
+//! (`cargo run -p crow-memory-types --bin gen-schema`, then
+//! `scripts/gen_wire_types.sh` in the python sdk). Append-only chat
+//! history: create + read/search, no update, no delete.
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 /// Default crow-memory HTTP port: 27697 = CROWS on a phone keypad.
@@ -12,14 +16,14 @@ pub const DEFAULT_MEMORY_PORT: u16 = 27697;
 
 // ---- Records (read side) ---------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct PromptRecord {
     pub id: String,
     pub name: String,
     pub template: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AgentRecord {
     pub agent_id: String,
     pub session_id: String,
@@ -35,7 +39,7 @@ pub struct AgentRecord {
     pub created_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MessageRecord {
     pub id: i64,
     pub agent_id: String,
@@ -48,7 +52,7 @@ pub struct MessageRecord {
     pub score: Option<f32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SessionInfo {
     pub session_id: String,
     pub last_activity: String,
@@ -67,18 +71,18 @@ pub struct SessionInfo {
 
 // ---- Requests / responses (write side) -------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LookupPromptRequest {
     pub template: String,
     pub name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct LookupPromptResponse {
     pub prompt_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct CreateAgentRequest {
     pub agent_id: String,
     pub session_id: String,
@@ -92,7 +96,7 @@ pub struct CreateAgentRequest {
     pub model_identifier: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AddMessageRequest {
     pub agent_id: String,
     pub message: serde_json::Value,
@@ -100,12 +104,12 @@ pub struct AddMessageRequest {
     pub usage: Option<serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct AddMessageResponse {
     pub id: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct SearchMessagesRequest {
     pub query: String,
     pub limit: usize,
@@ -113,19 +117,114 @@ pub struct SearchMessagesRequest {
     pub role: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct MaxAgentIdxResponse {
     pub max_idx: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ErrorResponse {
     pub error: String,
 }
 
+// ---- images ----
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct AddImageRequest {
+    pub mime: String,
+    /// Base64-encoded image bytes (RFC 4648 standard alphabet).
+    pub data: String,
+    pub w: i64,
+    pub h: i64,
+}
+
+/// Image as served on the wire. Storage-side bytes live in the server's
+/// `StoredImage`; here `data` is always base64.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct ImageRecord {
+    pub image_id: String,
+    pub mime: String,
+    /// Base64-encoded image bytes (RFC 4648 standard alphabet).
+    pub data: String,
+    pub w: i64,
+    pub h: i64,
+    pub created_at: String,
+}
+
+/// JSON Schema covering every wire type, `$defs` keyed by type name.
+/// Single source of truth for client codegen (python pydantic).
+pub fn wire_schema() -> serde_json::Value {
+    let mut defs = serde_json::Map::new();
+
+    macro_rules! add {
+        ($($t:ty),* $(,)?) => {
+            $(
+                {
+                    let name = std::any::type_name::<$t>()
+                        .rsplit("::")
+                        .next()
+                        .unwrap();
+                    let mut value =
+                        serde_json::to_value(schemars::schema_for!($t)).unwrap();
+                    let obj = value.as_object_mut().unwrap();
+                    obj.remove("$schema");
+                    let nested = obj.remove("$defs");
+                    defs.insert(name.to_string(), value);
+                    if let Some(serde_json::Value::Object(n)) = nested {
+                        for (k, v) in n {
+                            defs.entry(k).or_insert(v);
+                        }
+                    }
+                }
+            )*
+        };
+    }
+
+    add!(
+        PromptRecord,
+        AgentRecord,
+        MessageRecord,
+        SessionInfo,
+        LookupPromptRequest,
+        LookupPromptResponse,
+        CreateAgentRequest,
+        AddMessageRequest,
+        AddMessageResponse,
+        SearchMessagesRequest,
+        MaxAgentIdxResponse,
+        ErrorResponse,
+        AddImageRequest,
+        ImageRecord,
+    );
+
+    serde_json::json!({
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "crow-memory wire types",
+        "description": "Generated from the crow-memory-types rust crate — do not edit by hand.",
+        "$defs": serde_json::Value::Object(defs),
+    })
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn schema_json_up_to_date() {
+        // The committed schema.json is the artifact the python sdk generates
+        // pydantic models from. If this fails, run:
+        //   cargo run -p crow-memory-types --bin gen-schema crow-memory-types/schema.json
+        let committed = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/schema.json"
+        ))
+        .expect("schema.json missing — run gen-schema");
+        let generated =
+            serde_json::to_string_pretty(&wire_schema()).unwrap() + "\n";
+        assert_eq!(
+            committed, generated,
+            "schema.json drifted from the rust types — regenerate it"
+        );
+    }
 
     #[test]
     fn agent_record_round_trip() {

@@ -881,7 +881,7 @@ impl MemoryStore {
         Ok(())
     }
 
-    pub async fn get_image(&self, image_id: &str) -> anyhow::Result<Option<ImageRecord>> {
+    pub async fn get_image(&self, image_id: &str) -> anyhow::Result<Option<StoredImage>> {
         // By-id fetch, but still project away the mv column — the blob is
         // what we want, the multivector is not.
         let rows = query_columns(
@@ -910,7 +910,7 @@ impl MemoryStore {
                     .downcast_ref::<Int64Array>()
                     .unwrap();
                 let created_ats = col_str(batch, 5);
-                return Ok(Some(ImageRecord {
+                return Ok(Some(StoredImage {
                     image_id: ids.value(0).to_string(),
                     mime: mimes.value(0).to_string(),
                     data: datas.value(0).to_vec(),
@@ -927,7 +927,7 @@ impl MemoryStore {
 // ---- Records (wire types live in crow-memory-types) ------------------------
 
 /// One row of the images table (bytes + metadata, no mv).
-pub struct ImageRecord {
+pub struct StoredImage {
     pub image_id: String,
     pub mime: String,
     pub data: Vec<u8>,

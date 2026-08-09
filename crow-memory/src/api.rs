@@ -12,9 +12,9 @@ use axum::{
     Json, Router,
 };
 use crow_memory_types::{
-    AddMessageRequest, AddMessageResponse, AgentRecord, CreateAgentRequest, ErrorResponse,
-    LookupPromptRequest, LookupPromptResponse, MaxAgentIdxResponse, MessageRecord, PromptRecord,
-    SearchMessagesRequest, SessionInfo,
+    AddImageRequest, AddMessageRequest, AddMessageResponse, AgentRecord, CreateAgentRequest,
+    ErrorResponse, ImageRecord, LookupPromptRequest, LookupPromptResponse, MaxAgentIdxResponse,
+    MessageRecord, PromptRecord, SearchMessagesRequest, SessionInfo,
 };
 
 use crate::store::MemoryStore;
@@ -239,26 +239,8 @@ async fn sessions_by_cwd(
 }
 
 // ---- images ----
-
-#[derive(serde::Deserialize)]
-struct AddImageRequest {
-    mime: String,
-    /// Base64-encoded image bytes.
-    data: String,
-    w: i64,
-    h: i64,
-}
-
-#[derive(serde::Serialize)]
-struct ImageResponse {
-    image_id: String,
-    mime: String,
-    /// Base64-encoded image bytes.
-    data: String,
-    w: i64,
-    h: i64,
-    created_at: String,
-}
+// Wire types live in crow-memory-types (single source of truth for the
+// python sdk's generated models).
 
 async fn add_image(
     State(s): State<Arc<MemoryStore>>,
@@ -275,11 +257,11 @@ async fn add_image(
 async fn get_image(
     State(s): State<Arc<MemoryStore>>,
     Path(image_id): Path<String>,
-) -> Result<Json<ImageResponse>, ApiError> {
+) -> Result<Json<ImageRecord>, ApiError> {
     s.get_image(&image_id)
         .await?
         .map(|img| {
-            Json(ImageResponse {
+            Json(ImageRecord {
                 image_id: img.image_id,
                 mime: img.mime,
                 data: base64_encode(&img.data),

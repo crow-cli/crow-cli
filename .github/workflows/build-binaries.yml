@@ -1,0 +1,107 @@
+name: Build Binaries
+
+on:
+  push:
+    tags:
+      - "v*" # Trigger on version tags like v0.1.13
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os:
+          [
+            ubuntu-22.04,
+            macos-15-intel,
+            macos-latest,
+            windows-latest,
+            ubuntu-24.04-arm,
+          ]
+        include:
+          - os: ubuntu-22.04
+            target: linux-x86_64
+            archive_name: crow-cli-linux-x86_64.tar.gz
+          - os: macos-15-intel
+            target: darwin-x86_64
+            archive_name: crow-cli-darwin-x86_64.tar.gz
+          - os: macos-latest
+            target: darwin-aarch64
+            archive_name: crow-cli-darwin-aarch64.tar.gz
+          - os: windows-latest
+            target: windows-x86_64
+            archive_name: crow-cli-windows-x86_64.zip
+          - os: ubuntu-24.04-arm
+            target: linux-aarch64
+            archive_name: crow-cli-linux-aarch64.tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "crow-cli/pyproject.toml"
+
+      - name: Install dependencies
+        working-directory: ./crow-cli
+        run: |
+          uv pip install --system pyinstaller
+
+      - name: Build with PyInstaller
+        working-directory: ./crow-cli
+        run: |
+          uv run pyinstaller crow-cli.spec --noconfirm
+
+      - name: Create archive
+        shell: bash
+        run: |
+          cd crow-cli
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            cd dist
+            7z a -tzip ${{ matrix.archive_name }} crow-cli.exe
+            mv ${{ matrix.archive_name }} ../
+          else
+            cd dist
+            tar -czvf ${{ matrix.archive_name }} crow-cli
+            mv ${{ matrix.archive_name }} ../
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: crow-cli-${{ matrix.target }}
+          path: crow-cli/${{ matrix.archive_name }}
+          retention-days: 30
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: crow-cli-*
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            crow-cli-*.tar.gz
+            crow-cli-*.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true

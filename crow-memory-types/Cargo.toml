@@ -1,6 +1,6 @@
 [package]
 name = "crow-memory-types"
-version = "0.2.0"
+version = "0.1.31"
 edition = "2021"
 description = "Wire types for the crow-memory HTTP API — shared by server and SDK"
 repository = "https://github.com/crow-cli/crow-cli"
@@ -9,3 +9,8 @@ license = "MIT"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+schemars = "1"
+
+[[bin]]
+name = "gen-schema"
+path = "src/bin/gen_schema.rs"

@@ -1,0 +1,14 @@
+[project]
+name = "litellm-dashscope"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "crow-cli",
+    "ipython>=9.13.0",
+    "openai>=2.33.0",
+]
+
+[tool.uv.sources]
+crow-cli = { path = "../../crow-cli" }

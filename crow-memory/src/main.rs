@@ -1,7 +1,7 @@
 //! crow-memory server binary: axum + LanceDB + embeddings, single writer.
 //!
 //! Reads `memory_path` + `embedding` from the crow config.yaml (same file
-//! crow-cli uses); clients talk to this server via crow-memory-sdk.
+//! crow-cli uses); clients talk to this server via the python crow-memory-sdk.
 
 use std::path::PathBuf;
 use std::sync::Arc;

@@ -1,0 +1,47 @@
+2026-02-20 00:12:06,100 - root - INFO - Text list: ['']
+2026-02-20 00:12:49,266 - root - INFO - Resource link: 
+2026-02-20 00:12:49,267 - root - INFO - Text list: ['']
+2026-02-20 00:13:33,222 - root - INFO - Resource link: field_meta=None annotations=None description=None mime_type=None name='README.md' size=None title=None uri='file:///home/thomas/src/projects/orchestrator-project/crow/docs/openhands_book/README.md' type='resource_link'
+2026-02-20 00:13:33,222 - root - INFO - Text list: ['']
+2026-02-20 00:14:49,306 - root - INFO - block type: <class 'acp.schema.ResourceContentBlock'>
+2026-02-20 00:14:49,306 - root - INFO - Resource link: field_meta=None annotations=None description=None mime_type=None name='server.py' size=None title=None uri='file:///home/thomas/src/projects/orchestrator-project/crow/src/crow/acp/server.py' type='resource_link'
+2026-02-20 00:14:49,306 - root - INFO - Text list: ['']
+2026-02-20 00:20:52,507 - root - INFO - block type: <class 'acp.schema.ResourceContentBlock'>
+2026-02-20 00:20:52,507 - root - INFO - resource link from object {}
+2026-02-20 00:20:52,507 - root - INFO - Text list: ['']
+2026-02-20 00:22:41,709 - root - INFO - block type: <class 'acp.schema.ResourceContentBlock'>
+2026-02-20 00:22:41,709 - root - INFO - Text list: ['file:///home/thomas/src/projects/orchestrator-project/crow/docs/openhands_book/README.md']
+2026-02-20 00:22:41,710 - root - INFO - Text list: ['file:///home/thomas/src/projects/orchestrator-project/crow/docs/openhands_book/README.md', ' yoooo']
+2026-02-20 00:23:21,821 - root - INFO - block type: <class 'acp.schema.ResourceContentBlock'>
+2026-02-20 00:23:21,821 - root - INFO - Text list: ['file:///home/thomas/src/projects/orchestrator-project/crow/src/crow/acp/server.py#L8:14']
+2026-02-20 00:39:07,056 - root - ERROR - Error parsing JSON-RPC message
+Traceback (most recent call last):
+  File "/home/thomas/src/projects/mcp-testing/crow-acp/.venv/lib/python3.14/site-packages/acp/connection.py", line 155, in _receive_loop
+    message: dict[str, Any] = json.loads(line)
+                              ~~~~~~~~~~^^^^^^
+  File "/home/thomas/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/json/__init__.py", line 352, in loads
+    return _default_decoder.decode(s)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^
+  File "/home/thomas/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/json/decoder.py", line 345, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/thomas/.local/share/uv/python/cpython-3.14.2-linux-x86_64-gnu/lib/python3.14/json/decoder.py", line 363, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 2 column 1 (char 1)
+2026-02-20 00:54:54,594 - root - INFO - block type: <class 'acp.schema.ResourceContentBlock'>
+2026-02-20 00:54:54,595 - root - INFO - Text list: ['8\t     "agent-client-protocol",\n9\t     "aiofiles>=25.1.0",\n10\t     "ipython>=9.9.0",\n11\t     "markdownify>=1.2.2",\n12\t     "openai>=2.14.0",\n13\t     "openhands-sdk @ git+https://github.com/odellus/software-agent-sdk.git@c8f2947#subdirectory=openhands-sdk",\n14\t     "openhands-tools @ git+https://github.com/odellus/software-agent-sdk.git@c8f2947#subdirectory=openhands-tools",\n15\t     "python-dotenv>=1.2.1",\n16\t     "pyyaml>=6.0.0",\n17\t     "requests>=2.32.5",\n18\t     "starlette>=0.27.0",\n19\t     "typer>=0.12.0",\n20\t     "uvicorn>=0.20.0",\n21\t     "websockets>=14.0",\n22\t ]\n23\t \n24\t [project.scripts]\n25\t crow = "crow.cli.main:app"\n26\t \n27\t [build-system]\n28\t requires = ["hatchling"]\n29\t build-backend = "hatchling.build"\n30\t \n31\t [tool.hatch.metadata]\n32\t allow-direct-references = true\n33\t \n34\t [tool.hatch.build.targets.wheel]\n35\t packages = ["src/crow"]\n36\t \n37\t [tool.hatch.build.targets.wheel.force-include]\n38\t "src/crow/editor/frontend/dist" = "crow/editor/frontend/dist"\n39\t \n40\t [tool.hatch.build.targets.sdist.force-include]\n41\t "src/crow/editor/frontend/dist" = "src/crow/editor/frontend/dist"\n42\t \n43\t [tool.uv.sources]\n44\t openhands-sdk = { git = "https://github.com/odellus/software-agent-sdk.git", rev = "c8f2947", subdirectory = "openhands-sdk" }\n45\t openhands-tools = { git = "https://github.com/odellus/software-agent-sdk.git", rev = "c8f2947", subdirectory = "openhands-tools" }']
+2026-02-20 03:00:43,338 - root - INFO - Starting 30 second delay for session 37228fc66a744bec8ae8a46055a715f1
+2026-02-20 03:01:10,381 - root - INFO - Starting 30 second delay for session 3cbab967d61340ea8802db2365d775fa
+2026-02-20 03:01:48,394 - root - INFO - Starting 30 second delay for session 0fdc1893573b46618a98c2eef41185d2
+2026-02-20 03:01:53,399 - root - INFO - Delay complete, processing prompt for session 0fdc1893573b46618a98c2eef41185d2
+2026-02-20 03:01:53,400 - root - INFO - Text list: ['hey']
+2026-02-20 03:04:31,806 - root - INFO - Starting 30 second delay for session 96ed9c45dd904ae9af012a41b61b6c46
+2026-02-20 03:04:36,810 - root - INFO - Delay complete, processing prompt for session 96ed9c45dd904ae9af012a41b61b6c46
+2026-02-20 03:04:36,810 - root - INFO - Text list: ['hey']
+2026-02-20 03:16:16,253 - root - INFO - Starting 30 second delay for session 96ed9c45dd904ae9af012a41b61b6c46
+2026-02-20 03:16:21,255 - root - INFO - Delay complete, processing prompt for session 96ed9c45dd904ae9af012a41b61b6c46
+2026-02-20 03:16:21,255 - root - INFO - Text list: ['yo']
+2026-02-20 03:28:30,775 - root - INFO - Starting 30 second delay for session 4f87f2dbbba64b7285249df03b8f8a76
+2026-02-20 03:28:42,516 - root - INFO - Cancel request for session: 4f87f2dbbba64b7285249df03b8f8a76
+2026-02-20 03:28:42,516 - root - INFO - Cancel event set for session: 4f87f2dbbba64b7285249df03b8f8a76
+2026-02-20 03:28:42,516 - root - INFO - Cancelled during delay for session 4f87f2dbbba64b7285249df03b8f8a76

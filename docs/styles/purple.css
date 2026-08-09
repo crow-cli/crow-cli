@@ -1,0 +1,118 @@
+/* Deep purple dark mode for MyST book-theme */
+
+:root {
+  color-scheme: dark;
+}
+
+/* Main backgrounds */
+body,
+#site-header,
+#site-nav,
+#site-main,
+article,
+main {
+  background-color: #1c005f !important;
+}
+
+/* Sidebar/navigation */
+nav,
+aside,
+.sidebar {
+  background-color: #120040 !important;
+}
+
+/* All text */
+body {
+  color: #ffffff !important;
+}
+
+/* Links */
+a {
+  color: #a78bfa !important;
+}
+
+a:hover {
+  color: #c4b5fd !important;
+}
+
+/* Code blocks */
+pre,
+code {
+  background-color: #0f0035 !important;
+  border: 1px solid #2600ab !important;
+  color: #e2e8f0 !important;
+}
+
+/* Inline code */
+code {
+  padding: 0.2em 0.4em;
+  border-radius: 4px;
+}
+
+/* Headers */
+h1, h2, h3, h4, h5, h6 {
+  color: #ffffff !important;
+}
+
+/* Admonitions/callouts */
+.admonition,
+.callout {
+  background-color: #120040 !important;
+  border-left-color: #8b5cf6 !important;
+}
+
+/* Tables */
+table {
+  border-color: #2600ab !important;
+}
+
+th {
+  background-color: #120040 !important;
+}
+
+td {
+  border-color: #2600ab !important;
+}
+
+/* Buttons */
+button,
+.button,
+.btn {
+  background-color: #2600ab !important;
+  color: white !important;
+  border: none !important;
+}
+
+button:hover,
+.button:hover {
+  background-color: #3d00cc !important;
+}
+
+/* Search */
+.search-input,
+input[type="search"] {
+  background-color: #120040 !important;
+  border-color: #2600ab !important;
+  color: white !important;
+}
+
+/* Footer */
+footer {
+  background-color: #120040 !important;
+  border-top-color: #2600ab !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  background-color: #120040;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: #2600ab;
+}
+
+/* Selection */
+::selection {
+  background-color: #2600ab;
+  color: white;
+}
