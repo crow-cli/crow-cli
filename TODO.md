@@ -5,8 +5,9 @@
 
 Context: Python is the future of crow-cli. The Rust rewrite (crow-cli repo,
 main branch) was an experiment; its only survivors are the `crow-memory`
-HTTP service and `crow-memory-types`. Everything else ports back to this
-worktree (branch `crow-cli-python`; lands on main via REBASE, not merge).
+HTTP service and `crow-memory-types`. Everything else ported back on branch
+`crow-cli-python` and LANDED on main via merge 9eb8533d (branch tree adopted
+WHOLESALE as source of truth; only TASK-SYSTEM.md kept from old main).
 Dynamic language = fast OODA loop; the heavy lifting lives in the Rust
 crow-memory service behind HTTP, spoken to by the PYTHON crow-memory-sdk.
 
@@ -266,6 +267,44 @@ persist/search blocked the event loop. Now async end to end:
       consolidated memory stack (spawns the real binary); terminal startup fix
       verified live; model routing covered by 19 unit tests with real openai
       exception objects.
+
+## Land on main — DONE 2026-08-09
+- [x] Merge crow-cli-python into main treating the branch as single source
+      of truth: `git merge -s ours --no-commit --no-ff` skeleton (dodges the
+      delete/modify conflicts) → `git rm -rf .` → `git checkout
+      crow-cli-python -- .` → restore keep-list → commit (9eb8533d, parents
+      ee2cb032 + 5dfbbf6f). `git diff crow-cli-python main` = ONLY
+      TASK-SYSTEM.md (+159). Keep-list: TASK-SYSTEM.md (reference for the
+      task-system plan). vendor submodules initialized in main worktree.
+      NOT pushed (no explicit request).
+
+## Cancellation robustness — thinking-token audit + tests
+The old `add_assistant_response` guard dropped thinking-only turns ("if it's
+just thinking tokens don't add that shit") — fixed aacac95a + regression test
+5dfbbf6f. User directive: audit ALL remaining assumptions about thinking
+tokens and test cancellation thoroughly (unit + e2e).
+- [ ] Audit: grep every thinking/reasoning_content/empty-content assumption
+      in react.py, session.py, compact.py, send_request normalization, ACP
+      update path; list findings.
+- [ ] Unit tests: cancel during thinking (done: 5dfbbf6f); cancel during
+      content streaming; cancel AFTER tool-call streaming (tool_calls must
+      NOT be persisted — orphan tool_calls break the conversation);
+      reconstruction round-trip keeps reasoning_content; send_request keeps
+      reasoning_content in the outgoing payload.
+- [ ] e2e (live LLM, sparingly): cancel a real turn mid-flight; assert the
+      persisted turn carries reasoning_content and the next turn's
+      reconstruction includes it.
+      (criteria: suite green; audit findings written down; e2e ran once)
+
+## Provider reasoning_content probe
+User hypothesis: the provider (alibaba/dashscope) receives reasoning_content
+in the request history but drops it — "it emits, but it doesn't actually
+operate on it."
+- [ ] Verify the harness actually SENDS reasoning_content: inspect a real
+      outgoing request payload (request log / chunk log).
+- [ ] A/B against the provider: same history with vs without
+      reasoning_content on an assistant message; does the answer change?
+      Report which side is dropping it (harness vs provider).
 
 ## Deferred — captured, explicitly out of this sprint
 - TASK-SYSTEM.md async long-running jobs / agent delegation (crow-task) — later

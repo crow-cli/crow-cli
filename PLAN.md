@@ -168,5 +168,31 @@ init. Provisioning code lives under cli/ (daemon.py moved there too).
          OK); forced scratch build from submodules → ollama 0.30.8 binary,
          surgical repoint, idempotent re-run. COMMIT.
 
+## Phase 12 — cancellation robustness (thinking-token audit + tests) — IN PROGRESS
+Context: the `len(thinking) > 0` guard fix (aacac95a) + regression test
+(5dfbbf6f) landed, but the old comment ("if it's just thinking tokens don't
+add that shit") implies more baked-in assumptions. Audit, then unit + e2e.
+12.1 [ ] Audit react.py / session.py / compact.py / send_request / ACP path
+         for assumptions about thinking-only or empty-content turns.
+         VERIFY: findings list written (here or TODO.md).
+12.2 [ ] Unit tests: cancel-during-content, cancel-after-tool-call-streaming
+         (assert NO tool_calls persisted), reconstruction round-trip keeps
+         reasoning_content, send_request outgoing messages keep
+         reasoning_content.
+         VERIFY: `cd crow-cli && uv run pytest -x -q` green, new tests included.
+12.3 [ ] ONE live e2e cancellation test (e2e tier, costs money — run once):
+         cancel mid-thinking, assert persisted reasoning_content + next-turn
+         reconstruction.
+         VERIFY: test passes against the real LLM; committed.
+
+## Phase 13 — provider reasoning_content probe
+13.1 [ ] Find a real outgoing request payload from a reconstructed session;
+         confirm reasoning_content present in the messages array.
+         VERIFY: payload excerpt captured as evidence.
+13.2 [ ] A/B probe against the provider endpoint (small model, one call each):
+         history WITH reasoning_content vs WITHOUT on the same question;
+         compare. Conclude: harness drops it / provider drops it / it works.
+         VERIFY: both responses captured; conclusion written in TODO.md.
+
 Done = every box in TODO.md checked (or deferred with written reason) AND PLAN phases
 all marked with evidence. Then report.
