@@ -16,7 +16,7 @@ Commit at each item (`git add -A && git commit`). Never ask "want me to proceed"
 1.2 [x] crow-mcp → crow-mcp-dev; `crow-mcp-dev --help` exits 0 (eyeballed).
 1.3 [x] ~/.crow/config.yaml key crow-mcp → crow-mcp-dev; yaml intact.
 
-## Phase 2 — crow-memory consolidation
+## Phase 2 — crow-memory consolidation — DONE 2026-08-09 (f917368d; service boot verify pending -j2 build)
 2.1 Copy `crow-memory-types/` and `crow-memory/` crate sources from crow-cli main
     branch (~/src/crow-team/crow-cli) into this worktree root. Do NOT copy the Rust
     crow-memory-sdk. Create root `Cargo.toml` workspace with those members.

@@ -5,7 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "agent-client-protocol>=0.9.0",
+    "agent-client-protocol>=0.12.0,<0.13.0",
     "coolname>=2.2.0",
     "crow-memory-sdk>=0.1.0",
     "directory-tree>=1.0.0",

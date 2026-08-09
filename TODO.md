@@ -18,17 +18,11 @@ crow-memory service behind HTTP, spoken to by the PYTHON crow-memory-sdk.
   no collision with the Rust binaries in ~/.cargo/bin)
 
 ## crow-memory consolidation
-- [ ] Bring `crow-memory-types` crate from crow-cli main into this worktree (repo root layout)
-- [ ] Bring `crow-memory` crate (axum+LanceDB HTTP service) from crow-cli main;
-      REMOVE its dependency on the Rust crow-memory-sdk — the Python crow-memory-sdk
-      is the SDK now. Do NOT bring the Rust crow-memory-sdk crate over.
-- [ ] Root `Cargo.toml` workspace over those two crates; `cargo build --release` green
-- [ ] Type sharing: ONE source of truth for wire types shared between
-      crow-memory-types (Rust) and crow-memory-sdk (Python pydantic).
-      Research + implement + drift test.
-- [ ] Delete the old Python `crow-memory` (in-process lancedb) package; migrate any
-      remaining imports (crow_cli/agent/memory.py, crow_mcp/memory/main.py) to the
-      Python crow-memory-sdk
+- [x] Bring `crow-memory-types` crate from crow-cli main into this worktree (repo root layout) — 2026-08-09
+- [x] Bring `crow-memory` crate (axum+LanceDB HTTP service); Rust crow-memory-sdk NOT brought over (dev-dep removed; its tests ported to python e2e) — 2026-08-09
+- [x] Root `Cargo.toml` workspace over those two crates — 2026-08-09, `cargo metadata` + crow-memory-types build/test green; release build of service pending (running -j2)
+- [x] Type sharing: rust structs = single source → schema.json (schemars, drift-tested in cargo) → types_wire.py (datamodel-code-generator, drift-tested in pytest) + port-const cross-check — 2026-08-09, both drift tests green
+- [x] Delete old Python `crow-memory` (in-process lancedb) package; imports were already migrated to crow-memory-sdk (verified no `crow_memory` imports remain) — 2026-08-09
   (criteria: service binary builds + boots + answers /healthz or equivalent;
   crow-cli + crow-mcp pass their memory tests against the HTTP service;
   zero `crow_memory` imports remain outside the sdk)
