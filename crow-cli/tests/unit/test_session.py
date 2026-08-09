@@ -1,11 +1,21 @@
-"""Unit tests for pure session helpers (no persistence, no service).
+"""Unit tests for session helpers.
 
 The session/persistence contract (create/load/add_message round-trips) is
-tested in crow-memory, which owns the storage layer. Here we only cover the
-pure helpers that live in crow_cli.agent.session.
+tested in crow-memory, which owns the storage layer. Here we cover the pure
+helpers and the cancellation-persistence contract (thinking-only turns must
+survive), the latter against the in-memory fake client.
 """
 
-from crow_cli.agent.session import _parse_frontmatter, get_skills
+import logging
+
+import pytest
+
+from crow_cli.agent.session import (
+    AgentSession,
+    _parse_frontmatter,
+    get_skills,
+    lookup_or_create_prompt,
+)
 
 
 class TestParseFrontmatter:
@@ -57,3 +67,41 @@ class TestGetSkills:
 
     def test_missing_dir_returns_empty(self, tmp_path):
         assert get_skills(tmp_path / "does-not-exist") == []
+
+
+class TestCancelledTurnPersistence:
+    """A turn cancelled while the model is still thinking has no content and
+    no tool calls — the accumulated reasoning is the only record of what the
+    agent was doing. It must be persisted so reconstruction hands it back to
+    the next turn (and query_session can show it)."""
+
+    @pytest.fixture
+    async def session(self, memory_service, sample_prompt_template):
+        prompt_id = await lookup_or_create_prompt(
+            sample_prompt_template, name="test-prompt"
+        )
+        return await AgentSession.create(
+            prompt_id=prompt_id,
+            prompt_args={"name": "Crow", "workspace": "/tmp", "display_tree": "test/"},
+            tool_definitions=[],
+            request_params={},
+            model_identifier="test-model",
+            cwd="/tmp",
+            agent_idx=1,
+        )
+
+    async def test_thinking_only_turn_is_persisted(self, session, memory_service):
+        await session.add_assistant_response(
+            ["thinking ", "about the task"], [], [], logging.getLogger("test")
+        )
+        stored = memory_service._messages[session.agent_id]
+        assert stored[-1] == {
+            "role": "assistant",
+            "content": "",
+            "reasoning_content": "thinking about the task",
+        }
+
+    async def test_empty_turn_is_not_persisted(self, session, memory_service):
+        before = len(memory_service._messages[session.agent_id])
+        await session.add_assistant_response([], [], [], logging.getLogger("test"))
+        assert len(memory_service._messages[session.agent_id]) == before
