@@ -34,3 +34,6 @@ crow-orchestrator-mcp/src/crow_orchestrator_mcp/__pycache__
 
 
 sandbox/lancedb-testing/pylate_lancedb/
+
+# Rust
+target/

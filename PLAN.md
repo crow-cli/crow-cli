@@ -11,17 +11,10 @@ Commit at each item (`git add -A && git commit`). Never ask "want me to proceed"
 - Rust (from worktree root): `cargo build --release`
 - Install for live checks: `cd crow-cli && uv sync` then `uv run crow-cli-dev --help`
 
-## Phase 1 — Renames (kill the PATH collisions)
-1.1 Rename `crow-cli` console script → `crow-cli-dev` in crow-cli/pyproject.toml;
-    update internal refs (README, docs, config templates, system prompts, tests).
-    VERIFY: `uv sync` reinstalls; `uv run crow-cli-dev --help` exits 0; grep finds no
-    leftover script named `crow-cli` in pyproject.
-1.2 Rename `crow-mcp` console script → `crow-mcp-dev` in crow-mcp/pyproject.toml;
-    update refs incl. any MCP client configs in-repo.
-    VERIFY: `uv run crow-mcp-dev --help` (or module entry) exits 0.
-1.3 Update `~/.crow/config.yaml` MCP setting to the crow-mcp-dev command.
-    VERIFY: config parses (yaml load); command path in it exists.
-    COMMIT.
+## Phase 1 — Renames (kill the PATH collisions) — DONE 2026-08-09 (f9b29066)
+1.1 [x] crow-cli → crow-cli-dev; `crow-cli-dev --help` exits 0 (eyeballed).
+1.2 [x] crow-mcp → crow-mcp-dev; `crow-mcp-dev --help` exits 0 (eyeballed).
+1.3 [x] ~/.crow/config.yaml key crow-mcp → crow-mcp-dev; yaml intact.
 
 ## Phase 2 — crow-memory consolidation
 2.1 Copy `crow-memory-types/` and `crow-memory/` crate sources from crow-cli main

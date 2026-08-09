@@ -1,20 +1,64 @@
-"""Wire types for the crow-memory SDK — pydantic models.
+"""Wire types for the crow-memory SDK.
 
-Mirrors `crow-memory-types` in the Rust workspace. Models are tolerant:
-extra fields from newer servers are ignored, missing fields from older
-servers get defaults (same backward-compat contract as the Rust types).
+The record/request models are GENERATED (`types_wire.py`) from the rust
+`crow-memory-types` crate — the single source of truth for the HTTP
+contract (see `scripts/gen_wire_types.py` and the drift test in
+`tests/test_schema_drift.py`). This module re-exports them and adds
+client-side ergonomics:
+
+- `MessageRecord`: derived `session_id` / `agent_idx` properties
+- `ImageRecord`: `data` as decoded bytes (the wire carries base64 str)
+- `MemoryApiError`, `SearchResults`, `default_memory_url`: client-only
 """
 
 from __future__ import annotations
 
 import os
-from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
+from . import types_wire
+from .types_wire import (
+    AddImageRequest,
+    AddMessageRequest,
+    AddMessageResponse,
+    AgentRecord,
+    CreateAgentRequest,
+    ErrorResponse,
+    LookupPromptRequest,
+    LookupPromptResponse,
+    MaxAgentIdxResponse,
+    PromptRecord,
+    SearchMessagesRequest,
+    SessionInfo,
+)
+
+# Must match `pub const DEFAULT_MEMORY_PORT` in crow-memory-types/src/lib.rs
+# (enforced by tests/test_schema_drift.py).
 DEFAULT_MEMORY_PORT = 27697  # CROWS on a phone keypad
 
 _RETRYABLE_STATUS = {502, 503, 504}
+
+__all__ = [
+    "DEFAULT_MEMORY_PORT",
+    "default_memory_url",
+    "MemoryApiError",
+    "SearchResults",
+    "AddImageRequest",
+    "AddMessageRequest",
+    "AddMessageResponse",
+    "AgentRecord",
+    "CreateAgentRequest",
+    "ErrorResponse",
+    "ImageRecord",
+    "LookupPromptRequest",
+    "LookupPromptResponse",
+    "MaxAgentIdxResponse",
+    "MessageRecord",
+    "PromptRecord",
+    "SearchMessagesRequest",
+    "SessionInfo",
+]
 
 
 def default_memory_url() -> str:
@@ -33,40 +77,7 @@ class MemoryApiError(Exception):
         self.error = error
 
 
-class _Record(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-
-class PromptRecord(_Record):
-    id: str
-    name: str
-    template: str
-
-
-class AgentRecord(_Record):
-    agent_id: str
-    session_id: str
-    agent_idx: int
-    cwd: str = ""
-    prompt_id: str = ""
-    prompt_args: Any = None
-    system_prompt: str = ""
-    tool_definitions: Any = None
-    request_params: Any = None
-    model_identifier: str = ""
-    status: str = ""
-    created_at: str = ""
-
-
-class MessageRecord(_Record):
-    id: int
-    agent_id: str
-    created_at: str = ""
-    data: Any = None
-    role: str = ""
-    #: Search relevance (lower = better, LanceDB `_distance`); semantic hits only.
-    score: float | None = None
-
+class MessageRecord(types_wire.MessageRecord):
     @property
     def session_id(self) -> str:
         """agent_id is '{session_id}-{agent_idx}'; the idx is the last segment."""
@@ -80,28 +91,12 @@ class MessageRecord(_Record):
             return None
 
 
-class SessionInfo(_Record):
-    session_id: str
-    last_activity: str = ""
-    message_count: int = 0
-    agent_count: int = 0
-    last_role: str = ""
-    cwd: str = ""
-    model_identifier: str = ""
-    agent_idxs: list[int] = []
-    last_message: MessageRecord | None = None
-
-
-class ImageRecord(_Record):
-    image_id: str
-    mime: str
+class ImageRecord(types_wire.ImageRecord):
+    #: Decoded image bytes; the wire format carries base64 in a str.
     data: bytes
-    w: int
-    h: int
-    created_at: str = ""
 
 
-class SearchResults(_Record):
+class SearchResults(BaseModel):
     """Result of a memory search. Image search is unwired upstream (the
     images table has no index), so `images` is always empty for now."""
 

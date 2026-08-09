@@ -11,9 +11,9 @@ Dynamic language = fast OODA loop; the heavy lifting lives in the Rust
 crow-memory service behind HTTP, spoken to by the PYTHON crow-memory-sdk.
 
 ## Renames + config
-- [ ] Rename console script `crow-cli` → `crow-cli-dev` (pyproject + all internal refs)
-- [ ] Rename console script `crow-mcp` → `crow-mcp-dev` (pyproject + refs)
-- [ ] Update `~/.crow/config.yaml` MCP setting for the crow-mcp-dev rename
+- [x] Rename console script `crow-cli` → `crow-cli-dev` (pyproject + all internal refs) — 2026-08-09, `crow-cli-dev --help` verified
+- [x] Rename console script `crow-mcp` → `crow-mcp-dev` (pyproject + refs) — 2026-08-09, `crow-mcp-dev --help` verified
+- [x] Update `~/.crow/config.yaml` MCP setting for the crow-mcp-dev rename — 2026-08-09, key renamed, http url intact
   (criteria: `uv sync` clean; `crow-cli-dev --help` and `crow-mcp-dev --help` run;
   no collision with the Rust binaries in ~/.cargo/bin)
 
