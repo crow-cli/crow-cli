@@ -62,8 +62,8 @@ class DaemonSpec:
 
 
 def worktree_root() -> Path:
-    """The repo root this CLI was installed from (<root>/crow-cli/src/crow_cli)."""
-    return Path(__file__).resolve().parents[3]
+    """The repo root this CLI was installed from (<root>/crow-cli/src/crow_cli/cli)."""
+    return Path(__file__).resolve().parents[4]
 
 
 def _config_yaml(config_dir: Path) -> dict[str, Any]:
@@ -95,9 +95,13 @@ def default_registry(config_dir: Path) -> dict[str, DaemonSpec]:
     memory_port = int(cfg.get("memory_port") or DEFAULT_MEMORY_PORT)
     mcp_port = _port_from_mcp_servers(cfg)
 
-    ollama_bin = (
-        os.environ.get("OLLAMA_MV_BIN")
-        or str(Path.home() / "src/crow-team/ollama/ollama")
+    ollama_candidates = [
+        root / "vendor" / "ollama" / "ollama",        # `daemon install ollama-mv` build output
+        config_dir / "vendor" / "ollama" / "ollama",  # fresh-machine clone location
+        Path.home() / "src/crow-team/ollama/ollama",  # legacy dev checkout
+    ]
+    ollama_bin = os.environ.get("OLLAMA_MV_BIN") or next(
+        (str(c) for c in ollama_candidates if c.is_file()), str(ollama_candidates[-1])
     )
     memory_bin = (
         os.environ.get("CROW_MEMORY_BIN")
@@ -143,7 +147,10 @@ def default_registry(config_dir: Path) -> dict[str, DaemonSpec]:
             name="ollama-mv",
             command=ollama_bin,
             args=["serve"],
-            env={"OLLAMA_HOST": f"127.0.0.1:{DEFAULT_OLLAMA_PORT}"},
+            env={
+                "OLLAMA_HOST": f"127.0.0.1:{DEFAULT_OLLAMA_PORT}",
+                "OLLAMA_MODELS": str(Path.home() / ".local/share/ollama-mv-models"),
+            },
             health_url=f"http://127.0.0.1:{DEFAULT_OLLAMA_PORT}/api/version",
             start_timeout=60.0,
         ),

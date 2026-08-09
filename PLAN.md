@@ -149,5 +149,24 @@ known-good. Also: vendor submodules onto this branch.
          (store, MCP log, no blue leak). Caught+fixed: dead run --config-dir
          (agent subprocess now gets it) and TOOL_ICONS NameError (dc225e14).
 
+## Phase 11 — daemon install ollama-mv — DONE 2026-08-09
+User directive: port the main branch's `crow-cli daemon install ollama-mv`
+(embeddings.rs provisioning recipe) into the Python CLI and hook it into
+init. Provisioning code lives under cli/ (daemon.py moved there too).
+11.1 [x] daemon.py → crow_cli/cli/daemon.py; import sites updated;
+         worktree_root() parents index fixed for the extra depth.
+11.2 [x] cli/embeddings.py: find_go, vendor checkouts (worktree submodules
+         preferred, fresh-machine clone fallback), pin check, cmake+go
+         Release build, idempotent provision(), surgical config.yaml
+         daemons repoint, verify_embeddings retry loop.
+11.3 [x] `daemon install` command (provision → start → verify, --no-verify);
+         ollama-mv spec gains OLLAMA_MODELS + built-binary command chain;
+         init step 5 uses provision (dead build-ollama.sh path removed).
+11.4 [x] VERIFY: crow-cli 115 ✓ w-integration (14 new unit tests),
+         crow-mcp 115 ✓, sdk 10 ✓. Live: blue install = idempotent no-op
+         (existing vendor binary, unmanaged :11392 untouched, embeddings
+         OK); forced scratch build from submodules → ollama 0.30.8 binary,
+         surgical repoint, idempotent re-run. COMMIT.
+
 Done = every box in TODO.md checked (or deferred with written reason) AND PLAN phases
 all marked with evidence. Then report.

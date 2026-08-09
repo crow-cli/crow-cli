@@ -407,7 +407,8 @@ def run_init(config_dir: Path, yes: bool = False):
     # =========================================================================
     console.print("\n[bold cyan]═══ Step 5: ollama-mv (embeddings) ═══[/bold cyan]\n")
 
-    from crow_cli.daemon import default_registry
+    from crow_cli.cli import embeddings
+    from crow_cli.cli.daemon import default_registry
 
     registry = default_registry(config_dir)
     ollama_spec = registry["ollama-mv"]
@@ -415,7 +416,6 @@ def run_init(config_dir: Path, yes: bool = False):
     if ollama_bin.is_file():
         console.print(f"[green]✓[/green] ollama-mv binary found: {ollama_bin}")
     else:
-        build_script = Path(__file__).resolve().parents[3] / "scripts" / "build-ollama.sh"
         do_build = (
             True
             if yes
@@ -426,19 +426,18 @@ def run_init(config_dir: Path, yes: bool = False):
             )
         )
         if do_build:
-            import subprocess
-
-            console.print(f"[dim]→ {build_script}[/dim]")
-            proc = subprocess.run(["bash", str(build_script)])
-            if proc.returncode == 0:
-                console.print(f"[green]✓[/green] Built {ollama_bin}")
-            else:
+            try:
+                built = embeddings.provision(config_dir)
+                console.print(f"[green]✓[/green] Built {built}")
+            except embeddings.ProvisionError as e:
                 console.print(
-                    f"[red]✗ ollama-mv build failed (exit {proc.returncode}) — "
-                    f"run {build_script} manually later[/red]"
+                    f"[red]✗ ollama-mv build failed — {e}\n"
+                    "  fix it later: crow-cli-dev daemon install ollama-mv[/red]"
                 )
         else:
-            console.print("[yellow]⊘ Skipped — set OLLAMA_MV_BIN or build later[/yellow]")
+            console.print(
+                "[yellow]⊘ Skipped — run `crow-cli-dev daemon install ollama-mv` later[/yellow]"
+            )
 
     # =========================================================================
     # STEP 6: Start daemons
@@ -455,7 +454,7 @@ def run_init(config_dir: Path, yes: bool = False):
         else Confirm.ask(f"Start daemons now? [dim]({', '.join(start_names)})[/dim]", default=True)
     )
     if do_start:
-        from crow_cli.daemon import start as daemon_start
+        from crow_cli.cli.daemon import start as daemon_start
 
         # Re-read the registry: config.yaml was just written (ports etc.)
         registry = default_registry(config_dir)

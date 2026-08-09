@@ -2,7 +2,7 @@
 
 Services: crow-memory (rust HTTP memory service), crow-mcp (MCP over HTTP),
 ollama-mv (multivector embedding server), searxng (docker). See
-crow_cli/daemon.py for the registry and lifecycle conventions.
+crow_cli/cli/daemon.py for the registry and lifecycle conventions.
 """
 
 from __future__ import annotations
@@ -15,7 +15,8 @@ from rich.console import Console
 from rich.table import Table
 
 from crow_cli.agent.configure import get_default_config_dir
-from crow_cli.daemon import default_registry, restart, start, status, stop
+from crow_cli.cli import embeddings
+from crow_cli.cli.daemon import default_registry, restart, start, status, stop
 
 app = typer.Typer(help="Manage crow infrastructure daemons (memory, mcp, ollama-mv, searxng).")
 console = Console()
@@ -104,3 +105,33 @@ def status_cmd(
 def list_cmd(config_dir: Path | None = typer.Option(None, "--config-dir")):
     """Alias for `status all`."""
     status_cmd(ALL, config_dir, False)
+
+
+@app.command("install")
+def install_cmd(
+    name: str = typer.Argument(..., help=f"Daemon to provision ('{embeddings.SERVICE_NAME}')."),
+    config_dir: Path | None = typer.Option(None, "--config-dir"),
+    no_verify: bool = typer.Option(
+        False, "--no-verify", help="Skip the post-install embed check."
+    ),
+):
+    """Provision a daemon: build what's missing, point config at it, start it,
+    verify. Idempotent — a finished install is a no-op."""
+    cdir = get_default_config_dir(config_dir)
+    if name != embeddings.SERVICE_NAME:
+        console.print(f"[red]no installer for:[/red] {name} (only {embeddings.SERVICE_NAME})")
+        raise typer.Exit(1)
+    try:
+        binary = embeddings.provision(cdir)
+    except embeddings.ProvisionError as e:
+        console.print(f"[red]{e}[/red]")
+        raise typer.Exit(1)
+    console.print(f"{embeddings.SERVICE_NAME} binary: [cyan]{binary}[/cyan]")
+    # Re-read the registry: config.yaml may have just been repointed.
+    console.print(start(cdir, default_registry(cdir)[embeddings.SERVICE_NAME]))
+    if not no_verify:
+        if not embeddings.verify_embeddings():
+            console.print(
+                "[red]embeddings: FAILED after 24 attempts — check the ollama-mv log[/red]"
+            )
+            raise typer.Exit(1)

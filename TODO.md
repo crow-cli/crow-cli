@@ -224,6 +224,36 @@ persist/search blocked the event loop. Now async end to end:
       real services and cycle only the scratch crow-mcp; real searxng
       untouched (still Up); scratch dir cleaned up after
 
+## Phase 11 — daemon install ollama-mv (provisioning) — DONE 2026-08-09
+- [x] daemon.py moved into crow_cli/cli/ (CLI functionality; top level keeps
+      agent_runner only); all import sites updated; worktree_root() parents
+      index fixed for the extra depth
+- [x] New crow_cli/cli/embeddings.py (port of the main branch's
+      embeddings.rs): find_go ($GO → ~/.local/go/bin/go → PATH); vendor
+      checkouts prefer the worktree's vendor/ submodules, clone the forks
+      into {config_dir}/vendor on a fresh machine; LLAMA_CPP_VERSION pin
+      check vs the llama.cpp tag (bail with fix instructions); cmake Release
+      build (-j min(cpus,8), offline via OLLAMA_LLAMA_CPP_SOURCE);
+      provision() idempotent; repoint_command edits config.yaml surgically
+      (comments survive; text-append when no daemons section yet);
+      verify_embeddings (POST /api/embed colbert:true, 120s timeout,
+      24 × 5s retries)
+- [x] `daemon install <name>` command: provision → start (unmanaged-safe) →
+      verify; --no-verify escape hatch; only ollama-mv has an installer
+- [x] ollama-mv DaemonSpec: OLLAMA_MODELS env added
+      (~/.local/share/ollama-mv-models — matches the running server);
+      command chain OLLAMA_MV_BIN → worktree vendor → config-dir vendor →
+      legacy dev checkout
+- [x] init step 5 now routes through embeddings.provision (replaces the raw
+      build-ollama.sh subprocess whose parents[3] script path was dead)
+- [x] 14 new unit tests (tests/unit/test_embeddings.py); crow-cli 115 ✓
+      w-integration, crow-mcp 115 ✓ (+5 tier-gated), sdk 10 ✓
+- [x] Verified live: blue install idempotent no-op (finds the Aug-5
+      ~/.agents/crow/vendor binary, unmanaged :11392 untouched, embeddings
+      OK); forced build from a scratch config built the worktree submodules
+      (ollama 0.30.8), repointed surgically, re-run idempotent; scratch
+      cleaned up
+
 ## Tests — DONE 2026-08-09
 - [x] Full sweep green across all packages after every change:
       crow-cli unit 99 ✓ (+integration 101 ✓, live e2e 5 ✓),

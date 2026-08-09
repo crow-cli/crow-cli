@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from crow_cli import daemon as daemon_mod
-from crow_cli.daemon import DaemonSpec, pid_file, read_pid, restart, start, status, stop
+from crow_cli.cli import daemon as daemon_mod
+from crow_cli.cli.daemon import DaemonSpec, pid_file, read_pid, restart, start, status, stop
 
 CID = "c0ffee" * 10  # full 60-char container id
 
