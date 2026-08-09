@@ -353,7 +353,7 @@ class AcpAgent(Agent):
 
         # Get tools from MCP server
         tools = await get_tools(mcp_client)
-        session = make_agent_session(
+        session = await make_agent_session(
             self._config,
             tools,
             self._default_model_identifier(),
@@ -422,12 +422,12 @@ class AcpAgent(Agent):
 
         try:
             # Find the highest-indexed agent for this session
-            max_idx = AgentSession.get_max_agent_idx(session_id, memory_path=self._memory_path)
+            max_idx = await AgentSession.get_max_agent_idx(session_id, memory_path=self._memory_path)
             agent_id = f"{session_id}-{max_idx}"
             self._logger.info(
                 "LOAD_SESSION: Step 1: Loading agent %s from DB", agent_id
             )
-            session = AgentSession.load(
+            session = await AgentSession.load(
                 agent_id,
                 memory_path=self._memory_path,
             )
@@ -528,7 +528,7 @@ class AcpAgent(Agent):
         if self._session_id == session_id and self._agent_id:
             agent_id = self._agent_id
         else:
-            max_idx = AgentSession.get_max_agent_idx(session_id, memory_path=self._memory_path)
+            max_idx = await AgentSession.get_max_agent_idx(session_id, memory_path=self._memory_path)
             agent_id = f"{session_id}-{max_idx}"
 
         # Initialize if not set
@@ -580,7 +580,7 @@ class AcpAgent(Agent):
         if self._session_id == session_id and self._agent_id:
             agent_id = self._agent_id
         else:
-            max_idx = AgentSession.get_max_agent_idx(session_id, memory_path=self._memory_path)
+            max_idx = await AgentSession.get_max_agent_idx(session_id, memory_path=self._memory_path)
             agent_id = f"{session_id}-{max_idx}"
 
         async def _execute_turn() -> PromptResponse:
@@ -610,7 +610,7 @@ class AcpAgent(Agent):
                     for cmd in _SLASH_COMMANDS:
                         if cmd["name"] == cmd_name:
                             # Add user message to session
-                            session.add_message(
+                            await session.add_message(
                                 {"role": "user", "content": user_content}
                             )
                             result = await cmd["func"](agent_id, cmd_args, self)
@@ -632,7 +632,7 @@ class AcpAgent(Agent):
                     return PromptResponse(stop_reason="end_turn")
 
             # Add user message to session with content array (supports multimodal)
-            session.add_message({"role": "user", "content": user_content})
+            await session.add_message({"role": "user", "content": user_content})
 
             # Clear cancel event for this new prompt
             cancel_event = self._cancel_events.get(session_id)
@@ -809,7 +809,7 @@ class AcpAgent(Agent):
         self._logger.info("Listing sessions for working directory: %s", cwd)
         if cwd is None:
             return ListSessionsResponse(sessions=[], next_cursor=None)
-        sessions_info = get_session_by_cwd(cwd, self._memory_path)
+        sessions_info = await get_session_by_cwd(cwd, self._memory_path)
         sessions = [SessionInfo(**session) for session in sessions_info]
         return ListSessionsResponse(sessions=sessions, next_cursor=None)
 

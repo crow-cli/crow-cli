@@ -19,7 +19,7 @@ import uuid
 import pytest
 from fastmcp import Client
 
-from crow_memory_sdk import SyncMemoryClient
+from crow_memory_sdk import MemoryClient
 
 # crow-mcp project root: tests/integration/<this file> -> up two -> crow-mcp
 CROW_MCP_DIR = os.path.dirname(
@@ -49,12 +49,12 @@ async def server():
         yield c
 
 
-def _write_session_from_this_process() -> None:
+async def _write_session_from_this_process() -> None:
     """Write a session + messages from THIS process — a different process than
     the running MCP server — via the shared crow-memory service."""
-    with SyncMemoryClient() as mem:
+    async with MemoryClient() as mem:
         agent_id = f"{SID}-1"
-        mem.create_agent(
+        await mem.create_agent(
             agent_id=agent_id,
             session_id=SID,
             agent_idx=1,
@@ -66,8 +66,8 @@ def _write_session_from_this_process() -> None:
             request_params={},
             model_identifier="stub-model",
         )
-        mem.add_message(agent_id, {"role": "user", "content": "hello across processes"})
-        mem.add_message(agent_id, {"role": "assistant", "content": MARKER})
+        await mem.add_message(agent_id, {"role": "user", "content": "hello across processes"})
+        await mem.add_message(agent_id, {"role": "assistant", "content": MARKER})
 
 
 class TestCrossProcessVisibility:
@@ -75,7 +75,7 @@ class TestCrossProcessVisibility:
         client = server
 
         # Write from this process (not the server process).
-        _write_session_from_this_process()
+        await _write_session_from_this_process()
 
         # list_sessions must include the new session.
         listed = await client.call_tool("list_sessions", {"limit": 200})

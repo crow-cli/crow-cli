@@ -31,10 +31,10 @@ class TestCompaction:
         return config
 
     @pytest.fixture
-    def setup_session(self, memory_service, sample_prompt_template):
+    async def setup_session(self, memory_service, sample_prompt_template):
         """Create a 1-positioned session with a long conversation."""
-        prompt_id = lookup_or_create_prompt(sample_prompt_template, name="test-prompt")
-        session = AgentSession.create(
+        prompt_id = await lookup_or_create_prompt(sample_prompt_template, name="test-prompt")
+        session = await AgentSession.create(
             prompt_id=prompt_id,
             prompt_args={"name": "Crow", "workspace": "/tmp", "display_tree": "test/"},
             tool_definitions=[],
@@ -44,8 +44,8 @@ class TestCompaction:
             agent_idx=1,
         )
         for i in range(20):
-            session.add_message({"role": "user", "content": f"User message {i}"})
-            session.add_message(
+            await session.add_message({"role": "user", "content": f"User message {i}"})
+            await session.add_message(
                 {"role": "assistant", "content": f"Assistant response {i}"}
             )
         return session
@@ -89,7 +89,7 @@ class TestCompaction:
         assert result.agent_id != session.agent_id
 
         # The new record is persisted and loadable.
-        reloaded = AgentSession.load(result.agent_id)
+        reloaded = await AgentSession.load(result.agent_id)
         assert reloaded.agent_id == result.agent_id
 
     @pytest.mark.asyncio
@@ -119,7 +119,7 @@ class TestCompaction:
         # In-memory object unchanged.
         assert len(session.messages) == original_count
         # Persisted original record unchanged.
-        reloaded = AgentSession.load(original_agent_id)
+        reloaded = await AgentSession.load(original_agent_id)
         assert len(reloaded.messages) == original_count
 
     @pytest.mark.asyncio

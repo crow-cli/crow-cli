@@ -146,7 +146,7 @@ async def compact(
     # 5. Create new agent record: same session_id, next agent_idx
     new_agent_idx = original_agent_idx + 1
     new_agent_id = f"{original_session_id}-{new_agent_idx}"
-    new_session = make_agent_session(
+    new_session = await make_agent_session(
         config,
         session.tools,
         session.model_identifier if session.model_identifier else "",
@@ -157,7 +157,7 @@ async def compact(
 
     last_msgs = last_messages(session)
     new_agent_prompt = f"{summary}\n\nLast messages:\n\n{last_msgs}"
-    new_session.add_message(
+    await new_session.add_message(
         {"role": "user", "content": new_agent_prompt},
     )
 

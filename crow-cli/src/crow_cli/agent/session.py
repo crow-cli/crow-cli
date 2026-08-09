@@ -27,16 +27,16 @@ from crow_cli.agent.configure import (
     Config,
 )
 
-def get_session_by_cwd(cwd, memory_path=DEFAULT_MEMORY_PATH):
+async def get_session_by_cwd(cwd, memory_path=DEFAULT_MEMORY_PATH):
     """
-    Lookup agents by working directory via the in-process memory store.
+    Lookup agents by working directory via the memory service.
 
     Returns list of session info dicts with session_id, title, updated_at.
     """
     client = MemoryClient(memory_path)
     try:
         result = []
-        for agent in client.list_agents():
+        for agent in await client.list_agents():
             prompt_args = agent.prompt_args or {}
             if prompt_args.get("workspace") != cwd:
                 continue
@@ -44,7 +44,7 @@ def get_session_by_cwd(cwd, memory_path=DEFAULT_MEMORY_PATH):
             # Title from the second message (index 1, after the system message).
             # Fetch the first three records so len > 2 tells us a title exists.
             title = "Untitled Chat"
-            recs = client.query_messages(
+            recs = await client.query_messages(
                 agent_id=agent.agent_id, order="asc", limit=3
             )
             if len(recs) > 2:
@@ -74,7 +74,7 @@ def get_session_by_cwd(cwd, memory_path=DEFAULT_MEMORY_PATH):
             )
         return result
     finally:
-        client.close()
+        await client.close()
 
 
 def get_coolname() -> str:
@@ -82,7 +82,7 @@ def get_coolname() -> str:
     return generate_slug(4)
 
 
-def lookup_or_create_prompt(
+async def lookup_or_create_prompt(
     template: str,
     name: str,
     memory_path: str = DEFAULT_MEMORY_PATH,
@@ -92,14 +92,14 @@ def lookup_or_create_prompt(
     """
     client = MemoryClient(memory_path)
     try:
-        return client.lookup_or_create_prompt(template, name)
+        return await client.lookup_or_create_prompt(template, name)
     finally:
-        client.close()
+        await client.close()
 
 
 class AgentSession:
     """
-    Manages conversation state and persistence via the in-process memory store (LanceDB).
+    Manages conversation state and persistence via the crow-memory service.
 
     agent_id = "{session_id}-{agent_idx}" is the key.
     session_id is derived for ACP upstream routing only.
@@ -124,32 +124,32 @@ class AgentSession:
 
     @property
     def client(self) -> MemoryClient:
-        """Lazy-load the in-process memory client."""
+        """Lazy-load the memory client."""
         if self._client is None:
             self._client = MemoryClient(self.memory_path)
         return self._client
 
-    def add_message(self, msg: dict, usage: dict | None = None):
+    async def add_message(self, msg: dict, usage: dict | None = None):
         """
-        Add message to in-memory list AND persist to database.
+        Add message to in-memory list AND persist to the service.
 
         Args:
             msg: Full message dict (role, content, tool_calls, etc.)
             usage: Token usage dict with prompt_tokens, completion_tokens, total_tokens
         """
         self.messages.append(msg)
-        self.client.add_message(self.agent_id, msg, usage)
+        await self.client.add_message(self.agent_id, msg, usage)
 
-    def add_tool_response(
+    async def add_tool_response(
         self,
         tool_results: list[dict],
         logger: Logger,
     ):
         for tool_result in tool_results:
             logger.info(f"TOOL RESULT: {tool_result}")
-            self.add_message(tool_result)
+            await self.add_message(tool_result)
 
-    def add_assistant_response(
+    async def add_assistant_response(
         self,
         thinking: list[str],
         content: list[str],
@@ -181,14 +181,14 @@ class AgentSession:
             logger.info(f"Adding message: {msg}")
             logger.info(f"Message usage: {usage}")
             # Add to database/list
-            self.add_message(msg, usage)
+            await self.add_message(msg, usage)
 
-    def _save_messages(self, messages: list[dict]):
+    async def _save_messages(self, messages: list[dict]):
         """Batch save messages to the service."""
-        self.client.save_messages(self.agent_id, messages)
+        await self.client.save_messages(self.agent_id, messages)
 
     @classmethod
-    def create(
+    async def create(
         cls,
         prompt_id: str,
         prompt_args: dict[str, Any],
@@ -206,7 +206,7 @@ class AgentSession:
 
         # Load and render prompt
         try:
-            prompt = client.get_prompt(prompt_id)
+            prompt = await client.get_prompt(prompt_id)
         except MemoryServiceError as e:
             if e.status == 404:
                 raise ValueError(f"Prompt '{prompt_id}' not found") from e
@@ -218,7 +218,7 @@ class AgentSession:
         agent_id = f"{session_id}-{agent_idx}"
 
         # Create agent record
-        client.create_agent(
+        await client.create_agent(
             agent_id=agent_id,
             session_id=session_id,
             agent_idx=agent_idx,
@@ -230,7 +230,7 @@ class AgentSession:
             request_params=request_params,
             model_identifier=model_identifier,
         )
-        client.close()
+        await client.close()
 
         # Build session instance
         session = cls(agent_id, session_id, agent_idx, memory_path, cwd=cwd)
@@ -242,18 +242,18 @@ class AgentSession:
 
         # Start with system message
         session.messages = [{"role": "system", "content": system_prompt}]
-        session._save_messages(session.messages)
+        await session._save_messages(session.messages)
 
         # Add initial messages if provided
         if initial_messages:
             for msg in initial_messages:
                 if msg.get("role") != "system":  # Skip system messages
-                    session.add_message(msg)
+                    await session.add_message(msg)
 
         return session
 
     @classmethod
-    def get_max_agent_idx(
+    async def get_max_agent_idx(
         cls,
         session_id: str,
         memory_path: str = DEFAULT_MEMORY_PATH,
@@ -261,12 +261,12 @@ class AgentSession:
         """Return the highest agent_idx for a given session_id."""
         client = MemoryClient(memory_path)
         try:
-            return client.get_max_agent_idx(session_id)
+            return await client.get_max_agent_idx(session_id)
         finally:
-            client.close()
+            await client.close()
 
     @classmethod
-    def list_sessions(
+    async def list_sessions(
         cls,
         limit: int = 50,
         offset: int = 0,
@@ -275,12 +275,12 @@ class AgentSession:
         """List sessions ordered by most-recent message activity (desc)."""
         client = MemoryClient(memory_path)
         try:
-            return client.list_sessions(limit=limit, offset=offset)
+            return await client.list_sessions(limit=limit, offset=offset)
         finally:
-            client.close()
+            await client.close()
 
     @classmethod
-    def load(
+    async def load(
         cls,
         agent_id: str,
         memory_path: str = DEFAULT_MEMORY_PATH,
@@ -288,13 +288,13 @@ class AgentSession:
         """Factory method to load existing agent session from the service."""
         client = MemoryClient(memory_path)
         try:
-            agent, messages = client.load(agent_id, hydrate=True)
+            agent, messages = await client.load(agent_id, hydrate=True)
         except MemoryServiceError as e:
             if e.status == 404:
                 raise ValueError(f"Agent '{agent_id}' not found") from e
             raise
         finally:
-            client.close()
+            await client.close()
 
         session = cls(
             agent_id=agent.agent_id,
@@ -312,10 +312,10 @@ class AgentSession:
 
         return session
 
-    def close(self):
+    async def close(self):
         """Close the HTTP client."""
         if self._client is not None:
-            self._client.close()
+            await self._client.close()
         self._client = None
 
 
@@ -434,7 +434,7 @@ def build_agents_content(cwd: str) -> str:
     return "\n\n".join(parts) if parts else "No AGENTS.md found"
 
 
-def make_agent_session(
+async def make_agent_session(
     config: Config,
     tools: list[dict],
     model_id: str,
@@ -449,7 +449,7 @@ def make_agent_session(
         template = template_path.read_text()
     else:
         template = config.system_prompt
-    prompt_id = lookup_or_create_prompt(
+    prompt_id = await lookup_or_create_prompt(
         template, name="crow-default", memory_path=config.memory_path
     )
     skills = get_skills(SKILLS_DIR)
@@ -463,7 +463,7 @@ def make_agent_session(
         session_id = get_coolname()
     if agent_idx is None:
         agent_idx = 1
-    return AgentSession.create(
+    return await AgentSession.create(
         prompt_id=prompt_id,
         prompt_args={
             "workspace": cwd,

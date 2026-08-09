@@ -5,8 +5,9 @@ Mirrors the Rust `crow-memory-sdk` crate: same endpoints, same retry policy
 else fails fast — the v1 no-backoff retry storm lesson). Append-only memory:
 create + read/search, no update, no delete.
 
-Two flavors: `MemoryClient` (async, httpx.AsyncClient) and `SyncMemoryClient`
-(httpx.Client) — identical surface.
+Single flavor: `MemoryClient` (async, httpx.AsyncClient). Both consumers —
+the crow-cli agent and crow-mcp — run async event loops, so the sync client
+that used to live here was ripped out instead of maintained.
 """
 
 from .types import (
@@ -21,7 +22,6 @@ from .types import (
     default_memory_url,
 )
 from .client import MemoryClient
-from .sync_client import SyncMemoryClient
 
 __all__ = [
     "DEFAULT_MEMORY_PORT",
@@ -34,5 +34,4 @@ __all__ = [
     "ImageRecord",
     "SearchResults",
     "MemoryClient",
-    "SyncMemoryClient",
 ]

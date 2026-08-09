@@ -311,6 +311,7 @@ requires-dist = [
 dev = [
     { name = "datamodel-code-generator", specifier = ">=0.72.2" },
     { name = "pytest", specifier = ">=9.1.1" },
+    { name = "pytest-asyncio", specifier = ">=0.23.0" },
 ]
 
 [[package]]

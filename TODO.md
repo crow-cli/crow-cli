@@ -158,6 +158,25 @@ notes → ~/.agents/notes; global AGENTS.md → ~/.agents/AGENTS.md.
       Legacy ~/.crow left in place (crow.db, state.db, old memory.lance,
       logs) — inert data, deliberately not deleted.
 
+## Async memory path — DONE 2026-08-09
+The agent's turn pipeline is fully async (AsyncOpenAI, react_loop, ACP
+handlers) but memory I/O went through the SDK's SYNC client — every
+persist/search blocked the event loop. Now async end to end:
+- [x] SDK: SyncMemoryClient + sync_client.py RIPPED OUT; MemoryClient
+      (httpx.AsyncClient) is the only flavor; wire-contract suite ported
+      to async (concurrency test now asyncio.gather)
+- [x] Agent adapter (agent/memory.py) async over the SDK client
+- [x] session.py async surface: get_session_by_cwd, lookup_or_create_prompt,
+      make_agent_session, AgentSession add_message/add_tool_response/
+      add_assistant_response/_save_messages/create/load/get_max_agent_idx/
+      list_sessions/close
+- [x] Call sites awaited: react.py (4 persist sites), compact.py,
+      agent/main.py (8 sites), cli/main.py inspect → asyncio.run wrapper
+- [x] Tests: conftest FakeMemoryClient async; test_compact fixtures async;
+      crow-mcp cross-process test seeds via async client
+- [x] Verified: suites green (crow-cli 99/101, sdk 10, crow-mcp 120) +
+      live `inspect` smoke vs the real service (both branches)
+
 ## Daemon `all` commands + docker unmanaged tracking — DONE 2026-08-09
 `daemon start|stop|restart|status all` already existed at the CLI layer
 (name argument defaults to "all"; `list` = `status all`). Two fixes:

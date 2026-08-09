@@ -738,7 +738,7 @@ async def react_loop(
                 "to avoid breaking conversation (no tool responses would exist)"
             )
             # Don't persist tool calls - just persist thinking/content if any
-            session.add_assistant_response(
+            await session.add_assistant_response(
                 state_accumulator["thinking"],
                 state_accumulator["content"],
                 [],  # Empty tool calls - NEVER persist on cancellation
@@ -784,7 +784,7 @@ async def react_loop(
 
         # This ends the react loop — NO TOOLS!!
         if not tool_call_inputs and len(content) > 0:
-            session.add_assistant_response(
+            await session.add_assistant_response(
                 thinking,
                 content,
                 [],
@@ -815,11 +815,11 @@ async def react_loop(
                 snapshot_hooks=snapshot_hooks,
             )
 
-            session.add_assistant_response(
+            await session.add_assistant_response(
                 thinking,
                 content,
                 tool_call_inputs,
                 logger,
                 usage,
             )
-            session.add_tool_response(tool_results, logger)
+            await session.add_tool_response(tool_results, logger)

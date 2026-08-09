@@ -183,9 +183,13 @@ def inspect_db(
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
 ):
     """Inspect Crow sessions — state, messages, etc."""
+    asyncio.run(_inspect_db(session_id, messages, limit, json_output))
+
+
+async def _inspect_db(session_id, messages, limit, json_output):
     if session_id:
         # Use existing AgentSession methods to get the latest agent for this session
-        max_idx = AgentSession.get_max_agent_idx(session_id)
+        max_idx = await AgentSession.get_max_agent_idx(session_id)
         if max_idx < 0:
             if json_output:
                 print(json.dumps({"error": f"Session '{session_id}' not found"}))
@@ -194,7 +198,7 @@ def inspect_db(
             raise SystemExit(1)
 
         agent_id = f"{session_id}-{max_idx}"
-        session_obj = AgentSession.load(agent_id)
+        session_obj = await AgentSession.load(agent_id)
 
         session_data = {
             "agent_id": session_obj.agent_id,
@@ -237,7 +241,7 @@ def inspect_db(
     else:
         # List all sessions, most-recently-active first.
         try:
-            sessions_list = AgentSession.list_sessions(limit=limit)
+            sessions_list = await AgentSession.list_sessions(limit=limit)
         except MemoryServiceError as e:
             if json_output:
                 print(json.dumps({"error": f"memory error: {e.detail}"}))

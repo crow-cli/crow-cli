@@ -38,20 +38,20 @@ class FakeMemoryClient:
         cls._prompts.clear()
         cls._pid[0] = 0
 
-    def close(self):
+    async def close(self):
         pass
 
-    def __enter__(self):
+    async def __aenter__(self):
         return self
 
-    def __exit__(self, *exc):
+    async def __aexit__(self, *exc):
         pass
 
-    def health(self):
+    async def health(self):
         return {"status": "ok"}
 
     # ---- prompts ----
-    def lookup_or_create_prompt(self, template: str, name: str = "crow-default") -> str:
+    async def lookup_or_create_prompt(self, template: str, name: str = "crow-default") -> str:
         for pid, p in self._prompts.items():
             if p["template"] == template:
                 return pid
@@ -60,13 +60,13 @@ class FakeMemoryClient:
         self._prompts[pid] = {"id": pid, "name": name, "template": template, "created": True}
         return pid
 
-    def get_prompt(self, prompt_id: str) -> PromptRecord:
+    async def get_prompt(self, prompt_id: str) -> PromptRecord:
         if prompt_id not in self._prompts:
             raise MemoryServiceError(404, f"prompt '{prompt_id}' not found")
         return PromptRecord.model_validate(self._prompts[prompt_id])
 
     # ---- agents ----
-    def create_agent(self, *, agent_id, session_id, agent_idx=1, cwd="/tmp",
+    async def create_agent(self, *, agent_id, session_id, agent_idx=1, cwd="/tmp",
                      prompt_id=None, prompt_args=None, system_prompt="",
                      tool_definitions=None, request_params=None,
                      model_identifier="", **kwargs) -> AgentRecord:
@@ -80,7 +80,7 @@ class FakeMemoryClient:
         self._messages.setdefault(agent_id, [])
         return AgentRecord.model_validate(self._agents[agent_id])
 
-    def load(self, agent_id: str, hydrate: bool = False) -> tuple[AgentRecord, list[dict]]:
+    async def load(self, agent_id: str, hydrate: bool = False) -> tuple[AgentRecord, list[dict]]:
         if agent_id not in self._agents:
             raise MemoryServiceError(404, f"agent '{agent_id}' not found")
         return (
@@ -88,26 +88,26 @@ class FakeMemoryClient:
             list(self._messages.get(agent_id, [])),
         )
 
-    def list_agents(self, session_id: str | None = None) -> list[AgentRecord]:
+    async def list_agents(self, session_id: str | None = None) -> list[AgentRecord]:
         return [
             AgentRecord.model_validate(a)
             for a in self._agents.values()
             if session_id is None or a["session_id"] == session_id
         ]
 
-    def get_max_agent_idx(self, session_id: str) -> int:
+    async def get_max_agent_idx(self, session_id: str) -> int:
         idxs = [a["agent_idx"] for a in self._agents.values() if a["session_id"] == session_id]
         return max(idxs) if idxs else -1
 
-    def list_sessions(self, limit: int = 50, offset: int = 0) -> list[dict]:
+    async def list_sessions(self, limit: int = 50, offset: int = 0) -> list[dict]:
         return []
 
     # ---- messages ----
-    def add_message(self, agent_id: str, message: dict, usage: dict | None = None) -> int:
+    async def add_message(self, agent_id: str, message: dict, usage: dict | None = None) -> int:
         self._messages.setdefault(agent_id, []).append(message)
         return len(self._messages[agent_id])
 
-    def save_messages(self, agent_id: str, messages: list[dict]) -> list[int]:
+    async def save_messages(self, agent_id: str, messages: list[dict]) -> list[int]:
         existing = self._messages.setdefault(agent_id, [])
         start = len(existing)
         existing.extend(messages)

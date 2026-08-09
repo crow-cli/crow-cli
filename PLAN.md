@@ -120,5 +120,21 @@ to "all"); the work was making it SAFE.
         `restart all` skips all real services, cycles only scratch crow-mcp;
         crow-cli suites green (99 unit / 101 w-integration). COMMIT.
 
+## Phase 9 — async memory path, rip out sync httpx — DONE 2026-08-09
+User directive: "let's change them both to be async ... then we can rip out
+sync httpx code". The agent ran its memory I/O through the SDK's sync client
+inside an otherwise-async turn pipeline (event-loop blocking, worst on
+search).
+9.1 [x] SDK async-only: sync_client.py deleted, SyncMemoryClient unexported;
+        wire-contract suite ported to async (pytest-asyncio added to the sdk
+        dev group; concurrency test uses asyncio.gather).
+9.2 [x] Agent: memory.py adapter async; session.py surface async; call sites
+        awaited in react.py / compact.py / agent/main.py; cli/main.py inspect
+        gets an asyncio.run wrapper.
+9.3 [x] VERIFY: crow-cli 99 unit / 101 w-integration ✓, sdk 10 ✓ (real
+        binary), crow-mcp 120 ✓; live `inspect` smoke (list + session
+        branches) against the real service. Zero SyncMemoryClient refs left.
+        COMMIT.
+
 Done = every box in TODO.md checked (or deferred with written reason) AND PLAN phases
 all marked with evidence. Then report.
