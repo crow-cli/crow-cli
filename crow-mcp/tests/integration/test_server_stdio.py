@@ -41,7 +41,7 @@ async def client():
             "crow_mcp": {
                 "transport": "stdio",
                 "command": "uv",
-                "args": ["--project", CROW_MCP_DIR, "run", "crow-mcp"],
+                "args": ["--project", CROW_MCP_DIR, "run", "crow-mcp-dev"],
                 "cwd": CROW_MCP_DIR,
             }
         }

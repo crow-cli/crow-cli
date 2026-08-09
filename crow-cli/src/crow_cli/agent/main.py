@@ -33,7 +33,7 @@ By default ollama's `API_KEY` is `empty` and the base url is [http://localhost:1
 # Configure `crow-cli`
 Now you're guaranteed to have an API key and a base url to access an LLM, run the following and throw your url and keys in there.
 ```bash
-uvx crow-cli init
+crow-cli-dev init
 ```
 
 Then restart your agent.
@@ -254,16 +254,19 @@ class AcpAgent(Agent):
 
         # Get command and args of current process for terminal-auth
         command = sys.argv[0]
-        if command.endswith("crow-cli"):
+        if os.path.basename(command).startswith("crow-cli"):
             args = []
         else:
-            # Find "crow-cli" in argv and get args before it
-            try:
-                idx = sys.argv.index("crow-cli")
-                args = sys.argv[1 : idx + 1]
-            except ValueError:
-                # crow-cli not in argv, just use empty args
-                args = []
+            # Find the crow-cli executable in argv and get args before it
+            idx = next(
+                (
+                    i
+                    for i, a in enumerate(sys.argv)
+                    if os.path.basename(a).startswith("crow-cli")
+                ),
+                None,
+            )
+            args = sys.argv[1 : idx + 1] if idx is not None else []
 
         # Build terminal auth args
         terminal_args = args + ["auth"]
@@ -289,7 +292,7 @@ class AcpAgent(Agent):
                     field_meta={
                         "terminal-auth": {
                             "command": "uvx",
-                            "args": ["crow-cli", "acp"],
+                            "args": ["--from", "crow-cli", "crow-cli-dev", "acp"],
                             "label": "Crow Auth",
                             "env": {},
                             "type": "terminal",

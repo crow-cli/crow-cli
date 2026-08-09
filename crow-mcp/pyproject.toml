@@ -28,7 +28,7 @@ Repository = "https://github.com/crow-cli/crow-cli"
 Issues = "https://github.com/crow-cli/crow-cli/issues"
 Documentation = "https://github.com/crow-cli/crow-cli#readme"
 [project.scripts]
-crow-mcp = "crow_mcp.server.main:main"
+crow-mcp-dev = "crow_mcp.server.main:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -182,13 +182,12 @@ CONFIG_YAML = """# config.yaml for the spec at
 
 # DEFAULT mcpServers
 mcpServers:
-  crow-mcp:
-    transport: stdio
-    command: uvx
-    args:
-      - crow-mcp
+  crow-mcp-dev:
+    transport: http
+    url: http://127.0.0.1:2770/mcp
 
-# Memory store path (LanceDB, in-process)
+# Memory is served by the crow-memory HTTP service (Rust, LanceDB-backed).
+# The python crow-memory-sdk talks to it; this path is no longer used in-process.
 memory_path: ~/.crow/memory.lance
 
 # EXAMPLE PROVIDER

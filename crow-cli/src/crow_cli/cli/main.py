@@ -26,10 +26,10 @@ app = typer.Typer(
     name="crow-cli",
     help=(
         "Transparent CLI for the Crow agent — full observability into agent state.\n\n"
-        "Talk to an agent with `crow-cli run \"prompt\"` and continue a session with "
+        "Talk to an agent with `crow-cli-dev run \"prompt\"` and continue a session with "
         "`-s <session-id>`. This is also how agents delegate to subagents: launch a "
         "worker with `run`, then read its thoughts via the query_session MCP tool. "
-        "See `crow-cli run --help` for the full delegation recipe."
+        "See `crow-cli-dev run --help` for the full delegation recipe."
     ),
 )
 
@@ -38,7 +38,7 @@ app.add_typer(install_app, name="install")
 
 
 console = Console()
-# we need to work on a crow-cli init command to set up configuration
+# we need to work on a crow-cli-dev init command to set up configuration
 # until then...
 client = CrowClient(console=console)
 
@@ -326,17 +326,17 @@ def run(
 
     1. Launch a worker (it gets a coolname session id):
 
-        crow-cli run "refactor the parser into its own module"
+        crow-cli-dev run "refactor the parser into its own module"
 
     2. Continue that session with -s (give it a hellacious timeout if the
     prompt is big):
 
-        crow-cli run -s <session-id> "now add tests"
+        crow-cli-dev run -s <session-id> "now add tests"
 
     3. Send a long, pre-written delegation prompt from a file or stdin:
 
-        crow-cli run -f delegation.md -s <session-id>
-        cat delegation.md | crow-cli run -
+        crow-cli-dev run -f delegation.md -s <session-id>
+        cat delegation.md | crow-cli-dev run -
 
     4. From another agent, read what the worker did with the query_session MCP
     tool: query_session(session_id="<session-id>") — a bare call returns the
@@ -373,11 +373,11 @@ def run(
             "[red]Error: Either provide a prompt or use -i for interactive mode[/red]"
         )
         client._console.print("\n[yellow]Examples:[/yellow]")
-        client._console.print("  crow-cli run 'list the files'")
-        client._console.print("  crow-cli run -i")
-        client._console.print("  crow-cli run -s <session-id> -i")
-        client._console.print("  crow-cli run -f prompt.md -s <session-id>")
-        client._console.print("  cat prompt.md | crow-cli run -")
+        client._console.print("  crow-cli-dev run 'list the files'")
+        client._console.print("  crow-cli-dev run -i")
+        client._console.print("  crow-cli-dev run -s <session-id> -i")
+        client._console.print("  crow-cli-dev run -f prompt.md -s <session-id>")
+        client._console.print("  cat prompt.md | crow-cli-dev run -")
         raise SystemExit(1)
 
     # Run the async main
@@ -429,7 +429,7 @@ async def _run_async(
             await client.send_prompt(conn, actual_session_id, prompt)
             client._console.print(f"\n[dim]Session: {actual_session_id}[/dim]")
             client._console.print(
-                f'[dim]Use crow-cli run -s {actual_session_id} "<your—message>" to continue this conversation[/dim]'
+                f'[dim]Use crow-cli-dev run -s {actual_session_id} "<your—message>" to continue this conversation[/dim]'
             )
     except Exception as e:
         # If something went wrong, try to get stderr before re-raising
