@@ -44,27 +44,6 @@ console = Console()
 # until then...
 client = CrowClient(console=console)
 
-# Tool kind -> icon mapping
-TOOL_ICONS = {
-    "read": "📖",
-    "edit": "✏️",
-    "write": "📝",
-    "delete": "🗑️",
-    "move": "📦",
-    "search": "🔍",
-    "fetch": "🌐",
-    "execute": "⚡",
-    "other": "🔧",
-}
-
-# Status -> indicator mapping
-STATUS_ICONS = {
-    "pending": "⏳",
-    "in_progress": "🔄",
-    "completed": "✅",
-    "failed": "❌",
-}
-
 
 # ===========================================================================
 # ACP Agent
@@ -387,7 +366,7 @@ def run(
         raise SystemExit(1)
 
     # Run the async main
-    asyncio.run(_run_async(prompt, interactive, session_id, cwd))
+    asyncio.run(_run_async(prompt, interactive, session_id, cwd, config_dir))
 
 
 async def _run_async(
@@ -395,6 +374,7 @@ async def _run_async(
     interactive: bool,
     session_id: str | None,
     cwd: str,
+    config_dir: Path | None = None,
 ) -> None:
     """Async implementation of run command."""
     client._console.print(
@@ -409,7 +389,7 @@ async def _run_async(
     )
 
     # Spawn agent
-    proc = await client.spawn_agent(cwd)
+    proc = await client.spawn_agent(cwd, config_dir)
 
     try:
         # Connect

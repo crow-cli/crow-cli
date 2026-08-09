@@ -39,6 +39,7 @@ crow-cli-dev init
 Then restart your agent.
 """
 
+import argparse
 import asyncio
 import base64
 import mimetypes
@@ -831,4 +832,8 @@ def main(config_dir: Path | None = None, config: Config | None = None, debug: bo
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config-dir", type=Path, default=None)
+    parser.add_argument("--debug", action="store_true")
+    args = parser.parse_args()
+    main(config_dir=args.config_dir, debug=args.debug)

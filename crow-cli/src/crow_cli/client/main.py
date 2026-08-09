@@ -29,6 +29,7 @@ import asyncio
 import sys
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from acp import (
@@ -67,6 +68,27 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+
+# Tool kind -> icon mapping
+TOOL_ICONS = {
+    "read": "📖",
+    "edit": "✏️",
+    "write": "📝",
+    "delete": "🗑️",
+    "move": "📦",
+    "search": "🔍",
+    "fetch": "🌐",
+    "execute": "⚡",
+    "other": "🔧",
+}
+
+# Status -> indicator mapping
+STATUS_ICONS = {
+    "pending": "⏳",
+    "in_progress": "🔄",
+    "completed": "✅",
+    "failed": "❌",
+}
 
 
 class CrowClient(Client):
@@ -282,16 +304,24 @@ class CrowClient(Client):
         self._terminals.release(terminal_id)
         return ReleaseTerminalResponse()
 
-    async def spawn_agent(self, cwd: str) -> asyncio.subprocess.Process:
+    async def spawn_agent(
+        self, cwd: str, config_dir: Path | None = None
+    ) -> asyncio.subprocess.Process:
         """Spawn the crow-acp agent subprocess."""
         # Check if running in PyInstaller frozen build
         is_frozen = getattr(sys, "frozen", False)
+
+        # The agent loads its OWN config in its own process — forward the
+        # config dir so `run --config-dir` routes the whole stack (memory
+        # port, mcpServers, providers) and not just this client.
+        dir_args = ["--config-dir", str(config_dir)] if config_dir else []
 
         if is_frozen:
             # For frozen builds, use the 'acp' subcommand
             proc = await asyncio.create_subprocess_exec(
                 sys.executable,
                 "acp",
+                *dir_args,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -303,6 +333,7 @@ class CrowClient(Client):
                 sys.executable,
                 "-m",
                 "crow_cli.agent.main",
+                *dir_args,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
