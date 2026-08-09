@@ -33,18 +33,31 @@ crow-mcp is started automatically by crow-cli as a child process. You don't norm
 To use it standalone:
 
 ```bash
-uv --project crow-mcp run crow-mcp
+# stdio
+uv --project /path/to/crow-mcp run crow-mcp
+# http in the background/separate service
+uv --project /path/to/crow-mcp run crow-mcp --transport http --port 2770
 ```
 
 Or register it in any MCP client config:
 
 ```json
+// stdio
 {
   "mcpServers": {
     "crow-mcp": {
       "transport": "stdio",
       "command": "uv",
       "args": ["--project", "/path/to/crow-mcp", "run", "crow-mcp"]
+    }
+  }
+}
+// http
+{
+  "mcpServers": {
+    "crow-mcp": {
+      "transport": "http",
+      "url": "http://127.0.0.1:2770/mcp"
     }
   }
 }
