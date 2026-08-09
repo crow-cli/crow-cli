@@ -15,7 +15,7 @@ name = "crow-memory"
 path = "src/main.rs"
 
 [dependencies]
-crow-memory-types = { path = "../crow-memory-types", version = "0.2.0" }
+crow-memory-types = { path = "../crow-memory-types", version = "0.1.31" }
 axum = "0.8"
 clap = { version = "4", features = ["derive"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

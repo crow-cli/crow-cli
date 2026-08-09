@@ -1,11 +1,11 @@
 [project]
 name = "crow-mcp"
-version = "0.1.30"
+version = "0.1.31"
 description = "Crow builtin MCP server"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "crow-memory-sdk>=0.1.0",
+    "crow-memory-sdk>=0.31",
     "fastmcp>=3.4.2",
     "httpx>=0.28.0",
     "markdownify>=0.14.0",

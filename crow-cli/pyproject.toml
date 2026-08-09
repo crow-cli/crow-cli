@@ -30,7 +30,7 @@ Issues = "https://github.com/crow-cli/crow-cli/issues"
 Documentation = "https://github.com/crow-cli/crow-cli#readme"
 
 [project.scripts]
-crow-cli-dev = "crow_cli.cli.main:main"
+crow-cli = "crow_cli.cli.main:main"
 
 [build-system]
 requires = ["hatchling"]
