@@ -36,10 +36,14 @@ crow-memory service behind HTTP, spoken to by the PYTHON crow-memory-sdk.
   (NOT in scope: HTTP agent daemons, conductors, proxies)
 
 ## Daemon management
-- [ ] `crow-cli-dev daemon start|stop|restart|status|list` managing:
-      crow-memory, crow-mcp (HTTP transport), ollama-mv, searxng (docker)
-- [ ] Docker control via the python docker SDK for searxng (compose-level control)
-- [ ] Runstate convention (pidfiles/ports) + service registry in config
+- [x] `crow-cli-dev daemon start|stop|restart|status|list` managing:
+      crow-memory, crow-mcp (HTTP transport), ollama-mv, searxng (docker) — 2026-08-09 (be8a1e4a)
+- [x] Docker control via the python docker SDK for searxng (compose file = definition source,
+      SDK operates; `docker compose up -d` creates missing containers) — 2026-08-09
+- [x] Runstate convention (pidfiles {config_dir}/run, logs {config_dir}/logs w/ 5MB×4 rotation,
+      rust CLI conventions) + `daemons:` config overrides — 2026-08-09
+      Verified live: status detects all 4 (unmanaged); crow-mcp full start→status→stop cycle on
+      scratch config/port; searxng docker stop→start cycle. Refuses to kill unmanaged processes.
 
 ## init
 - [ ] `crow-cli-dev init`: existing behavior (config.yaml, prompts, searxng defaults)

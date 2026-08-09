@@ -43,7 +43,7 @@ Commit at each item (`git add -A && git commit`). Never ask "want me to proceed"
 3.3 [x] e2e: integration handshake 2/2, live-LLM e2e 5/5, full
         `crow-cli-dev run` turn eyeballed (ACP-UPGRADE-OK).
 
-## Phase 4 — Daemon management
+## Phase 4 — Daemon management — DONE 2026-08-09 (be8a1e4a)
 4.1 Design runstate layout (pid/port files under ~/.crow/run or similar) + service
     registry (config-driven): crow-memory, crow-mcp, ollama-mv, searxng.
 4.2 Implement `crow-cli-dev daemon start|stop|restart|status|list` for process

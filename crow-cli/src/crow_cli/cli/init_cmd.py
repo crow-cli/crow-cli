@@ -285,7 +285,7 @@ def run_init(config_dir: Path, yes: bool = False):
     # =========================================================================
     console.print("\n[bold cyan]═══ Step 3: Review ═══[/bold cyan]\n")
 
-    memory_path = str(Path.home() / ".crow" / "memory.lance")
+    memory_path = str(config_dir / "memory.lance")
     console.print(f"[dim]Memory store: {memory_path}[/dim]")
 
     if providers:
@@ -309,7 +309,9 @@ def run_init(config_dir: Path, yes: bool = False):
     s_table.add_column("Service", style="cyan")
     s_table.add_column("Status", style="green")
     s_table.add_row("SearXNG", "✓ Docker" if setup_searxng else "✗ Skip")
-    s_table.add_row("Memory", "in-process LanceDB")
+    s_table.add_row("Memory", "crow-memory HTTP service (rust, LanceDB)")
+    s_table.add_row("MCP", "crow-mcp-dev over HTTP (:2770)")
+    s_table.add_row("Embeddings", "ollama-mv (multivector fork)")
     console.print(s_table)
 
     console.print(f"\n[dim]Config directory: {config_dir}[/dim]")
@@ -339,10 +341,9 @@ def run_init(config_dir: Path, yes: bool = False):
     # config.yaml — single source of truth for crow-cli config
     config_data: dict[str, Any] = {
         "mcpServers": {
-            "crow-mcp": {
-                "transport": "stdio",
-                "command": "uvx",
-                "args": ["crow-mcp"],
+            "crow-mcp-dev": {
+                "transport": "http",
+                "url": "http://127.0.0.1:2770/mcp",
             }
         },
         "memory_path": memory_path,
@@ -401,18 +402,67 @@ def run_init(config_dir: Path, yes: bool = False):
     (config_dir / "logs").mkdir(exist_ok=True)
 
     # =========================================================================
-    # STEP 5: Start services (just instructions)
+    # STEP 5: ollama-mv (multivector embedding server)
     # =========================================================================
-    if active_services:
-        console.print("\n[bold cyan]═══ Step 5: Start Services ═══[/bold cyan]\n")
-        services_list = list(active_services.keys())
-        console.print(
-            Panel(
-                f"[bold white]cd {config_dir} && docker compose up -d[/bold white]\n\n"
-                f"[dim]Starts: {', '.join(services_list)}[/dim]",
-                title="[yellow]Start " + " + ".join(services_list) + "[/yellow]",
-                border_style="yellow",
+    console.print("\n[bold cyan]═══ Step 5: ollama-mv (embeddings) ═══[/bold cyan]\n")
+
+    from crow_cli.daemon import default_registry
+
+    registry = default_registry(config_dir)
+    ollama_spec = registry["ollama-mv"]
+    ollama_bin = Path(ollama_spec.command)
+    if ollama_bin.is_file():
+        console.print(f"[green]✓[/green] ollama-mv binary found: {ollama_bin}")
+    else:
+        build_script = Path(__file__).resolve().parents[3] / "scripts" / "build-ollama.sh"
+        do_build = (
+            True
+            if yes
+            else Confirm.ask(
+                f"ollama-mv binary missing ({ollama_bin}). Build it from source? "
+                "[dim](go + cmake, takes a while)[/dim]",
+                default=True,
             )
+        )
+        if do_build:
+            import subprocess
+
+            console.print(f"[dim]→ {build_script}[/dim]")
+            proc = subprocess.run(["bash", str(build_script)])
+            if proc.returncode == 0:
+                console.print(f"[green]✓[/green] Built {ollama_bin}")
+            else:
+                console.print(
+                    f"[red]✗ ollama-mv build failed (exit {proc.returncode}) — "
+                    f"run {build_script} manually later[/red]"
+                )
+        else:
+            console.print("[yellow]⊘ Skipped — set OLLAMA_MV_BIN or build later[/yellow]")
+
+    # =========================================================================
+    # STEP 6: Start daemons
+    # =========================================================================
+    console.print("\n[bold cyan]═══ Step 6: Start Daemons ═══[/bold cyan]\n")
+
+    start_names = ["crow-memory", "crow-mcp", "ollama-mv"]
+    if setup_searxng:
+        start_names.append("searxng")
+
+    do_start = (
+        True
+        if yes
+        else Confirm.ask(f"Start daemons now? [dim]({', '.join(start_names)})[/dim]", default=True)
+    )
+    if do_start:
+        from crow_cli.daemon import start as daemon_start
+
+        # Re-read the registry: config.yaml was just written (ports etc.)
+        registry = default_registry(config_dir)
+        for name in start_names:
+            console.print(daemon_start(config_dir, registry[name]))
+    else:
+        console.print(
+            "[dim]Start them later: crow-cli-dev daemon start all[/dim]"
         )
 
     # =========================================================================
@@ -425,15 +475,15 @@ def run_init(config_dir: Path, yes: bool = False):
     done_lines = [
         "[bold green]✓ Configuration complete![/bold green]\n",
         f"Config:   [cyan]{config_file}[/cyan]",
-        f"Memory:   [cyan]{config_dir / 'memory.lance'}[/cyan] [dim](in-process, no service)[/dim]",
+        f"Memory:   [cyan]crow-memory service → {config_dir / 'memory.lance'}[/cyan]",
         f"Logs:     [cyan]{config_logs}[/cyan]",
         f"Prompt:   [cyan]{system_prompt_dir}/system_prompt.jinja2[/cyan]",
         f"Secrets:  [cyan]{env_file}[/cyan]",
     ]
     if active_services:
         done_lines.append(f"Compose:  [cyan]{compose_file}[/cyan]")
-        done_lines.append(f"\n[dim]Start services:[/dim] [bold red]cd {config_dir} && docker compose up -d[/bold red]")
-    done_lines.append(f'\n[dim]Test:[/dim] [bold white]crow-cli run "hey"[/bold white]')
+    done_lines.append(f"\n[dim]Daemons:[/dim] [bold white]crow-cli-dev daemon status[/bold white]")
+    done_lines.append(f'[dim]Test:[/dim] [bold white]crow-cli-dev run "hey"[/bold white]')
     console.print(Panel.fit("\n".join(done_lines), border_style="green"))
 
 
