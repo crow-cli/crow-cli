@@ -1,34 +1,70 @@
-# crow-cli TODO
+# crow-cli-python TODO
 
-## [v2] Retry + capability-aware fallback on transient provider 400s
+## **DO NOT ASK USER FOR FEEDBACK — THIS IS THE USER FEEDBACK.**
+## **DO NOT ASK USER FOR NEXT STEPS — THESE ARE THE NEXT STEPS.**
 
-**Symptom (user-visible):** `Internal error: {"error":"data: {\"error\":{\"code\":\"invalid_parameter_error\",...,\"message\":\"Download multimodal file timed out\",...}}"}` — sporadic, mid-turn, kills the react loop.
+Context: Python is the future of crow-cli. The Rust rewrite (crow-cli repo,
+main branch) was an experiment; its only survivors are the `crow-memory`
+HTTP service and `crow-memory-types`. Everything else ports back to this
+worktree (branch `crow-cli-python`; lands on main via REBASE, not merge).
+Dynamic language = fast OODA loop; the heavy lifting lives in the Rust
+crow-memory service behind HTTP, spoken to by the PYTHON crow-memory-sdk.
 
-**Diagnosis (from `~/.crow/logs/crow-cli-successful-wild-fulmar-of-awe.log:40-72`, 5 occurrences):**
-- It is a provider-side **HTTP 400** (`openai.BadRequestError`), NOT a local network error.
-  Stack: `main.py:725 await task` → `main.py:667 _execute_turn` → `react.py:632 send_request` → `openai/_base_client.py:1669` raises.
-- The openai SDK auto-retries 429 / 5xx / connection resets, but **never 4xx**. So a
-  transient server error propagates straight out of `react_loop` and aborts the turn.
-- `Download multimodal file timed out` is DashScope/Alibaba's **server-side** multimodal
-  ingest step timing out while processing the image payload. Sporadic ⇒ transient, not
-  deterministic. Correlates with the lance image split: hydration now re-inlines full
-  base64 images every turn (observed 130k-token prompts carrying image blocks), so the
-  multimodal payload is large and occasionally exceeds their ingest deadline.
-- **Not a correctness bug on our side.** It's a missing retry on a transient 400 plus,
-  longer-term, no fallback when a model chokes on multimodal content.
+## Renames + config
+- [ ] Rename console script `crow-cli` → `crow-cli-dev` (pyproject + all internal refs)
+- [ ] Rename console script `crow-mcp` → `crow-mcp-dev` (pyproject + refs)
+- [ ] Update `~/.crow/config.yaml` MCP setting for the crow-mcp-dev rename
+  (criteria: `uv sync` clean; `crow-cli-dev --help` and `crow-mcp-dev --help` run;
+  no collision with the Rust binaries in ~/.cargo/bin)
 
-**Plan — DEFERRED to crow-cli v2 (v1 react loop / store.py are FROZEN, do not patch here):**
-1. **Retry this error class.** Treat `invalid_parameter_error` / `Download multimodal file timed out`
-   (and sibling transient ingest errors) as retryable *despite* the 400 status: bounded
-   exponential backoff inside `send_request`, distinct from the SDK's own retry policy.
-2. **Capability-aware model registry.** Tag each model with capabilities (vision, audio,
-   tool-use, context window). A fallback chain must NEVER land on a text-only model while
-   the conversation carries image/audio blocks.
-3. **Auto-strip on downgrade.** If we do fall back to a model lacking a modality, strip the
-   unsupported content blocks (image/audio → `[image omitted: model has no vision]` placeholder)
-   automatically instead of hard-failing. Bans on image/audio data are derived from capabilities,
-   not hardcoded per provider.
-4. **Round-robin / fallback chain, no litellm.** We don't run litellm today; keep it out of the
-   stack. Build the retry+fallback+capability routing in-process (Rust in v2).
+## crow-memory consolidation
+- [ ] Bring `crow-memory-types` crate from crow-cli main into this worktree (repo root layout)
+- [ ] Bring `crow-memory` crate (axum+LanceDB HTTP service) from crow-cli main;
+      REMOVE its dependency on the Rust crow-memory-sdk — the Python crow-memory-sdk
+      is the SDK now. Do NOT bring the Rust crow-memory-sdk crate over.
+- [ ] Root `Cargo.toml` workspace over those two crates; `cargo build --release` green
+- [ ] Type sharing: ONE source of truth for wire types shared between
+      crow-memory-types (Rust) and crow-memory-sdk (Python pydantic).
+      Research + implement + drift test.
+- [ ] Delete the old Python `crow-memory` (in-process lancedb) package; migrate any
+      remaining imports (crow_cli/agent/memory.py, crow_mcp/memory/main.py) to the
+      Python crow-memory-sdk
+  (criteria: service binary builds + boots + answers /healthz or equivalent;
+  crow-cli + crow-mcp pass their memory tests against the HTTP service;
+  zero `crow_memory` imports remain outside the sdk)
 
-**Status:** not fixing in v1. Revisit when the v2 ACP client/agent is built.
+## ACP upgrade
+- [ ] Bump `agent-client-protocol` >=0.9.0 → 0.12.0 (latest on PyPI, v1 schema;
+      v2 does not exist for Python and we are NOT using it)
+- [ ] Fix agent + client code against the new SDK; e2e ACP handshake + a real turn work
+  (NOT in scope: HTTP agent daemons, conductors, proxies)
+
+## Daemon management
+- [ ] `crow-cli-dev daemon start|stop|restart|status|list` managing:
+      crow-memory, crow-mcp (HTTP transport), ollama-mv, searxng (docker)
+- [ ] Docker control via the python docker SDK for searxng (compose-level control)
+- [ ] Runstate convention (pidfiles/ports) + service registry in config
+
+## init
+- [ ] `crow-cli-dev init`: existing behavior (config.yaml, prompts, searxng defaults)
+      PLUS build the ollama-mv fork (~/src/crow-team/ollama) + deps (llamacpp where
+      needed), and start the daemons (crow-memory, crow-mcp, ollama-mv)
+
+## Critique pass
+- [ ] Triage the critique notes (~/src/crow-team/notes/dev/crow-cli-critique*.md):
+      what applies to current crow-cli-python → implement; what doesn't → record why here
+- [ ] Carried from the old v1 TODO (deferred-to-v2 item, now in scope):
+      retry transient provider 400s (`invalid_parameter_error` / multimodal ingest
+      timeouts) + capability-aware model fallback with auto-strip on downgrade
+
+## Tests
+- [ ] Keep unit/integration tests green AND meaningful throughout; fix stale assumptions
+- [ ] Add e2e tests where they catch bugs unit/integration cannot (true usage paths)
+
+## Deferred — captured, explicitly out of this sprint
+- TASK-SYSTEM.md async long-running jobs / agent delegation (crow-task) — later
+- ACP-over-HTTP agents, conductor, proxies — later
+- ~/.agents directory adoption (skills → ~/.agents/skill, global AGENTS.md →
+  ~/.agents/AGENTS.md, notes → ~/.agents/notes) — layout being driven by thomas
+- The Rust crow-cli / crow-mcp / crow-server / crow-verifier crates die with the
+  experiment; only crow-memory + crow-memory-types survive
