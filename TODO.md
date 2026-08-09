@@ -158,9 +158,31 @@ notes → ~/.agents/notes; global AGENTS.md → ~/.agents/AGENTS.md.
       Legacy ~/.crow left in place (crow.db, state.db, old memory.lance,
       logs) — inert data, deliberately not deleted.
 
+## Daemon `all` commands + docker unmanaged tracking — DONE 2026-08-09
+`daemon start|stop|restart|status all` already existed at the CLI layer
+(name argument defaults to "all"; `list` = `status all`). Two fixes:
+- [x] restart() on an unmanaged process daemon printed stop's refusal AND
+      then start's no-op (confusing compound message) → single
+      "running unmanaged — restart skipped (stop it yourself, then
+      `daemon start`)"
+- [x] Docker kind had NO unmanaged concept — `restart all` from a scratch
+      config dir restarted the REAL searxng container. Now symmetric with
+      processes: start() records the started container's id in the pidfile
+      slot; status() sets managed iff recorded id == current container id
+      (detail "unmanaged" otherwise); stop()/restart() refuse/skip when the
+      record is absent or mismatched. Shared _unmanaged() helper; read_pid
+      rebuilt on string-aware _read_record (pidfile holds a container id
+      for docker daemons).
+- [x] 11 new unit tests (tests/unit/test_daemon.py) — real lifecycle code,
+      docker SDK boundary faked at _docker_container (real container never
+      touched by tests)
+- [x] Verified: scratch config dir — start/restart all correctly skip all 4
+      real services and cycle only the scratch crow-mcp; real searxng
+      untouched (still Up); scratch dir cleaned up after
+
 ## Tests — DONE 2026-08-09
 - [x] Full sweep green across all packages after every change:
-      crow-cli unit 88 ✓ (+integration 90 ✓, live e2e 5 ✓),
+      crow-cli unit 99 ✓ (+integration 101 ✓, live e2e 5 ✓),
       crow-mcp 115 ✓, crow-memory-sdk 10 ✓ (incl. wire contract vs the real
       freshly-built binary + wedged-server timeout).
 - [x] Stale-assumption scan: no lancedb leftovers in tests (one historical

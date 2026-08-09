@@ -11,7 +11,9 @@ Two kinds of services, one interface:
 - ``docker``: container operated via the docker SDK; when the container
   doesn't exist yet it is created from its compose file
   (``docker compose -f <file> up -d <service>``) — compose stays the
-  definition source, the SDK does start/stop/status.
+  definition source, the SDK does start/stop/status. The id of a
+  container we started is recorded in the same pidfile slot, so
+  stop/restart can refuse containers started elsewhere (unmanaged).
 
 The registry is config-driven: built-in defaults below, overridable per
 service from the ``daemons:`` section of config.yaml (keys: command, args,
@@ -194,10 +196,18 @@ def _alive(pid: int) -> bool:
         return True
 
 
+def _read_record(config_dir: Path, name: str) -> str | None:
+    """Raw pidfile content: a pid for process daemons, a container id for docker."""
+    try:
+        return pid_file(config_dir, name).read_text().strip() or None
+    except OSError:
+        return None
+
+
 def read_pid(config_dir: Path, name: str) -> int | None:
     try:
-        return int(pid_file(config_dir, name).read_text().strip())
-    except (OSError, ValueError):
+        return int(_read_record(config_dir, name))
+    except (TypeError, ValueError):
         return None
 
 
@@ -227,8 +237,9 @@ def _docker_container(spec: DaemonSpec):
 
 
 def status(config_dir: Path, spec: DaemonSpec) -> dict[str, Any]:
-    """Live status. `managed` means we hold the pidfile; a service can be
-    running unmanaged (started elsewhere) — health still reports."""
+    """Live status. `managed` means we hold the pidfile (process) or our
+    recorded container id matches (docker); a service can be running
+    unmanaged (started elsewhere) — health still reports."""
     st: dict[str, Any] = {
         "name": spec.name,
         "kind": spec.kind,
@@ -246,7 +257,8 @@ def status(config_dir: Path, spec: DaemonSpec) -> dict[str, Any]:
         if container is None:
             return st
         st["running"] = container.status == "running"
-        st["detail"] = container.status
+        st["managed"] = st["running"] and _read_record(config_dir, spec.name) == container.id
+        st["detail"] = container.status if st["managed"] or not st["running"] else "unmanaged"
         st["healthy"] = st["running"] and healthy(spec)
         return st
 
@@ -295,6 +307,13 @@ def start(config_dir: Path, spec: DaemonSpec) -> str:
                 check=True,
                 capture_output=True,
             )
+            container, _ = _docker_container(spec)
+        if container is not None:
+            # Record the container we started so stop/restart can tell it
+            # apart from one started elsewhere (unmanaged).
+            pf = pid_file(config_dir, spec.name)
+            pf.parent.mkdir(parents=True, exist_ok=True)
+            pf.write_text(container.id)
         if _wait_healthy(spec, spec.start_timeout):
             return f"{spec.name}: started"
         return f"{spec.name}: started but not healthy yet — check `docker logs {spec.container}`"
@@ -329,9 +348,18 @@ def start(config_dir: Path, spec: DaemonSpec) -> str:
 def stop(config_dir: Path, spec: DaemonSpec) -> str:
     if spec.kind == "docker":
         container, _ = _docker_container(spec)
-        if container is None or container.status != "running":
+        if container is None:
+            pid_file(config_dir, spec.name).unlink(missing_ok=True)
             return f"{spec.name}: not running"
+        if container.status != "running":
+            return f"{spec.name}: not running"
+        if _read_record(config_dir, spec.name) != container.id:
+            return (
+                f"{spec.name}: running unmanaged — not stopping it "
+                "(stop it yourself; `daemon start` won't touch it)"
+            )
         container.stop(timeout=int(spec.stop_timeout))
+        pid_file(config_dir, spec.name).unlink(missing_ok=True)
         return f"{spec.name}: stopped"
 
     pid = read_pid(config_dir, spec.name)
@@ -354,7 +382,28 @@ def stop(config_dir: Path, spec: DaemonSpec) -> str:
     return f"{spec.name}: stopped" + ("" if not _alive(pid) else " (SIGKILL)")
 
 
+def _unmanaged(config_dir: Path, spec: DaemonSpec) -> bool:
+    """Service is up but we didn't start it (or lost track of it)."""
+    if spec.kind == "docker":
+        try:
+            container, _ = _docker_container(spec)
+        except Exception:
+            return False
+        return (
+            container is not None
+            and container.status == "running"
+            and _read_record(config_dir, spec.name) != container.id
+        )
+    pid = read_pid(config_dir, spec.name)
+    return (pid is None or not _alive(pid)) and healthy(spec)
+
+
 def restart(config_dir: Path, spec: DaemonSpec) -> str:
+    if _unmanaged(config_dir, spec):
+        return (
+            f"{spec.name}: running unmanaged — restart skipped "
+            "(stop it yourself, then `daemon start`)"
+        )
     stopped = stop(config_dir, spec)
     started = start(config_dir, spec)
     return f"{stopped}; {started}"

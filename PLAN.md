@@ -106,5 +106,19 @@ dir → ~/.agents/skills (sibling); notes → ~/.agents/notes; global AGENTS.md 
         sees all 4 daemons from the new config dir (nothing restarted);
         suites green (crow-cli 90, crow-mcp 115, sdk 10). COMMIT.
 
+## Phase 8 — daemon `all` polish + docker unmanaged tracking — DONE 2026-08-09
+User asked for `daemon (re)start/stop all` — already existed (name defaults
+to "all"); the work was making it SAFE.
+8.1 [x] restart() unmanaged-skip for process daemons (single message instead
+        of stop-refusal + start-noop compound).
+8.2 [x] Docker unmanaged tracking: start() records container id in the
+        pidfile slot; status() managed = recorded id matches; stop()/
+        restart() refuse/skip unmanaged containers — fixes the incident
+        where `restart all --config-dir <scratch>` restarted the live
+        searxng container.
+8.3 [x] VERIFY: 11 new unit tests (docker SDK boundary faked); scratch-dir
+        `restart all` skips all real services, cycles only scratch crow-mcp;
+        crow-cli suites green (99 unit / 101 w-integration). COMMIT.
+
 Done = every box in TODO.md checked (or deferred with written reason) AND PLAN phases
 all marked with evidence. Then report.
