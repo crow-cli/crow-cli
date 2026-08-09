@@ -5,9 +5,6 @@ description = "Crow builtin MCP server"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "binaryornot>=0.4.4",
-    "cachetools>=7.0.0",
-    "charset-normalizer>=3.4.4",
     "crow-memory-sdk>=0.1.0",
     "fastmcp>=3.4.2",
     "httpx>=0.28.0",
@@ -15,7 +12,6 @@ dependencies = [
     "readabilipy>=0.3.0",
     "pydantic>=2.12.5",
     "opencv-python>=4.13.0.92",
-    "ipython>=9.15.0",
 ]
 
 [tool.uv.sources]
@@ -36,6 +32,7 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
+    "ipython>=9.15.0",
     "pytest>=9.0.2",
     "pytest-asyncio>=0.23.0",
 ]

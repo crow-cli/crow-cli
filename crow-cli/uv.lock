@@ -251,9 +251,7 @@ dependencies = [
     { name = "docker" },
     { name = "fastmcp" },
     { name = "httpx" },
-    { name = "ipython" },
     { name = "jinja2" },
-    { name = "json-schema-to-pydantic" },
     { name = "openai" },
     { name = "pyyaml" },
     { name = "rich" },
@@ -262,6 +260,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "ipython" },
     { name = "pyinstaller" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -276,9 +275,7 @@ requires-dist = [
     { name = "docker", specifier = ">=7.2.0" },
     { name = "fastmcp", specifier = ">=2.14.5" },
     { name = "httpx", specifier = ">=0.28.1" },
-    { name = "ipython", specifier = ">=9.10.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
-    { name = "json-schema-to-pydantic", specifier = ">=0.4.9" },
     { name = "openai", specifier = ">=2.21.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "rich", specifier = ">=14.3.3" },
@@ -287,6 +284,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "ipython", specifier = ">=9.10.0" },
     { name = "pyinstaller", specifier = ">=6.0.0" },
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "pytest-asyncio", specifier = ">=0.23.0" },
@@ -718,18 +716,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/47/66/eea81dfff765ed66c68fd2ed8c96245109e13c896c2a5015c7839c92367e/jiter-0.13.0-cp314-cp314t-win32.whl", hash = "sha256:24dc96eca9f84da4131cdf87a95e6ce36765c3b156fc9ae33280873b1c32d5f6", size = 201196, upload-time = "2026-02-02T12:37:19.101Z" },
     { url = "https://files.pythonhosted.org/packages/ff/32/4ac9c7a76402f8f00d00842a7f6b83b284d0cf7c1e9d4227bc95aa6d17fa/jiter-0.13.0-cp314-cp314t-win_amd64.whl", hash = "sha256:0a8d76c7524087272c8ae913f5d9d608bd839154b62c4322ef65723d2e5bb0b8", size = 204215, upload-time = "2026-02-02T12:37:20.495Z" },
     { url = "https://files.pythonhosted.org/packages/f9/8e/7def204fea9f9be8b3c21a6f2dd6c020cf56c7d5ff753e0e23ed7f9ea57e/jiter-0.13.0-cp314-cp314t-win_arm64.whl", hash = "sha256:2c26cf47e2cad140fa23b6d58d435a7c0161f5c514284802f25e87fddfe11024", size = 187152, upload-time = "2026-02-02T12:37:22.124Z" },
-]
-
-[[package]]
-name = "json-schema-to-pydantic"
-version = "0.4.9"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "pydantic" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/87/b8/90a3af11bcf9f8c76f1f7399705cd6c23c2271f1d70f882529bde2c1ad86/json_schema_to_pydantic-0.4.9.tar.gz", hash = "sha256:f71bc57c9016a6cecaf259392b4a3f35a34ad79da3934a64d21d73f526c6e28d", size = 53020, upload-time = "2026-02-01T20:47:47.29Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ad/2e/58bada6e9195417baff0b06be34cd3b1a6c19153b4d08a4dea2e8b324cb5/json_schema_to_pydantic-0.4.9-py3-none-any.whl", hash = "sha256:7b1126aa70a482f8442866139d14e71a5f678ae5bece72b51db28374c4237cc9", size = 16351, upload-time = "2026-02-01T20:47:45.705Z" },
 ]
 
 [[package]]
