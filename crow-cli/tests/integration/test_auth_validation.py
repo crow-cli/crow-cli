@@ -153,7 +153,7 @@ def run_auth_check(
         sandbox_home = tempfile.mkdtemp(prefix="acp-auth-check-")
         full_env["HOME"] = sandbox_home
         # Create the log directory the agent expects
-        log_dir = Path(sandbox_home) / ".crow" / "logs"
+        log_dir = Path(sandbox_home) / ".agents" / "crow" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
 
     proc = None

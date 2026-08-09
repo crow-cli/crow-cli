@@ -37,11 +37,11 @@ uv tool install crow-cli --python 3.14      # or run without installing: uvx cro
 Initialize your configuration and start the backing services:
 
 ```bash
-crow-cli init                          # scaffolds ~/.crow (config.yaml, .env, docker-compose)
-cd ~/.crow && docker compose up -d     # starts crow-memory + SearXNG
+crow-cli init                          # scaffolds ~/.agents/crow (config.yaml, .env, docker-compose)
+cd ~/.agents/crow && docker compose up -d     # starts crow-memory + SearXNG
 ```
 
-`crow-cli init` walks you through provider and model selection and writes your secrets to `~/.crow/.env`, referenced from the config as `${VAR}`.
+`crow-cli init` walks you through provider and model selection and writes your secrets to `~/.agents/crow/.env`, referenced from the config as `${VAR}`.
 
 ## Quick start
 
@@ -89,7 +89,7 @@ crow-cli is a monorepo. The pieces:
 
 ### crow-cli — the agent
 
-The ACP-native agent: a streaming ReAct loop with tool calling, cancellation, conversation compaction, and multimodal input. Provider and model configuration lives in `~/.crow/config.yaml`.
+The ACP-native agent: a streaming ReAct loop with tool calling, cancellation, conversation compaction, and multimodal input. Provider and model configuration lives in `~/.agents/crow/config.yaml`.
 
 ### crow-memory — persistence + memory API
 
@@ -113,7 +113,7 @@ The built-in [MCP](https://modelcontextprotocol.io/) server providing the agent'
 | `capture_webcam` / `read_image_file` | Vision input |
 | `list_sessions` / `query_memory` / `query_session` | Memory (see above) |
 
-**Extensible by design:** register any MCP server in `~/.crow/config.yaml` and its tools appear alongside these automatically.
+**Extensible by design:** register any MCP server in `~/.agents/crow/config.yaml` and its tools appear alongside these automatically.
 
 > ⚠️ **Tool names are not namespaced.** crow-mcp registers its tools as `read`, `edit`, `terminal`, … — not `crow-mcp_read`. When you add your own MCP servers, watch for name collisions.
 
@@ -123,11 +123,11 @@ crow-cli ships a maintained SearXNG configuration (stored as JSON so the agent c
 
 ### Skills
 
-Agents load reusable skills from `~/.crow/skills/` — each a directory with a `SKILL.md` describing when and how to use it. Skill distribution is still being worked out; today skills are local directories.
+Agents load reusable skills from `~/.agents/skills/` — each a directory with a `SKILL.md` describing when and how to use it. Skill distribution is still being worked out; today skills are local directories.
 
 ## Configuration
 
-`~/.crow/config.yaml` holds providers, models, and MCP servers; secrets live in `~/.crow/.env` and are interpolated with `${VAR}`.
+`~/.agents/crow/config.yaml` holds providers, models, and MCP servers; secrets live in `~/.agents/crow/.env` and are interpolated with `${VAR}`.
 
 ```yaml
 providers:

@@ -2,7 +2,7 @@
 Configuration management for crow-cli.
 
 Default config files are Python string constants imported from defaults.
-On first access to ~/.crow, defaults are written to disk if nothing exists.
+On first access to ~/.agents/crow, defaults are written to disk if nothing exists.
 The user's config.yaml is read from disk for actual runtime config.
 """
 
@@ -25,13 +25,19 @@ from crow_cli.agent.logger import setup_logger
 
 ENV_PATTERN = re.compile(r"\$\{([^}]+)\}")
 
-CROW_DIR = Path.home() / ".crow"
+AGENTS_DIR = Path.home() / ".agents"
+# Config lives under ~/.agents/crow; the shared workspaces (skills, notes,
+# global AGENTS.md) are SIBLINGS of the config dir, directly under ~/.agents.
+DEFAULT_CONFIG_DIR = AGENTS_DIR / "crow"
+SKILLS_DIR = AGENTS_DIR / "skills"
+NOTES_DIR = AGENTS_DIR / "notes"
+GLOBAL_AGENTS_MD = AGENTS_DIR / "AGENTS.md"
 
 
 def get_default_config_dir(config_dir: Path | str | None = None) -> Path:
-    """Return the config directory. If config_dir is given, use it. Otherwise ~/.crow."""
+    """Return the config directory. If config_dir is given, use it. Otherwise ~/.agents/crow."""
     if config_dir is None:
-        return CROW_DIR
+        return DEFAULT_CONFIG_DIR
     return Path(config_dir).resolve()
 
 
@@ -157,7 +163,7 @@ class Config:
             _logger.info("No config.yaml found, returning bare Config")
             return cls(
                 config_dir=target_dir,
-                memory_path=str(Path.home() / ".crow" / "memory.lance"),
+                memory_path=str(DEFAULT_CONFIG_DIR / "memory.lance"),
             )
 
         with open(config_file) as f:
@@ -203,7 +209,7 @@ class Config:
             )
 
         # Parse overrides
-        memory_path = os.path.expanduser(parsed.get("memory_path") or "~/.crow/memory.lance")
+        memory_path = os.path.expanduser(parsed.get("memory_path") or "~/.agents/crow/memory.lance")
         overrides = {}
         for key, typ in (
             ("max_retries_per_step", int),

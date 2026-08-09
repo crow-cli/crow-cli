@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 def get_log_path():
-    root = Path().home() / ".crow" / "logs"
+    root = Path().home() / ".agents" / "crow" / "logs"
 
     log_path = root / "crow-mcp.log"
     root.mkdir(parents=True, exist_ok=True)

@@ -1,7 +1,7 @@
 """
 crow-cli init - Interactive configuration setup wizard.
 
-Builds config.yaml and .env in ~/.crow (or --config-dir).
+Builds config.yaml and .env in ~/.agents/crow (or --config-dir).
 
 Configuration priority (highest to lowest):
 1. LLM_*_API_KEY / LLM_*_BASE_URL env vars
@@ -492,5 +492,5 @@ def run_init(config_dir: Path, yes: bool = False):
 def init_command(config_dir: Path = None, yes: bool = False):
     """Initialize Crow configuration interactively."""
     if config_dir is None:
-        config_dir = Path(os.path.expanduser("~/.crow"))
+        config_dir = Path(os.path.expanduser("~/.agents/crow"))
     run_init(config_dir=config_dir, yes=yes)

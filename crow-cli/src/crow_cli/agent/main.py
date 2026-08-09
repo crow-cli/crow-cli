@@ -673,7 +673,7 @@ class AcpAgent(Agent):
                         )
                 if not provider:
                     raise RuntimeError(
-                        "No LLM providers configured. Check ~/.crow/config.yaml."
+                        "No LLM providers configured. Check ~/.agents/crow/config.yaml."
                     )
 
                 llm = configure_llm(provider=provider, debug=self._config.chunk_log, logger=self._session_logger)

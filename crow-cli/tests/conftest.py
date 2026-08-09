@@ -131,7 +131,7 @@ def memory_service(monkeypatch):
 @pytest.fixture
 def test_config_dir(tmp_path):
     """Create a temporary config directory with test config."""
-    config_dir = tmp_path / ".crow"
+    config_dir = tmp_path / ".agents" / "crow"
     config_dir.mkdir(parents=True)
 
     # Create .env file

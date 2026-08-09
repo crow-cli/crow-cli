@@ -16,7 +16,7 @@ from pathlib import Path
 
 def find_session_dir(session: str | None = None):
     """Resolve the --debug log dir for a session (or the most recent one)."""
-    logs = Path(os.path.expanduser("~/.crow/logs"))
+    logs = Path(os.path.expanduser("~/.agents/crow/logs"))
     if session:
         d = logs / session
         return d if d.is_dir() else None

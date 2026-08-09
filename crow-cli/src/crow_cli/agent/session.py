@@ -20,7 +20,12 @@ from crow_cli.agent.memory import DEFAULT_MEMORY_PATH, MemoryClient, MemoryServi
 from crow_cli.agent.prompt import render_template
 from crow_cli.agent.context import get_directory_tree
 
-from crow_cli.agent.configure import Config
+from crow_cli.agent.configure import (
+    AGENTS_DIR,
+    NOTES_DIR,
+    SKILLS_DIR,
+    Config,
+)
 
 def get_session_by_cwd(cwd, memory_path=DEFAULT_MEMORY_PATH):
     """
@@ -385,16 +390,16 @@ def _read_agents_file(directory: str) -> str | None:
 def build_display_tree(cwd: str) -> str:
     """Build the directory-tree context block shown to an agent.
 
-    Every agent sees the two shared workspaces — ``~/.crow/notes`` and
-    ``~/.crow/skills`` — because the edit tool no longer sandboxes to cwd, so
+    Every agent sees the two shared workspaces — ``~/.agents/notes`` and
+    ``~/.agents/skills`` — because the edit tool no longer sandboxes to cwd, so
     any agent can read and edit them. Agents working inside a real project also
     get their own cwd tree. The notes agent (cwd == $HOME) is the exception: it
     skips the cwd tree, since treeing $HOME is dominated by logs, the db, and
     VSCode-extension noise.
     """
     home = str(Path.home())
-    notes_dir = os.path.join(home, ".crow", "notes")
-    skills_dir = os.path.join(home, ".crow", "skills")
+    notes_dir = str(NOTES_DIR)
+    skills_dir = str(SKILLS_DIR)
     trees = [get_directory_tree(notes_dir), get_directory_tree(skills_dir)]
     if os.path.realpath(cwd) != os.path.realpath(home):
         trees.append(get_directory_tree(cwd))
@@ -408,7 +413,7 @@ def build_agents_content(cwd: str) -> str:
 
     Two memory files are in play:
 
-    * the **global** one at ``~/.crow/notes/AGENTS.md`` — cross-cutting rules
+    * the **global** one at ``~/.agents/AGENTS.md`` — cross-cutting rules
       that carry across every agent, and
     * the **local** one at ``<cwd>/AGENTS.md`` — project-specific knowledge.
 
@@ -418,9 +423,8 @@ def build_agents_content(cwd: str) -> str:
     appended when present.
     """
     home = str(Path.home())
-    notes_dir = os.path.join(home, ".crow", "notes")
     parts = []
-    global_agents = _read_agents_file(notes_dir)
+    global_agents = _read_agents_file(str(AGENTS_DIR))
     if global_agents:
         parts.append(global_agents)
     if os.path.realpath(cwd) != os.path.realpath(home):
@@ -448,7 +452,7 @@ def make_agent_session(
     prompt_id = lookup_or_create_prompt(
         template, name="crow-default", memory_path=config.memory_path
     )
-    skills = get_skills(config.config_dir / "skills")
+    skills = get_skills(SKILLS_DIR)
 
     # Context blocks: the directory tree (notes + skills, plus cwd unless cwd
     # is $HOME) and the persistent-memory AGENTS.md (global, plus the cwd's own

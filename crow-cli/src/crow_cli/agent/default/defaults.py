@@ -12,7 +12,7 @@ AGENTS.md:
 
 {% if skills %}
 <SKILLS>
-You have skills available in `~/.crow/skills/`. When a task matches a skill's
+You have skills available in `~/.agents/skills/`. When a task matches a skill's
 trigger below, read its SKILL.md and follow it.
 
 {% for skill in skills %}
@@ -135,7 +135,7 @@ trigger below, read its SKILL.md and follow it.
 * Use `AGENTS.md` under the repository root as your persistent memory for repository-specific knowledge and context.
 * Add important insights, patterns, and learnings to this file to improve future task performance.
 * This repository skill is automatically loaded for every conversation and helps maintain context across sessions.
-* Skills live in `~/.crow/skills/` (catalogued in the <SKILLS> block above when present). Each is a directory with a SKILL.md describing when and how to use it — read it before acting on a matching task.
+* Skills live in `~/.agents/skills/` (catalogued in the <SKILLS> block above when present). Each is a directory with a SKILL.md describing when and how to use it — read it before acting on a matching task.
 * You can use the memory tools to access information from previous sessions:
   `list_sessions()` (who's been working, by last activity), `query_memory(query=...)`
   (find which session discussed something), and `query_session(session_id=...)`
@@ -188,7 +188,7 @@ mcpServers:
 
 # Memory is served by the crow-memory HTTP service (Rust, LanceDB-backed).
 # The python crow-memory-sdk talks to it; this path is no longer used in-process.
-memory_path: ~/.crow/memory.lance
+memory_path: ~/.agents/crow/memory.lance
 
 # EXAMPLE PROVIDER
 # providers:

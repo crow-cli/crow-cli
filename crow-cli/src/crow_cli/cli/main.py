@@ -74,7 +74,7 @@ def run_agentmain(
         None,
         "--config-dir",
         "-d",
-        help="Configuration directory (default: ~/.crow)",
+        help="Configuration directory (default: ~/.agents/crow)",
     ),
     debug: bool = typer.Option(
         False,
@@ -96,7 +96,7 @@ def run_agentmain(
 ):
     """Main entry point for the crow-cli agent."""
     if config_dir is None:
-        config_dir = Path.home() / ".crow"
+        config_dir = Path.home() / ".agents" / "crow"
 
     config = Config.load(config_dir=config_dir)
 
@@ -133,7 +133,7 @@ def run_init(
         None,
         "--config-dir",
         "-d",
-        help="Configuration directory (default: ~/.crow)",
+        help="Configuration directory (default: ~/.agents/crow)",
     ),
     yes: bool = typer.Option(
         False,
@@ -144,7 +144,7 @@ def run_init(
 ):
     """Initialize Crow configuration interactively."""
     if config_dir is None:
-        config_dir = Path.home() / ".crow"
+        config_dir = Path.home() / ".agents" / "crow"
     init_command(config_dir=config_dir, yes=yes)
 
 
@@ -309,7 +309,7 @@ def run(
         None,
         "--config-dir",
         "-d",
-        help="Configuration directory (default: ~/.crow)",
+        help="Configuration directory (default: ~/.agents/crow)",
     ),
 ):
     """

@@ -131,17 +131,32 @@ critique means for the PYTHON code.
   the legacy v1 layout; the target is `~/.agents/skills` decoupled from the
   config dir — see the deferred note below, not a critique miss).
 
-### Noted, deferred (part of the ~/.agents adoption item)
-- Skills dir: the move is FROM `{config_dir}/skills` TO `~/.agents/skills` —
-  skills are DECOUPLED from the config dir, which itself becomes
-  `~/.agents/crow` (so `~/.agents/skills` is a SIBLING of the config dir, not
-  under it). thomas already moved the real skills to `~/.agents/skills`.
-  Code sites for when the adoption item lands: session.py `get_skills(
-  config.config_dir / "skills")` → `~/.agents/skills`; session.py context-tree
-  hardcoded `~/.crow/skills` + `~/.crow/notes`; defaults.py system-prompt text
-  ("skills available in ~/.crow/skills/"). Note: Rust's `~/.agents/skills`
-  scan (the critique's "wrong directory vs v1" item) was actually the FUTURE
-  layout — v1/Python behavior is the legacy one here.
+### ~/.agents layout — IMPLEMENTED 2026-08-09 (was deferred; user directive)
+- Skills DECOUPLE from the config dir: `{config_dir}/skills` → `~/.agents/skills`
+  (sibling of the config dir `~/.agents/crow`). Rust's `~/.agents/skills` scan
+  (the critique's "wrong directory vs v1" item) was the future layout; v1/Python
+  `{config_dir}/skills` was the legacy one. See Phase 7 below.
+
+## ~/.agents layout adoption — DONE 2026-08-09
+CONFIG_DIR ~/.crow → ~/.agents/crow; skills decoupled → ~/.agents/skills;
+notes → ~/.agents/notes; global AGENTS.md → ~/.agents/AGENTS.md.
+- [x] Code: configure.py constants (AGENTS_DIR / DEFAULT_CONFIG_DIR /
+      SKILLS_DIR / NOTES_DIR / GLOBAL_AGENTS_MD); cli/main.py + init_cmd.py
+      defaults; session.py context tree + get_skills + global AGENTS.md read
+      from ~/.agents; defaults.py prompt texts + CONFIG_YAML memory_path;
+      crow-mcp logger → ~/.agents/crow/logs; README + tests updated
+- [x] Disk: skills rsynced ~/.crow → ~/.agents (newer Aug-4 updates landed;
+      .venv excluded), stale ~/.crow/skills retired; notes moved;
+      *.jinja2 prompts + compose.yaml + searxng/ copied to ~/.agents/crow;
+      config.yaml merged (crow-mcp-dev http mcpServers + memory_path
+      ~/.agents/crow/memory.lance + memory_port 27697 + embedding section);
+      .env already a superset at the new location (verified key-by-key)
+- [x] Verified: Config.load() on the new default dir end-to-end (incl.
+      Phase-6 memory_port → CROW_MEMORY_URL export); `daemon status` from the
+      new config dir sees all 4 daemons running/healthy, nothing restarted;
+      full suites green (90 / 115 / 10)
+      Legacy ~/.crow left in place (crow.db, state.db, old memory.lance,
+      logs) — inert data, deliberately not deleted.
 
 ## Tests — DONE 2026-08-09
 - [x] Full sweep green across all packages after every change:
@@ -159,9 +174,5 @@ critique means for the PYTHON code.
 ## Deferred — captured, explicitly out of this sprint
 - TASK-SYSTEM.md async long-running jobs / agent delegation (crow-task) — later
 - ACP-over-HTTP agents, conductor, proxies — later
-- ~/.agents directory adoption: CONFIG_DIR ~/.crow → ~/.agents/crow; skills
-  DECOUPLED from the config dir → ~/.agents/skills (sibling, already moved by
-  thomas); global AGENTS.md → ~/.agents/AGENTS.md; notes → ~/.agents/notes —
-  layout being driven by thomas
 - The Rust crow-cli / crow-mcp / crow-server / crow-verifier crates die with the
   experiment; only crow-memory + crow-memory-types survive

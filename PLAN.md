@@ -87,5 +87,24 @@ Commit at each item (`git add -A && git commit`). Never ask "want me to proceed"
     crow-memory-sdk 10 ✓ incl. wire contract against the freshly built binary.
     Stale-assumption scan clean (see TODO.md Tests section).
 
+## Phase 7 — ~/.agents layout adoption — DONE 2026-08-09
+Was deferred; pulled in by user directive (the file headers ARE the feedback).
+Target: CONFIG_DIR ~/.crow → ~/.agents/crow; skills DECOUPLED from the config
+dir → ~/.agents/skills (sibling); notes → ~/.agents/notes; global AGENTS.md →
+~/.agents/AGENTS.md.
+7.1 [x] Code: configure.py path constants (AGENTS_DIR/DEFAULT_CONFIG_DIR/
+        SKILLS_DIR/NOTES_DIR/GLOBAL_AGENTS_MD); cli defaults (main.py typer
+        options, init_cmd.py); session.py (context tree, get_skills, global
+        AGENTS.md); defaults.py prompt texts + CONFIG_YAML; crow-mcp logger;
+        README + tests. Zero `.crow` refs left in shipped src.
+7.2 [x] Disk: skills rsynced (newer Aug-4 revisions landed; .venv excluded),
+        stale ~/.crow/skills retired; notes moved; jinja2 prompts +
+        compose.yaml + searxng/ copied; config.yaml merged (crow-mcp-dev http
+        + memory_path ~/.agents/crow/memory.lance + memory_port + embedding);
+        .env verified superset at new location.
+7.3 [x] VERIFY: Config.load() end-to-end on new default dir; daemon status
+        sees all 4 daemons from the new config dir (nothing restarted);
+        suites green (crow-cli 90, crow-mcp 115, sdk 10). COMMIT.
+
 Done = every box in TODO.md checked (or deferred with written reason) AND PLAN phases
 all marked with evidence. Then report.

@@ -343,11 +343,11 @@ class TestResolvePath:
 
     def test_crow_skills_path_is_allowed(self, tmp_path, monkeypatch):
         # The motivating case: any agent, regardless of its cwd, may edit
-        # skills/notes under ~/.crow. Resolution must not raise.
+        # skills/notes under ~/.agents. Resolution must not raise.
         monkeypatch.chdir(tmp_path)
         from crow_mcp.editor.main import _resolve_path
 
-        target = Path.home() / ".crow" / "skills" / "new-skill" / "SKILL.md"
+        target = Path.home() / ".agents" / "skills" / "new-skill" / "SKILL.md"
         assert _resolve_path(str(target)) == target.resolve()
 
 

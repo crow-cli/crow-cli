@@ -27,7 +27,7 @@ from crow_memory_sdk import (
 log = logging.getLogger(__name__)
 
 #: Legacy sentinel. Memory lives in the crow-memory service now, not a path.
-DEFAULT_MEMORY_PATH = "~/.crow/memory.lance (unused — see CROW_MEMORY_URL)"
+DEFAULT_MEMORY_PATH = "~/.agents/crow/memory.lance (unused — see CROW_MEMORY_URL)"
 
 #: Server-side query cap; filtering happens client-side above this.
 _FETCH_ALL = 1_000_000
