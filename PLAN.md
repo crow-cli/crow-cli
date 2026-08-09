@@ -136,5 +136,18 @@ search).
         branches) against the real service. Zero SyncMemoryClient refs left.
         COMMIT.
 
+## Phase 10 — green-stack e2e beside blue — DONE 2026-08-09
+User directive: full e2e setup + test running side-by-side with the services
+the Rust main branch manages, so the switchover (0.1.31, rebase on main) is
+known-good. Also: vendor submodules onto this branch.
+10.1 [x] vendor/ollama + vendor/llama.cpp gitlinks + populated .gitmodules
+         from main (branch was cut before they landed) (61cc829f).
+10.2 [x] crow-memory daemon spec passes --config {config_dir}/config.yaml;
+         memory_bin PATH fallback (4e197f05).
+10.3 [x] Green env ~/.agents/crow-py (memory :27698, mcp :2771, own lance
+         store; embeddings+search shared); e2e turn verified green-only
+         (store, MCP log, no blue leak). Caught+fixed: dead run --config-dir
+         (agent subprocess now gets it) and TOOL_ICONS NameError (dc225e14).
+
 Done = every box in TODO.md checked (or deferred with written reason) AND PLAN phases
 all marked with evidence. Then report.

@@ -158,6 +158,31 @@ notes → ~/.agents/notes; global AGENTS.md → ~/.agents/AGENTS.md.
       Legacy ~/.crow left in place (crow.db, state.db, old memory.lance,
       logs) — inert data, deliberately not deleted.
 
+## Green-stack e2e (side-by-side with blue) — DONE 2026-08-09
+Prove crow-cli-python runs a full agent turn completely independently of the
+services the Rust main branch manages — blue and green live at the same time.
+- [x] vendor submodules on this branch: .gitmodules was EMPTY + vendor/
+      gitlinks missing (branch predates them on main) — brought from main
+      (ollama 6970db8, llama.cpp 46deb9f crow-colqwen2-mv) (61cc829f)
+- [x] daemon: crow-memory gets --config {config_dir}/config.yaml; memory_bin
+      falls back to PATH (4e197f05)
+- [x] Green env ~/.agents/crow-py: config.yaml cloned from blue with
+      memory_port 27698 / own memory.lance / mcp :2771; .env copied with
+      CROW_MEMORY_PORT=27698 (env beats config.yaml memory_port in the
+      server's precedence — first start attempt bound 27697 because of the
+      copied 27697 line)
+- [x] Green daemons up beside blue: crow-memory :27698 + crow-mcp :2771
+      managed; ollama-mv + searxng shared (stateless infra, unmanaged)
+- [x] e2e caught + fixed 2 bugs (dc225e14): run --config-dir was DEAD
+      (spawned agent loaded default config → 'green' turn persisted to blue
+      store + used blue MCP); TOOL_ICONS/STATUS_ICONS NameError in the run
+      client renderer
+- [x] VERIFIED: full turn (LLM qwen3.8-max-preview + terminal tool + 5
+      persisted messages) routes exclusively through green — green store has
+      the session, blue store has zero agents for it, green crow-mcp log
+      shows the tool execution. Spin down: crow-cli-dev daemon stop all
+      --config-dir ~/.agents/crow-py
+
 ## Async memory path — DONE 2026-08-09
 The agent's turn pipeline is fully async (AsyncOpenAI, react_loop, ACP
 handlers) but memory I/O went through the SDK's SYNC client — every
