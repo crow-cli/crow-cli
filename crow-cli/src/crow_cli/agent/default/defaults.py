@@ -208,4 +208,13 @@ MAX_COMPACT_TOKENS: 180000
 
 MAX_TOKENS: 38192
 
-max_retries_per_step: 3"""
+max_retries_per_step: 3
+
+# Retry budget for the crow-memory client (crow-memory-sdk). The agent
+# waits out crow-memory restarts instead of dying: backoff doubles from
+# memory_retry_base_delay each step, capped at memory_retry_max_delay
+# seconds. memory_max_retries is TOTAL attempts; 0 = retry forever.
+# Defaults: 12 attempts ≈ 3.5 min of backoff.
+memory_max_retries: 12
+memory_retry_base_delay: 0.5
+memory_retry_max_delay: 30.0"""

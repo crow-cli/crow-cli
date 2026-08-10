@@ -121,6 +121,13 @@ class Config:
     memory_path: str = ""
     mcp_servers: dict[str, Any] = field(default_factory=dict)
     max_retries_per_step: int = 3
+    # crow-memory client retry budget: total attempts (0 = retry forever),
+    # first backoff seconds, and per-step cap. Defaults ≈ 3.5 min of backoff
+    # (0.5 → 1 → 2 → 4 → 8 → 16 → 30 → 30 ...) so the agent waits out
+    # crow-memory restarts instead of dying.
+    memory_max_retries: int = 12
+    memory_retry_base_delay: float = 0.5
+    memory_retry_max_delay: float = 30.0
     MAX_COMPACT_TOKENS: int = 190000
     MAX_TOKENS: int = 38192
     TEMPERATURE: float = 0.6
@@ -213,6 +220,9 @@ class Config:
         overrides = {}
         for key, typ in (
             ("max_retries_per_step", int),
+            ("memory_max_retries", int),
+            ("memory_retry_base_delay", float),
+            ("memory_retry_max_delay", float),
             ("MAX_COMPACT_TOKENS", int),
             ("MAX_TOKENS", int),
             ("TEMPERATURE", float),

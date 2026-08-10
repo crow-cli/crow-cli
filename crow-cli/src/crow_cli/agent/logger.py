@@ -17,6 +17,9 @@ def setup_logger(log_file: Path, name="crow_logger", max_mb=5, max_files=3):
 
     # 3. Prevent duplicate log entries if this function is called multiple times
     if not logger.handlers:
+        # RotatingFileHandler doesn't create parent dirs; a config dir with
+        # config.yaml but no logs/ would otherwise crash Config.load().
+        Path(log_file).parent.mkdir(parents=True, exist_ok=True)
         # 4. Set up the RotatingFileHandler
         # maxBytes triggers the rotation, backupCount limits the total files
         file_handler = RotatingFileHandler(

@@ -24,9 +24,12 @@ class MemoryClient:
     """Async client for one crow-memory server.
 
     Retry policy (ported from the Rust SDK): connect errors, timeouts, and
-    502/503/504 back off exponentially for up to `max_retries` attempts;
-    every other error fails fast. Use as a context manager, or call
-    `close()` explicitly.
+    502/503/504 back off exponentially — starting at `base_delay` seconds,
+    doubling each step, each step capped at `max_delay` (None = no cap) —
+    for up to `max_retries` total attempts; every other error fails fast.
+    `max_retries <= 0` retries retryable failures forever (robust mode:
+    wait out any outage instead of dying). Use as a context manager, or
+    call `close()` explicitly.
     """
 
     def __init__(
@@ -34,9 +37,13 @@ class MemoryClient:
         base_url: str | None = None,
         timeout: float = 10.0,
         max_retries: int = 3,
+        base_delay: float = 0.2,
+        max_delay: float | None = None,
     ):
         self.base_url = (base_url or default_memory_url()).rstrip("/")
-        self._max_retries = max_retries
+        self._max_retries = max_retries  # total attempts; <= 0 = retry forever
+        self._base_delay = base_delay
+        self._max_delay = max_delay
         self._http = httpx.AsyncClient(
             base_url=self.base_url, timeout=httpx.Timeout(timeout)
         )
@@ -60,24 +67,26 @@ class MemoryClient:
         json: Any = None,
         params: dict[str, Any] | None = None,
     ) -> httpx.Response:
-        delay = 0.2
-        last_exc: Exception | None = None
-        for attempt in range(self._max_retries):
+        delay = self._base_delay
+        attempt = 0
+        while True:
             try:
                 resp = await self._http.request(method, path, json=json, params=params)
             except (httpx.ConnectError, httpx.TimeoutException) as e:
-                last_exc = e
-                if attempt + 1 < self._max_retries:
-                    await asyncio.sleep(delay)
-                    delay *= 2
-                    continue
-                raise MemoryApiError(0, f"cannot reach {self.base_url} ({type(e).__name__}: {e})") from e
-            if resp.status_code in _RETRYABLE_STATUS and attempt + 1 < self._max_retries:
-                await asyncio.sleep(delay)
-                delay *= 2
-                continue
-            return resp
-        raise MemoryApiError(0, f"unreachable: {last_exc}")
+                if self._exhausted(attempt):
+                    raise MemoryApiError(0, f"cannot reach {self.base_url} ({type(e).__name__}: {e})") from e
+            else:
+                if resp.status_code not in _RETRYABLE_STATUS or self._exhausted(attempt):
+                    return resp
+            await asyncio.sleep(delay)
+            delay *= 2
+            if self._max_delay is not None:
+                delay = min(delay, self._max_delay)
+            attempt += 1
+
+    def _exhausted(self, attempt: int) -> bool:
+        """True when no attempts remain (`max_retries <= 0` = unlimited)."""
+        return self._max_retries > 0 and attempt + 1 >= self._max_retries
 
     @staticmethod
     def _raise_for_status(resp: httpx.Response) -> None:

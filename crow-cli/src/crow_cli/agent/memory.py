@@ -16,8 +16,10 @@ accepted and ignored — kept for call-site compat during transition.
 """
 
 import logging
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from crow_cli.agent.configure import Config
 from crow_memory_sdk import (
     AgentRecord,
     ImageRecord,
@@ -50,11 +52,18 @@ class MemoryServiceError(Exception):
 class MemoryClient:
     """Adapter over the crow-memory HTTP service (async, pydantic out).
 
-    `path` is ignored (kept positionally for compat).
+    `path` is ignored (kept positionally for compat). The retry budget is
+    read from config.yaml: `memory_max_retries` (total attempts, 0 = retry
+    forever), `memory_retry_base_delay`, `memory_retry_max_delay`.
     """
 
-    def __init__(self, path: str | None = None, **_kwargs):
-        self._sdk = SdkMemoryClient()
+    def __init__(self, path: str | None = None, config_dir: Path | None = None, **_kwargs):
+        cfg = Config.load(config_dir)
+        self._sdk = SdkMemoryClient(
+            max_retries=cfg.memory_max_retries,
+            base_delay=cfg.memory_retry_base_delay,
+            max_delay=cfg.memory_retry_max_delay,
+        )
 
     async def close(self):
         await self._sdk.close()
