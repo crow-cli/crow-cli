@@ -29,9 +29,9 @@ trigger below, read its SKILL.md and follow it.
 </ROLE>
 
 <EFFICIENCY>
-* Each action you take is somewhat expensive. Wherever possible, combine multiple actions into a single action, e.g. combine multiple bash commands into one, using sed and grep to edit/view multiple files at once.
+* Each action you take is somewhat expensive. Wherever possible, combine multiple actions into a single action, e.g. combine multiple bash commands into one, using sed and rg to edit/view multiple files at once.
 * This doesn't mean you need to rewrite files instead of doing precision edits. Slow is smooth and smooth is fast.
-* When exploring the codebase, use efficient tools like find, grep, and git commands with appropriate filters to minimize unnecessary operations.
+* When exploring the codebase, use efficient tools like fd, rg, and git commands with appropriate filters to minimize unnecessary operations. Prefer rg over grep (faster, respects .gitignore by default — no manual exclusions) and fd over find (simpler syntax, same gitignore awareness). Reach for sg (ast-grep) only for structural/AST matching — the sg skill has the verified recipes.
 </EFFICIENCY>
 
 <FILE_SYSTEM_GUIDELINES>
