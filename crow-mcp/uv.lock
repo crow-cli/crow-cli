@@ -181,7 +181,7 @@ wheels = [
 
 [[package]]
 name = "crow-mcp"
-version = "0.1.31"
+version = "0.1.32"
 source = { editable = "." }
 dependencies = [
     { name = "crow-memory-sdk" },
@@ -220,7 +220,7 @@ dev = [
 
 [[package]]
 name = "crow-memory-sdk"
-version = "0.1.31"
+version = "0.1.32"
 source = { editable = "../crow-memory-sdk" }
 dependencies = [
     { name = "crow-memory-types" },

@@ -1,6 +1,6 @@
 [package]
 name = "crow-memory"
-version = "0.1.31"
+version = "0.1.32"
 edition = "2021"
 description = "crow-memory HTTP server — axum + LanceDB + embeddings (single writer)"
 repository = "https://github.com/crow-cli/crow-cli"
@@ -15,7 +15,7 @@ name = "crow-memory"
 path = "src/main.rs"
 
 [dependencies]
-crow-memory-types = { path = "../crow-memory-types", version = "0.1.31" }
+crow-memory-types = { path = "../crow-memory-types", version = "0.1.32" }
 axum = "0.8"
 clap = { version = "4", features = ["derive"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

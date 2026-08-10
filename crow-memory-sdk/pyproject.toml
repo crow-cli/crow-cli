@@ -1,11 +1,11 @@
 [project]
 name = "crow-memory-sdk"
-version = "0.1.31"
+version = "0.1.32"
 description = "Python client for the crow-memory HTTP service (LanceDB-backed agent memory)"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
-    "crow-memory-types>=0.1.31",
+    "crow-memory-types>=0.1.32",
     "httpx>=0.28.1",
 ]
 

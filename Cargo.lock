@@ -946,7 +946,7 @@ checksum = "61803da095bee82a81bb1a452ecc25d3b2f1416d1897eb86430c6159ef717c17"
 
 [[package]]
 name = "crow-memory"
-version = "0.1.31"
+version = "0.1.32"
 dependencies = [
  "anyhow",
  "arrow-array",
@@ -979,7 +979,7 @@ dependencies = [
 
 [[package]]
 name = "crow-memory-types"
-version = "0.1.31"
+version = "0.1.32"
 dependencies = [
  "pyo3",
  "pythonize",

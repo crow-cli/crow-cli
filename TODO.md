@@ -38,10 +38,14 @@ comes AFTER the bindings work locally.
 ## Deferred (distribution phase — in progress)
 - [x] crates.io: YANKED 0.2.0 (both crates), PUBLISHED 0.1.31 (both) —
       2026-08-10, from local (cargo logged in). types first, then memory.
-- [ ] crow-memory-types wheels → PyPI (maturin, abi3-py314, 7 targets).
-      Needs: workflow + new-project bootstrap (pending trusted publisher or token).
-- [ ] crow-memory-sdk → PyPI (workflow exists, reviewed).
-- [ ] drop [tool.uv.sources] in crow-cli/crow-mcp, re-lock against PyPI,
-      republish both (kills the zombie `crow-memory>=0.1.30` dep on PyPI).
+- [x] Bumped everyone to 0.1.32 (lockstep, dep specs included) so the
+      release-triggered workflows have a fresh version to publish:
+      crates.io (publish-crow-memory.yml, idempotent, types first) +
+      PyPI (types wheels, sdk, cli, mcp).
+- [ ] RELEASE 0.1.32 (thomas pushes + cuts release; workflows do the rest).
+      Pending trusted publishers on PyPI needed first for crow-memory-types
+      + crow-memory-sdk.
+- [ ] after green release: drop [tool.uv.sources] in crow-cli/crow-mcp/sdk,
+      re-lock against PyPI.
 - [ ] crow-memory-types README (crates.io + PyPI pages are blank without it).
 - [ ] old PyPI `crow-memory` 0.1.30 (dead python pkg): tombstone or leave.
