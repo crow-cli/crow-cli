@@ -42,9 +42,16 @@ comes AFTER the bindings work locally.
       release-triggered workflows have a fresh version to publish:
       crates.io (publish-crow-memory.yml, idempotent, types first) +
       PyPI (types wheels, sdk, cli, mcp).
-- [ ] RELEASE 0.1.32 (thomas pushes + cuts release; workflows do the rest).
-      Pending trusted publishers on PyPI needed first for crow-memory-types
-      + crow-memory-sdk.
+- [x] ONE pipeline: release.yml replaces all five publish workflows —
+      dependency-ordered via needs: crates-io (types→memory, idempotent) →
+      pypi-types (7 abi3 wheels) → pypi-sdk → pypi-clients (cli+mcp matrix).
+      Wheels-only PyPI uploads (sdist would carry tool.uv.sources pyproject).
+      Path sources verified NOT to leak: wheel METADATA carries only the
+      registry specs (crow-memory-types>=0.1.32 etc).
+- [ ] RELEASE 0.1.32 (thomas cuts release; release.yml does the rest).
+      His side first: CARGO_REGISTRY_TOKEN repo secret + 4 trusted
+      publishers on PyPI, ALL with workflow filename release.yml, env pypi
+      (crow-cli/crow-mcp publishers must be UPDATED from the old filenames).
 - [ ] after green release: drop [tool.uv.sources] in crow-cli/crow-mcp/sdk,
       re-lock against PyPI.
 - [ ] crow-memory-types README (crates.io + PyPI pages are blank without it).
