@@ -14,12 +14,17 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      # crow-memory-types FIRST: crow-memory depends on it by version
-      # (the path in its Cargo.toml is stripped by `cargo publish`), so the
-      # types crate must be resolvable from crates.io before crow-memory.
-      # Publishes whatever version the manifest carries — no auto-increment.
-      - name: Publish crow-memory-types
-        run: cargo publish -p crow-memory-types
+      # Idempotent: skip whatever is already on crates.io (re-releases, or a
+      # version published locally first). Manifest carries the version — no
+      # auto-increment anywhere.
+      - name: Publish crow-memory-types (if missing)
+        run: |
+          v=$(sed -n 's/^version = "\(.*\)"/\1/p' crow-memory-types/Cargo.toml | head -1)
+          if curl -sf "https://crates.io/api/v1/crates/crow-memory-types/$v" > /dev/null; then
+            echo "crow-memory-types $v already on crates.io — skipping"
+          else
+            cargo publish -p crow-memory-types
+          fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -30,7 +35,13 @@ jobs:
       # --no-verify: skip compiling the full lance/arrow stack just to prove
       # the package builds — build-binaries already proves that. Publishing
       # only packages the crate.
-      - name: Publish crow-memory
-        run: cargo publish -p crow-memory --no-verify
+      - name: Publish crow-memory (if missing)
+        run: |
+          v=$(sed -n 's/^version = "\(.*\)"/\1/p' crow-memory/Cargo.toml | head -1)
+          if curl -sf "https://crates.io/api/v1/crates/crow-memory/$v" > /dev/null; then
+            echo "crow-memory $v already on crates.io — skipping"
+          else
+            cargo publish -p crow-memory --no-verify
+          fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
