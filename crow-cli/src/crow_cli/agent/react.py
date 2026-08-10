@@ -10,6 +10,7 @@ from acp.interfaces import Client
 from acp.schema import (
     ClientCapabilities,
     ToolCallProgress,
+    UsageUpdate,
 )
 from fastmcp import Client as MCPClient
 from openai import APIConnectionError, APIError, AsyncOpenAI, RateLimitError
@@ -757,6 +758,21 @@ async def react_loop(
         # and to compact it
         #####################################
         logger.info(f"Pre-Tool ExecutionUsage: {usage}")
+
+        # Expose token usage to the ACP client (context % against the compaction
+        # threshold). usage_update is stabilized in v1; Zed renders it as a
+        # context-meter. Best-effort: a dead client must not kill the react loop.
+        if usage and usage.get("total_tokens"):
+            try:
+                await conn.session_update(
+                    session_id=session_id,
+                    update=UsageUpdate(
+                        used=int(usage["total_tokens"]),
+                        size=config.MAX_COMPACT_TOKENS,
+                    ),
+                )
+            except Exception:
+                logger.warning("Failed to send usage_update to ACP client", exc_info=True)
 
         # 1. Check your token threshold
         if usage and usage["total_tokens"] > config.MAX_COMPACT_TOKENS:
