@@ -35,8 +35,13 @@ comes AFTER the bindings work locally.
 - [x] crow-cli/crow-mcp keep [tool.uv.sources] crow-memory-sdk path until the
       sdk is actually on PyPI (distribution phase).
 
-## Deferred (distribution phase — not this sprint)
-- Publish crow-memory-types wheels to PyPI (maturin matrix or abi3 singletons),
-  crow-memory-sdk to PyPI, then drop the path sources in crow-cli/crow-mcp.
-- crow-memory 0.2.0 already on crates.io vs local 0.1.31 — version reconciliation
-  at next release tag (tag carries the manifest version; no auto-increment).
+## Deferred (distribution phase — in progress)
+- [x] crates.io: YANKED 0.2.0 (both crates), PUBLISHED 0.1.31 (both) —
+      2026-08-10, from local (cargo logged in). types first, then memory.
+- [ ] crow-memory-types wheels → PyPI (maturin, abi3-py314, 7 targets).
+      Needs: workflow + new-project bootstrap (pending trusted publisher or token).
+- [ ] crow-memory-sdk → PyPI (workflow exists, reviewed).
+- [ ] drop [tool.uv.sources] in crow-cli/crow-mcp, re-lock against PyPI,
+      republish both (kills the zombie `crow-memory>=0.1.30` dep on PyPI).
+- [ ] crow-memory-types README (crates.io + PyPI pages are blank without it).
+- [ ] old PyPI `crow-memory` 0.1.30 (dead python pkg): tombstone or leave.
