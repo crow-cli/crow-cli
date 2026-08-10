@@ -26,7 +26,7 @@ macro_rules! pytype {
             /// Parse from a Python dict through the wire serde impl.
             #[staticmethod]
             fn from_dict(obj: Bound<'_, PyAny>) -> PyResult<Self> {
-                let inner: crate::$name = depythonize(&obj)?;
+                let inner: crate::$name = depythonize(&obj).map_err(ser_err)?;
                 Ok(Self { inner })
             }
 

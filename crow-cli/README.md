@@ -167,8 +167,8 @@ uv run --project crow-cli pytest crow-cli/tests --run-e2e           # live LLM c
 crow-cli/               the agent — ACP server, ReAct loop, CLI
 crow-mcp/               built-in MCP tool server
 crow-memory/            persistence + memory service (LanceDB, ColBERT/ColPali)
-crow-task-mcp/          task-list MCP server for delegation (being reworked)
-crow-orchestrator-mcp/  orchestration MCP server for delegation (being reworked)
+crow-memory-types/      the wire contract (rust crate + PyO3 bindings)
+crow-memory-sdk/        python client for crow-memory
 ```
 
 ## License

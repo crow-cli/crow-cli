@@ -1,4 +1,4 @@
-name: Publish crow-memory to PyPI
+name: Publish crow-memory to crates.io
 
 on:
   release:
@@ -7,31 +7,30 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/p/crow-memory
-    permissions:
-      id-token: write  # Required for trusted publishing
-      contents: read
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version-file: "crow-memory/pyproject.toml"
+      # crow-memory-types FIRST: crow-memory depends on it by version
+      # (the path in its Cargo.toml is stripped by `cargo publish`), so the
+      # types crate must be resolvable from crates.io before crow-memory.
+      # Publishes whatever version the manifest carries — no auto-increment.
+      - name: Publish crow-memory-types
+        run: cargo publish -p crow-memory-types
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-      - name: Build package
-        working-directory: ./crow-memory
-        run: uv build
+      # Give the sparse index time to pick up crow-memory-types.
+      - name: Wait for crates.io index
+        run: sleep 60
 
-      - name: Publish to PyPI
-        working-directory: ./crow-memory
-        run: uv publish
+      # --no-verify: skip compiling the full lance/arrow stack just to prove
+      # the package builds — build-binaries already proves that. Publishing
+      # only packages the crate.
+      - name: Publish crow-memory
+        run: cargo publish -p crow-memory --no-verify
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

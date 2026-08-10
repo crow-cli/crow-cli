@@ -1,5 +1,6 @@
 [project]
 name = "crow-memory-types"
+dynamic = ["version"]  # maturin reads it from Cargo.toml
 description = "Wire types for the crow-memory HTTP API — Python bindings (PyO3) over the same serde impls the server uses"
 requires-python = ">=3.14"
 license = "MIT"

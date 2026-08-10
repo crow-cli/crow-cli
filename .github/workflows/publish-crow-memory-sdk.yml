@@ -1,4 +1,4 @@
-name: Publish crow-orchestrator-mcp to PyPI
+name: Publish crow-memory-sdk to PyPI
 
 on:
   release:
@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/crow-orchestrator-mcp
+      url: https://pypi.org/p/crow-memory-sdk
     permissions:
       id-token: write  # Required for trusted publishing
       contents: read
@@ -26,12 +26,12 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version-file: "crow-orchestrator-mcp/pyproject.toml"
+          python-version-file: "crow-memory-sdk/pyproject.toml"
 
       - name: Build package
-        working-directory: ./crow-orchestrator-mcp
+        working-directory: ./crow-memory-sdk
         run: uv build
 
       - name: Publish to PyPI
-        working-directory: ./crow-orchestrator-mcp
+        working-directory: ./crow-memory-sdk
         run: uv publish
