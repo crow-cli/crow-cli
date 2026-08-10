@@ -26,6 +26,7 @@ Usage:
 """
 
 import asyncio
+import json
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -60,6 +61,7 @@ from acp.schema import (
     ToolCall,
     ToolCallProgress,
     ToolCallStart,
+    UsageUpdate,
     WaitForTerminalExitResponse,
     WriteTextFileResponse,
 )
@@ -105,6 +107,25 @@ class CrowClient(Client):
         self._console = console
         self._task_list = []
         self._terminals = TerminalManager()
+        self._json_mode = False
+        self._json_pending: tuple[str, list[str]] | None = None
+
+    # -- JSONL output (-j): one event per line, pipeable to jq --
+
+    def _emit_json(self, **event: Any) -> None:
+        print(json.dumps(event), flush=True)
+
+    def _buffer_json(self, kind: str, text: str) -> None:
+        if self._json_pending is None or self._json_pending[0] != kind:
+            self._flush_json()
+            self._json_pending = (kind, [])
+        self._json_pending[1].append(text)
+
+    def _flush_json(self) -> None:
+        if self._json_pending:
+            kind, parts = self._json_pending
+            self._emit_json(type=kind, text="".join(parts))
+        self._json_pending = None
 
     async def request_permission(
         self,
@@ -135,6 +156,36 @@ class CrowClient(Client):
         **kwargs: Any,
     ) -> None:
         """Handle streaming updates from the agent."""
+        if self._json_mode:
+            if isinstance(update, AgentMessageChunk):
+                self._buffer_json("message", self._extract_text(update.content))
+            elif isinstance(update, AgentThoughtChunk):
+                self._buffer_json("thinking", self._extract_text(update.content))
+            elif isinstance(update, ToolCallStart):
+                self._flush_json()
+                self._emit_json(
+                    type="tool_call",
+                    event="start",
+                    tool_call_id=getattr(update, "tool_call_id", None),
+                    title=update.title,
+                    kind=update.kind,
+                    status=update.status,
+                )
+            elif isinstance(update, ToolCallProgress):
+                self._flush_json()
+                self._emit_json(
+                    type="tool_call",
+                    event="progress",
+                    tool_call_id=getattr(update, "tool_call_id", None),
+                    title=update.title,
+                    kind=update.kind,
+                    status=update.status,
+                )
+            elif isinstance(update, UsageUpdate):
+                self._flush_json()
+                self._emit_json(type="usage", used=update.used, size=update.size)
+            return
+
         if isinstance(update, AgentMessageChunk):
             if (
                 self._last_chunk is None
@@ -305,7 +356,7 @@ class CrowClient(Client):
         return ReleaseTerminalResponse()
 
     async def spawn_agent(
-        self, cwd: str, config_dir: Path | None = None
+        self, cwd: str, config_dir: Path | None = None, model: str | None = None
     ) -> asyncio.subprocess.Process:
         """Spawn the crow-acp agent subprocess."""
         # Check if running in PyInstaller frozen build
@@ -315,6 +366,7 @@ class CrowClient(Client):
         # config dir so `run --config-dir` routes the whole stack (memory
         # port, mcpServers, providers) and not just this client.
         dir_args = ["--config-dir", str(config_dir)] if config_dir else []
+        model_args = ["--model", model] if model else []
 
         if is_frozen:
             # For frozen builds, use the 'acp' subcommand
@@ -322,6 +374,7 @@ class CrowClient(Client):
                 sys.executable,
                 "acp",
                 *dir_args,
+                *model_args,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -334,6 +387,7 @@ class CrowClient(Client):
                 "-m",
                 "crow_cli.agent.main",
                 *dir_args,
+                *model_args,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -354,20 +408,22 @@ class CrowClient(Client):
         prompt: str,
     ) -> None:
         """Send a single prompt and wait for completion, then nag on incomplete tasks."""
-        self._console.print()
-        self._console.print(
-            Panel(
-                f"[bold]{prompt}[/bold]", title="[cyan]You[/cyan]", border_style="cyan"
+        if not self._json_mode:
+            self._console.print()
+            self._console.print(
+                Panel(
+                    f"[bold]{prompt}[/bold]", title="[cyan]You[/cyan]", border_style="cyan"
+                )
             )
-        )
-        self._console.print()
+            self._console.print()
 
         await conn.prompt(
             session_id=session_id,
             prompt=[text_block(prompt)],
         )
 
-        self._console.print()
+        if not self._json_mode:
+            self._console.print()
 
         # Nag loop: if the agent left incomplete tasks, keep prompting
         # until they're all done (or safety limit hit).
@@ -389,16 +445,18 @@ class CrowClient(Client):
                 f'for completed tasks to "completed".'
             )
 
-            self._console.print()
-            self._console.rule("[dim yellow]Nag[/dim yellow]")
-            self._console.print()
+            if not self._json_mode:
+                self._console.print()
+                self._console.rule("[dim yellow]Nag[/dim yellow]")
+                self._console.print()
 
             await conn.prompt(
                 session_id=session_id,
                 prompt=[text_block(nag)],
             )
 
-            self._console.print()
+            if not self._json_mode:
+                self._console.print()
 
     async def interactive_loop(
         self, conn: ClientSideConnection, session_id: str

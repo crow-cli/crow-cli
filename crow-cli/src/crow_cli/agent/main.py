@@ -145,6 +145,7 @@ class AcpAgent(Agent):
         self,
         config: Config | None = None,
         hooks: list[CommandHook] | None = None,
+        model: str | None = None,
     ) -> None:
         """
         Initialize the merged agent.
@@ -154,6 +155,9 @@ class AcpAgent(Agent):
             hooks: Command hooks to run before terminal execution.
                    If None, defaults to [uv_project_hook].
                    Pass [] to disable all hooks.
+            model: Model NAME from config.yaml's models: section to force for
+                   all sessions (the `-m` flag). Overrides the first-in-config
+                   default and any session's saved model.
 
         Sets up:
         - AsyncExitStack for resource management
@@ -168,6 +172,17 @@ class AcpAgent(Agent):
             hooks if hooks is not None else [uv_project_hook]
         )
         self._logger = setup_logger(self._config.config_dir / "logs" / "crow-cli.log")
+        self._model_override = None
+        if model is not None:
+            self._model_override = config.llm.models.get(model)
+            if self._model_override is None:
+                valid = sorted(config.llm.models)
+                self._logger.error(
+                    "-m model %r not found in config.yaml models: %s", model, valid
+                )
+                raise ValueError(
+                    f"model {model!r} not found in config.yaml models: {valid}"
+                )
         self._memory_path = self._config.memory_path
         self._exit_stack = AsyncExitStack()
         self._agent_id: str | None = None
@@ -189,13 +204,13 @@ class AcpAgent(Agent):
         self._notification_queue: list[dict] = []  # queued extension notifications
 
     def _default_model_value(self) -> str:
-        model = next(iter(self._config.llm.models.values()), None)
+        model = self._model_override or next(iter(self._config.llm.models.values()), None)
         if not model:
             return ""
         return f"{model.provider_name}:{model.model_id}"
 
     def _default_model_identifier(self) -> str:
-        model = next(iter(self._config.llm.models.values()), None)
+        model = self._model_override or next(iter(self._config.llm.models.values()), None)
         return model.model_id if model else ""
 
     def _get_config_options(self, session_id: str) -> list[SessionConfigOptionSelect]:
@@ -478,9 +493,18 @@ class AcpAgent(Agent):
             )
             # Initialize session config if not present
             if session.session_id not in self._config_values:
-                # Resolve model_identifier to "provider_name:model_id" format
+                # Resolve model_identifier to "provider_name:model_id" format.
+                # A -m override wins over the session's saved model: the CLI
+                # flag is an explicit "use THIS model for this run".
                 resolved = self._default_model_value()
-                if session.model_identifier:
+                if self._model_override is not None:
+                    if session.model_identifier != self._model_override.model_id:
+                        self._logger.info(
+                            "load_session: -m override %r supersedes saved model %r",
+                            self._model_override.name,
+                            session.model_identifier,
+                        )
+                elif session.model_identifier:
                     match = next(
                         (
                             m
@@ -819,21 +843,23 @@ async def agent_run(
     config_dir: Path | None = None,
     config: Config | None = None,
     debug: bool = False,
+    model: str | None = None,
 ) -> None:
     if config is None:
         config = Config.load(config_dir=config_dir)
     if debug:
         config.chunk_log = True
-    await run_agent(AcpAgent(config=config))
+    await run_agent(AcpAgent(config=config, model=model))
 
 
-def main(config_dir: Path | None = None, config: Config | None = None, debug: bool = False):
-    asyncio.run(agent_run(config_dir=config_dir, config=config, debug=debug))
+def main(config_dir: Path | None = None, config: Config | None = None, debug: bool = False, model: str | None = None):
+    asyncio.run(agent_run(config_dir=config_dir, config=config, debug=debug, model=model))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config-dir", type=Path, default=None)
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--model", type=str, default=None)
     args = parser.parse_args()
-    main(config_dir=args.config_dir, debug=args.debug)
+    main(config_dir=args.config_dir, debug=args.debug, model=args.model)

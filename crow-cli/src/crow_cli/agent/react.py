@@ -767,6 +767,7 @@ async def react_loop(
                 await conn.session_update(
                     session_id=session_id,
                     update=UsageUpdate(
+                        session_update="usage_update",
                         used=int(usage["total_tokens"]),
                         size=config.MAX_COMPACT_TOKENS,
                     ),

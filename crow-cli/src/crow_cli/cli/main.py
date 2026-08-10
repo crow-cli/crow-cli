@@ -72,6 +72,12 @@ def run_agentmain(
         "-o",
         help="YAML file with config values to override",
     ),
+    model: str = typer.Option(
+        None,
+        "--model",
+        "-m",
+        help="Model to use (name from config.yaml models: section)",
+    ),
 ):
     """Main entry point for the crow-cli agent."""
     if config_dir is None:
@@ -111,7 +117,7 @@ def run_agentmain(
     if debug:
         config.chunk_log = True
 
-    agent_main(config=config)
+    agent_main(config=config, model=model)
 
 
 @app.command("init")
@@ -276,6 +282,58 @@ async def _inspect_db(session_id, messages, limit, json_output):
 
 
 @app.command()
+def models(
+    config_dir: Path = typer.Option(
+        None,
+        "--config-dir",
+        "-d",
+        help="Configuration directory (default: ~/.agents/crow)",
+    ),
+    json_out: bool = typer.Option(
+        False, "--json", "-j", help="Machine-readable JSON output"
+    ),
+):
+    """List the models available from config.yaml (first one is the default)."""
+    config = Config.load(config_dir=config_dir)
+    rows = [
+        {
+            "name": m.name,
+            "provider": m.provider_name,
+            "model_id": m.model_id,
+            "capabilities": sorted(m.capabilities) if m.capabilities is not None else None,
+            "fallbacks": list(m.fallbacks),
+            "default": i == 0,
+        }
+        for i, m in enumerate(config.llm.models.values())
+    ]
+    if json_out:
+        print(json.dumps(rows, indent=2))
+        return
+    if not rows:
+        console.print("[yellow]No models configured.[/yellow]")
+        return
+    table = Table(title="Models")
+    table.add_column("", justify="center")  # default marker
+    table.add_column("name", style="bold", overflow="fold")
+    table.add_column("provider", overflow="fold")
+    table.add_column("model_id", overflow="fold")
+    table.add_column("capabilities", overflow="fold")
+    table.add_column("fallbacks", overflow="fold")
+    for r in rows:
+        caps = ",".join(r["capabilities"]) if r["capabilities"] is not None else "*"
+        table.add_row(
+            "[green]*[/green]" if r["default"] else "",
+            r["name"],
+            r["provider"],
+            r["model_id"],
+            caps,
+            ",".join(r["fallbacks"]),
+        )
+    console.print(table)
+    console.print("[dim]* = default (first in config.yaml); capabilities * = assume all[/dim]")
+
+
+@app.command()
 def run(
     prompt: str = typer.Argument(
         None, help="Prompt to send (optional in interactive mode; '-' reads stdin)"
@@ -302,12 +360,32 @@ def run(
         "-d",
         help="Configuration directory (default: ~/.agents/crow)",
     ),
+    model: str | None = typer.Option(
+        None,
+        "--model",
+        "-m",
+        help="Model to use (name from config.yaml models:); overrides the session's saved model",
+    ),
+    json_out: bool = typer.Option(
+        False,
+        "--json",
+        "-j",
+        help="Machine-readable JSONL to stdout (one event per line; disables rich rendering)",
+    ),
 ):
     """
     Run the Crow client — send a prompt to an agent (one-shot) or start a REPL.
 
     MODES: default sends one prompt, prints the response, and exits;
     -i/--interactive starts a REPL loop.
+
+    MODELS: the agent uses the first model in config.yaml's models: section
+    by default. Override with -m/--model <name> (see `crow-cli models`);
+    the override also wins over a resumed session's saved model.
+
+    MACHINE OUTPUT: -j/--json emits JSONL to stdout — one event per line
+    (session, thinking, message, tool_call, usage, result, error), rich
+    rendering disabled. Pipe to a .jsonl file or jq. One-shot only.
 
     PROMPT SOURCES: the prompt can be a positional argument, a file
     (--prompt-file/-f), or stdin (pass '-' as the prompt).
@@ -344,6 +422,10 @@ def run(
     else:
         logging.basicConfig(level=logging.WARNING)
 
+    if json_out and interactive:
+        print(json.dumps({"type": "error", "error": "--json is one-shot only; not supported with --interactive"}))
+        raise SystemExit(1)
+
     # Resolve the prompt source: --prompt-file > stdin ('-') > positional arg.
     if prompt_file is not None:
         if prompt is not None:
@@ -374,7 +456,11 @@ def run(
         raise SystemExit(1)
 
     # Run the async main
-    asyncio.run(_run_async(prompt, interactive, session_id, cwd, config_dir))
+    asyncio.run(_run_async(prompt, interactive, session_id, cwd, config_dir, model, json_out))
+
+
+def _emit_json(**event: Any) -> None:
+    print(json.dumps(event), flush=True)
 
 
 async def _run_async(
@@ -383,21 +469,25 @@ async def _run_async(
     session_id: str | None,
     cwd: str,
     config_dir: Path | None = None,
+    model: str | None = None,
+    json_out: bool = False,
 ) -> None:
     """Async implementation of run command."""
-    client._console.print(
-        Panel(
-            "[bold]Crow ACP Client[/bold]\n\n"
-            f"Working directory: [cyan]{cwd}[/cyan]\n"
-            f"Mode: {'[green]Interactive[/green]' if interactive else '[yellow]Single-shot[/yellow]'}\n"
-            f"Session: {session_id or '[dim]New session[/dim]'}",
-            title="[magenta]🪶 Crow[/magenta]",
-            border_style="magenta",
+    client._json_mode = json_out
+    if not json_out:
+        client._console.print(
+            Panel(
+                "[bold]Crow ACP Client[/bold]\n\n"
+                f"Working directory: [cyan]{cwd}[/cyan]\n"
+                f"Mode: {'[green]Interactive[/green]' if interactive else '[yellow]Single-shot[/yellow]'}\n"
+                f"Session: {session_id or '[dim]New session[/dim]'}",
+                title="[magenta]🪶 Crow[/magenta]",
+                border_style="magenta",
+            )
         )
-    )
 
     # Spawn agent
-    proc = await client.spawn_agent(cwd, config_dir)
+    proc = await client.spawn_agent(cwd, config_dir, model=model)
 
     try:
         # Connect
@@ -405,15 +495,26 @@ async def _run_async(
 
         # Create or load session
         if session_id:
-            client._console.print(f"[cyan]Loading session: {session_id}[/cyan]")
+            if not json_out:
+                client._console.print(f"[cyan]Loading session: {session_id}[/cyan]")
             await conn.load_session(session_id=session_id, mcp_servers=[], cwd=cwd)
             actual_session_id = session_id
         else:
-            client._console.print("[cyan]Creating new session...[/cyan]")
+            if not json_out:
+                client._console.print("[cyan]Creating new session...[/cyan]")
             session = await conn.new_session(mcp_servers=[], cwd=cwd)
             actual_session_id = session.session_id
-            client._console.print(
-                f"[green]Session created: {actual_session_id}[/green]"
+            if not json_out:
+                client._console.print(
+                    f"[green]Session created: {actual_session_id}[/green]"
+                )
+        if json_out:
+            _emit_json(
+                type="session",
+                session_id=actual_session_id,
+                cwd=cwd,
+                mode="interactive" if interactive else "one_shot",
+                model=model,
             )
 
         # Run
@@ -421,28 +522,44 @@ async def _run_async(
             await client.interactive_loop(conn, actual_session_id)
         else:
             await client.send_prompt(conn, actual_session_id, prompt)
-            client._console.print(f"\n[dim]Session: {actual_session_id}[/dim]")
-            client._console.print(
-                f'[dim]Use crow-cli-dev run -s {actual_session_id} "<your—message>" to continue this conversation[/dim]'
-            )
+            if json_out:
+                client._flush_json()
+                _emit_json(type="result", session_id=actual_session_id)
+            else:
+                client._console.print(f"\n[dim]Session: {actual_session_id}[/dim]")
+                client._console.print(
+                    f'[dim]Use crow-cli-dev run -s {actual_session_id} "<your—message>" to continue this conversation[/dim]'
+                )
     except Exception as e:
-        # If something went wrong, try to get stderr before re-raising
-        try:
-            if hasattr(proc, "_stderr_reader") and not proc._stderr_reader.done():
-                stderr_output = await proc._stderr_reader
-                if stderr_output and stderr_output.strip():
-                    client._console.print()
-                    client._console.print("[red]═══ Agent subprocess failed ═══[/red]")
-                    client._console.print()
-                    client._console.print(stderr_output.decode())
-                    client._console.print()
-                    client._console.print(
-                        "[yellow]The agent subprocess exited with an error. "
-                        "The traceback above shows what went wrong.[/yellow]"
+        # Surface the agent's stderr (e.g. a startup failure like an unknown
+        # -m model) before re-raising. Wait briefly for the process to die so
+        # the stderr read completes — the old .done() check raced the reader.
+        stderr_output = b""
+        reader = getattr(proc, "_stderr_reader", None)
+        if reader is not None:
+            try:
+                if proc.returncode is None:
+                    with contextlib.suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(proc.wait(), timeout=2)
+                if proc.returncode is not None:
+                    stderr_output = await asyncio.wait_for(
+                        asyncio.shield(reader), timeout=3
                     )
-        except Exception:
-            # If we can't read stderr, just continue with the original error
-            pass
+            except Exception:
+                pass
+        if stderr_output and stderr_output.strip():
+            text = stderr_output.decode(errors="replace")
+            if json_out:
+                _emit_json(type="error", error=text.strip())
+            else:
+                client._console.print()
+                client._console.print("[red]═══ Agent subprocess failed ═══[/red]")
+                client._console.print()
+                client._console.print(text)
+                client._console.print(
+                    "[yellow]The agent subprocess exited with an error. "
+                    "The traceback above shows what went wrong.[/yellow]"
+                )
         raise e
 
     finally:
