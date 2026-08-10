@@ -119,6 +119,7 @@ class Config:
     config_dir: Path
     llm: LLMConfig = field(default_factory=LLMConfig)
     memory_path: str = ""
+    skills_dir: str = str(SKILLS_DIR)
     mcp_servers: dict[str, Any] = field(default_factory=dict)
     max_retries_per_step: int = 3
     # crow-memory client retry budget: total attempts (0 = retry forever),
@@ -217,6 +218,7 @@ class Config:
 
         # Parse overrides
         memory_path = os.path.expanduser(parsed.get("memory_path") or "~/.agents/crow/memory.lance")
+        skills_dir = os.path.expanduser(parsed.get("skills_dir") or str(SKILLS_DIR))
         overrides = {}
         for key, typ in (
             ("max_retries_per_step", int),
@@ -236,12 +238,13 @@ class Config:
         _logger.info("FINAL mcp_servers stored in Config: %s", mcp_servers)
         system_prompt_path = None
         if "system_prompt_path" in parsed:
-            system_prompt_path = Path(parsed["system_prompt_path"])
+            system_prompt_path = Path(os.path.expanduser(parsed["system_prompt_path"]))
 
         return cls(
             config_dir=target_dir,
             llm=llm,
             memory_path=memory_path,
+            skills_dir=skills_dir,
             mcp_servers=mcp_servers,
             system_prompt_path=system_prompt_path,
             **overrides,

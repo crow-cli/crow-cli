@@ -386,7 +386,7 @@ def _read_agents_file(directory: str) -> str | None:
     return None
 
 
-def build_display_tree(cwd: str) -> str:
+def build_display_tree(cwd: str, skills_dir: str | Path | None = None) -> str:
     """Build the directory-tree context block shown to an agent.
 
     Every agent sees the two shared workspaces — ``~/.agents/notes`` and
@@ -398,7 +398,7 @@ def build_display_tree(cwd: str) -> str:
     """
     home = str(Path.home())
     notes_dir = str(NOTES_DIR)
-    skills_dir = str(SKILLS_DIR)
+    skills_dir = str(skills_dir or SKILLS_DIR)
     trees = [get_directory_tree(notes_dir), get_directory_tree(skills_dir)]
     if os.path.realpath(cwd) != os.path.realpath(home):
         trees.append(get_directory_tree(cwd))
@@ -443,20 +443,17 @@ async def make_agent_session(
 ):
     if config.system_prompt_path:
         template = config.system_prompt_path.read_text()
-    elif not config.system_prompt:
-        template_path = config.config_dir / "prompts" / "system_prompt.jinja2"
-        template = template_path.read_text()
     else:
         template = config.system_prompt
     prompt_id = await lookup_or_create_prompt(
         template, name="crow-default", memory_path=config.memory_path
     )
-    skills = get_skills(SKILLS_DIR)
+    skills = get_skills(Path(config.skills_dir))
 
     # Context blocks: the directory tree (notes + skills, plus cwd unless cwd
     # is $HOME) and the persistent-memory AGENTS.md (global, plus the cwd's own
     # when cwd is not $HOME). See build_display_tree / build_agents_content.
-    display_tree = build_display_tree(cwd)
+    display_tree = build_display_tree(cwd, config.skills_dir)
     agents_content = build_agents_content(cwd)
     if session_id is None:
         session_id = get_coolname()
@@ -470,6 +467,7 @@ async def make_agent_session(
             "agents_content": agents_content,
             "session_id": session_id,
             "skills": skills,
+            "skills_dir": config.skills_dir,
         },
         tool_definitions=tools,
         request_params={"temperature": 0.2},

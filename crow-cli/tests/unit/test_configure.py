@@ -1,8 +1,10 @@
-"""Config parsing + wiring for the crow-memory retry budget."""
+"""Config parsing + wiring: crow-memory retry budget, skills_dir, prompt path."""
+
+from pathlib import Path
 
 import yaml
 
-from crow_cli.agent.configure import Config
+from crow_cli.agent.configure import SKILLS_DIR, Config
 from crow_cli.agent.memory import MemoryClient
 
 
@@ -31,6 +33,23 @@ def test_memory_retry_overrides(test_config_dir):
     assert cfg.memory_max_retries == 0
     assert cfg.memory_retry_base_delay == 2.5
     assert cfg.memory_retry_max_delay == 60.0
+
+
+def test_skills_dir_default(test_config_dir):
+    cfg = Config.load(test_config_dir)
+    assert cfg.skills_dir == str(SKILLS_DIR)
+
+
+def test_skills_dir_override(test_config_dir):
+    _add_keys(test_config_dir, skills_dir="~/custom-skills")
+    cfg = Config.load(test_config_dir)
+    assert cfg.skills_dir == str(Path.home() / "custom-skills")
+
+
+def test_system_prompt_path_expanded(test_config_dir):
+    _add_keys(test_config_dir, system_prompt_path="~/.agents/crow/prompts/system_prompt.jinja2")
+    cfg = Config.load(test_config_dir)
+    assert cfg.system_prompt_path == Path.home() / ".agents" / "crow" / "prompts" / "system_prompt.jinja2"
 
 
 def test_memory_client_wires_config_into_sdk(test_config_dir):
