@@ -115,7 +115,7 @@ class MemoryClient:
         if resp.status_code == 404:
             return None
         self._raise_for_status(resp)
-        return PromptRecord.model_validate(resp.json())
+        return PromptRecord.from_dict(resp.json())
 
     # -- agents --
 
@@ -155,13 +155,13 @@ class MemoryClient:
         if resp.status_code == 404:
             return None
         self._raise_for_status(resp)
-        return AgentRecord.model_validate(resp.json())
+        return AgentRecord.from_dict(resp.json())
 
     async def list_agents(self, session_id: str | None = None) -> list[AgentRecord]:
         params = {"session_id": session_id} if session_id else None
         resp = await self._request("GET", "/v1/agents", params=params)
         self._raise_for_status(resp)
-        return [AgentRecord.model_validate(d) for d in resp.json()]
+        return [AgentRecord.from_dict(d) for d in resp.json()]
 
     async def get_max_agent_idx(self, session_id: str) -> int:
         resp = await self._request(
@@ -210,7 +210,7 @@ class MemoryClient:
             "GET", f"/v1/agents/{agent_id}/messages/query", params=params
         )
         self._raise_for_status(resp)
-        return [MessageRecord.model_validate(d) for d in resp.json()]
+        return [MessageRecord.from_dict(d) for d in resp.json()]
 
     async def search_messages(
         self, query: str, limit: int = 20, role: str | None = None
@@ -220,7 +220,7 @@ class MemoryClient:
             body["role"] = role
         resp = await self._request("POST", "/v1/messages/search", json=body)
         self._raise_for_status(resp)
-        return [MessageRecord.model_validate(d) for d in resp.json()]
+        return [MessageRecord.from_dict(d) for d in resp.json()]
 
     # -- sessions --
 
@@ -229,12 +229,12 @@ class MemoryClient:
             "GET", "/v1/sessions", params={"limit": limit, "offset": offset}
         )
         self._raise_for_status(resp)
-        return [SessionInfo.model_validate(d) for d in resp.json()]
+        return [SessionInfo.from_dict(d) for d in resp.json()]
 
     async def get_sessions_by_cwd(self, cwd: str) -> list[SessionInfo]:
         resp = await self._request("GET", "/v1/sessions/by-cwd", params={"cwd": cwd})
         self._raise_for_status(resp)
-        return [SessionInfo.model_validate(d) for d in resp.json()]
+        return [SessionInfo.from_dict(d) for d in resp.json()]
 
     # -- images --
 
@@ -251,12 +251,4 @@ class MemoryClient:
         if resp.status_code == 404:
             return None
         self._raise_for_status(resp)
-        d = resp.json()
-        return ImageRecord(
-            image_id=d["image_id"],
-            mime=d["mime"],
-            data=base64.b64decode(d["data"]),
-            w=d["w"],
-            h=d["h"],
-            created_at=d.get("created_at", ""),
-        )
+        return ImageRecord.from_dict(resp.json())

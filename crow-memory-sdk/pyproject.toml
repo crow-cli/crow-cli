@@ -5,9 +5,15 @@ description = "Python client for the crow-memory HTTP service (LanceDB-backed ag
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "crow-memory-types>=0.1.31",
     "httpx>=0.28.1",
-    "pydantic>=2.12.5",
 ]
+
+# Local monorepo build of the crow-memory-types wheel (maturin). Drops out
+# when the wheels are published to PyPI — the metadata above already carries
+# the registry dependency.
+[tool.uv.sources]
+crow-memory-types = { path = "../crow-memory-types" }
 
 [project.urls]
 Homepage = "https://github.com/crow-cli/crow-cli"
@@ -23,7 +29,6 @@ packages = ["src/crow_memory_sdk"]
 
 [dependency-groups]
 dev = [
-    "datamodel-code-generator>=0.72.2",
     "pytest>=9.1.1",
     "pytest-asyncio>=0.23.0",
 ]
