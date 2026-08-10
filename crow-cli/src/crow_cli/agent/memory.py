@@ -10,8 +10,9 @@ react_loop, ACP handlers) runs on one event loop, and memory I/O must not
 block it. The old sync facade was ripped out with the SDK's sync client.
 
 Interface is otherwise unchanged so session.py / main.py keep their shape;
-records come back as pydantic models (AgentRecord, MessageRecord,
-SessionInfo, ...). The old `path` positional (a LanceDB directory) is
+records come back as crow-memory-types wire objects (AgentRecord,
+MessageRecord, SessionInfo, ...) — the server's own serde contract, see
+crow-memory-sdk. The old `path` positional (a LanceDB directory) is
 accepted and ignored — kept for call-site compat during transition.
 """
 

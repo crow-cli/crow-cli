@@ -252,7 +252,7 @@ async def _inspect_db(session_id, messages, limit, json_output):
         if json_output:
             print(
                 json.dumps(
-                    {"sessions": [s.model_dump() for s in sessions_list]}, indent=2
+                    {"sessions": [s.to_dict() for s in sessions_list]}, indent=2
                 )
             )
         else:

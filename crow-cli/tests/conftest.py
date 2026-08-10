@@ -63,7 +63,7 @@ class FakeMemoryClient:
     async def get_prompt(self, prompt_id: str) -> PromptRecord:
         if prompt_id not in self._prompts:
             raise MemoryServiceError(404, f"prompt '{prompt_id}' not found")
-        return PromptRecord.model_validate(self._prompts[prompt_id])
+        return PromptRecord.from_dict(self._prompts[prompt_id])
 
     # ---- agents ----
     async def create_agent(self, *, agent_id, session_id, agent_idx=1, cwd="/tmp",
@@ -78,19 +78,19 @@ class FakeMemoryClient:
             "status": "active", "created_at": "2026-01-01T00:00:00+00:00",
         }
         self._messages.setdefault(agent_id, [])
-        return AgentRecord.model_validate(self._agents[agent_id])
+        return AgentRecord.from_dict(self._agents[agent_id])
 
     async def load(self, agent_id: str, hydrate: bool = False) -> tuple[AgentRecord, list[dict]]:
         if agent_id not in self._agents:
             raise MemoryServiceError(404, f"agent '{agent_id}' not found")
         return (
-            AgentRecord.model_validate(self._agents[agent_id]),
+            AgentRecord.from_dict(self._agents[agent_id]),
             list(self._messages.get(agent_id, [])),
         )
 
     async def list_agents(self, session_id: str | None = None) -> list[AgentRecord]:
         return [
-            AgentRecord.model_validate(a)
+            AgentRecord.from_dict(a)
             for a in self._agents.values()
             if session_id is None or a["session_id"] == session_id
         ]
