@@ -1,0 +1,18 @@
+[project]
+name = "crow-memory-types"
+description = "Wire types for the crow-memory HTTP API — Python bindings (PyO3) over the same serde impls the server uses"
+requires-python = ">=3.14"
+license = "MIT"
+
+[project.urls]
+Homepage = "https://github.com/crow-cli/crow-cli"
+Repository = "https://github.com/crow-cli/crow-cli"
+Issues = "https://github.com/crow-cli/crow-cli/issues"
+
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[tool.maturin]
+module-name = "crow_memory_types"
+features = ["python"]

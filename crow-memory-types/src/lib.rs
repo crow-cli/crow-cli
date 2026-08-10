@@ -1,14 +1,18 @@
 //! Wire types for the crow-memory HTTP API.
 //!
 //! The SINGLE SOURCE OF TRUTH for the contract between the crow-memory
-//! server (axum + LanceDB) and its clients — the python crow-memory-sdk
-//! generates its pydantic models from this crate's JSON Schema
-//! (`cargo run -p crow-memory-types --bin gen-schema`, then
-//! `scripts/gen_wire_types.sh` in the python sdk). Append-only chat
-//! history: create + read/search, no update, no delete.
+//! server (axum + LanceDB) and its clients. The python crow-memory-sdk
+//! consumes these same types through the PyO3 bindings (cargo feature
+//! "python", built with maturin) — one contract, no codegen. The JSON
+//! Schema export (`cargo run -p crow-memory-types --bin gen-schema`)
+//! remains for tooling. Append-only chat history: create + read/search,
+//! no update, no delete.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+#[cfg(feature = "python")]
+mod py;
 
 /// Default crow-memory HTTP port: 27697 = CROWS on a phone keypad.
 /// Below the Linux ephemeral range (32768+), unregistered in IANA.
