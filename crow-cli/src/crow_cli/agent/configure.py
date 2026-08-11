@@ -122,13 +122,6 @@ class Config:
     skills_dir: str = str(SKILLS_DIR)
     mcp_servers: dict[str, Any] = field(default_factory=dict)
     max_retries_per_step: int = 3
-    # crow-memory client retry budget: total attempts (0 = retry forever),
-    # first backoff seconds, and per-step cap. Defaults ≈ 3.5 min of backoff
-    # (0.5 → 1 → 2 → 4 → 8 → 16 → 30 → 30 ...) so the agent waits out
-    # crow-memory restarts instead of dying.
-    memory_max_retries: int = 12
-    memory_retry_base_delay: float = 0.5
-    memory_retry_max_delay: float = 30.0
     MAX_COMPACT_TOKENS: int = 190000
     MAX_TOKENS: int = 38192
     TEMPERATURE: float = 0.6
@@ -171,19 +164,11 @@ class Config:
             _logger.info("No config.yaml found, returning bare Config")
             return cls(
                 config_dir=target_dir,
-                memory_path=str(DEFAULT_CONFIG_DIR / "memory.lance"),
+                memory_path=str(DEFAULT_CONFIG_DIR / "crow.db"),
             )
 
         with open(config_file) as f:
             raw = yaml.safe_load(f) or {}
-
-        # memory_port in config.yaml is the source of truth for where the
-        # crow-memory service listens. Everything downstream (this CLI's own
-        # MemoryClient, stdio-spawned MCP servers, daemons) resolves the URL
-        # via CROW_MEMORY_URL, so export it here unless the user already set
-        # it explicitly (.env or shell wins).
-        if raw.get("memory_port") and not os.environ.get("CROW_MEMORY_URL"):
-            os.environ["CROW_MEMORY_URL"] = f"http://127.0.0.1:{int(raw['memory_port'])}"
 
         _logger.info("RAW config.yaml mcpServers: %s", raw.get("mcpServers", {}))
         missing_vars: set[str] = set()
@@ -217,14 +202,11 @@ class Config:
             )
 
         # Parse overrides
-        memory_path = os.path.expanduser(parsed.get("memory_path") or "~/.agents/crow/memory.lance")
+        memory_path = os.path.expanduser(parsed.get("memory_path") or "~/.agents/crow/crow.db")
         skills_dir = os.path.expanduser(parsed.get("skills_dir") or str(SKILLS_DIR))
         overrides = {}
         for key, typ in (
             ("max_retries_per_step", int),
-            ("memory_max_retries", int),
-            ("memory_retry_base_delay", float),
-            ("memory_retry_max_delay", float),
             ("MAX_COMPACT_TOKENS", int),
             ("MAX_TOKENS", int),
             ("TEMPERATURE", float),

@@ -1,3 +1,27 @@
+# crow-cli TODO — sqlite fallback sprint 2026-08-11
+
+## **DO NOT ASK USER FOR FEEDBACK — THIS IS THE USER FEEDBACK.**
+## **DO NOT ASK USER FOR NEXT STEPS — THESE ARE THE NEXT STEPS.**
+
+Mandate: back to clean+simple sqlite (old schema v3 db.py), images as files in
+config_dir/images (DB keeps location, hydrate to base64 only on LLM send),
+search = sqlite BM25 not ColBERT MaxSim, NO migration, rest is deleting files.
+
+- [ ] db.py back in crow-cli/agent/ (sqlalchemy v3 schema + WAL pragmas + FTS5
+      bm25 + image extract/hydrate). Verify: tests/unit/test_db.py green.
+- [ ] session.py/react.py/compact.py/cli-inspect rewired to db.py; hydrate on
+      LLM send only. Verify: unit suite + live smoke with an image message.
+- [ ] Delete agent/memory.py SDK wrapper + dead config keys.
+- [ ] crow-mcp memory tools: sqlite reader + FTS5 bm25 (no crow-cli import).
+      Verify: tools return live rows; crow-mcp suite green.
+- [ ] Delete service stack: daemon crow-memory built-in, sdk deps, config
+      embedding reliance; kill crow-memory; everything still works.
+- [ ] AGENTS.md update; commits per phase.
+- [x] (done earlier today) 413 fix: DefaultBodyLimit 64MB + vision 1568px cap —
+      superseded by this sprint's architecture but shipped and verified.
+
+---
+
 # crow-cli TODO — fresh sprint 2026-08-10
 
 Needle focus: crow-memory-types ships Python bindings (PyO3). ONE contract —

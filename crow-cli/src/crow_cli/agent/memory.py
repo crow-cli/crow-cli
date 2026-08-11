@@ -1,43 +1,30 @@
-"""Memory layer for crow-cli — client for the crow-memory HTTP service.
+"""Memory layer for crow-cli — in-process SQLite, images on disk.
 
-Was: in-process LanceDB via the crow-memory package (a ~2GB dataset mmap per
-process). Now: talks to the shared crow-memory service (default
-http://127.0.0.1:27697, override with CROW_MEMORY_URL) through
-crow-memory-sdk's async client. The agent process no longer opens LanceDB.
+Back to the pre-service design (schema v3 in db.py) with one wrinkle: image
+blobs never enter the database. Writes extract inline base64 blocks to
+``config_dir/images/<sha256hex><ext>`` and store ``image_ref`` blocks; loads
+with ``hydrate=True`` swap refs back to base64 data URLs for the LLM.
 
-Everything here is async — the agent's turn pipeline (AsyncOpenAI,
-react_loop, ACP handlers) runs on one event loop, and memory I/O must not
-block it. The old sync facade was ripped out with the SDK's sync client.
+Search is SQLite FTS5 + bm25 (keyword). No embeddings, no HTTP service.
 
-Interface is otherwise unchanged so session.py / main.py keep their shape;
-records come back as crow-memory-types wire objects (AgentRecord,
-MessageRecord, SessionInfo, ...) — the server's own serde contract, see
-crow-memory-sdk. The old `path` positional (a LanceDB directory) is
-accepted and ignored — kept for call-site compat during transition.
+The async interface is preserved so session.py / main.py keep their shape;
+sqlite I/O is local and millisecond-fast, so the async methods simply call the
+sync db helpers.
 """
 
 import logging
+import os
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable
 
+from crow_cli.agent import db
 from crow_cli.agent.configure import Config
-from crow_memory_sdk import (
-    AgentRecord,
-    ImageRecord,
-    MemoryApiError,
-    MessageRecord,
-    PromptRecord,
-    SearchResults,
-    SessionInfo,
-    MemoryClient as SdkMemoryClient,
-)
 
 log = logging.getLogger(__name__)
 
-#: Legacy sentinel. Memory lives in the crow-memory service now, not a path.
-DEFAULT_MEMORY_PATH = "~/.agents/crow/memory.lance (unused — see CROW_MEMORY_URL)"
+#: Legacy sentinel — call sites pass it positionally; the db lives in config_dir.
+DEFAULT_MEMORY_PATH = "~/.agents/crow/crow.db"
 
-#: Server-side query cap; filtering happens client-side above this.
 _FETCH_ALL = 1_000_000
 
 
@@ -50,36 +37,104 @@ class MemoryServiceError(Exception):
         super().__init__(f"memory error {status}: {detail}")
 
 
-class MemoryClient:
-    """Adapter over the crow-memory HTTP service (async, pydantic out).
+# ---- records -----------------------------------------------------------------
 
-    `path` is ignored (kept positionally for compat). The retry budget is
-    read from config.yaml: `memory_max_retries` (total attempts, 0 = retry
-    forever), `memory_retry_base_delay`, `memory_retry_max_delay`.
-    """
+
+@dataclass
+class AgentRecord:
+    agent_id: str
+    session_id: str
+    agent_idx: int
+    cwd: str = "/tmp"
+    prompt_id: str | None = None
+    prompt_args: dict | None = None
+    system_prompt: str = ""
+    tool_definitions: list = field(default_factory=list)
+    request_params: dict = field(default_factory=dict)
+    model_identifier: str = ""
+    status: str = "active"
+    created_at: str = ""
+
+
+@dataclass
+class MessageRecord:
+    id: int
+    agent_id: str
+    session_id: str
+    agent_idx: int
+    role: str
+    created_at: str
+    data: dict
+
+
+@dataclass
+class PromptRecord:
+    id: str
+    name: str
+    template: str
+    created_at: str = ""
+
+
+@dataclass
+class SessionInfo:
+    session_id: str
+    last_activity: str
+    message_count: int
+    agent_count: int
+    model_identifier: str = ""
+
+    def to_dict(self) -> dict:
+        return {
+            "session_id": self.session_id,
+            "last_activity": self.last_activity,
+            "message_count": self.message_count,
+            "agent_count": self.agent_count,
+            "model_identifier": self.model_identifier,
+        }
+
+
+@dataclass
+class SearchResults:
+    messages: list[MessageRecord]
+    images: list = field(default_factory=list)
+
+
+def _agent_record(a: db.Agent) -> AgentRecord:
+    return AgentRecord(
+        agent_id=a.agent_id,
+        session_id=a.session_id,
+        agent_idx=a.agent_idx,
+        cwd=a.cwd,
+        prompt_id=a.prompt_id,
+        prompt_args=a.prompt_args,
+        system_prompt=a.system_prompt,
+        tool_definitions=a.tool_definitions or [],
+        request_params=a.request_params or {},
+        model_identifier=a.model_identifier,
+        status=a.status,
+        created_at=a.created_at,
+    )
+
+
+class MemoryClient:
+    """SQLite-backed memory. `path` is ignored (kept positionally for compat)."""
 
     def __init__(self, path: str | None = None, config_dir: Path | None = None, **_kwargs):
         cfg = Config.load(config_dir)
-        self._sdk = SdkMemoryClient(
-            max_retries=cfg.memory_max_retries,
-            base_delay=cfg.memory_retry_base_delay,
-            max_delay=cfg.memory_retry_max_delay,
-        )
+        db_path = Path(os.path.expanduser(path or str(cfg.config_dir / "crow.db")))
+        self.db_uri = f"sqlite:///{db_path}"
+        self.images_dir = db_path.parent / "images"
+        db.create_database(self.db_uri)
+        self._engine = db.get_engine(self.db_uri)
 
     async def close(self):
-        await self._sdk.close()
+        self._engine.dispose()
 
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, *exc):
         await self.close()
-
-    async def _call(self, fn: Callable[..., Awaitable], *args, **kwargs):
-        try:
-            return await fn(*args, **kwargs)
-        except MemoryApiError as e:
-            raise MemoryServiceError(e.status, e.error) from e
 
     # ---- agents ----
 
@@ -98,44 +153,48 @@ class MemoryClient:
         model_identifier: str = "",
         initial_messages: list[dict] | None = None,
     ) -> AgentRecord:
-        await self._call(
-            self._sdk.create_agent,
+        db.create_agent(
+            self._engine,
             agent_id=agent_id,
             session_id=session_id,
             agent_idx=agent_idx,
             cwd=cwd,
-            prompt_id=prompt_id or "",
+            prompt_id=prompt_id,
             prompt_args=prompt_args or {},
             system_prompt=system_prompt,
             tool_definitions=tool_definitions or [],
             request_params=request_params or {},
             model_identifier=model_identifier,
         )
-        for m in (initial_messages or []):
+        for m in initial_messages or []:
             if m.get("role") != "system":
-                await self._call(self._sdk.add_message, agent_id, m)
-        agent = await self._call(self._sdk.get_agent, agent_id)
+                await self.add_message(agent_id, m)
+        agent = db.get_agent(self._engine, agent_id)
         if agent is None:
             raise MemoryServiceError(500, f"agent '{agent_id}' vanished after create")
-        return agent
+        return _agent_record(agent)
 
     async def load(self, agent_id: str, hydrate: bool = False) -> tuple[AgentRecord, list[dict]]:
-        agent = await self._call(self._sdk.get_agent, agent_id)
+        agent = db.get_agent(self._engine, agent_id)
         if agent is None:
             raise MemoryServiceError(404, f"agent '{agent_id}' not found")
-        messages = await self._call(self._sdk.load_messages, agent_id, hydrate)
-        return agent, messages
+        messages = db.load_messages(
+            self._engine, agent_id, hydrate=hydrate, images_dir=self.images_dir
+        )
+        return _agent_record(agent), messages
 
     async def list_agents(self, session_id: str | None = None) -> list[AgentRecord]:
-        return await self._call(self._sdk.list_agents, session_id)
+        return [_agent_record(a) for a in db.list_agents(self._engine, session_id)]
 
     # ---- messages ----
 
     async def add_message(self, agent_id: str, message: dict, usage: dict | None = None) -> int:
-        return await self._call(self._sdk.add_message, agent_id, message, usage)
+        return db.add_message(
+            self._engine, agent_id, message, images_dir=self.images_dir, usage=usage
+        )
 
     async def save_messages(self, agent_id: str, messages: list[dict]) -> list[int]:
-        return [await self._call(self._sdk.add_message, agent_id, m) for m in messages]
+        return [await self.add_message(agent_id, m) for m in messages]
 
     async def query_messages(
         self,
@@ -153,53 +212,64 @@ class MemoryClient:
         if agent_id is not None:
             agent_ids = [agent_id]
         elif session_id is not None:
-            agent_ids = [a.agent_id for a in await self._call(self._sdk.list_agents, session_id)]
+            agent_ids = [a.agent_id for a in db.list_agents(self._engine, session_id)]
         else:
             raise MemoryServiceError(400, "query_messages needs session_id or agent_id")
-
-        recs: list[MessageRecord] = []
-        for aid in agent_ids:
-            for r in await self._call(
-                self._sdk.query_messages_by_agent, aid, order_asc=True, limit=_FETCH_ALL
-            ):
-                if agent_idx is not None and r.agent_idx != agent_idx:
-                    continue
-                if after is not None and r.created_at < after:
-                    continue
-                if before is not None and r.created_at > before:
-                    continue
-                if roles is not None and r.role not in roles:
-                    continue
-                recs.append(r)
-        recs.sort(key=lambda r: r.created_at, reverse=(order != "asc"))
-        return recs[offset : offset + limit]
+        idx = {a.agent_id: (a.session_id, a.agent_idx) for a in db.list_agents(self._engine)}
+        recs = []
+        for row in db.query_messages(
+            self._engine,
+            agent_ids,
+            roles=roles,
+            after=after,
+            before=before,
+            order=order,
+            limit=limit,
+            offset=offset,
+        ):
+            sid, aidx = idx.get(row.agent_id, ("", 0))
+            if agent_idx is not None and aidx != agent_idx:
+                continue
+            recs.append(
+                MessageRecord(
+                    id=row.id,
+                    agent_id=row.agent_id,
+                    session_id=sid,
+                    agent_idx=aidx,
+                    role=row.role,
+                    created_at=row.created_at,
+                    data=dict(row.data),
+                )
+            )
+        return recs
 
     # ---- sessions ----
 
     async def get_max_agent_idx(self, session_id: str) -> int:
-        return await self._call(self._sdk.get_max_agent_idx, session_id)
+        return db.get_max_agent_idx(self._engine, session_id)
 
     async def list_sessions(self, limit: int = 50, offset: int = 0) -> list[SessionInfo]:
-        return await self._call(self._sdk.list_sessions, limit, offset)
+        return [
+            SessionInfo(
+                session_id=s["session_id"],
+                last_activity=s["last_activity"],
+                message_count=s["message_count"],
+                agent_count=s["agent_count"],
+                model_identifier=s["model_identifier"],
+            )
+            for s in db.list_sessions(self._engine, limit, offset)
+        ]
 
     # ---- prompts ----
 
     async def lookup_or_create_prompt(self, template: str, name: str = "crow-default") -> str:
-        return await self._call(self._sdk.lookup_or_create_prompt, template, name)
+        return db.lookup_or_create_prompt(self._engine, template, name)
 
     async def get_prompt(self, prompt_id: str) -> PromptRecord:
-        p = await self._call(self._sdk.get_prompt, prompt_id)
+        p = db.get_prompt(self._engine, prompt_id)
         if p is None:
             raise MemoryServiceError(404, f"prompt '{prompt_id}' not found")
-        return p
-
-    # ---- images ----
-
-    async def get_image(self, image_id: str) -> ImageRecord:
-        img = await self._call(self._sdk.get_image, image_id)
-        if img is None:
-            raise MemoryServiceError(404, f"image '{image_id}' not found")
-        return img
+        return PromptRecord(id=p.id, name=p.name, template=p.template, created_at=p.created_at)
 
     # ---- search ----
 
@@ -211,19 +281,26 @@ class MemoryClient:
         limit: int = 10,
         query_image: bytes | None = None,
     ) -> SearchResults:
-        messages: list[MessageRecord] = []
-        if modality in ("text", "both") and query:
-            # The service searches globally; session/agent scoping is a
-            # client-side post-filter (overfetch x4 like the Rust MCP tools).
-            hits = await self._call(self._sdk.search_messages, query, limit * 4)
-            f_session = (filters or {}).get("session_id")
-            f_idx = (filters or {}).get("agent_idx")
-            for h in hits:
-                if f_session is not None and h.session_id != f_session:
-                    continue
-                if f_idx is not None and h.agent_idx != f_idx:
-                    continue
-                messages.append(h)
-        # Image search: the service has no image index (the images table is
-        # unwired upstream too). Nothing to return.
-        return SearchResults(messages=messages[:limit], images=[])
+        if not query or modality not in ("text", "both"):
+            return SearchResults(messages=[])
+        hits = db.search_messages(
+            self._engine,
+            query,
+            limit=limit,
+            session_id=(filters or {}).get("session_id"),
+            agent_idx=(filters or {}).get("agent_idx"),
+        )
+        return SearchResults(
+            messages=[
+                MessageRecord(
+                    id=h["id"],
+                    agent_id=h["agent_id"],
+                    session_id=h["session_id"],
+                    agent_idx=h["agent_idx"],
+                    role=h["role"],
+                    created_at=h["created_at"],
+                    data=h["data"],
+                )
+                for h in hits
+            ]
+        )

@@ -96,12 +96,6 @@ def run_agentmain(
             config.memory_path = overrides["memory_path"]
         if "max_retries_per_step" in overrides:
             config.max_retries_per_step = int(overrides["max_retries_per_step"])
-        if "memory_max_retries" in overrides:
-            config.memory_max_retries = int(overrides["memory_max_retries"])
-        if "memory_retry_base_delay" in overrides:
-            config.memory_retry_base_delay = float(overrides["memory_retry_base_delay"])
-        if "memory_retry_max_delay" in overrides:
-            config.memory_retry_max_delay = float(overrides["memory_retry_max_delay"])
         if "MAX_COMPACT_TOKENS" in overrides:
             config.MAX_COMPACT_TOKENS = int(overrides["MAX_COMPACT_TOKENS"])
         if "MAX_TOKENS" in overrides:
