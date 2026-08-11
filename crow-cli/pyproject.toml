@@ -19,8 +19,6 @@ dependencies = [
     "typer>=0.24.1",
 ]
 
-[tool.uv.sources]
-
 
 [project.urls]
 Homepage = "https://github.com/crow-cli/crow-cli"

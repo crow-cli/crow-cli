@@ -1,7 +1,0 @@
-[submodule "vendor/ollama"]
-	path = vendor/ollama
-	url = git@github.com:crow-cli/ollama.git
-	branch = main
-[submodule "vendor/llama.cpp"]
-	path = vendor/llama.cpp
-	url = git@github.com:crow-cli/llama.cpp.git

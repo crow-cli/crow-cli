@@ -21,11 +21,8 @@ service you can query across sessions.
 
 | Package | What it is |
 |---------|-----------|
-| [`crow-cli`](./crow-cli/README.md) | The agent — CLI, ACP server, tool executors, memory client |
-| [`crow-mcp`](./crow-mcp/README.md) | MCP toolserver (filesystem, terminal, web search) |
-| [`crow-memory`](./crow-memory/README.md) | (deprecated) LanceDB memory service — superseded by in-process sqlite |
-| [`crow-memory-types`](./crow-memory-types/) | (deprecated) wire contract for the service era |
-| [`crow-memory-sdk`](./crow-memory-sdk/) | (deprecated) Python client for crow-memory |
+| [`crow-cli`](./crow-cli/README.md) | The agent — CLI, ACP server, tool executors, sqlite memory |
+| [`crow-mcp`](./crow-mcp/README.md) | MCP toolserver (filesystem, terminal, web search, memory tools) |
 
 ## Getting started
 

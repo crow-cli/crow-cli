@@ -166,9 +166,6 @@ uv run --project crow-cli pytest crow-cli/tests --run-e2e           # live LLM c
 ```
 crow-cli/               the agent — ACP server, ReAct loop, CLI
 crow-mcp/               built-in MCP tool server
-crow-memory/            (deprecated) LanceDB memory service — superseded by sqlite
-crow-memory-types/      (deprecated) wire contract for the service era
-crow-memory-sdk/        (deprecated) python client for crow-memory
 ```
 
 ## License

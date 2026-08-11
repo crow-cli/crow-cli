@@ -20,12 +20,12 @@ Run with: `cd crow-cli && uv --project . run crow-cli`
   `image_ref` block) and hydrated to base64 data URLs only when the
   conversation is sent to the LLM.
 - Search is FTS5 + bm25 (keyword). No embeddings, no LanceDB, no ColBERT.
-- The service era is over: crow-memory (Rust), crow-memory-types,
-  crow-memory-sdk are DEPRECATED — still in the repo, no longer imported by
-  crow-cli or crow-mcp. Daemon management was deleted from the CLI
-  (daemon.py/daemon_cmd.py/embeddings.py gone); daemons that still run on a
-  machine are supervised externally — NEVER stop/restart them from agent
-  code, the user does that himself.
+- The service era is DELETED (2026-08-11): crow-memory (Rust),
+  crow-memory-types, crow-memory-sdk, the root Cargo workspace and the
+  vendor/ submodules are gone from the worktree. Daemon management was
+  deleted from the CLI (daemon.py/daemon_cmd.py/embeddings.py gone); daemons
+  that still run on a machine are supervised externally — NEVER stop/restart
+  them from agent code, the user does that himself.
 - crow-orchestrator-mcp and crow-task-mcp are DEAD (deleted 2026-08-10).
   Do not resurrect.
 
