@@ -245,10 +245,16 @@ def _rotate_log(base: Path) -> None:
 def _alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
-        return True
     except ProcessLookupError:
         return False
     except PermissionError:
+        return True
+    # A zombie still answers kill(pid, 0) but is dead — an unreaped daemon
+    # must not read as "running" (stop would SIGKILL-escalate for nothing).
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        return stat.rsplit(")", 1)[1].split()[0] != "Z"
+    except OSError:
         return True
 
 
@@ -427,12 +433,22 @@ def stop(config_dir: Path, spec: DaemonSpec) -> str:
         pid_file(config_dir, spec.name).unlink(missing_ok=True)
         return f"{spec.name}: not running"
 
-    os.kill(pid, signal.SIGTERM)
+    # Daemons spawn in their own session (start_new_session=True), so the
+    # recorded pid is also the pgid — signal the whole group, or children
+    # of wrappers like `npm exec -> sh -> node` survive as orphans still
+    # holding the port.
+    def _signal(sig: int) -> None:
+        try:
+            os.killpg(pid, sig)
+        except ProcessLookupError:
+            pass
+
+    _signal(signal.SIGTERM)
     deadline = time.time() + spec.stop_timeout
     while time.time() < deadline and _alive(pid):
         time.sleep(0.1)
     if _alive(pid):
-        os.kill(pid, signal.SIGKILL)
+        _signal(signal.SIGKILL)
         time.sleep(0.2)
     pid_file(config_dir, spec.name).unlink(missing_ok=True)
     return f"{spec.name}: stopped" + ("" if not _alive(pid) else " (SIGKILL)")

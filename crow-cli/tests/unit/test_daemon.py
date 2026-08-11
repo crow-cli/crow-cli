@@ -7,7 +7,9 @@ records, status/stop/restart logic — is the real code path.
 
 from __future__ import annotations
 
-from pathlib import Path
+import os
+import subprocess
+import time
 
 import pytest
 
@@ -155,6 +157,27 @@ def test_read_pid_ignores_container_id_record(tmp_path):
     pf.write_text(CID)
     assert read_pid(tmp_path, "searxng") is None
     assert daemon_mod._read_record(tmp_path, "searxng") == CID
+
+
+def test_process_stop_signals_process_group(tmp_path):
+    """Wrappers like `npm exec -> sh -> node` spawn children in the daemon's
+    session — stop must signal the whole group, not just the leader, or the
+    child keeps holding the port."""
+    leader = subprocess.Popen(["sh", "-c", "sleep 60 & wait"], start_new_session=True)
+    try:
+        spec = DaemonSpec(name="grp", command="sh")
+        pid_file(tmp_path, "grp").parent.mkdir(parents=True)
+        pid_file(tmp_path, "grp").write_text(str(leader.pid))
+        assert stop(tmp_path, spec) == "grp: stopped"
+        leader.wait()  # reap the leader zombie so the group dissolves
+        time.sleep(0.1)
+        # The child sleep got the group signal too — with a leader-only
+        # kill it would still be alive here and the probe would succeed.
+        with pytest.raises(ProcessLookupError):
+            os.killpg(leader.pid, 0)
+    finally:
+        if leader.poll() is None:
+            leader.kill()
 
 
 # -------------------------------------------------------------- services --
