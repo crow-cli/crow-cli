@@ -258,7 +258,7 @@ def test_auth_validation():
     project_path = Path(__file__).resolve().parents[2]
 
     result = run_auth_check(
-        cmd=["uv", "--project", str(project_path), "run", "crow-cli-dev", "acp"],
+        cmd=["uv", "--project", str(project_path), "run", "crow-cli", "acp"],
         cwd=project_path,
         timeout=30.0,
     )

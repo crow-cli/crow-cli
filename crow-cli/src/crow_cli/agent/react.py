@@ -44,9 +44,26 @@ from crow_cli.agent.tools import (
 
 logger = logging.getLogger(__name__)
 
+# Content used for the synthetic tool response that keeps history valid when
+# the user cancels a turn after the LLM emitted tool calls. The API requires
+# every tool_call_id in an assistant message to have a matching tool response.
+TOOL_CALL_CANCELLED_MESSAGE = "Tool call cancelled by user"
+
 
 def session_from_agent_id(agent_id):
     return agent_id.rsplit("-", 1)[0]
+
+
+def cancelled_tool_results(tool_call_inputs: list[dict]) -> list[dict]:
+    """Build a 'cancelled by user' tool response for every tool call."""
+    return [
+        {
+            "role": "tool",
+            "tool_call_id": tc["id"],
+            "content": TOOL_CALL_CANCELLED_MESSAGE,
+        }
+        for tc in tool_call_inputs
+    ]
 
 
 # Provider-side transient faults that surface as HTTP 400 and so are never
@@ -81,6 +98,7 @@ async def send_request(
     max_retries: int = 3,
     retry_delay: float = 1.0,
     temperature: float = 0.6,
+    reasoning_effort: str | None = None,
     request_log_path: str | None = None,
     config: Config | None = None,
 ):
@@ -93,6 +111,9 @@ async def send_request(
         tools: List of tool definitions.
         max_retries: Maximum number of retry attempts (default: 3).
         retry_delay: Base delay between retries in seconds (default: 1.0).
+        temperature: Sampling temperature (ignored when reasoning_effort is set).
+        reasoning_effort: When set (e.g. "low"/"medium"/"high"), sent INSTEAD
+            of temperature — reasoning models reject temperature.
 
     Returns:
         Streaming response from LLM
@@ -130,6 +151,14 @@ async def send_request(
                     normalized_messages, to_strip
                 )
 
+    # Reasoning models (gpt-5, o3, ...) reject temperature — when
+    # reasoning_effort is configured we send it and omit temperature entirely.
+    sampling_params: dict[str, Any] = (
+        {"reasoning_effort": reasoning_effort}
+        if reasoning_effort
+        else {"temperature": temperature}
+    )
+
     # Under --debug, dump the exact request payload (the append-only chat
     # history + params) so immutable-history analysis can diff consecutive
     # turns. Sits beside the response chunk log in the same chunk_log_dir.
@@ -138,7 +167,7 @@ async def send_request(
             "model": routed_model,
             "messages": normalized_messages,
             "tools": tools,
-            "temperature": temperature,
+            **sampling_params,
             "max_tokens": max_tokens,
             "parallel_tool_calls": True,
             "stream_options": {"include_usage": True},
@@ -156,7 +185,7 @@ async def send_request(
                 messages=normalized_messages,
                 tools=tools,
                 stream=True,
-                temperature=temperature,
+                **sampling_params,
                 max_tokens=max_tokens,
                 parallel_tool_calls=True,
                 stream_options={"include_usage": True},  # Get usage in final chunk
@@ -458,6 +487,7 @@ async def execute_tool_calls(
     logger: Logger,
     hooks: list[CommandHook],
     snapshot_hooks: list[FileSnapshotHook] | None = None,
+    tool_results: list[dict] | None = None,
 ) -> list[dict]:
     """
     Execute tool calls via MCP or ACP client terminal.
@@ -466,18 +496,75 @@ async def execute_tool_calls(
         turn_id: Turn ID for ACP tool call IDs
         agent_id: Agent ID (internal key)
         tool_call_inputs: List of tool calls to execute
+        tool_results: Optional accumulator filled in-place, so callers can
+            still see completed results when the call is cancelled mid-flight.
 
     Returns:
         List of tool results
     """
     session_id = session_from_agent_id(agent_id)
-    tool_results = []
+    if tool_results is None:
+        tool_results = []
     use_acp_terminal = client_capabilities and getattr(
         client_capabilities, "terminal", False
     )
     fs_caps = getattr(client_capabilities, "fs", None) if client_capabilities else None
     use_acp_write = fs_caps and getattr(fs_caps, "write_text_file", False)
     use_acp_read = fs_caps and getattr(fs_caps, "read_text_file", False)
+    try:
+        return await _execute_tool_calls_inner(
+            conn=conn,
+            session_id=session_id,
+            client_capabilities=client_capabilities,
+            turn_id=turn_id,
+            config=config,
+            mcp_clients=mcp_clients,
+            sessions=sessions,
+            agent_id=agent_id,
+            tool_call_inputs=tool_call_inputs,
+            tool_results=tool_results,
+            logger=logger,
+            hooks=hooks,
+            snapshot_hooks=snapshot_hooks,
+            use_acp_terminal=use_acp_terminal,
+            use_acp_write=use_acp_write,
+            use_acp_read=use_acp_read,
+        )
+    except asyncio.CancelledError:
+        # Cancelled mid-execution: every tool call still needs a response so
+        # the persisted assistant message (with tool_calls) stays valid. Keep
+        # real results for tools that finished; placeholder for the rest.
+        responded = {r["tool_call_id"] for r in tool_results}
+        for tool_call in tool_call_inputs:
+            if tool_call["id"] not in responded:
+                tool_results.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call["id"],
+                        "content": TOOL_CALL_CANCELLED_MESSAGE,
+                    }
+                )
+        raise
+
+
+async def _execute_tool_calls_inner(
+    conn: Client,
+    session_id: str,
+    client_capabilities: ClientCapabilities,
+    turn_id: str,
+    config: Config,
+    mcp_clients: dict[str, MCPClient],
+    sessions: dict[str, AgentSession],
+    agent_id: str,
+    tool_call_inputs: list[dict],
+    tool_results: list[dict],
+    logger: Logger,
+    hooks: list[CommandHook],
+    snapshot_hooks: list[FileSnapshotHook] | None,
+    use_acp_terminal: bool,
+    use_acp_write: bool,
+    use_acp_read: bool,
+) -> list[dict]:
     for tool_call in tool_call_inputs:
         tool_name = tool_call["function"]["name"]
         tool_args = tool_call["function"]["arguments"]
@@ -706,6 +793,7 @@ async def react_loop(
             config.MAX_TOKENS,
             max_retries=config.max_retries_per_step,
             temperature=config.TEMPERATURE,
+            reasoning_effort=config.reasoning_effort,
             request_log_path=request_log_path,
             config=config,
         )
@@ -726,28 +814,32 @@ async def react_loop(
         except asyncio.CancelledError:
             logger.info("React loop cancelled mid-stream")
 
-            # CRITICAL: NEVER persist tool calls on cancellation
-            # Whether tool calls are complete or incomplete, we MUST NOT persist them because:
-            # 1. We're about to raise without executing the tools
-            # 2. This means no tool responses will be added to history
-            # 3. Next API call will fail: "An assistant message with tool_calls must be
-            #    followed by tool messages responding to each tool_call_id"
-            #
-            # Even if the LLM finished streaming complete tool calls with valid JSON,
-            # we cannot persist them because we never executed the tools.
-
-            logger.info(
-                "Cancellation occurred - not persisting tool calls to history "
-                "to avoid breaking conversation (no tool responses would exist)"
+            # Persist whatever tool calls the stream already produced, EACH
+            # with a synthetic "cancelled" tool response. The API requires
+            # every tool_call_id in an assistant message to be followed by a
+            # tool message responding to it — so we never persist a tool call
+            # without its response, and we never silently drop one either.
+            # Incomplete calls (no id or no name yet — cancelled very early)
+            # are filtered out since they can't be addressed in history.
+            tool_call_inputs, _ = process_tool_call_inputs(
+                state_accumulator["tool_calls"]
             )
-            # Don't persist tool calls - just persist thinking/content if any
+            tool_call_inputs = [
+                tc
+                for tc in tool_call_inputs
+                if tc["id"] and tc["function"]["name"]
+            ]
             await session.add_assistant_response(
                 state_accumulator["thinking"],
                 state_accumulator["content"],
-                [],  # Empty tool calls - NEVER persist on cancellation
+                tool_call_inputs,
                 logger,
                 usage,
             )
+            if tool_call_inputs:
+                await session.add_tool_response(
+                    cancelled_tool_results(tool_call_inputs), logger
+                )
             raise
 
         ################################################
@@ -820,19 +912,40 @@ async def react_loop(
         else:
             logger.info(f"Pre-Tool ExecutionUsage: {usage}")
             # We've got some tools to execute!
-            tool_results = await execute_tool_calls(
-                conn=conn,
-                client_capabilities=client_capabilities,
-                turn_id=turn_id,
-                config=config,
-                mcp_clients=mcp_clients,
-                sessions=sessions,
-                agent_id=agent_id,
-                tool_call_inputs=tool_call_inputs,
-                logger=logger,
-                hooks=hooks or [],
-                snapshot_hooks=snapshot_hooks,
-            )
+            tool_results: list[dict] = []
+            try:
+                await execute_tool_calls(
+                    conn=conn,
+                    client_capabilities=client_capabilities,
+                    turn_id=turn_id,
+                    config=config,
+                    mcp_clients=mcp_clients,
+                    sessions=sessions,
+                    agent_id=agent_id,
+                    tool_call_inputs=tool_call_inputs,
+                    logger=logger,
+                    hooks=hooks or [],
+                    snapshot_hooks=snapshot_hooks,
+                    tool_results=tool_results,
+                )
+            except asyncio.CancelledError:
+                # Cancelled mid-tool-execution. execute_tool_calls already
+                # filled "cancelled" placeholders for every call that has no
+                # result, so persist the assistant message WITH its tool calls
+                # and the full response set — history stays valid.
+                logger.info(
+                    "Cancelled during tool execution - persisting assistant "
+                    "message and tool responses before re-raising"
+                )
+                await session.add_assistant_response(
+                    thinking,
+                    content,
+                    tool_call_inputs,
+                    logger,
+                    usage,
+                )
+                await session.add_tool_response(tool_results, logger)
+                raise
 
             await session.add_assistant_response(
                 thinking,

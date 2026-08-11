@@ -10,10 +10,11 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from dotenv import load_dotenv
+from pydantic import BaseModel, ValidationError
 
 from crow_cli.agent.default import (
     COMPOSE_YAML,
@@ -88,6 +89,36 @@ def resolve_env_vars(value: Any, missing: set[str] | None = None) -> Any:
     return value
 
 
+# OpenAI reasoning models (gpt-5, o3, ...) accept `reasoning_effort` instead
+# of `temperature`. These are the enumerable values from the OpenAI API
+# reference (developers.openai.com): none, minimal, low, medium, high, xhigh,
+# max. We validate config.yaml against this set so a typo fails fast at load
+# time instead of as an opaque provider 400 mid-turn.
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+REASONING_EFFORT_VALUES = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+
+
+class ReasoningEffortModel(BaseModel):
+    """Validate a reasoning_effort value against OpenAI's enumerable set."""
+
+    reasoning_effort: ReasoningEffort
+
+
+def parse_reasoning_effort(raw: Any) -> str:
+    """Validate and normalize a config.yaml reasoning_effort value.
+
+    Raises ValueError naming the valid set when the value is not enumerable.
+    """
+    value = str(raw).strip().lower()
+    try:
+        return ReasoningEffortModel(reasoning_effort=value).reasoning_effort
+    except ValidationError:
+        raise ValueError(
+            f"reasoning_effort must be one of {', '.join(REASONING_EFFORT_VALUES)}, "
+            f"got {raw!r}"
+        ) from None
+
+
 @dataclass
 class LLMProvider:
     name: str
@@ -125,6 +156,9 @@ class Config:
     MAX_COMPACT_TOKENS: int = 190000
     MAX_TOKENS: int = 38192
     TEMPERATURE: float = 0.6
+    # When set, sent to the LLM INSTEAD of temperature — reasoning models
+    # (gpt-5, o3, ...) reject temperature. Validated against OpenAI's enum.
+    reasoning_effort: ReasoningEffort | None = None
     chunk_log: bool = False  # Write every raw chunk to JSONL for debugging
     system_prompt: str = SYSTEM_PROMPT
     system_prompt_path: Path | None = None
@@ -213,6 +247,10 @@ class Config:
         ):
             if key in parsed:
                 overrides[key] = typ(parsed[key])
+        if "reasoning_effort" in parsed and parsed["reasoning_effort"] is not None:
+            overrides["reasoning_effort"] = parse_reasoning_effort(
+                parsed["reasoning_effort"]
+            )
         if "chunk_log" in parsed:
             overrides["chunk_log"] = bool(parsed["chunk_log"])
 

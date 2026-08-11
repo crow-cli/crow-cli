@@ -249,4 +249,9 @@ MAX_COMPACT_TOKENS: 180000
 
 MAX_TOKENS: 38192
 
-max_retries_per_step: 3"""
+max_retries_per_step: 3
+
+# For reasoning models (gpt-5, o3, ...). When set, crow sends reasoning_effort
+# and OMITS temperature (reasoning models reject temperature).
+# One of: none | minimal | low | medium | high | xhigh | max
+# reasoning_effort: medium"""
