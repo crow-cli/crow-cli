@@ -15,10 +15,15 @@ Two kinds of services, one interface:
   container we started is recorded in the same pidfile slot, so
   stop/restart can refuse containers started elsewhere (unmanaged).
 
-The registry is config-driven: built-in defaults below, overridable per
-service from the ``daemons:`` section of config.yaml (keys: command, args,
-env, health_url, tcp_port, container, compose_file, start_timeout,
-stop_timeout).
+The registry is config-driven, precedence built-ins < ``services:`` <
+``daemons:``:
+
+- ``services:`` in config.yaml declares how to run additional things
+  (typically MCP servers) as daemons — each entry takes the DaemonSpec
+  keys (command, args, env, health_url, tcp_port, ...). A service that
+  shares its name with an ``mcpServers`` entry and declares no health
+  check gets its tcp probe port from that entry's url.
+- ``daemons:`` overrides any spec, built-in or service-derived, by name.
 """
 
 from __future__ import annotations
@@ -73,18 +78,50 @@ def _config_yaml(config_dir: Path) -> dict[str, Any]:
     return yaml.safe_load(path.read_text()) or {}
 
 
+def _port_from_url(url: str) -> int | None:
+    """Extract the port from an http(s) URL, if it has one."""
+    hostpart = url.split("//")[-1].split("/", 1)[0]
+    if ":" in hostpart:
+        try:
+            return int(hostpart.rsplit(":", 1)[1])
+        except ValueError:
+            return None
+    return None
+
+
 def _port_from_mcp_servers(cfg: dict[str, Any]) -> int:
     """Pull the crow-mcp port out of the mcpServers URL if it's http."""
     for name, srv in (cfg.get("mcpServers") or {}).items():
         if not name.startswith("crow-mcp"):
             continue
-        url = (srv or {}).get("url", "")
-        if ":" in url.rsplit("/", 1)[0].split("//")[-1]:
-            try:
-                return int(url.rsplit("/", 1)[0].split(":")[-1])
-            except ValueError:
-                pass
+        port = _port_from_url((srv or {}).get("url", ""))
+        if port is not None:
+            return port
     return DEFAULT_MCP_PORT
+
+
+def _apply_service_specs(
+    specs: dict[str, DaemonSpec], cfg: dict[str, Any]
+) -> None:
+    """Register daemons from the top-level `services:` block — declarations
+    of how to run things (typically MCP servers) as services. Only declared
+    keys are set, so a service shadowing a built-in name patches it rather
+    than clobbering it. If a service shares its name with an mcpServers
+    entry and declares no health check, the port of that entry's url becomes
+    the tcp health probe."""
+    for name, service in (cfg.get("services") or {}).items():
+        if not isinstance(service, dict):
+            continue
+        spec = specs.get(name)
+        if spec is None:
+            spec = DaemonSpec(name=name)
+            specs[name] = spec
+        for k, v in service.items():
+            if hasattr(spec, k):
+                setattr(spec, k, v)
+        if spec.health_url is None and spec.tcp_port is None:
+            mcp_entry = (cfg.get("mcpServers") or {}).get(name) or {}
+            spec.tcp_port = _port_from_url(mcp_entry.get("url", ""))
 
 
 def default_registry(config_dir: Path) -> dict[str, DaemonSpec]:
@@ -163,6 +200,10 @@ def default_registry(config_dir: Path) -> dict[str, DaemonSpec]:
             health_url=f"http://127.0.0.1:{searxng_port}/",
         ),
     }
+
+    # services: block (e.g. MCP servers run as daemons), then daemons:
+    # overrides on top — daemons: always wins.
+    _apply_service_specs(specs, cfg)
 
     for name, overrides in (cfg.get("daemons") or {}).items():
         spec = specs.get(name)

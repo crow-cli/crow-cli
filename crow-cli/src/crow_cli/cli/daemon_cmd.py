@@ -18,7 +18,10 @@ from crow_cli.agent.configure import get_default_config_dir
 from crow_cli.cli import embeddings
 from crow_cli.cli.daemon import default_registry, restart, start, status, stop
 
-app = typer.Typer(help="Manage crow infrastructure daemons (memory, mcp, ollama-mv, searxng).")
+app = typer.Typer(
+    help="Manage crow infrastructure daemons (memory, mcp, ollama-mv, searxng, "
+    "plus anything declared in config.yaml's services: block)."
+)
 console = Console()
 
 ALL = "all"

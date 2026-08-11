@@ -155,3 +155,63 @@ def test_read_pid_ignores_container_id_record(tmp_path):
     pf.write_text(CID)
     assert read_pid(tmp_path, "searxng") is None
     assert daemon_mod._read_record(tmp_path, "searxng") == CID
+
+
+# -------------------------------------------------------------- services --
+
+
+@pytest.mark.parametrize(
+    ("url", "port"),
+    [
+        ("http://127.0.0.1:2779/mcp", 2779),
+        ("http://localhost:2779/mcp", 2779),
+        ("http://localhost/mcp", None),
+        ("not-a-url", None),
+        ("http://host:bad/mcp", None),
+    ],
+)
+def test_port_from_url(url, port):
+    assert daemon_mod._port_from_url(url) == port
+
+
+def test_services_block_registers_daemon_with_port_from_mcp_url():
+    """A services: entry becomes a DaemonSpec; with no explicit health check,
+    the tcp port is derived from the same-named mcpServers url."""
+    specs: dict[str, DaemonSpec] = {}
+    cfg = {
+        "mcpServers": {"playwright": {"transport": "http", "url": "http://localhost:2779/mcp"}},
+        "services": {"playwright": {"command": "npx", "args": ["@playwright/mcp@v0.0.79", "--port", "2779"]}},
+    }
+    daemon_mod._apply_service_specs(specs, cfg)
+    spec = specs["playwright"]
+    assert spec.command == "npx"
+    assert spec.args == ["@playwright/mcp@v0.0.79", "--port", "2779"]
+    assert spec.tcp_port == 2779
+    assert spec.health_url is None
+
+
+def test_services_block_explicit_health_wins_over_url_derivation():
+    specs: dict[str, DaemonSpec] = {}
+    cfg = {
+        "mcpServers": {"srv": {"transport": "http", "url": "http://localhost:9999/mcp"}},
+        "services": {"srv": {"command": "srv-bin", "tcp_port": 1234}},
+    }
+    daemon_mod._apply_service_specs(specs, cfg)
+    assert specs["srv"].tcp_port == 1234
+
+
+def test_services_block_patches_builtin_without_clobber():
+    """A service shadowing a built-in name sets only declared fields."""
+    builtin = DaemonSpec(name="ollama-mv", command="ollama", start_timeout=60.0)
+    specs = {"ollama-mv": builtin}
+    cfg = {"services": {"ollama-mv": {"env": {"OLLAMA_HOST": "127.0.0.1:9999"}}}}
+    daemon_mod._apply_service_specs(specs, cfg)
+    assert specs["ollama-mv"].env == {"OLLAMA_HOST": "127.0.0.1:9999"}
+    assert specs["ollama-mv"].command == "ollama"  # untouched
+    assert specs["ollama-mv"].start_timeout == 60.0  # untouched
+
+
+def test_services_block_ignores_non_dict_entries():
+    specs: dict[str, DaemonSpec] = {}
+    daemon_mod._apply_service_specs(specs, {"services": {"broken": "npx something"}})
+    assert specs == {}
