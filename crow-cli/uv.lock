@@ -246,7 +246,6 @@ source = { editable = "." }
 dependencies = [
     { name = "agent-client-protocol" },
     { name = "coolname" },
-    { name = "crow-memory-sdk" },
     { name = "directory-tree" },
     { name = "docker" },
     { name = "fastmcp" },
@@ -271,7 +270,6 @@ dev = [
 requires-dist = [
     { name = "agent-client-protocol", specifier = ">=0.12.0,<0.13.0" },
     { name = "coolname", specifier = ">=2.2.0" },
-    { name = "crow-memory-sdk", editable = "../crow-memory-sdk" },
     { name = "directory-tree", specifier = ">=1.0.0" },
     { name = "docker", specifier = ">=7.2.0" },
     { name = "fastmcp", specifier = ">=2.14.5" },
@@ -291,31 +289,6 @@ dev = [
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "pytest-asyncio", specifier = ">=0.23.0" },
 ]
-
-[[package]]
-name = "crow-memory-sdk"
-version = "0.1.32"
-source = { editable = "../crow-memory-sdk" }
-dependencies = [
-    { name = "crow-memory-types" },
-    { name = "httpx" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "crow-memory-types", directory = "../crow-memory-types" },
-    { name = "httpx", specifier = ">=0.28.1" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=9.1.1" },
-    { name = "pytest-asyncio", specifier = ">=0.23.0" },
-]
-
-[[package]]
-name = "crow-memory-types"
-source = { directory = "../crow-memory-types" }
 
 [[package]]
 name = "cryptography"

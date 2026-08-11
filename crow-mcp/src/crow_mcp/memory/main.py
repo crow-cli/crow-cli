@@ -1,13 +1,13 @@
-"""Memory MCP tools — client of the crow-memory HTTP service.
+"""Memory MCP tools — read-mostly client of the crow-cli sqlite database.
 
-Was: in-process LanceDB + ColBERT via the crow-memory package. Now: talks to
-the shared crow-memory service through crow-memory-sdk's async client, so the
-MCP server process carries no dataset state at all.
+The database (~/.agents/crow/crow.db, written by crow-cli) is the only
+integration point; crow-mcp never imports crow-cli. Search is SQLite FTS5 +
+bm25 (keyword). See store.py for the accessor.
 
 Three tools, split along the backend's own seams:
 
 - list_sessions: sessions ordered by last message activity (who's working now).
-- query_memory:  semantic discovery ACROSS all sessions (query required).
+- query_memory:  keyword discovery ACROSS all sessions (query required).
 - query_session: read/search WITHIN one session, across all its agents by
   default so delegated agents' history is never lost.
 
@@ -18,23 +18,9 @@ that must stay fast and correct.
 import json
 from enum import Enum
 
-from crow_memory_sdk import MemoryClient, MessageRecord
-
+from crow_mcp.memory import store
+from crow_mcp.memory.store import Msg
 from crow_mcp.server.main import mcp
-
-#: One process-wide client; the service is local and the tools are chatty.
-_client: MemoryClient | None = None
-
-
-def client() -> MemoryClient:
-    global _client
-    if _client is None:
-        _client = MemoryClient()
-    return _client
-
-
-#: Client-side fetch cap; the server takes a limit, we filter above it.
-_FETCH_ALL = 1_000_000
 
 
 # ---------------------------------------------------------------------------
@@ -49,6 +35,7 @@ class ContentMode(str, Enum):
 
 
 class SearchType(str, Enum):
+    #: BM25 over the FTS5 index (the old ColBERT MaxSim backend is gone).
     SEMANTIC = "semantic"
     KEYWORD = "keyword"
     BOTH = "both"
@@ -180,10 +167,10 @@ def _build_excerpt(data: dict, query: str, max_len: int = 120) -> str:
 
 
 def _apply_context_window(
-    messages: list[MessageRecord],
+    messages: list[Msg],
     match_indices: set[int],
     context: int,
-) -> list[MessageRecord]:
+) -> list[Msg]:
     """Return messages within `context` messages of any match index."""
     if not match_indices or context <= 0:
         return [messages[i] for i in sorted(match_indices)]
@@ -218,7 +205,7 @@ def _snippet(data: dict | None, role: str | None, max_len: int = 60) -> str:
 def _render_transcript(
     session_id: str,
     agent_idx: int | None,
-    recs: list[MessageRecord],
+    recs: list[Msg],
     mode: ContentMode,
     note: str,
 ) -> str:
@@ -253,7 +240,7 @@ _MODE_ROLES = {
 
 
 # ---------------------------------------------------------------------------
-# Session-scoped fetch (the service has no session-scoped query endpoint)
+# Session-scoped fetch
 # ---------------------------------------------------------------------------
 
 async def _session_records(
@@ -262,25 +249,9 @@ async def _session_records(
     roles: list[str] | None,
     after: str | None,
     before: str | None,
-) -> list[MessageRecord]:
+) -> list[Msg]:
     """All of a session's messages (ascending), filtered, across its agents."""
-    agents = await client().list_agents(session_id)
-    recs: list[MessageRecord] = []
-    for a in agents:
-        if agent_idx is not None and a.agent_idx != agent_idx:
-            continue
-        for r in await client().query_messages_by_agent(
-            a.agent_id, order_asc=True, limit=_FETCH_ALL
-        ):
-            if after is not None and r.created_at < after:
-                continue
-            if before is not None and r.created_at > before:
-                continue
-            if roles is not None and r.role not in roles:
-                continue
-            recs.append(r)
-    recs.sort(key=lambda r: r.created_at)
-    return recs
+    return store.session_records(session_id, agent_idx, roles, after, before)
 
 
 # ---------------------------------------------------------------------------
@@ -306,7 +277,7 @@ async def list_sessions(limit: int = 50, offset: int = 0) -> str:
     """
     limit = min(max(limit, 1), 200)
     offset = max(offset, 0)
-    sessions = await client().list_sessions(limit=limit, offset=offset)
+    sessions = store.list_sessions(limit=limit, offset=offset)
     if not sessions:
         return "No sessions found."
 
@@ -344,16 +315,14 @@ async def query_memory(
 ) -> str:
     """Search conversation history ACROSS all sessions (discovery).
 
-    Semantic (ColBERT) search over every session. Use this to find WHICH session
-    discussed something, then dig in with query_session(session_id). To browse a
-    known session or search within one, use query_session.
+    BM25 keyword search (FTS5) over every session. Use this to find WHICH
+    session discussed something, then dig in with query_session(session_id).
+    To browse a known session or search within one, use query_session.
 
     Args:
         query: Search term (required).
         mode: ContentMode controlling which message types match and display.
-        search_type: "semantic" (default, ColBERT MaxSim) or "both". Pure
-            "keyword" is not supported across all sessions — use query_session
-            for keyword search within a session.
+        search_type: Accepted for compatibility; all search is BM25 keyword now.
         limit: Max matches (default 20, hard cap 200).
         offset: Pagination offset.
 
@@ -363,15 +332,8 @@ async def query_memory(
     limit = min(max(limit, 1), 200)
     offset = max(offset, 0)
 
-    if search_type == SearchType.KEYWORD:
-        return (
-            "Keyword search across all sessions is not supported. Use semantic "
-            "search here, or query_session(session_id, search_type='keyword') "
-            "for keyword search within a session."
-        )
-
     roles = _MODE_ROLES.get(mode)
-    hits = await client().search_messages(query, limit=limit + offset)
+    hits = store.search(query, limit=limit + offset)
     if roles:
         hits = [h for h in hits if h.role in roles]
     hits = hits[offset:offset + limit]
@@ -385,12 +347,13 @@ async def query_memory(
     for h in hits:
         ts = h.created_at[:19].replace("T", " ")
         excerpt = _build_excerpt(h.data, query).replace("|", "\\|")
-        score = h.score if h.score is not None else 0.0
+        # bm25() ranks lower-is-better (negative); flip for readability.
+        score = -h.score if h.score is not None else 0.0
         lines.append(
             f"| {h.session_id} | {h.agent_idx} | {ts} | {h.role} "
             f"| {score:.2f} | {excerpt} |"
         )
-    lines.append(f"\n*Showing {len(hits)} semantic matches*")
+    lines.append(f"\n*Showing {len(hits)} BM25 matches*")
     return "\n".join(lines)
 
 
@@ -424,7 +387,7 @@ async def query_session(
       tail (the latest message) so you aren't drowned — raise `limit` for more,
       or set order="asc" to start from the first message of the session. Use
       `offset` / `after` / `before` to dig backwards in time.
-    - Search (query given): semantic / keyword search within the session across
+    - Search (query given): BM25 / keyword search within the session across
       all agents, with an optional context window.
 
     Args:
@@ -439,7 +402,7 @@ async def query_session(
         limit: Max messages. Browse default = 1 (the tail); search default = 20.
             Hard cap 200.
         offset: Pagination offset (into the past when order="desc").
-        search_type: "semantic" (default), "keyword", or "both". Search only.
+        search_type: "semantic" (default, BM25), "keyword" (substring), or "both". Search only.
 
     Returns:
         Markdown transcript (newest-first by default), each message tagged with
@@ -488,16 +451,13 @@ async def _search_session(session_id, query, agent_idx, mode, roles, order,
     match_indices: set[int] = set()
 
     if search_type in (SearchType.SEMANTIC, SearchType.BOTH):
-        # The service searches globally; scope to this session's agents
-        # client-side (overfetch x4, same trick as the Rust MCP tools).
+        # BM25 over the FTS5 index, scoped to this session's agents.
         agent_ids = {r.agent_id for r in all_recs}
-        sem_hits = await client().search_messages(query, limit=limit * 4)
+        sem_hits = store.search(query, limit=limit * 4, agent_ids=agent_ids)
         if roles:
             sem_hits = [h for h in sem_hits if h.role in roles]
         id_to_idx = {r.id: i for i, r in enumerate(all_recs)}
         for h in sem_hits:
-            if h.agent_id not in agent_ids:
-                continue
             idx = id_to_idx.get(h.id)
             if idx is not None:
                 match_indices.add(idx)

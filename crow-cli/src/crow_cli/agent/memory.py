@@ -55,6 +55,10 @@ class AgentRecord:
     status: str = "active"
     created_at: str = ""
 
+    @classmethod
+    def from_dict(cls, d: dict) -> "AgentRecord":
+        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
+
 
 @dataclass
 class MessageRecord:
@@ -73,6 +77,10 @@ class PromptRecord:
     name: str
     template: str
     created_at: str = ""
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "PromptRecord":
+        return cls(**{k: v for k, v in d.items() if k in cls.__dataclass_fields__})
 
 
 @dataclass

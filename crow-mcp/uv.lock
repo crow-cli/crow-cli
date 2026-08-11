@@ -184,7 +184,6 @@ name = "crow-mcp"
 version = "0.1.32"
 source = { editable = "." }
 dependencies = [
-    { name = "crow-memory-sdk" },
     { name = "fastmcp" },
     { name = "httpx" },
     { name = "markdownify" },
@@ -202,7 +201,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "crow-memory-sdk", editable = "../crow-memory-sdk" },
     { name = "fastmcp", specifier = ">=3.4.2" },
     { name = "httpx", specifier = ">=0.28.0" },
     { name = "markdownify", specifier = ">=0.14.0" },
@@ -217,31 +215,6 @@ dev = [
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "pytest-asyncio", specifier = ">=0.23.0" },
 ]
-
-[[package]]
-name = "crow-memory-sdk"
-version = "0.1.32"
-source = { editable = "../crow-memory-sdk" }
-dependencies = [
-    { name = "crow-memory-types" },
-    { name = "httpx" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "crow-memory-types", directory = "../crow-memory-types" },
-    { name = "httpx", specifier = ">=0.28.1" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=9.1.1" },
-    { name = "pytest-asyncio", specifier = ">=0.23.0" },
-]
-
-[[package]]
-name = "crow-memory-types"
-source = { directory = "../crow-memory-types" }
 
 [[package]]
 name = "cryptography"

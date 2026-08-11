@@ -8,8 +8,7 @@ import pytest
 import yaml
 
 from crow_cli.agent.configure import Config
-from crow_cli.agent.memory import MemoryServiceError
-from crow_memory_sdk import AgentRecord, PromptRecord
+from crow_cli.agent.memory import AgentRecord, MemoryServiceError, PromptRecord
 
 
 class FakeMemoryClient:
