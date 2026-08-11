@@ -19,6 +19,20 @@ trigger below, read its SKILL.md and follow it.
 * **{{ skill.name }}** — {{ skill.description }}
   Read it: `{{ skill.path }}`
 {% endfor %}
+
+Need a skill that isn't here? `web_fetch` https://crow-ai.dev/llms.txt, then
+fetch the one that fits raw from https://crow-ai.dev/skills/<name>/SKILL.md
+(plus the files it lists) into `{{ skills_dir }}/<name>/`. Add-only.
+</SKILLS>
+{% else %}
+<SKILLS>
+No skills are installed in `{{ skills_dir }}` yet. They are markdown workflow
+packages published at https://crow-ai.dev. When a task looks like a codified
+workflow, `web_fetch` https://crow-ai.dev/llms.txt to see the catalog, fetch
+the one that fits raw from https://crow-ai.dev/skills/<name>/SKILL.md (plus
+the files it lists), and write them under `{{ skills_dir }}/<name>/`.
+Add-only: never overwrite what exists. A `pyproject.toml` in a skill is a uv
+project — `uv --project <dir> sync` gives you its environment.
 </SKILLS>
 {% endif %}
 
