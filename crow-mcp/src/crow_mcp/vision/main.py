@@ -68,6 +68,19 @@ def read_image_file(file_path: str) -> Image:
             f"❌ Failed to read image file: {file_path} (invalid format or corrupted)"
         )
 
+    # Cap resolution: full-res screenshots re-encoded here produce multi-MB
+    # base64 tool results. 1568px is the standard vision-model tile ceiling,
+    # so nothing is lost for analysis.
+    max_dim = 1568
+    h, w = frame.shape[:2]
+    if max(h, w) > max_dim:
+        scale = max_dim / max(h, w)
+        frame = cv2.resize(
+            frame,
+            (int(w * scale), int(h * scale)),
+            interpolation=cv2.INTER_AREA,
+        )
+
     # Determine format from file extension
     ext = os.path.splitext(file_path)[1].lower()
     if ext in [".jpg", ".jpeg"]:

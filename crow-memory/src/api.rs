@@ -5,7 +5,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Path, Query, State},
+    extract::{DefaultBodyLimit, Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post, put},
@@ -55,6 +55,11 @@ pub fn router(store: Arc<MemoryStore>) -> Router {
         .route("/v1/sessions", get(list_sessions))
         .route("/v1/sessions/by-cwd", get(sessions_by_cwd))
         .route("/v1/images/{image_id}", put(add_image).get(get_image))
+        // axum's default body limit is 2MB, which rejects tool responses
+        // carrying base64 images before the handler (and extract_images'
+        // content-addressing) ever runs. Tool results can legitimately be
+        // much larger, so raise the ceiling.
+        .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
         .with_state(store)
 }
 
