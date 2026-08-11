@@ -130,6 +130,12 @@ class MemoryClient:
     def __init__(self, path: str | None = None, config_dir: Path | None = None, **_kwargs):
         cfg = Config.load(config_dir)
         db_path = Path(os.path.expanduser(path or str(cfg.config_dir / "crow.db")))
+        if db_path.is_dir():
+            raise MemoryServiceError(
+                500,
+                f"{db_path} is a directory (leftover lance dataset from the old "
+                "crow-memory service) — remove it so sqlite can own this path",
+            )
         self.db_uri = f"sqlite:///{db_path}"
         self.images_dir = db_path.parent / "images"
         db.create_database(self.db_uri)

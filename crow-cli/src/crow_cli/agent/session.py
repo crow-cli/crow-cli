@@ -99,7 +99,7 @@ async def lookup_or_create_prompt(
 
 class AgentSession:
     """
-    Manages conversation state and persistence via the crow-memory service.
+    Manages conversation state and persistence via an in-process sqlite db.
 
     agent_id = "{session_id}-{agent_idx}" is the key.
     session_id is derived for ACP upstream routing only.

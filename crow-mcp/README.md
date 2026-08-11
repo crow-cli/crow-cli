@@ -65,7 +65,7 @@ Or register it in any MCP client config:
 
 ## Memory tools
 
-The memory tools (`list_sessions`, `query_memory`, `query_session`) talk to the [crow-memory](../crow-memory/README.md) service over HTTP (default: `http://localhost:8901`).
+The memory tools (`list_sessions`, `query_memory`, `query_session`) read the shared sqlite database (`~/.agents/crow/crow.db` by default, override with `CROW_MEMORY_DB`) directly — read-only, BM25 keyword search via FTS5, no service involved.
 
 ## Development
 

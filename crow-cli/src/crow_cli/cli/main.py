@@ -18,7 +18,6 @@ from crow_cli.agent.configure import Config
 from crow_cli.agent.main import main as agent_main
 from crow_cli.agent.memory import MemoryServiceError
 from crow_cli.agent.session import AgentSession
-from crow_cli.cli.daemon_cmd import app as daemon_app
 from crow_cli.cli.init_cmd import init_command
 from crow_cli.cli.install import app as install_app
 from crow_cli.client.main import CrowClient, connect_client
@@ -36,7 +35,6 @@ app = typer.Typer(
 
 # Register command groups
 app.add_typer(install_app, name="install")
-app.add_typer(daemon_app, name="daemon")
 
 
 console = Console()

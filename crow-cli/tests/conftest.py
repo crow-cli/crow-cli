@@ -12,12 +12,12 @@ from crow_cli.agent.memory import AgentRecord, MemoryServiceError, PromptRecord
 
 
 class FakeMemoryClient:
-    """In-memory stand-in for the crow-memory service.
+    """In-memory stand-in for the sqlite MemoryClient.
 
     The agent is fully decoupled from persistence: AgentSession talks to a
-    MemoryClient over HTTP. For hermetic unit tests we swap that client for
+    MemoryClient. For hermetic unit tests we swap that client for
     this fake (patched over ``crow_cli.agent.session.MemoryClient``) instead of
-    standing up the real service. Storage is class-level so every instance the
+    touching the real database. Storage is class-level so every instance the
     code constructs shares one dataset — writes via one client are readable via
     the next, exactly like the real service.
     """
@@ -117,8 +117,8 @@ class FakeMemoryClient:
 def memory_service(monkeypatch):
     """Patch the persistence client with the in-memory fake; reset per test.
 
-    Persistence itself is tested in crow-memory. crow-cli unit tests that touch
-    sessions use this fake so they stay hermetic (no running service required).
+    Persistence itself is tested in tests/unit/test_db.py. crow-cli unit tests
+    that touch sessions use this fake so they stay hermetic (no real db).
     """
     FakeMemoryClient._reset()
     import crow_cli.agent.session as session_mod
@@ -222,16 +222,14 @@ def sample_workspace(tmp_path):
 # Test tiers
 #
 #   tests/unit/         fast, hermetic — always run. Tests that touch sessions
-#                       use the `memory_service` fake (see above), so no running
-#                       crow-memory service is required.
+#                       use the `memory_service` fake (see above), so no real
+#                       database is required.
 #   tests/integration/  spawn the agent / real environment — opt-in
 #   tests/e2e/          make live LLM calls via the configured provider — opt-in
 #
-# Persistence itself is tested in crow-memory (crow-memory/src + its smoke
-# tests), not here. The agent is fully decoupled from persistence: it talks to
-# the crow-memory service over HTTP. The long-term direction is a always-on
-# daemon/service (ACP v2), at which point service-backed tests would run against
-# a dedicated instance on a test port rather than a fake.
+# Persistence itself is tested in tests/unit/test_db.py (schema v3 sqlite +
+# FTS5 + image extract/hydrate). The agent is fully decoupled from
+# persistence: it talks to MemoryClient, which owns the sqlite file.
 #
 # Default `pytest` runs only the unit tier so the suite is green and fast.
 # Run the real tests with:

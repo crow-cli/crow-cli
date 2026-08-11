@@ -10,12 +10,12 @@
 
 `crow-cli` is an [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) coding agent that runs in your terminal and inside ACP-compatible editors. It reads and edits code, runs shell commands, searches the web, and remembers your work across sessions.
 
-Most agent toolkits treat persistence as an afterthought. crow-cli treats it as the point: every session lives in a dedicated memory service ([crow-memory](#crow-memory--persistence--memory-api)) built on [LanceDB](https://lancedb.github.io/lancedb/) with ColBERT and ColPali embeddings, so agents recall past conversations semantically and can delegate work to one another. Sessions get memorable coolname ids (like `taupe-squirrel-of-splendid-potency`) you can resume or read from any other agent.
+Most agent toolkits treat persistence as an afterthought. crow-cli treats it as the point: every session lives in a local sqlite database (`~/.agents/crow/crow.db`) with FTS5 full-text search, so agents recall past conversations and can delegate work to one another. Images are stored as files next to the database and hydrated only when sent to the LLM. Sessions get memorable coolname ids (like `taupe-squirrel-of-splendid-potency`) you can resume or read from any other agent.
 
 ## Requirements
 
 - Python 3.14+, managed with [uv](https://docs.astral.sh/uv/)
-- Docker, for the crow-memory and SearXNG services
+- Docker, for the SearXNG service
 - An API key for an OpenAI-compatible LLM provider (OpenRouter, OpenAI, your own endpoint, …)
 
 | Platform | Notes |
@@ -38,7 +38,7 @@ Initialize your configuration and start the backing services:
 
 ```bash
 crow-cli init                          # scaffolds ~/.agents/crow (config.yaml, .env, docker-compose)
-cd ~/.agents/crow && docker compose up -d     # starts crow-memory + SearXNG
+cd ~/.agents/crow && docker compose up -d     # starts SearXNG
 ```
 
 `crow-cli init` walks you through provider and model selection and writes your secrets to `~/.agents/crow/.env`, referenced from the config as `${VAR}`.
@@ -91,15 +91,15 @@ crow-cli is a monorepo. The pieces:
 
 The ACP-native agent: a streaming ReAct loop with tool calling, cancellation, conversation compaction, and multimodal input. Provider and model configuration lives in `~/.agents/crow/config.yaml`.
 
-### crow-memory — persistence + memory API
+### Persistence — sqlite memory
 
-A standalone service — a LanceDB store with ColBERT (text) and ColPali (image) multivector embeddings — that the agent talks to over HTTP. It backs both session persistence and a semantic memory API, exposed to agents as three tools:
+Sessions persist to a single sqlite database (`~/.agents/crow/crow.db`, schema v3, WAL mode) with an FTS5 index for BM25 keyword search. Images in messages are written to `~/.agents/crow/images/` and referenced by path; they are hydrated to base64 data URLs only when the conversation is sent to the LLM. The same database backs the memory API, exposed to agents as three tools:
 
 - `list_sessions()` — sessions ordered by recent activity (who's working on what)
 - `query_memory(query)` — find which session discussed something, across all sessions
 - `query_session(session_id)` — read or search within one session (spans all of that session's agents)
 
-This is what makes multi-agent delegation work: launch a worker, then read its thoughts from any other agent. Today crow-memory runs as a Docker container the agent connects to; longer-term it moves toward an always-on daemon, in line with the ACP v2 direction.
+This is what makes multi-agent delegation work: launch a worker, then read its thoughts from any other agent. No service to run — the sqlite file is the integration point.
 
 ### crow-mcp — the tool server
 
@@ -154,7 +154,7 @@ Run the unit tests — fast and hermetic, no services required (tests that touch
 uv run --project crow-cli pytest crow-cli/tests/unit
 ```
 
-The persistence layer itself is tested in `crow-memory`. Integration and end-to-end tiers are opt-in:
+The persistence layer itself is tested in `crow-cli/tests/unit/test_db.py`. Integration and end-to-end tiers are opt-in:
 
 ```bash
 uv run --project crow-cli pytest crow-cli/tests --run-integration   # spawn the agent
@@ -166,9 +166,9 @@ uv run --project crow-cli pytest crow-cli/tests --run-e2e           # live LLM c
 ```
 crow-cli/               the agent — ACP server, ReAct loop, CLI
 crow-mcp/               built-in MCP tool server
-crow-memory/            persistence + memory service (LanceDB, ColBERT/ColPali)
-crow-memory-types/      the wire contract (rust crate + PyO3 bindings)
-crow-memory-sdk/        python client for crow-memory
+crow-memory/            (deprecated) LanceDB memory service — superseded by sqlite
+crow-memory-types/      (deprecated) wire contract for the service era
+crow-memory-sdk/        (deprecated) python client for crow-memory
 ```
 
 ## License

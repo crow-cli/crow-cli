@@ -23,9 +23,9 @@ service you can query across sessions.
 |---------|-----------|
 | [`crow-cli`](./crow-cli/README.md) | The agent — CLI, ACP server, tool executors, memory client |
 | [`crow-mcp`](./crow-mcp/README.md) | MCP toolserver (filesystem, terminal, web search) |
-| [`crow-memory`](./crow-memory/README.md) | Memory service — LanceDB + ColBERT/ColPali embeddings, supervised daemon |
-| [`crow-memory-types`](./crow-memory-types/) | The wire contract — rust crate (crates.io) + PyO3 bindings, one schema for server and SDK |
-| [`crow-memory-sdk`](./crow-memory-sdk/) | Python client for crow-memory, built on the crow-memory-types bindings |
+| [`crow-memory`](./crow-memory/README.md) | (deprecated) LanceDB memory service — superseded by in-process sqlite |
+| [`crow-memory-types`](./crow-memory-types/) | (deprecated) wire contract for the service era |
+| [`crow-memory-sdk`](./crow-memory-sdk/) | (deprecated) Python client for crow-memory |
 
 ## Getting started
 

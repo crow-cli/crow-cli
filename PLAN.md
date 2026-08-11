@@ -16,11 +16,11 @@ crow-cli — the sqlite file is the only integration point. Don't overcomplicate
 Build/test: `cd crow-cli && uv --project crow-cli run pytest crow-cli/tests/unit -q`
 and `uv --project crow-mcp run pytest crow-mcp/tests -q`.
 
-Current trajectory: 1 → 2 → 3 → 4.
+All phases complete (1 → 2 → 3 → 4).
 
 ## Phase 1 — db.py back in crow-cli
-1.1 Re-add `sqlalchemy` to crow-cli pyproject.
-1.2 `crow-cli/src/crow_cli/agent/db.py`: schema v3 (prompts/agents/messages;
+1.1 [x] Re-add `sqlalchemy` to crow-cli pyproject.
+1.2 [x] `crow-cli/src/crow_cli/agent/db.py`: schema v3 (prompts/agents/messages;
     one row = one message; JSON data col) + engine pragmas (WAL,
     busy_timeout=5000, synchronous=NORMAL) + FTS5 `messages_fts` (agent_id/role
     unindexed + extracted text, bm25 rank) synced in add_message + image
@@ -32,11 +32,11 @@ Current trajectory: 1 → 2 → 3 → 4.
     two-engine concurrent write smoke, list_sessions ordering.
 
 ## Phase 2 — rewire crow-cli agent
-2.1 session.py: MemoryClient → db.py; db_uri/images_dir from Config
+2.1 [x] session.py: MemoryClient → db.py; db_uri/images_dir from Config
     (config_dir/crow.db, config_dir/images).
-2.2 react.py / main.py / compact.py / cli inspect: follow the new seam;
+2.2 [x] react.py / main.py / compact.py / cli inspect: follow the new seam;
     hydrate image_ref → base64 ONLY when building the LLM request.
-2.3 Delete agent/memory.py SDK wrapper; drop dead config keys
+2.3 [x] Delete agent/memory.py (rewrote as sqlite adapter; interface kept) SDK wrapper; drop dead config keys
     (memory URL/retry budget).
     Verify: crow-cli unit suite green; live smoke: persist message with inline
     image → row has image_ref, file on disk, hydrated payload has data URL.
@@ -48,12 +48,16 @@ Current trajectory: 1 → 2 → 3 → 4.
 3.2 Restart crow-mcp; verify list_sessions/query_session/query_memory return
     real rows (this session visible). crow-mcp suite green.
 
-## Phase 4 — delete the service stack
-4.1 daemon.py: drop crow-memory built-in; ollama-mv optional only.
-4.2 config.yaml: drop memory_port/embedding reliance from agent path.
-4.3 crow-cli + crow-mcp: drop crow-memory-sdk dep; READMEs note deprecation of
-    crow-memory (Rust) + sdk.
-4.4 Kill crow-memory daemon; verify crow-cli + crow-mcp fully functional with
-    the service dead.
-4.5 AGENTS.md (repo root): new architecture facts, strike stale ones.
+## Phase 4 — delete daemon management from the CLI (done)
+4.1 [x] Deleted daemon.py, daemon_cmd.py, embeddings.py (ollama-mv provisioning),
+    test_daemon.py, test_embeddings.py, main.py registration, init_cmd.py
+    steps 5+6 (ollama-mv build + daemon start), stale service-era
+    integration test in crow-mcp.
+4.2 [x] defaults.py template: memory_path → crow.db, retry-budget block deleted;
+    init writes sqlite facts, no daemon promises.
+4.3 [x] READMEs (root, crow-cli, crow-mcp) + monorepo AGENTS.md: sqlite story,
+    crow-memory*/sdk marked deprecated.
+4.4 [x] Running daemons left ALIVE (user supervises; never kill from agent work).
+    Live LLM vision test passed against the running crow-mcp daemon.
+4.5 [x] Root AGENTS.md (~/src/crow-team): new architecture facts.
     Commit per phase with Session-Id trailer.

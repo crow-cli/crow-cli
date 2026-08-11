@@ -8,28 +8,33 @@ instructions for agents to follow
 # RUNNING
 Run with: `cd crow-cli && uv --project . run crow-cli`
 
-# ARCHITECTURE — the wire contract
-- `crow-memory-types` is the SINGLE contract between the crow-memory server
-  and every client. Rust crate (crates.io) + PyO3 bindings (cargo feature
-  `python`, built by maturin via crow-memory-types/pyproject.toml).
-- `crow-memory-sdk` imports the `crow_memory_types` native module — the SAME
-  serde impls the server uses. No codegen, no schema.json hop, no drift.
-  SDK wrappers (MessageRecord/SessionInfo/ImageRecord in types.py) add only
-  client-side ergonomics.
-- Versions move in LOCKSTEP across crow-memory-types, crow-memory,
-  crow-memory-sdk, crow-cli, crow-mcp. Release = git tag → GitHub release →
-  publish workflows use whatever version the manifests carry (no
-  auto-increment). crates.io publish order: crow-memory-types FIRST, then
-  crow-memory (depends on types by version; path is stripped on publish).
+# ARCHITECTURE — sqlite memory (2026-08-11)
+- Persistence is an in-process sqlite database (`~/.agents/crow/crow.db`,
+  schema v3, WAL + busy_timeout=5000): crow-cli/src/crow_cli/agent/db.py
+  (sqlalchemy) owns writes; crow-mcp reads the SAME file read-only with plain
+  sqlite3 (crow-mcp/src/crow_mcp/memory/store.py). The sqlite file is the only
+  integration point — crow-mcp NEVER imports crow-cli (MCP is a runtime
+  protocol boundary).
+- Images are files: inline image blocks are extracted to
+  `~/.agents/crow/images/<sha256><ext>` at write time (db row stores an
+  `image_ref` block) and hydrated to base64 data URLs only when the
+  conversation is sent to the LLM.
+- Search is FTS5 + bm25 (keyword). No embeddings, no LanceDB, no ColBERT.
+- The service era is over: crow-memory (Rust), crow-memory-types,
+  crow-memory-sdk are DEPRECATED — still in the repo, no longer imported by
+  crow-cli or crow-mcp. Daemon management was deleted from the CLI
+  (daemon.py/daemon_cmd.py/embeddings.py gone); daemons that still run on a
+  machine are supervised externally — NEVER stop/restart them from agent
+  code, the user does that himself.
 - crow-orchestrator-mcp and crow-task-mcp are DEAD (deleted 2026-08-10).
   Do not resurrect.
 
-# GOTCHAS
+# TESTING
+- crow-cli: `cd crow-cli && uv --project crow-cli run pytest crow-cli/tests/unit -q`
+- crow-mcp: `uv --project crow-mcp run pytest crow-mcp/tests -q`
+- Persistence contract lives in crow-cli/tests/unit/test_db.py.
+
+# GOTCHAS (historical, service era — mostly dead)
 - cargo on this laptop: always `-j 2`.
-- Local `cargo check -p crow-memory-types --features python` needs
-  `PYO3_PYTHON=$PWD/crow-memory-sdk/.venv/bin/python` (system python is 3.12,
-  abi3-py314 needs >= 3.14). uv-driven builds find the venv automatically.
-- uv does NOT rebuild the crow-memory-types path-dep wheel when rust sources
-  change. After rust edits: `uv sync --reinstall-package crow-memory-types`.
-- crates.io already holds crow-memory/crow-memory-types 0.2.0 (an earlier
-  ACP-agnostic publish); local manifests are 0.1.31. Reconcile at next tag.
+- crates.io still holds crow-memory/crow-memory-types 0.2.0 from an earlier
+  ACP-agnostic publish; irrelevant now that the packages are deprecated.

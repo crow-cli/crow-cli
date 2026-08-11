@@ -218,9 +218,9 @@ mcpServers:
     transport: http
     url: http://127.0.0.1:2770/mcp
 
-# Memory is served by the crow-memory HTTP service (Rust, LanceDB-backed).
-# The python crow-memory-sdk talks to it; this path is no longer used in-process.
-memory_path: ~/.agents/crow/memory.lance
+# Memory is an in-process sqlite database (schema v3). Images are stored as
+# files next to it (images/) and hydrated to base64 only when sent to the LLM.
+memory_path: ~/.agents/crow/crow.db
 
 # Where agent skills live (one directory per skill, each with a SKILL.md).
 # Scanned at session creation and injected into the system prompt.
@@ -249,13 +249,4 @@ MAX_COMPACT_TOKENS: 180000
 
 MAX_TOKENS: 38192
 
-max_retries_per_step: 3
-
-# Retry budget for the crow-memory client (crow-memory-sdk). The agent
-# waits out crow-memory restarts instead of dying: backoff doubles from
-# memory_retry_base_delay each step, capped at memory_retry_max_delay
-# seconds. memory_max_retries is TOTAL attempts; 0 = retry forever.
-# Defaults: 12 attempts ≈ 3.5 min of backoff.
-memory_max_retries: 12
-memory_retry_base_delay: 0.5
-memory_retry_max_delay: 30.0"""
+max_retries_per_step: 3"""

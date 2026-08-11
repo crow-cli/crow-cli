@@ -285,7 +285,7 @@ def run_init(config_dir: Path, yes: bool = False):
     # =========================================================================
     console.print("\n[bold cyan]═══ Step 3: Review ═══[/bold cyan]\n")
 
-    memory_path = str(config_dir / "memory.lance")
+    memory_path = str(config_dir / "crow.db")
     console.print(f"[dim]Memory store: {memory_path}[/dim]")
 
     if providers:
@@ -309,9 +309,8 @@ def run_init(config_dir: Path, yes: bool = False):
     s_table.add_column("Service", style="cyan")
     s_table.add_column("Status", style="green")
     s_table.add_row("SearXNG", "✓ Docker" if setup_searxng else "✗ Skip")
-    s_table.add_row("Memory", "crow-memory HTTP service (rust, LanceDB)")
+    s_table.add_row("Memory", "sqlite (crow.db, in-process)")
     s_table.add_row("MCP", "crow-mcp-dev over HTTP (:2770)")
-    s_table.add_row("Embeddings", "ollama-mv (multivector fork)")
     console.print(s_table)
 
     console.print(f"\n[dim]Config directory: {config_dir}[/dim]")
@@ -403,69 +402,6 @@ def run_init(config_dir: Path, yes: bool = False):
     (config_dir / "logs").mkdir(exist_ok=True)
 
     # =========================================================================
-    # STEP 5: ollama-mv (multivector embedding server)
-    # =========================================================================
-    console.print("\n[bold cyan]═══ Step 5: ollama-mv (embeddings) ═══[/bold cyan]\n")
-
-    from crow_cli.cli import embeddings
-    from crow_cli.cli.daemon import default_registry
-
-    registry = default_registry(config_dir)
-    ollama_spec = registry["ollama-mv"]
-    ollama_bin = Path(ollama_spec.command)
-    if ollama_bin.is_file():
-        console.print(f"[green]✓[/green] ollama-mv binary found: {ollama_bin}")
-    else:
-        do_build = (
-            True
-            if yes
-            else Confirm.ask(
-                f"ollama-mv binary missing ({ollama_bin}). Build it from source? "
-                "[dim](go + cmake, takes a while)[/dim]",
-                default=True,
-            )
-        )
-        if do_build:
-            try:
-                built = embeddings.provision(config_dir)
-                console.print(f"[green]✓[/green] Built {built}")
-            except embeddings.ProvisionError as e:
-                console.print(
-                    f"[red]✗ ollama-mv build failed — {e}\n"
-                    "  fix it later: crow-cli-dev daemon install ollama-mv[/red]"
-                )
-        else:
-            console.print(
-                "[yellow]⊘ Skipped — run `crow-cli-dev daemon install ollama-mv` later[/yellow]"
-            )
-
-    # =========================================================================
-    # STEP 6: Start daemons
-    # =========================================================================
-    console.print("\n[bold cyan]═══ Step 6: Start Daemons ═══[/bold cyan]\n")
-
-    start_names = ["crow-memory", "crow-mcp", "ollama-mv"]
-    if setup_searxng:
-        start_names.append("searxng")
-
-    do_start = (
-        True
-        if yes
-        else Confirm.ask(f"Start daemons now? [dim]({', '.join(start_names)})[/dim]", default=True)
-    )
-    if do_start:
-        from crow_cli.cli.daemon import start as daemon_start
-
-        # Re-read the registry: config.yaml was just written (ports etc.)
-        registry = default_registry(config_dir)
-        for name in start_names:
-            console.print(daemon_start(config_dir, registry[name]))
-    else:
-        console.print(
-            "[dim]Start them later: crow-cli-dev daemon start all[/dim]"
-        )
-
-    # =========================================================================
     # Done
     # =========================================================================
     config_logs = config_dir / "logs"
@@ -475,14 +411,13 @@ def run_init(config_dir: Path, yes: bool = False):
     done_lines = [
         "[bold green]✓ Configuration complete![/bold green]\n",
         f"Config:   [cyan]{config_file}[/cyan]",
-        f"Memory:   [cyan]crow-memory service → {config_dir / 'memory.lance'}[/cyan]",
+        f"Memory:   [cyan]sqlite → {config_dir / 'crow.db'}[/cyan]",
         f"Logs:     [cyan]{config_logs}[/cyan]",
         f"Prompt:   [cyan]{system_prompt_dir}/system_prompt.jinja2[/cyan]",
         f"Secrets:  [cyan]{env_file}[/cyan]",
     ]
     if active_services:
         done_lines.append(f"Compose:  [cyan]{compose_file}[/cyan]")
-    done_lines.append(f"\n[dim]Daemons:[/dim] [bold white]crow-cli-dev daemon status[/bold white]")
     done_lines.append(f'[dim]Test:[/dim] [bold white]crow-cli-dev run "hey"[/bold white]')
     console.print(Panel.fit("\n".join(done_lines), border_style="green"))
 

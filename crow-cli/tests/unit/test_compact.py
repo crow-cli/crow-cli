@@ -1,7 +1,7 @@
 """Unit tests for compaction (no live LLM, no live service).
 
 The summarization LLM call is mocked, and persistence is faked via the
-``memory_service`` fixture (an in-memory stand-in for the crow-memory service).
+``memory_service`` fixture (an in-memory stand-in for the sqlite MemoryClient).
 
 ``compact()`` (crow_cli.agent.compact) is async and takes a ``Config``. It
 summarizes the conversation into a NEW agent record (``agent_idx + 1``) whose

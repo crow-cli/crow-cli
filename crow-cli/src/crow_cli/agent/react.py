@@ -352,7 +352,7 @@ def _serialize_chunk(chunk) -> dict:
             return [_serialize_value(v) for v in value]
         if isinstance(value, dict):
             return {k: _serialize_value(v) for k, v in value.items()}
-        # crow-memory wire types (to_dict) or Pydantic model - serialize to dict
+        # record types (to_dict) or Pydantic model - serialize to dict
         if hasattr(value, "to_dict"):
             return _serialize_value(value.to_dict())
         if hasattr(value, "model_dump"):
