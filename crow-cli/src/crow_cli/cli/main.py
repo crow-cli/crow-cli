@@ -76,6 +76,21 @@ def run_agentmain(
         "-m",
         help="Model to use (name from config.yaml models: section)",
     ),
+    http: bool = typer.Option(
+        False,
+        "--http",
+        help="Serve ACP over Streamable HTTP + WebSocket instead of stdio",
+    ),
+    host: str = typer.Option(
+        "127.0.0.1",
+        "--host",
+        help="Bind address with --http (use 0.0.0.0 to expose)",
+    ),
+    port: int = typer.Option(
+        2769,
+        "--port",
+        help="Port with --http (default 2769)",
+    ),
 ):
     """Main entry point for the crow-cli agent."""
     if config_dir is None:
@@ -109,7 +124,7 @@ def run_agentmain(
     if debug:
         config.chunk_log = True
 
-    agent_main(config=config, model=model)
+    agent_main(config=config, model=model, http=http, host=host, port=port)
 
 
 @app.command("init")

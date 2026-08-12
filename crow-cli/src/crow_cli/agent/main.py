@@ -839,21 +839,64 @@ class AcpAgent(Agent):
         return ListSessionsResponse(sessions=sessions, next_cursor=None)
 
 
+async def serve_http(
+    config: Config, model: str | None, host: str, port: int
+) -> None:
+    """Serve the agent over Streamable HTTP + WebSocket (experimental, same
+    JSON-RPC lifecycle as stdio). One AcpAgent instance per connection; all
+    instances share the sqlite session store, so any client can address the
+    same sessions."""
+    import hypercorn.asyncio
+    from acp.http.asgi import create_asgi_app
+    from hypercorn.config import Config as HypercornConfig
+
+    app = create_asgi_app(lambda conn: AcpAgent(config=config, model=model))
+    hcfg = HypercornConfig()
+    hcfg.bind = [f"{host}:{port}"]
+    # Streamable HTTP requires HTTP/2; hypercorn negotiates h2c/h2.
+    hcfg.alpn_protocols = ["h2", "http/1.1"]
+    await hypercorn.asyncio.serve(app, hcfg)
+
+
 async def agent_run(
     config_dir: Path | None = None,
     config: Config | None = None,
     debug: bool = False,
     model: str | None = None,
+    http: bool = False,
+    host: str = "127.0.0.1",
+    port: int = 2769,
 ) -> None:
     if config is None:
         config = Config.load(config_dir=config_dir)
     if debug:
         config.chunk_log = True
-    await run_agent(AcpAgent(config=config, model=model))
+    if http:
+        await serve_http(config, model, host, port)
+    else:
+        await run_agent(AcpAgent(config=config, model=model))
 
 
-def main(config_dir: Path | None = None, config: Config | None = None, debug: bool = False, model: str | None = None):
-    asyncio.run(agent_run(config_dir=config_dir, config=config, debug=debug, model=model))
+def main(
+    config_dir: Path | None = None,
+    config: Config | None = None,
+    debug: bool = False,
+    model: str | None = None,
+    http: bool = False,
+    host: str = "127.0.0.1",
+    port: int = 2769,
+):
+    asyncio.run(
+        agent_run(
+            config_dir=config_dir,
+            config=config,
+            debug=debug,
+            model=model,
+            http=http,
+            host=host,
+            port=port,
+        )
+    )
 
 
 if __name__ == "__main__":
