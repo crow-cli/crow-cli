@@ -33,13 +33,6 @@ from crow_cli.agent.tools import (
     execute_acp_terminal,
     execute_acp_tool,
     execute_acp_write,
-    execute_acp_prompt,
-    execute_orchestration_send_prompt,
-    execute_orchestration_task_read,
-    execute_orchestration_task_write,
-    execute_orchestration_task_send,
-    execute_orchestration_orchestrator_task_read,
-    execute_orchestration_orchestrator_task_write,
 )
 
 logger = logging.getLogger(__name__)
@@ -636,71 +629,6 @@ async def _execute_tool_calls_inner(
                     args=arg_dict,
                     logger=logger,
                     snapshot_hooks=snapshot_hooks,
-                )
-            elif tool_name == "prompt":
-                result_content = await execute_acp_prompt(
-                    conn=conn,
-                    turn_id=turn_id,
-                    mcp_clients=mcp_clients,
-                    agent_id=agent_id,
-                    tool_call_id=llm_tool_call_id,
-                    tool_name=tool_name,
-                    args=arg_dict,
-                    logger=logger,
-                )
-            elif tool_name == "send_prompt":
-                result_content = await execute_orchestration_send_prompt(
-                    conn=conn,
-                    turn_id=turn_id,
-                    agent_id=agent_id,
-                    tool_call_id=llm_tool_call_id,
-                    args=arg_dict,
-                    logger=logger,
-                )
-            elif tool_name == "task_read":
-                result_content = await execute_orchestration_task_read(
-                    conn=conn,
-                    turn_id=turn_id,
-                    agent_id=agent_id,
-                    tool_call_id=llm_tool_call_id,
-                    args=arg_dict,
-                    logger=logger,
-                )
-            elif tool_name == "task_write":
-                result_content = await execute_orchestration_task_write(
-                    conn=conn,
-                    turn_id=turn_id,
-                    agent_id=agent_id,
-                    tool_call_id=llm_tool_call_id,
-                    args=arg_dict,
-                    logger=logger,
-                )
-            elif tool_name == "task_send":
-                result_content = await execute_orchestration_task_send(
-                    conn=conn,
-                    turn_id=turn_id,
-                    agent_id=agent_id,
-                    tool_call_id=llm_tool_call_id,
-                    args=arg_dict,
-                    logger=logger,
-                )
-            elif tool_name == "orchestrator_task_read":
-                result_content = await execute_orchestration_orchestrator_task_read(
-                    conn=conn,
-                    turn_id=turn_id,
-                    agent_id=agent_id,
-                    tool_call_id=llm_tool_call_id,
-                    args=arg_dict,
-                    logger=logger,
-                )
-            elif tool_name == "orchestrator_task_write":
-                result_content = await execute_orchestration_orchestrator_task_write(
-                    conn=conn,
-                    turn_id=turn_id,
-                    agent_id=agent_id,
-                    tool_call_id=llm_tool_call_id,
-                    args=arg_dict,
-                    logger=logger,
                 )
             else:
                 result_content = await execute_acp_tool(
