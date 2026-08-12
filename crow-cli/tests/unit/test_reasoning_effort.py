@@ -17,9 +17,27 @@ import yaml
 from crow_cli.agent.configure import (
     REASONING_EFFORT_VALUES,
     Config,
+    build_sampling_params,
     parse_reasoning_effort,
 )
 from crow_cli.agent.react import send_request
+
+
+# ---------------------------------------------------------------------------
+# build_sampling_params — the one sampling rule shared by react loop + compact
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSamplingParams:
+    def test_reasoning_effort_set_omits_temperature(self):
+        assert build_sampling_params("high", 0.6) == {"reasoning_effort": "high"}
+
+    def test_reasoning_effort_none_string_is_still_set(self):
+        # "none" is a real OpenAI effort level, not "unset"
+        assert build_sampling_params("none", 0.6) == {"reasoning_effort": "none"}
+
+    def test_unset_falls_back_to_temperature(self):
+        assert build_sampling_params(None, 0.4) == {"temperature": 0.4}
 
 
 # ---------------------------------------------------------------------------

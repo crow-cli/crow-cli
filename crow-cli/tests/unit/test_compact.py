@@ -77,6 +77,32 @@ class TestCompaction:
         assert kwargs["model"] == "test-model"
 
     @pytest.mark.asyncio
+    async def test_compact_uses_config_temperature_not_session_params(
+        self, setup_session, mock_llm, compact_config
+    ):
+        """Compaction samples with config.TEMPERATURE — NOT the session's
+        request_params (0.7 here) and NOT the provider default of 1.0, which
+        makes the model ramble instead of compress."""
+        compact_config.TEMPERATURE = 0.4
+        await compact(setup_session, mock_llm, compact_config, logger=MagicMock())
+
+        kwargs = mock_llm.chat.completions.create.call_args.kwargs
+        assert kwargs["temperature"] == 0.4
+        assert "reasoning_effort" not in kwargs
+
+    @pytest.mark.asyncio
+    async def test_compact_uses_reasoning_effort_instead_of_temperature(
+        self, setup_session, mock_llm, compact_config
+    ):
+        """Reasoning models reject temperature — compaction must swap too."""
+        compact_config.reasoning_effort = "high"
+        await compact(setup_session, mock_llm, compact_config, logger=MagicMock())
+
+        kwargs = mock_llm.chat.completions.create.call_args.kwargs
+        assert kwargs["reasoning_effort"] == "high"
+        assert "temperature" not in kwargs
+
+    @pytest.mark.asyncio
     async def test_compact_creates_new_agent_record(
         self, setup_session, mock_llm, compact_config
     ):

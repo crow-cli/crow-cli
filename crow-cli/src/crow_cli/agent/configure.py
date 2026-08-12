@@ -119,6 +119,20 @@ def parse_reasoning_effort(raw: Any) -> str:
         ) from None
 
 
+def build_sampling_params(
+    reasoning_effort: str | None,
+    temperature: float,
+) -> dict[str, Any]:
+    """The one sampling rule for every LLM call (react loop AND compaction):
+    reasoning_effort when set — temperature omitted, reasoning models reject
+    it — else temperature. Never both, never neither (no provider defaults)."""
+    return (
+        {"reasoning_effort": reasoning_effort}
+        if reasoning_effort
+        else {"temperature": temperature}
+    )
+
+
 @dataclass
 class LLMProvider:
     name: str

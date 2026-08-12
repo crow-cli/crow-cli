@@ -17,7 +17,7 @@ from openai import APIConnectionError, APIError, AsyncOpenAI, RateLimitError
 from openai._exceptions import APITimeoutError
 
 from crow_cli.agent.compact import compact
-from crow_cli.agent.configure import Config
+from crow_cli.agent.configure import Config, build_sampling_params
 from crow_cli.agent.context import maximal_deserialize
 from crow_cli.agent.hooks import CommandHook, FileSnapshotHook
 from crow_cli.agent.model_routing import (
@@ -153,11 +153,7 @@ async def send_request(
 
     # Reasoning models (gpt-5, o3, ...) reject temperature — when
     # reasoning_effort is configured we send it and omit temperature entirely.
-    sampling_params: dict[str, Any] = (
-        {"reasoning_effort": reasoning_effort}
-        if reasoning_effort
-        else {"temperature": temperature}
-    )
+    sampling_params = build_sampling_params(reasoning_effort, temperature)
 
     # Under --debug, dump the exact request payload (the append-only chat
     # history + params) so immutable-history analysis can diff consecutive
