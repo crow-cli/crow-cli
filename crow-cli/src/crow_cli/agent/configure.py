@@ -97,6 +97,11 @@ def resolve_env_vars(value: Any, missing: set[str] | None = None) -> Any:
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 REASONING_EFFORT_VALUES = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
+# Per-model modality. "image" (default) = assume vision-capable until proven
+# otherwise; "text" = the model cannot see images (route around / strip).
+Modality = Literal["text", "image"]
+MODALITY_VALUES = ("text", "image")
+
 
 class ReasoningEffortModel(BaseModel):
     """Validate a reasoning_effort value against OpenAI's enumerable set."""
@@ -133,6 +138,18 @@ def build_sampling_params(
     )
 
 
+def sampling_params_for(config: "Config", model_id: str) -> dict[str, Any]:
+    """Per-model sampling rule for every LLM call (react loop AND compaction):
+    the configured model's reasoning_effort XOR temperature. Models not in
+    config get the defaults (temperature 0.6, no effort)."""
+    model = next(
+        (m for m in config.llm.models.values() if m.model_id == model_id), None
+    )
+    if model is None:
+        return {"temperature": 0.6}
+    return build_sampling_params(model.reasoning_effort, model.temperature)
+
+
 @dataclass
 class LLMProvider:
     name: str
@@ -145,9 +162,13 @@ class LLModel:
     name: str
     provider_name: str
     model_id: str
-    # None = unknown → assume capable of everything (permissive default).
-    # A set restricts: e.g. set() is text-only, {"vision"} handles images.
-    capabilities: set[str] | None = None
+    # Per-model sampling, XOR: reasoning_effort wins and temperature is
+    # omitted entirely (reasoning models reject it); else temperature.
+    temperature: float = 0.6
+    reasoning_effort: ReasoningEffort | None = None
+    # Assume vision-capable until proven otherwise; "text" models get image
+    # blocks stripped / routed around (see model_routing).
+    modality: Modality = "image"
     # Ordered fallback chain (model NAMES from this config) used when this
     # model cannot handle the modalities present in the conversation.
     fallbacks: list[str] = field(default_factory=list)
@@ -169,10 +190,6 @@ class Config:
     max_retries_per_step: int = 3
     MAX_COMPACT_TOKENS: int = 190000
     MAX_TOKENS: int = 38192
-    TEMPERATURE: float = 0.6
-    # When set, sent to the LLM INSTEAD of temperature — reasoning models
-    # (gpt-5, o3, ...) reject temperature. Validated against OpenAI's enum.
-    reasoning_effort: ReasoningEffort | None = None
     chunk_log: bool = False  # Write every raw chunk to JSONL for debugging
     system_prompt: str = SYSTEM_PROMPT
     system_prompt_path: Path | None = None
@@ -218,6 +235,15 @@ class Config:
         with open(config_file) as f:
             raw = yaml.safe_load(f) or {}
 
+        # Sampling is per-model now (see LLModel) — a leftover global would be
+        # silently ignored, so reject it with a migration hint instead.
+        for stale in ("TEMPERATURE", "reasoning_effort"):
+            if stale in raw:
+                raise ValueError(
+                    f"config.yaml: global {stale!r} was removed; set it per "
+                    f"model under models: (temperature / reasoning_effort)."
+                )
+
         _logger.info("RAW config.yaml mcpServers: %s", raw.get("mcpServers", {}))
         missing_vars: set[str] = set()
         parsed = resolve_env_vars(raw, missing_vars)
@@ -239,13 +265,24 @@ class Config:
 
         # Parse models
         for name, data in parsed.get("models", {}).items():
-            raw_caps = data.get("capabilities")
-            capabilities = set(raw_caps) if raw_caps is not None else None
+            raw_effort = data.get("reasoning_effort")
+            raw_modality = str(data.get("modality", "image")).strip().lower()
+            if raw_modality not in MODALITY_VALUES:
+                raise ValueError(
+                    f"model {name!r}: modality must be one of "
+                    f"{', '.join(MODALITY_VALUES)}, got {data.get('modality')!r}"
+                )
             llm.models[name] = LLModel(
                 name=name,
                 provider_name=data.get("provider", ""),
                 model_id=data.get("model", ""),
-                capabilities=capabilities,
+                temperature=float(data.get("temperature", 0.6)),
+                reasoning_effort=(
+                    parse_reasoning_effort(raw_effort)
+                    if raw_effort is not None
+                    else None
+                ),
+                modality=raw_modality,
                 fallbacks=list(data.get("fallbacks") or []),
             )
 
@@ -257,14 +294,9 @@ class Config:
             ("max_retries_per_step", int),
             ("MAX_COMPACT_TOKENS", int),
             ("MAX_TOKENS", int),
-            ("TEMPERATURE", float),
         ):
             if key in parsed:
                 overrides[key] = typ(parsed[key])
-        if "reasoning_effort" in parsed and parsed["reasoning_effort"] is not None:
-            overrides["reasoning_effort"] = parse_reasoning_effort(
-                parsed["reasoning_effort"]
-            )
         if "chunk_log" in parsed:
             overrides["chunk_log"] = bool(parsed["chunk_log"])
 

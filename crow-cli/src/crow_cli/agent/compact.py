@@ -17,7 +17,7 @@ from logging import Logger
 
 from openai import AsyncOpenAI
 
-from crow_cli.agent.configure import Config, build_sampling_params
+from crow_cli.agent.configure import Config, sampling_params_for
 from crow_cli.agent.session import (
     AgentSession,
     make_agent_session,
@@ -123,8 +123,8 @@ async def compact(
     # 3. Append compaction prompt
     messages.append({"role": "user", "content": COMPACTION_PROMPT})
 
-    # 4. Send to LLM — same sampling rule as the react loop: reasoning_effort
-    # when configured, else config TEMPERATURE. Never the provider default
+    # 4. Send to LLM — same per-model sampling rule as the react loop: the
+    # model's reasoning_effort XOR temperature. Never the provider default
     # (temp 1.0 makes the model ramble instead of compress) and never the
     # session's request_params temperature.
     response = await llm.chat.completions.create(
@@ -133,7 +133,7 @@ async def compact(
         tools=session.tools if session.tools else None,
         tool_choice="none",
         max_tokens=MAX_OUTPUT_TOKENS,
-        **build_sampling_params(config.reasoning_effort, config.TEMPERATURE),
+        **sampling_params_for(config, session.model_identifier),
     )
     summary = response.choices[0].message.content
     usage = {

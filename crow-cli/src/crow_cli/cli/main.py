@@ -292,7 +292,8 @@ def models(
             "name": m.name,
             "provider": m.provider_name,
             "model_id": m.model_id,
-            "capabilities": sorted(m.capabilities) if m.capabilities is not None else None,
+            "modality": m.modality,
+            "sampling": m.reasoning_effort or f"temp={m.temperature}",
             "fallbacks": list(m.fallbacks),
             "default": i == 0,
         }
@@ -309,20 +310,21 @@ def models(
     table.add_column("name", style="bold", overflow="fold")
     table.add_column("provider", overflow="fold")
     table.add_column("model_id", overflow="fold")
-    table.add_column("capabilities", overflow="fold")
+    table.add_column("modality", overflow="fold")
+    table.add_column("sampling", overflow="fold")
     table.add_column("fallbacks", overflow="fold")
     for r in rows:
-        caps = ",".join(r["capabilities"]) if r["capabilities"] is not None else "*"
         table.add_row(
             "[green]*[/green]" if r["default"] else "",
             r["name"],
             r["provider"],
             r["model_id"],
-            caps,
+            r["modality"],
+            r["sampling"],
             ",".join(r["fallbacks"]),
         )
     console.print(table)
-    console.print("[dim]* = default (first in config.yaml); capabilities * = assume all[/dim]")
+    console.print("[dim]* = default (first in config.yaml); modality image = assume vision[/dim]")
 
 
 @app.command()

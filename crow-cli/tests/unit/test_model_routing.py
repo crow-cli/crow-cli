@@ -1,7 +1,7 @@
-"""Capability-aware model routing + transient-400 retry (hermetic).
+"""Modality-aware model routing + transient-400 retry (hermetic).
 
 Covers the carried v1 TODO item: retry transient provider 400s
-(multimodal ingest timeouts) + capability-aware fallback with auto-strip
+(multimodal ingest timeouts) + per-model modality fallback with auto-strip
 on downgrade. No LLM, no network.
 """
 
@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import httpx
 import pytest
@@ -33,7 +32,6 @@ IMG_BLOCK = {
     "type": "image_url",
     "image_url": {"url": "data:image/png;base64,AAAA"},
 }
-AUDIO_BLOCK = {"type": "input_audio", "input_audio": {"data": "AAAA", "format": "wav"}}
 TEXT_BLOCK = {"type": "text", "text": "hello"}
 
 
@@ -52,23 +50,23 @@ MODELS = {
         name="text-only",
         provider_name="p1",
         model_id="text-only-id",
-        capabilities=set(),  # explicitly text-only
+        modality="text",
         fallbacks=["vision-model"],
     ),
     "vision-model": LLModel(
         name="vision-model",
         provider_name="p1",
         model_id="vision-id",
-        capabilities={"vision"},
+        modality="image",
     ),
     "other-provider-vision": LLModel(
         name="other-provider-vision",
         provider_name="p2",
         model_id="other-vision-id",
-        capabilities={"vision"},
+        modality="image",
     ),
-    "unknown-caps": LLModel(
-        name="unknown-caps", provider_name="p1", model_id="unknown-id"
+    "default-modality": LLModel(
+        name="default-modality", provider_name="p1", model_id="default-id"
     ),
 }
 
@@ -83,12 +81,11 @@ def test_modalities_none_for_text_only():
     assert modalities_in_messages(msgs) == set()
 
 
-def test_modalities_detects_image_and_audio():
+def test_modalities_detects_image():
     msgs = [
         {"role": "user", "content": [TEXT_BLOCK, IMG_BLOCK]},
-        {"role": "tool", "content": [AUDIO_BLOCK], "tool_call_id": "x"},
     ]
-    assert modalities_in_messages(msgs) == {"vision", "audio"}
+    assert modalities_in_messages(msgs) == {"vision"}
 
 
 # ---------------------------------------------------------------------------
@@ -101,9 +98,10 @@ def test_route_no_modalities_unchanged():
     assert route_model(cfg, "text-only-id", set()) == ("text-only-id", set())
 
 
-def test_route_unknown_capabilities_is_permissive():
+def test_route_default_modality_is_permissive():
+    # modality defaults to "image" = assume vision-capable until proven otherwise
     cfg = make_config(MODELS)
-    assert route_model(cfg, "unknown-id", {"vision"}) == ("unknown-id", set())
+    assert route_model(cfg, "default-id", {"vision"}) == ("default-id", set())
 
 
 def test_route_capable_model_unchanged():
@@ -124,7 +122,7 @@ def test_route_skips_other_provider_fallback_and_strips():
         name="text-only",
         provider_name="p1",
         model_id="text-only-id",
-        capabilities=set(),
+        modality="text",
         fallbacks=["other-provider-vision"],  # p2 — client is bound to p1
     )
     cfg = make_config(models)
@@ -139,12 +137,12 @@ def test_route_no_fallback_strips():
         name="text-only",
         provider_name="p1",
         model_id="text-only-id",
-        capabilities=set(),
+        modality="text",
     )
     cfg = make_config(models)
-    assert route_model(cfg, "text-only-id", {"vision", "audio"}) == (
+    assert route_model(cfg, "text-only-id", {"vision"}) == (
         "text-only-id",
-        {"vision", "audio"},
+        {"vision"},
     )
 
 
@@ -176,12 +174,6 @@ def test_strip_replaces_images_in_place():
 def test_strip_empty_modalities_is_identity():
     msgs = [{"role": "user", "content": [IMG_BLOCK]}]
     assert strip_unsupported_blocks(msgs, set()) is msgs
-
-
-def test_strip_audio():
-    msgs = [{"role": "user", "content": [AUDIO_BLOCK]}]
-    out = strip_unsupported_blocks(msgs, {"audio"})
-    assert "audio omitted" in out[0]["content"][0]["text"]
 
 
 # ---------------------------------------------------------------------------
@@ -299,7 +291,7 @@ def test_send_request_routes_and_strips():
                 name="text-only",
                 provider_name="p1",
                 model_id="text-only-id",
-                capabilities=set(),
+                modality="text",
             )
         }
     )

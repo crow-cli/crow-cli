@@ -1,22 +1,21 @@
 """
-reasoning_effort through the WHOLE react loop (integration — real sqlite).
+Per-model sampling through the WHOLE react loop (integration — real sqlite).
 
 Unit tests cover parse + send_request in isolation. Here we drive a complete
 turn end-to-end and assert the exact params the loop hands the LLM client:
-when config.reasoning_effort is set the request carries reasoning_effort and
-OMITS temperature; when unset it carries temperature as before.
+when the routed model carries reasoning_effort the request has it and OMITS
+temperature; otherwise the model's per-model temperature applies.
 """
 
 import logging
 
-from crow_cli.agent.configure import Config
+from crow_cli.agent.configure import LLModel
 from crow_cli.agent.react import react_loop
 from crow_cli.agent.session import AgentSession
 
 from tests.integration.test_react_loop_cancel_integrity import (
     SESSION_ID,
     AGENT_ID,
-    DB_NAME,
     FakeConn,
     FakeLLM,
     content_chunk,
@@ -27,11 +26,11 @@ from tests.integration.test_react_loop_cancel_integrity import (
 logger = logging.getLogger(__name__)
 
 
-async def run_full_turn(tmp_path, reasoning_effort: str | None) -> dict:
+async def run_full_turn(tmp_path, model: LLModel) -> dict:
     """Run one react-loop turn to natural completion; return the LLM create
     kwargs captured on the wire, after reloading the session from the db."""
     config, session = await make_test_session(tmp_path)
-    config.reasoning_effort = reasoning_effort
+    config.llm.models[model.name] = model
 
     chunks = [
         content_chunk("Here is a plain answer, no tools needed."),
@@ -70,13 +69,29 @@ async def run_full_turn(tmp_path, reasoning_effort: str | None) -> dict:
     return llm.create_kwargs
 
 
-async def test_react_loop_sends_reasoning_effort_not_temperature(tmp_path):
-    kwargs = await run_full_turn(tmp_path, reasoning_effort="high")
+async def test_react_loop_sends_model_reasoning_effort_not_temperature(tmp_path):
+    kwargs = await run_full_turn(
+        tmp_path,
+        LLModel(
+            name="test-model",
+            provider_name="p",
+            model_id="test-model",
+            reasoning_effort="high",
+        ),
+    )
     assert kwargs["reasoning_effort"] == "high"
     assert "temperature" not in kwargs
 
 
-async def test_react_loop_sends_temperature_when_unset(tmp_path):
-    kwargs = await run_full_turn(tmp_path, reasoning_effort=None)
+async def test_react_loop_sends_model_temperature_when_effort_unset(tmp_path):
+    kwargs = await run_full_turn(
+        tmp_path,
+        LLModel(
+            name="test-model",
+            provider_name="p",
+            model_id="test-model",
+            temperature=0.4,
+        ),
+    )
     assert "reasoning_effort" not in kwargs
-    assert kwargs["temperature"] == Config.TEMPERATURE
+    assert kwargs["temperature"] == 0.4

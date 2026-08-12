@@ -17,7 +17,11 @@ from openai import APIConnectionError, APIError, AsyncOpenAI, RateLimitError
 from openai._exceptions import APITimeoutError
 
 from crow_cli.agent.compact import compact
-from crow_cli.agent.configure import Config, build_sampling_params
+from crow_cli.agent.configure import (
+    Config,
+    build_sampling_params,
+    sampling_params_for,
+)
 from crow_cli.agent.context import maximal_deserialize
 from crow_cli.agent.hooks import CommandHook, FileSnapshotHook
 from crow_cli.agent.model_routing import (
@@ -104,9 +108,10 @@ async def send_request(
         tools: List of tool definitions.
         max_retries: Maximum number of retry attempts (default: 3).
         retry_delay: Base delay between retries in seconds (default: 1.0).
-        temperature: Sampling temperature (ignored when reasoning_effort is set).
-        reasoning_effort: When set (e.g. "low"/"medium"/"high"), sent INSTEAD
-            of temperature — reasoning models reject temperature.
+        temperature: Fallback sampling temperature, used only when config is
+            None. With a config, the routed model's per-model values apply.
+        reasoning_effort: Fallback effort (config is None); when set, sent
+            INSTEAD of temperature — reasoning models reject temperature.
 
     Returns:
         Streaming response from LLM
@@ -144,9 +149,13 @@ async def send_request(
                     normalized_messages, to_strip
                 )
 
-    # Reasoning models (gpt-5, o3, ...) reject temperature — when
-    # reasoning_effort is configured we send it and omit temperature entirely.
-    sampling_params = build_sampling_params(reasoning_effort, temperature)
+    # Per-model sampling: the ROUTED model's reasoning_effort XOR temperature
+    # (reasoning models reject temperature). Without a config the explicit
+    # args apply.
+    if config is not None:
+        sampling_params = sampling_params_for(config, routed_model)
+    else:
+        sampling_params = build_sampling_params(reasoning_effort, temperature)
 
     # Under --debug, dump the exact request payload (the append-only chat
     # history + params) so immutable-history analysis can diff consecutive
@@ -716,8 +725,6 @@ async def react_loop(
             tools,
             config.MAX_TOKENS,
             max_retries=config.max_retries_per_step,
-            temperature=config.TEMPERATURE,
-            reasoning_effort=config.reasoning_effort,
             request_log_path=request_log_path,
             config=config,
         )

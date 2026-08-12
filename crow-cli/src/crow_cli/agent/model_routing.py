@@ -3,14 +3,17 @@
 Conversations carry modalities (images, audio) that not every model accepts.
 Per request:
 
-1. Requested model's capabilities unknown (unset in config) or covering the
-   present modalities → use it unchanged.
+1. Requested model's modality is "image" (the permissive default — assume
+   vision-capable until proven otherwise) or no images are present → use it
+   unchanged.
 2. Otherwise walk the model's `fallbacks` chain and take the first model
-   capable of every present modality. The LLM client is bound to one
-   provider, so only same-provider fallbacks are considered.
+   that can take images. The LLM client is bound to one provider, so only
+   same-provider fallbacks are considered.
 3. No capable model anywhere → keep the requested model and report which
    modalities to strip; send_request replaces those blocks with placeholders
    (auto-strip on downgrade) instead of hard-failing.
+
+Audio is out of scope for now — only vision is routed.
 """
 
 from __future__ import annotations
@@ -22,17 +25,14 @@ from crow_cli.agent.configure import Config
 
 logger = logging.getLogger(__name__)
 
-# OpenAI chat-completions content block type -> modality
+# OpenAI chat-completions content block type -> modality (vision only for now)
 BLOCK_MODALITIES: dict[str, str] = {
     "image_url": "vision",
     "image": "vision",
-    "input_audio": "audio",
-    "audio": "audio",
 }
 
 PLACEHOLDERS: dict[str, str] = {
     "vision": "[image omitted: model has no vision capability]",
-    "audio": "[audio omitted: model has no audio capability]",
 }
 
 
@@ -58,8 +58,8 @@ def _model_by_id(config: Config, model_id: str):
 
 
 def _capable(model, modalities: set[str]) -> bool:
-    # Unknown capabilities (None) = permissive: assume the model handles it.
-    return model.capabilities is None or modalities <= model.capabilities
+    # modality "image" (default) = permissive: assume the model handles it.
+    return model.modality == "image" or not modalities
 
 
 def route_model(

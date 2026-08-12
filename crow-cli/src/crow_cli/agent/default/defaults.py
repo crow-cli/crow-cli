@@ -243,15 +243,21 @@ system_prompt_path: ~/.agents/crow/prompts/system_prompt.jinja2
 #   placeholder-model:
 #     provider: placeholder-provider
 #     model: gpt-3.5-turbo
+#     temperature: 0.6
+#     # reasoning_effort: medium
+#     modality: image
+
+# Per-model sampling (all optional):
+#   temperature     — sampling temperature, default 0.6
+#   reasoning_effort — for reasoning models (gpt-5, o3, ...). When set, crow
+#                      sends it and OMITS temperature (reasoning models reject
+#                      temperature). One of: none | minimal | low | medium |
+#                      high | xhigh | max
+#   modality        — image (default, assume vision-capable) | text
 
 # Compaction parameters
 MAX_COMPACT_TOKENS: 180000
 
 MAX_TOKENS: 38192
 
-max_retries_per_step: 3
-
-# For reasoning models (gpt-5, o3, ...). When set, crow sends reasoning_effort
-# and OMITS temperature (reasoning models reject temperature).
-# One of: none | minimal | low | medium | high | xhigh | max
-# reasoning_effort: medium"""
+max_retries_per_step: 3"""

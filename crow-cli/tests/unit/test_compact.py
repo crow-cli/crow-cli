@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from crow_cli.agent.compact import compact
-from crow_cli.agent.configure import Config
+from crow_cli.agent.configure import Config, LLModel
 from crow_cli.agent.session import AgentSession, lookup_or_create_prompt
 
 
@@ -77,13 +77,18 @@ class TestCompaction:
         assert kwargs["model"] == "test-model"
 
     @pytest.mark.asyncio
-    async def test_compact_uses_config_temperature_not_session_params(
+    async def test_compact_uses_model_temperature_not_session_params(
         self, setup_session, mock_llm, compact_config
     ):
-        """Compaction samples with config.TEMPERATURE — NOT the session's
-        request_params (0.7 here) and NOT the provider default of 1.0, which
-        makes the model ramble instead of compress."""
-        compact_config.TEMPERATURE = 0.4
+        """Compaction samples with the model's per-model temperature — NOT
+        the session's request_params (0.7 here) and NOT the provider default
+        of 1.0, which makes the model ramble instead of compress."""
+        compact_config.llm.models["test-model"] = LLModel(
+            name="test-model",
+            provider_name="test-provider",
+            model_id="test-model",
+            temperature=0.4,
+        )
         await compact(setup_session, mock_llm, compact_config, logger=MagicMock())
 
         kwargs = mock_llm.chat.completions.create.call_args.kwargs
@@ -95,7 +100,12 @@ class TestCompaction:
         self, setup_session, mock_llm, compact_config
     ):
         """Reasoning models reject temperature — compaction must swap too."""
-        compact_config.reasoning_effort = "high"
+        compact_config.llm.models["test-model"] = LLModel(
+            name="test-model",
+            provider_name="test-provider",
+            model_id="test-model",
+            reasoning_effort="high",
+        )
         await compact(setup_session, mock_llm, compact_config, logger=MagicMock())
 
         kwargs = mock_llm.chat.completions.create.call_args.kwargs
