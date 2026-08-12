@@ -98,7 +98,7 @@ def test_config_load_per_model_defaults(test_config_dir):
     model = cfg.llm.models["test-model"]
     assert model.temperature == 0.6
     assert model.reasoning_effort is None
-    assert model.modality == "image"
+    assert model.modality == ["text", "image"]
 
 
 def test_config_load_parses_per_model_temperature(test_config_dir):
@@ -116,7 +116,7 @@ def test_config_load_parses_per_model_reasoning_effort(test_config_dir):
 def test_config_load_parses_modality_text(test_config_dir):
     _set_model(test_config_dir, modality="text")
     cfg = Config.load(test_config_dir)
-    assert cfg.llm.models["test-model"].modality == "text"
+    assert cfg.llm.models["test-model"].modality == ["text"]
 
 
 def test_config_load_invalid_reasoning_effort_fails_fast(test_config_dir):
@@ -125,8 +125,14 @@ def test_config_load_invalid_reasoning_effort_fails_fast(test_config_dir):
         Config.load(test_config_dir)
 
 
+def test_config_load_parses_modality_list(test_config_dir):
+    _set_model(test_config_dir, modality=["text", "image", "video"])
+    cfg = Config.load(test_config_dir)
+    assert cfg.llm.models["test-model"].modality == ["text", "image", "video"]
+
+
 def test_config_load_invalid_modality_fails_fast(test_config_dir):
-    _set_model(test_config_dir, modality="video")
+    _set_model(test_config_dir, modality="hologram")
     with pytest.raises(ValueError, match="modality"):
         Config.load(test_config_dir)
 

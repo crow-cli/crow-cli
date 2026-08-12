@@ -292,7 +292,7 @@ def models(
             "name": m.name,
             "provider": m.provider_name,
             "model_id": m.model_id,
-            "modality": m.modality,
+            "modality": ",".join(m.modality),
             "sampling": m.reasoning_effort or f"temp={m.temperature}",
             "fallbacks": list(m.fallbacks),
             "default": i == 0,
@@ -324,7 +324,7 @@ def models(
             ",".join(r["fallbacks"]),
         )
     console.print(table)
-    console.print("[dim]* = default (first in config.yaml); modality image = assume vision[/dim]")
+    console.print("[dim]* = default (first in config.yaml); text,image = default (assume vision)[/dim]")
 
 
 @app.command()

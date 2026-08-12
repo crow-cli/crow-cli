@@ -3,17 +3,17 @@
 Conversations carry modalities (images, audio) that not every model accepts.
 Per request:
 
-1. Requested model's modality is "image" (the permissive default — assume
-   vision-capable until proven otherwise) or no images are present → use it
-   unchanged.
+1. Requested model's modality list covers the present modalities (the
+   default ["text", "image"] assumes vision-capable until proven otherwise)
+   or no images are present → use it unchanged.
 2. Otherwise walk the model's `fallbacks` chain and take the first model
-   that can take images. The LLM client is bound to one provider, so only
+   whose list covers them. The LLM client is bound to one provider, so only
    same-provider fallbacks are considered.
 3. No capable model anywhere → keep the requested model and report which
    modalities to strip; send_request replaces those blocks with placeholders
    (auto-strip on downgrade) instead of hard-failing.
 
-Audio is out of scope for now — only vision is routed.
+Only image blocks are routed for now; audio/video are not mapped.
 """
 
 from __future__ import annotations
@@ -25,14 +25,15 @@ from crow_cli.agent.configure import Config
 
 logger = logging.getLogger(__name__)
 
-# OpenAI chat-completions content block type -> modality (vision only for now)
+# OpenAI chat-completions content block type -> modality (image only for now;
+# audio/video blocks are not routed yet)
 BLOCK_MODALITIES: dict[str, str] = {
-    "image_url": "vision",
-    "image": "vision",
+    "image_url": "image",
+    "image": "image",
 }
 
 PLACEHOLDERS: dict[str, str] = {
-    "vision": "[image omitted: model has no vision capability]",
+    "image": "[image omitted: model has no image capability]",
 }
 
 
@@ -58,8 +59,9 @@ def _model_by_id(config: Config, model_id: str):
 
 
 def _capable(model, modalities: set[str]) -> bool:
-    # modality "image" (default) = permissive: assume the model handles it.
-    return model.modality == "image" or not modalities
+    # Default ["text", "image"] = permissive: assume vision-capable until
+    # proven otherwise; ["text"] models fail the subset check for images.
+    return modalities <= set(model.modality)
 
 
 def route_model(

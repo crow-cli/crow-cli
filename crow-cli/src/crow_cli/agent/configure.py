@@ -97,10 +97,12 @@ def resolve_env_vars(value: Any, missing: set[str] | None = None) -> Any:
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 REASONING_EFFORT_VALUES = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
-# Per-model modality. "image" (default) = assume vision-capable until proven
-# otherwise; "text" = the model cannot see images (route around / strip).
-Modality = Literal["text", "image"]
-MODALITY_VALUES = ("text", "image")
+# Per-model modality LIST — what the model can take as input. Default
+# ["text", "image"] = assume vision-capable until proven otherwise; a
+# text-only model gets ["text"]. audio/video are filled in by hand (or by a
+# probe) for models that natively take them (qwen3.x-max takes video).
+Modality = Literal["text", "image", "audio", "video"]
+MODALITY_VALUES = ("text", "image", "audio", "video")
 
 
 class ReasoningEffortModel(BaseModel):
@@ -166,9 +168,10 @@ class LLModel:
     # omitted entirely (reasoning models reject it); else temperature.
     temperature: float = 0.6
     reasoning_effort: ReasoningEffort | None = None
-    # Assume vision-capable until proven otherwise; "text" models get image
-    # blocks stripped / routed around (see model_routing).
-    modality: Modality = "image"
+    # Input modalities. Assume vision-capable until proven otherwise;
+    # ["text"] models get image/audio/video blocks stripped / routed around
+    # (see model_routing).
+    modality: list[Modality] = field(default_factory=lambda: ["text", "image"])
     # Ordered fallback chain (model NAMES from this config) used when this
     # model cannot handle the modalities present in the conversation.
     fallbacks: list[str] = field(default_factory=list)
@@ -266,11 +269,19 @@ class Config:
         # Parse models
         for name, data in parsed.get("models", {}).items():
             raw_effort = data.get("reasoning_effort")
-            raw_modality = str(data.get("modality", "image")).strip().lower()
-            if raw_modality not in MODALITY_VALUES:
+            raw_modality = data.get("modality", ["text", "image"])
+            if isinstance(raw_modality, str):
+                raw_modality = [raw_modality]
+            if not isinstance(raw_modality, list):
                 raise ValueError(
-                    f"model {name!r}: modality must be one of "
-                    f"{', '.join(MODALITY_VALUES)}, got {data.get('modality')!r}"
+                    f"model {name!r}: modality must be a list, got {raw_modality!r}"
+                )
+            modality = [str(m).strip().lower() for m in raw_modality]
+            bad = [m for m in modality if m not in MODALITY_VALUES]
+            if bad:
+                raise ValueError(
+                    f"model {name!r}: modality entries must be one of "
+                    f"{', '.join(MODALITY_VALUES)}, got {bad}"
                 )
             llm.models[name] = LLModel(
                 name=name,
@@ -282,7 +293,7 @@ class Config:
                     if raw_effort is not None
                     else None
                 ),
-                modality=raw_modality,
+                modality=modality,
                 fallbacks=list(data.get("fallbacks") or []),
             )
 

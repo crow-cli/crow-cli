@@ -50,20 +50,20 @@ MODELS = {
         name="text-only",
         provider_name="p1",
         model_id="text-only-id",
-        modality="text",
+        modality=["text"],
         fallbacks=["vision-model"],
     ),
     "vision-model": LLModel(
         name="vision-model",
         provider_name="p1",
         model_id="vision-id",
-        modality="image",
+        modality=["text", "image"],
     ),
     "other-provider-vision": LLModel(
         name="other-provider-vision",
         provider_name="p2",
         model_id="other-vision-id",
-        modality="image",
+        modality=["text", "image"],
     ),
     "default-modality": LLModel(
         name="default-modality", provider_name="p1", model_id="default-id"
@@ -85,7 +85,7 @@ def test_modalities_detects_image():
     msgs = [
         {"role": "user", "content": [TEXT_BLOCK, IMG_BLOCK]},
     ]
-    assert modalities_in_messages(msgs) == {"vision"}
+    assert modalities_in_messages(msgs) == {"image"}
 
 
 # ---------------------------------------------------------------------------
@@ -99,19 +99,19 @@ def test_route_no_modalities_unchanged():
 
 
 def test_route_default_modality_is_permissive():
-    # modality defaults to "image" = assume vision-capable until proven otherwise
+    # modality defaults to ["text", "image"] = assume vision-capable until proven otherwise
     cfg = make_config(MODELS)
-    assert route_model(cfg, "default-id", {"vision"}) == ("default-id", set())
+    assert route_model(cfg, "default-id", {"image"}) == ("default-id", set())
 
 
 def test_route_capable_model_unchanged():
     cfg = make_config(MODELS)
-    assert route_model(cfg, "vision-id", {"vision"}) == ("vision-id", set())
+    assert route_model(cfg, "vision-id", {"image"}) == ("vision-id", set())
 
 
 def test_route_falls_back_to_capable_same_provider():
     cfg = make_config(MODELS)
-    model_id, to_strip = route_model(cfg, "text-only-id", {"vision"})
+    model_id, to_strip = route_model(cfg, "text-only-id", {"image"})
     assert model_id == "vision-id"
     assert to_strip == set()
 
@@ -122,13 +122,13 @@ def test_route_skips_other_provider_fallback_and_strips():
         name="text-only",
         provider_name="p1",
         model_id="text-only-id",
-        modality="text",
+        modality=["text"],
         fallbacks=["other-provider-vision"],  # p2 — client is bound to p1
     )
     cfg = make_config(models)
-    model_id, to_strip = route_model(cfg, "text-only-id", {"vision"})
+    model_id, to_strip = route_model(cfg, "text-only-id", {"image"})
     assert model_id == "text-only-id"
-    assert to_strip == {"vision"}
+    assert to_strip == {"image"}
 
 
 def test_route_no_fallback_strips():
@@ -137,18 +137,18 @@ def test_route_no_fallback_strips():
         name="text-only",
         provider_name="p1",
         model_id="text-only-id",
-        modality="text",
+        modality=["text"],
     )
     cfg = make_config(models)
-    assert route_model(cfg, "text-only-id", {"vision"}) == (
+    assert route_model(cfg, "text-only-id", {"image"}) == (
         "text-only-id",
-        {"vision"},
+        {"image"},
     )
 
 
 def test_route_unknown_model_id_is_permissive():
     cfg = make_config(MODELS)
-    assert route_model(cfg, "not-in-config", {"vision"}) == ("not-in-config", set())
+    assert route_model(cfg, "not-in-config", {"image"}) == ("not-in-config", set())
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +161,7 @@ def test_strip_replaces_images_in_place():
         {"role": "user", "content": [TEXT_BLOCK, IMG_BLOCK, TEXT_BLOCK]},
         {"role": "assistant", "content": "string content untouched"},
     ]
-    out = strip_unsupported_blocks(msgs, {"vision"})
+    out = strip_unsupported_blocks(msgs, {"image"})
     assert out[0]["content"][0] == TEXT_BLOCK
     assert out[0]["content"][1]["type"] == "text"
     assert "image omitted" in out[0]["content"][1]["text"]
@@ -291,7 +291,7 @@ def test_send_request_routes_and_strips():
                 name="text-only",
                 provider_name="p1",
                 model_id="text-only-id",
-                modality="text",
+                modality=["text"],
             )
         }
     )

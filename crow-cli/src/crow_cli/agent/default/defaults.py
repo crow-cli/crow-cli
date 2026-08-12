@@ -245,7 +245,7 @@ system_prompt_path: ~/.agents/crow/prompts/system_prompt.jinja2
 #     model: gpt-3.5-turbo
 #     temperature: 0.6
 #     # reasoning_effort: medium
-#     modality: image
+#     modality: [text, image]
 
 # Per-model sampling (all optional):
 #   temperature     — sampling temperature, default 0.6
@@ -253,7 +253,9 @@ system_prompt_path: ~/.agents/crow/prompts/system_prompt.jinja2
 #                      sends it and OMITS temperature (reasoning models reject
 #                      temperature). One of: none | minimal | low | medium |
 #                      high | xhigh | max
-#   modality        — image (default, assume vision-capable) | text
+#   modality        — list of input modalities (text | image | audio | video).
+#                     Default [text, image] = assume vision-capable until
+#                     proven otherwise; [text] = strip/route images around.
 
 # Compaction parameters
 MAX_COMPACT_TOKENS: 180000
