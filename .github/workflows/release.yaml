@@ -1,0 +1,162 @@
+name: Release all packages (memory first)
+
+# Single ordered release path: crow-memory MUST be live on PyPI before
+# crow-cli / crow-mcp are published, because both require crow-memory==<the
+# exact version being released>. Publishing them first would put packages on
+# PyPI that require a crow-memory version that does not exist yet.
+#
+# Order: preflight -> publish crow-memory -> wait until it is installable
+# from PyPI -> publish crow-cli + crow-mcp.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify crow-memory pins match the version being released
+        run: |
+          set -euo pipefail
+          MEM=$(grep -m1 '^version' crow-memory/pyproject.toml | sed -E 's/.*"(.*)".*/\1/')
+          echo "Releasing crow-memory $MEM"
+          for pkg in crow-cli crow-mcp; do
+            if ! grep -q "\"crow-memory==$MEM\"" "$pkg/pyproject.toml"; then
+              echo "::error::$pkg does not pin crow-memory==$MEM — bump its dependency before releasing"
+              exit 1
+            fi
+            echo "$pkg pins crow-memory==$MEM ✓"
+          done
+
+  publish-memory:
+    needs: preflight
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/crow-memory
+    permissions:
+      id-token: write  # Required for trusted publishing
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "crow-memory/pyproject.toml"
+
+      - name: Build package
+        working-directory: ./crow-memory
+        run: uv build
+
+      - name: Publish to PyPI
+        working-directory: ./crow-memory
+        run: uv publish
+
+  wait-for-pypi:
+    needs: publish-memory
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "crow-memory/pyproject.toml"
+
+      - name: Wait until crow-memory is live on PyPI
+        run: |
+          set -euo pipefail
+          MEM=$(grep -m1 '^version' crow-memory/pyproject.toml | sed -E 's/.*"(.*)".*/\1/')
+          echo "Waiting for crow-memory==$MEM to appear on PyPI"
+          for attempt in $(seq 1 60); do
+            if curl -fsS "https://pypi.org/pypi/crow-memory/$MEM/json" -o /dev/null; then
+              echo "crow-memory==$MEM is live on PyPI"
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              echo "::error::crow-memory==$MEM did not appear on PyPI within 10 minutes"
+              exit 1
+            fi
+            sleep 10
+          done
+          # JSON metadata is up; now prove the artifact actually installs, so
+          # the dependent publishes cannot outrun CDN propagation.
+          uv venv /tmp/verify-crow-memory
+          uv pip install --python /tmp/verify-crow-memory/bin/python "crow-memory==$MEM"
+          echo "crow-memory==$MEM installs from PyPI ✓"
+
+  publish-cli:
+    needs: wait-for-pypi
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/crow-cli
+    permissions:
+      id-token: write  # Required for trusted publishing
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "crow-cli/pyproject.toml"
+
+      - name: Build package
+        working-directory: ./crow-cli
+        run: uv build
+
+      - name: Publish to PyPI
+        working-directory: ./crow-cli
+        run: uv publish
+
+  publish-mcp:
+    needs: wait-for-pypi
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/crow-mcp
+    permissions:
+      id-token: write  # Required for trusted publishing
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "crow-mcp/pyproject.toml"
+
+      - name: Build package
+        working-directory: ./crow-mcp
+        run: uv build
+
+      - name: Publish to PyPI
+        working-directory: ./crow-mcp
+        run: uv publish
