@@ -1,6 +1,4 @@
-#!/home/thomas/src/backup/nid-backup/crow-cli/.venv/bin/python
-# Run tests using the project's virtual environment
-import sys
-import subprocess
-
-sys.exit(subprocess.run(["/home/thomas/src/backup/nid-backup/crow-cli/.venv/bin/python", "-m", "pytest"] + sys.argv[1:]).returncode)
+#!/usr/bin/env bash
+# Run the crow-cli test suite (unit by default; pass extra pytest args, e.g.
+# ./run_tests.sh tests/integration --run-integration).
+cd "$(dirname "$0")" && exec uv --project . run pytest "$@"

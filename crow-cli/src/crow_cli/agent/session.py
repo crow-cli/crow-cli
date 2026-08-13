@@ -29,7 +29,7 @@ from crow_cli.agent.configure import (
 
 async def get_session_by_cwd(cwd, memory_path=DEFAULT_MEMORY_PATH):
     """
-    Lookup agents by working directory via the memory service.
+    Lookup agents by working directory via the memory db.
 
     Returns list of session info dicts with session_id, title, updated_at.
     """

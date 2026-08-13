@@ -209,19 +209,19 @@ volumes:
     driver: local
 """
 
-CONFIG_YAML = """# config.yaml for the spec at
-# ../src/crow_acp/agent/config.py
+CONFIG_YAML = """# config.yaml — crow-cli configuration
+# (loaded by crow_cli/agent/configure.py)
 
 # DEFAULT mcpServers
 mcpServers:
-  crow-mcp-dev:
+  crow-mcp:
     transport: http
     url: http://127.0.0.1:2770/mcp
 
-# Memory is a SQL database (schema v4) reached via a SQLAlchemy db_uri —
-# sqlite by default, any SQLAlchemy URI (e.g. postgresql://) works. Images
-# are stored as files next to it (images/) and hydrated to base64 only when
-# sent to the LLM.
+# Memory is a SQL database reached via a SQLAlchemy db_uri — sqlite by
+# default, any SQLAlchemy URI (e.g. postgresql://) works. Owned by the
+# crow-memory package. Images are stored as files next to it (images/) and
+# hydrated to base64 only when sent to the LLM.
 db_uri: sqlite:///~/.agents/crow/crow.db
 
 # Where agent skills live (one directory per skill, each with a SKILL.md).

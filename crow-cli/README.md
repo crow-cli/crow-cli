@@ -148,13 +148,13 @@ cd crow-cli
 uv sync --project crow-cli
 ```
 
-Run the unit tests — fast and hermetic, no services required (tests that touch sessions use an in-memory fake of the memory service):
+Run the unit tests — fast and hermetic, no services required (unit tests that touch sessions use an in-memory fake of the persistence client; the integration tier uses a real throwaway sqlite db):
 
 ```bash
 uv run --project crow-cli pytest crow-cli/tests/unit
 ```
 
-The persistence layer itself is tested in `crow-cli/tests/unit/test_db.py`. Integration and end-to-end tiers are opt-in:
+The persistence layer itself lives in the `crow-memory` package and is tested in `crow-memory/tests/test_store.py`. Integration and end-to-end tiers are opt-in:
 
 ```bash
 uv run --project crow-cli pytest crow-cli/tests --run-integration   # spawn the agent
@@ -166,6 +166,7 @@ uv run --project crow-cli pytest crow-cli/tests --run-e2e           # live LLM c
 ```
 crow-cli/               the agent — ACP server, ReAct loop, CLI
 crow-mcp/               built-in MCP tool server
+crow-memory/            shared SQL persistence (sqlite default, postgres-ready)
 ```
 
 ## License

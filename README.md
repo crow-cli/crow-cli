@@ -14,15 +14,16 @@ Monorepo for the Crow coding agent.
 
 Crow is an [ACP](https://agentclientprotocol.com/)-native coding agent that runs in your
 terminal and inside ACP-compatible editors. It reads and edits code, runs shell commands,
-and searches the web — and it **remembers**: every session is written to a shared memory
-service you can query across sessions.
+and searches the web — and it **remembers**: every session is written to a
+shared sqlite database you can query across sessions.
 
 ## Packages
 
 | Package | What it is |
 |---------|-----------|
-| [`crow-cli`](./crow-cli/README.md) | The agent — CLI, ACP server, tool executors, sqlite memory |
+| [`crow-cli`](./crow-cli/README.md) | The agent — CLI, ACP server, tool executors |
 | [`crow-mcp`](./crow-mcp/README.md) | MCP toolserver (filesystem, terminal, web search, memory tools) |
+| [`crow-memory`](./crow-memory/README.md) | Shared SQL persistence (sqlite default, postgres-ready) consumed by both |
 
 ## Getting started
 
@@ -34,12 +35,15 @@ cd crow-cli/crow-cli
 uv sync
 uv run crow-cli init
 
-# start the memory service
-docker compose up -d
+# optional: start the SearXNG web-search backend that init scaffolded
+cd ~/.agents/crow && docker compose up -d
 
 # run the agent
 uv run crow-cli run "explain this project"
 ```
+
+Memory needs no service: every session is written to an in-process sqlite
+database (`~/.agents/crow/crow.db`) owned by the `crow-memory` package.
 
 ## License
 
