@@ -132,7 +132,7 @@ class FakeMCPClient:
 
 async def make_test_session(tmp_path) -> tuple[Config, AgentSession]:
     config = Config(config_dir=tmp_path)
-    config.memory_path = str(tmp_path / DB_NAME)
+    config.db_uri = f"sqlite:///{tmp_path / DB_NAME}"
     session = await make_agent_session(
         config,
         tools=[],
@@ -212,7 +212,7 @@ async def run_cancel_turn(
     assert stop == "cancelled", f"expected cancelled turn, got {stop}: {events}"
 
     await session.close()
-    return await AgentSession.load(AGENT_ID, memory_path=config.memory_path)
+    return await AgentSession.load(AGENT_ID, memory_path=config.db_uri)
 
 
 def tool_responses(messages: list[dict]) -> list[dict]:

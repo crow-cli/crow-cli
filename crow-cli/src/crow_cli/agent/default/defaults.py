@@ -218,9 +218,11 @@ mcpServers:
     transport: http
     url: http://127.0.0.1:2770/mcp
 
-# Memory is an in-process sqlite database (schema v3). Images are stored as
-# files next to it (images/) and hydrated to base64 only when sent to the LLM.
-memory_path: ~/.agents/crow/crow.db
+# Memory is a SQL database (schema v4) reached via a SQLAlchemy db_uri —
+# sqlite by default, any SQLAlchemy URI (e.g. postgresql://) works. Images
+# are stored as files next to it (images/) and hydrated to base64 only when
+# sent to the LLM.
+db_uri: sqlite:///~/.agents/crow/crow.db
 
 # Where agent skills live (one directory per skill, each with a SKILL.md).
 # Scanned at session creation and injected into the system prompt.

@@ -446,7 +446,7 @@ async def make_agent_session(
     else:
         template = config.system_prompt
     prompt_id = await lookup_or_create_prompt(
-        template, name="crow-default", memory_path=config.memory_path
+        template, name="crow-default", memory_path=config.db_uri
     )
     skills = get_skills(Path(config.skills_dir))
 
@@ -472,7 +472,7 @@ async def make_agent_session(
         tool_definitions=tools,
         request_params={"temperature": 0.2},
         model_identifier=model_id,
-        memory_path=config.memory_path,
+        memory_path=config.db_uri,
         cwd=cwd,
         agent_idx=agent_idx,
         session_id=session_id,

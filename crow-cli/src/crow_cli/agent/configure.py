@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
+from crow_memory import normalize_db_uri
 from dotenv import load_dotenv
 from pydantic import BaseModel, ValidationError
 
@@ -187,7 +188,7 @@ class LLMConfig:
 class Config:
     config_dir: Path
     llm: LLMConfig = field(default_factory=LLMConfig)
-    memory_path: str = ""
+    db_uri: str = ""
     skills_dir: str = str(SKILLS_DIR)
     mcp_servers: dict[str, Any] = field(default_factory=dict)
     max_retries_per_step: int = 3
@@ -232,7 +233,7 @@ class Config:
             _logger.info("No config.yaml found, returning bare Config")
             return cls(
                 config_dir=target_dir,
-                memory_path=str(DEFAULT_CONFIG_DIR / "crow.db"),
+                db_uri=f"sqlite:///{DEFAULT_CONFIG_DIR / 'crow.db'}",
             )
 
         with open(config_file) as f:
@@ -297,8 +298,12 @@ class Config:
                 fallbacks=list(data.get("fallbacks") or []),
             )
 
-        # Parse overrides
-        memory_path = os.path.expanduser(parsed.get("memory_path") or "~/.agents/crow/crow.db")
+        # Parse overrides. db_uri is the canonical key; legacy memory_path
+        # (a plain path) still works and becomes a sqlite URI. Default is
+        # config_dir-relative so custom config dirs stay self-contained.
+        db_uri = normalize_db_uri(
+            parsed.get("db_uri") or parsed.get("memory_path") or str(target_dir / "crow.db")
+        )
         skills_dir = os.path.expanduser(parsed.get("skills_dir") or str(SKILLS_DIR))
         overrides = {}
         for key, typ in (
@@ -320,7 +325,7 @@ class Config:
         return cls(
             config_dir=target_dir,
             llm=llm,
-            memory_path=memory_path,
+            db_uri=db_uri,
             skills_dir=skills_dir,
             mcp_servers=mcp_servers,
             system_prompt_path=system_prompt_path,

@@ -22,6 +22,7 @@ a = Analysis(
     ),
     hiddenimports=[
         'crow_cli',
+        'crow_memory',
         'crow_cli.agent',
         'crow_cli.agent.main',
         'crow_cli.agent.mcp_client',

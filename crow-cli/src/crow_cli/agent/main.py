@@ -183,7 +183,7 @@ class AcpAgent(Agent):
                 raise ValueError(
                     f"model {model!r} not found in config.yaml models: {valid}"
                 )
-        self._memory_path = self._config.memory_path
+        self._memory_db_uri = self._config.db_uri
         self._exit_stack = AsyncExitStack()
         self._agent_id: str | None = None
         self._session_id: str | None = None  # stripped version for ACP upstream
@@ -438,14 +438,14 @@ class AcpAgent(Agent):
 
         try:
             # Find the highest-indexed agent for this session
-            max_idx = await AgentSession.get_max_agent_idx(session_id, memory_path=self._memory_path)
+            max_idx = await AgentSession.get_max_agent_idx(session_id, memory_path=self._memory_db_uri)
             agent_id = f"{session_id}-{max_idx}"
             self._logger.info(
                 "LOAD_SESSION: Step 1: Loading agent %s from DB", agent_id
             )
             session = await AgentSession.load(
                 agent_id,
-                memory_path=self._memory_path,
+                memory_path=self._memory_db_uri,
             )
             self._logger.info("LOAD_SESSION: Step 1 complete: Agent loaded from DB")
 
@@ -553,7 +553,7 @@ class AcpAgent(Agent):
         if self._session_id == session_id and self._agent_id:
             agent_id = self._agent_id
         else:
-            max_idx = await AgentSession.get_max_agent_idx(session_id, memory_path=self._memory_path)
+            max_idx = await AgentSession.get_max_agent_idx(session_id, memory_path=self._memory_db_uri)
             agent_id = f"{session_id}-{max_idx}"
 
         # Initialize if not set
@@ -605,7 +605,7 @@ class AcpAgent(Agent):
         if self._session_id == session_id and self._agent_id:
             agent_id = self._agent_id
         else:
-            max_idx = await AgentSession.get_max_agent_idx(session_id, memory_path=self._memory_path)
+            max_idx = await AgentSession.get_max_agent_idx(session_id, memory_path=self._memory_db_uri)
             agent_id = f"{session_id}-{max_idx}"
 
         async def _execute_turn() -> PromptResponse:

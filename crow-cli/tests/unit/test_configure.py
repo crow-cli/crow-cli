@@ -42,3 +42,20 @@ def test_memory_client_creates_sqlite_in_config_dir(test_config_dir):
     client = MemoryClient(config_dir=test_config_dir)
     assert (test_config_dir / "crow.db").exists()
     assert client.images_dir == test_config_dir / "images"
+
+
+def test_db_uri_from_config(test_config_dir):
+    target = test_config_dir / "custom.db"
+    _add_keys(test_config_dir, db_uri=f"sqlite:///{target}")
+    client = MemoryClient(config_dir=test_config_dir)
+    assert target.exists()
+    assert client.images_dir == test_config_dir / "images"
+
+
+def test_legacy_memory_path_becomes_sqlite_uri(test_config_dir):
+    target = test_config_dir / "legacy.db"
+    _add_keys(test_config_dir, memory_path=str(target))
+    cfg = Config.load(test_config_dir)
+    assert cfg.db_uri == f"sqlite:///{target}"
+    MemoryClient(config_dir=test_config_dir)
+    assert target.exists()

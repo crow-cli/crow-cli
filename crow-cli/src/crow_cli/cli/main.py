@@ -105,8 +105,10 @@ def run_agentmain(
             config.system_prompt_path = Path(os.path.expanduser(overrides["system_prompt_path"]))
         if "skills_dir" in overrides:
             config.skills_dir = os.path.expanduser(overrides["skills_dir"])
-        if "memory_path" in overrides:
-            config.memory_path = overrides["memory_path"]
+        if "db_uri" in overrides or "memory_path" in overrides:
+            from crow_memory import normalize_db_uri
+
+            config.db_uri = normalize_db_uri(overrides.get("db_uri") or overrides["memory_path"])
         if "max_retries_per_step" in overrides:
             config.max_retries_per_step = int(overrides["max_retries_per_step"])
         if "MAX_COMPACT_TOKENS" in overrides:

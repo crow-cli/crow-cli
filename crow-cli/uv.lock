@@ -252,6 +252,7 @@ source = { editable = "." }
 dependencies = [
     { name = "agent-client-protocol", extra = ["http"] },
     { name = "coolname" },
+    { name = "crow-memory" },
     { name = "directory-tree" },
     { name = "docker" },
     { name = "fastmcp" },
@@ -261,7 +262,6 @@ dependencies = [
     { name = "openai" },
     { name = "pyyaml" },
     { name = "rich" },
-    { name = "sqlalchemy" },
     { name = "typer" },
 ]
 
@@ -277,6 +277,7 @@ dev = [
 requires-dist = [
     { name = "agent-client-protocol", extras = ["http"], specifier = ">=0.12.0,<0.13.0" },
     { name = "coolname", specifier = ">=2.2.0" },
+    { name = "crow-memory", editable = "../crow-memory" },
     { name = "directory-tree", specifier = ">=1.0.0" },
     { name = "docker", specifier = ">=7.2.0" },
     { name = "fastmcp", specifier = ">=2.14.5" },
@@ -286,7 +287,6 @@ requires-dist = [
     { name = "openai", specifier = ">=2.21.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "rich", specifier = ">=14.3.3" },
-    { name = "sqlalchemy", specifier = ">=2.0.51" },
     { name = "typer", specifier = ">=0.24.1" },
 ]
 
@@ -297,6 +297,24 @@ dev = [
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "pytest-asyncio", specifier = ">=0.23.0" },
 ]
+
+[[package]]
+name = "crow-memory"
+version = "0.1.0"
+source = { editable = "../crow-memory" }
+dependencies = [
+    { name = "coolname" },
+    { name = "sqlalchemy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "coolname", specifier = ">=2.2.0" },
+    { name = "sqlalchemy", specifier = ">=2.0" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8.0" }]
 
 [[package]]
 name = "cryptography"

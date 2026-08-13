@@ -1,9 +1,11 @@
-"""Memory layer for crow-cli — in-process SQLite, images on disk.
+"""Memory layer for crow-cli — SQL via crow-memory, images on disk.
 
-Back to the pre-service design (schema v3 in db.py) with one wrinkle: image
-blobs never enter the database. Writes extract inline base64 blocks to
-``config_dir/images/<sha256hex><ext>`` and store ``image_ref`` blocks; loads
-with ``hydrate=True`` swap refs back to base64 data URLs for the LLM.
+The store contract lives in the ``crow-memory`` package (schema v4): this
+class only resolves the db_uri from config and wraps the sync helpers in the
+async shape session.py / main.py expect. One wrinkle: image blobs never
+enter the database. Writes extract inline base64 blocks to
+``<db parent>/images/<sha256hex><ext>`` and store ``image_ref`` blocks;
+loads with ``hydrate=True`` swap refs back to base64 data URLs for the LLM.
 
 Search is SQLite FTS5 + bm25 (keyword). No embeddings, no HTTP service.
 
@@ -13,11 +15,10 @@ sync db helpers.
 """
 
 import logging
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from crow_cli.agent import db
+import crow_memory as db
 from crow_cli.agent.configure import Config
 
 log = logging.getLogger(__name__)
@@ -125,19 +126,26 @@ def _agent_record(a: db.Agent) -> AgentRecord:
 
 
 class MemoryClient:
-    """SQLite-backed memory. `path` is ignored (kept positionally for compat)."""
+    """crow-memory-backed store. `path` overrides the configured db_uri."""
 
     def __init__(self, path: str | None = None, config_dir: Path | None = None, **_kwargs):
         cfg = Config.load(config_dir)
-        db_path = Path(os.path.expanduser(path or str(cfg.config_dir / "crow.db")))
-        if db_path.is_dir():
-            raise MemoryServiceError(
-                500,
-                f"{db_path} is a directory (leftover lance dataset from the old "
-                "crow-memory service) — remove it so sqlite can own this path",
-            )
-        self.db_uri = f"sqlite:///{db_path}"
-        self.images_dir = db_path.parent / "images"
+        # DEFAULT_MEMORY_PATH is the legacy positional sentinel — it means
+        # "whatever the config says", not a literal override.
+        override = None if path in (None, DEFAULT_MEMORY_PATH) else path
+        self.db_uri = db.normalize_db_uri(override or cfg.db_uri)
+        if self.db_uri.startswith("sqlite:///"):
+            db_path = Path(self.db_uri.removeprefix("sqlite:///"))
+            if db_path.is_dir():
+                raise MemoryServiceError(
+                    500,
+                    f"{db_path} is a directory (leftover lance dataset from the old "
+                    "crow-memory service) — remove it so sqlite can own this path",
+                )
+            self.images_dir = db_path.parent / "images"
+        else:
+            # Non-file backends (e.g. postgres): images stay beside the config.
+            self.images_dir = cfg.config_dir / "images"
         db.create_database(self.db_uri)
         self._engine = db.get_engine(self.db_uri)
 

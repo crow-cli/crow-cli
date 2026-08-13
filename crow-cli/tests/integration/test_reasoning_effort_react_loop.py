@@ -60,7 +60,7 @@ async def run_full_turn(tmp_path, model: LLModel) -> dict:
 
     # The assistant reply really landed in the db
     await session.close()
-    loaded = await AgentSession.load(AGENT_ID, memory_path=config.memory_path)
+    loaded = await AgentSession.load(AGENT_ID, memory_path=config.db_uri)
     assert any(
         m.get("role") == "assistant" and "plain answer" in str(m.get("content"))
         for m in loaded.messages

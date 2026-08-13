@@ -285,8 +285,8 @@ def run_init(config_dir: Path, yes: bool = False):
     # =========================================================================
     console.print("\n[bold cyan]═══ Step 3: Review ═══[/bold cyan]\n")
 
-    memory_path = str(config_dir / "crow.db")
-    console.print(f"[dim]Memory store: {memory_path}[/dim]")
+    db_uri = f"sqlite:///{config_dir / 'crow.db'}"
+    console.print(f"[dim]Memory store: {db_uri}[/dim]")
 
     if providers:
         p_table = Table(title="Providers", show_header=True)
@@ -314,7 +314,7 @@ def run_init(config_dir: Path, yes: bool = False):
     console.print(s_table)
 
     console.print(f"\n[dim]Config directory: {config_dir}[/dim]")
-    console.print(f"[dim]Memory store: {memory_path}[/dim]")
+    console.print(f"[dim]Memory store: {db_uri}[/dim]")
 
     if not yes and not Confirm.ask("\nLooks good?", default=True):
         console.print("[red]Aborted. No files were written.[/red]")
@@ -345,7 +345,7 @@ def run_init(config_dir: Path, yes: bool = False):
                 "url": "http://127.0.0.1:2770/mcp",
             }
         },
-        "memory_path": memory_path,
+        "db_uri": db_uri,
         "providers": providers,
         "models": models,
         "MAX_COMPACT_TOKENS": 190000,
