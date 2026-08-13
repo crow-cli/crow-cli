@@ -1,6 +1,6 @@
 [project]
 name = "crow-memory"
-version = "0.1.0"
+version = "0.1.34"
 description = "Crow's memory store: SQLAlchemy over a db_uri (sqlite default, postgres-ready seam). Shared by crow-cli and crow-mcp."
 readme = "README.md"
 requires-python = ">=3.14"
