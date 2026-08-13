@@ -1,8 +1,10 @@
 name: Publish crow-mcp to PyPI
 
+# Manual only. Full releases go through release.yaml, which publishes
+# crow-memory first and waits for it to be live on PyPI — crow-mcp requires
+# crow-memory==<version>, so it must never race ahead of it.
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
 
 jobs:
   publish:

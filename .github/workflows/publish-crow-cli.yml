@@ -1,10 +1,10 @@
 name: Publish crow-cli to PyPI
 
+# Manual only. Full releases go through release.yaml, which publishes
+# crow-memory first and waits for it to be live on PyPI — crow-cli requires
+# crow-memory==<version>, so it must never race ahead of it.
 on:
-  release:
-    types: [published]
-    # Only trigger for releases tagged with crow-cli-* or v* if the release body mentions crow-cli
-    # Alternatively, you can use tags like "crow-cli-v*"
+  workflow_dispatch:
 
 jobs:
   publish:
