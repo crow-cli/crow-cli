@@ -1,39 +1,52 @@
-"""Read-mostly sqlite accessor for the crow-cli memory database.
+"""Read-mostly accessor for the crow memory database, built on crow-memory.
 
-crow-mcp never imports crow-cli (MCP is a runtime protocol boundary; the
-sqlite file is the only integration point). Plain sqlite3, no ORM: the
-schema is the one crow_cli/agent/db.py creates (agents / messages /
-messages_fts). Search is FTS5 + bm25 (keyword).
+crow-mcp never imports crow-cli (MCP is a runtime protocol boundary); the
+shared contract is the crow-memory package — one schema, one FTS5
+implementation, no drift. The db_uri resolves from: CROW_DB_URI env (URI) ->
+CROW_MEMORY_DB env (path) -> config.yaml db_uri/memory_path -> default.
+Search is FTS5 + bm25 (keyword).
 """
 
-import json
 import os
-import sqlite3
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
+import crow_memory as cm
+from sqlalchemy import func
+
 DEFAULT_DB = "~/.agents/crow/crow.db"
+CONFIG = "~/.agents/crow/config.yaml"
 
 
-def db_path() -> Path:
-    env = os.environ.get("CROW_MEMORY_DB")
-    if env:
-        return Path(os.path.expanduser(env))
-    cfg = Path(os.path.expanduser("~/.agents/crow/config.yaml"))
+def db_uri() -> str:
+    if env := os.environ.get("CROW_DB_URI"):
+        return cm.normalize_db_uri(env)
+    if env := os.environ.get("CROW_MEMORY_DB"):
+        return cm.normalize_db_uri(env)
+    cfg = Path(os.path.expanduser(CONFIG))
     if cfg.exists():
         for line in cfg.read_text().splitlines():
-            if line.startswith("memory_path:"):
-                return Path(os.path.expanduser(line.split(":", 1)[1].strip()))
-    return Path(os.path.expanduser(DEFAULT_DB))
+            for key in ("db_uri:", "memory_path:"):
+                if line.startswith(key):
+                    return cm.normalize_db_uri(line.split(":", 1)[1].strip())
+    return cm.normalize_db_uri(DEFAULT_DB)
 
 
-def _conn() -> sqlite3.Connection | None:
-    path = db_path()
-    if not path.exists():
-        return None
-    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
-    conn.row_factory = sqlite3.Row
-    return conn
+@lru_cache(maxsize=1)
+def _cached_engine(uri: str):
+    return cm.get_engine(uri)
+
+
+def _ro_engine():
+    """Read-only engine, or None when a sqlite file doesn't exist yet."""
+    uri = db_uri()
+    if uri.startswith("sqlite:///"):
+        path = Path(uri.removeprefix("sqlite:///"))
+        if not path.exists():
+            return None
+        uri = f"sqlite:///file:{path}?mode=ro&uri=true"
+    return _cached_engine(uri)
 
 
 @dataclass
@@ -61,69 +74,63 @@ class SessionRow:
     last_message: Msg | None = None
 
 
-def _agent_map(conn) -> dict[str, tuple[str, int, str, str]]:
-    """agent_id -> (session_id, agent_idx, model_identifier, cwd)."""
-    return {
-        r["agent_id"]: (r["session_id"], r["agent_idx"], r["model_identifier"], r["cwd"])
-        for r in conn.execute("SELECT * FROM agents")
-    }
-
-
-def _msg(row: sqlite3.Row, agents: dict, score: float | None = None) -> Msg:
-    sid, aidx, _, _ = agents.get(row["agent_id"], ("", 0, "", ""))
+def _msg(row, amap: dict[str, tuple[str, int]], score: float | None = None) -> Msg:
+    sid, aidx = amap.get(row.agent_id, ("", 0))
     return Msg(
-        id=row["id"],
-        agent_id=row["agent_id"],
+        id=row.id,
+        agent_id=row.agent_id,
         session_id=sid,
         agent_idx=aidx,
-        role=row["role"],
-        created_at=row["created_at"],
-        data=json.loads(row["data"]),
+        role=row.role,
+        created_at=row.created_at,
+        data=dict(row.data),
         score=score,
     )
 
 
 def list_sessions(limit: int = 50, offset: int = 0) -> list[SessionRow]:
-    if (conn := _conn()) is None:
+    engine = _ro_engine()
+    if engine is None:
         return []
-    with conn:
-        agents = _agent_map(conn)
-        rows = conn.execute(
-            """
-            SELECT a.session_id,
-                   MAX(m.created_at) AS last_activity,
-                   COUNT(DISTINCT m.id) AS message_count,
-                   COUNT(DISTINCT a.agent_id) AS agent_count
-            FROM agents a LEFT JOIN messages m ON m.agent_id = a.agent_id
-            GROUP BY a.session_id
-            ORDER BY last_activity DESC
-            LIMIT ? OFFSET ?
-            """,
-            (limit, offset),
-        ).fetchall()
+    with cm.Session(engine) as s:
+        rows = (
+            s.query(
+                cm.Agent.session_id,
+                func.max(cm.Message.created_at),
+                func.count(func.distinct(cm.Message.id)),
+                func.count(func.distinct(cm.Agent.agent_id)),
+            )
+            .join(cm.Message, cm.Message.agent_id == cm.Agent.agent_id, isouter=True)
+            .group_by(cm.Agent.session_id)
+            .order_by(func.max(cm.Message.created_at).desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+        agents = s.query(cm.Agent).all()
+        amap = {a.agent_id: (a.session_id, a.agent_idx) for a in agents}
         out = []
-        for r in rows:
-            sid = r["session_id"]
-            mine = [a for a, (s, _, m, c) in agents.items() if s == sid]
-            idxs = sorted(i for s, i, _, _ in (agents[a] for a in mine))
-            _, _, model, cwd = next((agents[a] for a in mine), ("", 0, "", ""))
-            last = conn.execute(
-                "SELECT * FROM messages WHERE agent_id IN ({}) ORDER BY id DESC LIMIT 1".format(
-                    ",".join("?" for _ in mine) or "''"
-                ),
-                mine,
-            ).fetchone()
+        for sid, last, n_msg, n_agent in rows:
+            mine = sorted((a for a in agents if a.session_id == sid), key=lambda a: a.agent_idx)
+            last_row = None
+            if mine:
+                last_row = (
+                    s.query(cm.Message)
+                    .filter(cm.Message.agent_id.in_([a.agent_id for a in mine]))
+                    .order_by(cm.Message.id.desc())
+                    .first()
+                )
             out.append(
                 SessionRow(
                     session_id=sid,
-                    last_activity=r["last_activity"] or "",
-                    message_count=r["message_count"],
-                    agent_count=r["agent_count"],
-                    agent_idxs=idxs,
-                    model_identifier=model,
-                    cwd=cwd,
-                    last_role=last["role"] if last else "",
-                    last_message=_msg(last, agents) if last else None,
+                    last_activity=last or "",
+                    message_count=n_msg,
+                    agent_count=n_agent,
+                    agent_idxs=[a.agent_idx for a in mine],
+                    model_identifier=mine[0].model_identifier if mine else "",
+                    cwd=mine[0].cwd if mine else "",
+                    last_role=last_row.role if last_row else "",
+                    last_message=_msg(last_row, amap) if last_row else None,
                 )
             )
         return out
@@ -136,55 +143,35 @@ def session_records(
     after: str | None = None,
     before: str | None = None,
 ) -> list[Msg]:
-    if (conn := _conn()) is None:
+    engine = _ro_engine()
+    if engine is None:
         return []
-    with conn:
-        agents = _agent_map(conn)
-        aids = [
-            a for a, (s, i, _, _) in agents.items()
-            if s == session_id and (agent_idx is None or i == agent_idx)
-        ]
-        if not aids:
-            return []
-        q = "SELECT * FROM messages WHERE agent_id IN ({})".format(",".join("?" for _ in aids))
-        params: list = list(aids)
-        if roles is not None:
-            q += " AND role IN ({})".format(",".join("?" for _ in roles))
-            params += roles
-        if after is not None:
-            q += " AND created_at > ?"
-            params.append(after)
-        if before is not None:
-            q += " AND created_at < ?"
-            params.append(before)
-        q += " ORDER BY id ASC"
-        return [_msg(r, agents) for r in conn.execute(q, params)]
+    with cm.Session(engine) as s:
+        agents = s.query(cm.Agent).filter_by(session_id=session_id).all()
+    aids = [a.agent_id for a in agents if agent_idx is None or a.agent_idx == agent_idx]
+    if not aids:
+        return []
+    amap = {a.agent_id: (a.session_id, a.agent_idx) for a in agents}
+    rows = cm.query_messages(engine, aids, roles=roles, after=after, before=before)
+    return [_msg(r, amap) for r in rows]
 
 
 def search(query: str, limit: int = 20, agent_ids: set[str] | None = None) -> list[Msg]:
     """BM25 keyword search, best match first. Quoted tokens = implicit AND."""
-    match = " ".join(f'"{t}"' for t in query.split() if t)
-    if not match or (conn := _conn()) is None:
+    engine = _ro_engine()
+    if engine is None:
         return []
-    with conn:
-        agents = _agent_map(conn)
-        hits = conn.execute(
-            """
-            SELECT rowid, bm25(messages_fts) AS rank
-            FROM messages_fts WHERE messages_fts MATCH ?
-            ORDER BY rank LIMIT ?
-            """,
-            (match, limit * (4 if agent_ids else 1)),
-        ).fetchall()
-        out = []
-        for h in hits:
-            row = conn.execute("SELECT * FROM messages WHERE id = ?", (h["rowid"],)).fetchone()
-            if row is None:
-                continue
-            m = _msg(row, agents, score=h["rank"])
-            if agent_ids is not None and m.agent_id not in agent_ids:
-                continue
-            out.append(m)
-            if len(out) >= limit:
-                break
-        return out
+    hits = cm.search_messages(engine, query, limit=limit, agent_ids=agent_ids)
+    return [
+        Msg(
+            id=h["id"],
+            agent_id=h["agent_id"],
+            session_id=h["session_id"],
+            agent_idx=h["agent_idx"],
+            role=h["role"],
+            created_at=h["created_at"],
+            data=h["data"],
+            score=h["score"],
+        )
+        for h in hits
+    ]
