@@ -7,6 +7,14 @@ name: Release all packages (memory first)
 #
 # Order: preflight -> publish crow-memory -> wait until it is installable
 # from PyPI -> publish crow-cli + crow-mcp.
+#
+# Each publish job uses its OWN GitHub environment. PyPI mints one token per
+# matching publisher and scopes it to that publisher's project, so identical
+# claims across projects (same repo + workflow + environment) are ambiguous
+# and 403. Distinct environments keep every project's claims unique.
+#
+# Jobs are idempotent: a version already live on PyPI is skipped, so a
+# failed run can simply be re-dispatched.
 
 on:
   workflow_dispatch:
@@ -35,7 +43,7 @@ jobs:
     needs: preflight
     runs-on: ubuntu-latest
     environment:
-      name: pypi
+      name: pypi-crow-memory
       url: https://pypi.org/p/crow-memory
     permissions:
       id-token: write  # Required for trusted publishing
@@ -54,13 +62,17 @@ jobs:
         with:
           python-version-file: "crow-memory/pyproject.toml"
 
-      - name: Build package
+      - name: Build and publish (skip if already on PyPI)
         working-directory: ./crow-memory
-        run: uv build
-
-      - name: Publish to PyPI
-        working-directory: ./crow-memory
-        run: uv publish
+        run: |
+          set -euo pipefail
+          VERSION=$(grep -m1 '^version' pyproject.toml | sed -E 's/.*"(.*)".*/\1/')
+          if curl -fsS "https://pypi.org/pypi/crow-memory/$VERSION/json" -o /dev/null; then
+            echo "crow-memory $VERSION is already on PyPI — skipping publish"
+          else
+            uv build
+            uv publish
+          fi
 
   wait-for-pypi:
     needs: publish-memory
@@ -103,7 +115,7 @@ jobs:
     needs: wait-for-pypi
     runs-on: ubuntu-latest
     environment:
-      name: pypi
+      name: pypi-crow-cli
       url: https://pypi.org/p/crow-cli
     permissions:
       id-token: write  # Required for trusted publishing
@@ -122,19 +134,23 @@ jobs:
         with:
           python-version-file: "crow-cli/pyproject.toml"
 
-      - name: Build package
+      - name: Build and publish (skip if already on PyPI)
         working-directory: ./crow-cli
-        run: uv build
-
-      - name: Publish to PyPI
-        working-directory: ./crow-cli
-        run: uv publish
+        run: |
+          set -euo pipefail
+          VERSION=$(grep -m1 '^version' pyproject.toml | sed -E 's/.*"(.*)".*/\1/')
+          if curl -fsS "https://pypi.org/pypi/crow-cli/$VERSION/json" -o /dev/null; then
+            echo "crow-cli $VERSION is already on PyPI — skipping publish"
+          else
+            uv build
+            uv publish
+          fi
 
   publish-mcp:
     needs: wait-for-pypi
     runs-on: ubuntu-latest
     environment:
-      name: pypi
+      name: pypi-crow-mcp
       url: https://pypi.org/p/crow-mcp
     permissions:
       id-token: write  # Required for trusted publishing
@@ -153,10 +169,14 @@ jobs:
         with:
           python-version-file: "crow-mcp/pyproject.toml"
 
-      - name: Build package
+      - name: Build and publish (skip if already on PyPI)
         working-directory: ./crow-mcp
-        run: uv build
-
-      - name: Publish to PyPI
-        working-directory: ./crow-mcp
-        run: uv publish
+        run: |
+          set -euo pipefail
+          VERSION=$(grep -m1 '^version' pyproject.toml | sed -E 's/.*"(.*)".*/\1/')
+          if curl -fsS "https://pypi.org/pypi/crow-mcp/$VERSION/json" -o /dev/null; then
+            echo "crow-mcp $VERSION is already on PyPI — skipping publish"
+          else
+            uv build
+            uv publish
+          fi
