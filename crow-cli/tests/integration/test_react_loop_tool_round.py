@@ -19,6 +19,7 @@ from types import SimpleNamespace
 
 from acp.schema import UsageUpdate
 
+from crow_cli.agent.configure import LLModel, LLMProvider
 from crow_cli.agent.react import react_loop
 from crow_cli.agent.session import AgentSession
 
@@ -286,6 +287,68 @@ async def test_compaction_crossing_threshold_creates_new_agent(tmp_path):
     # Old agent untouched — still just system + user
     loaded_old = await AgentSession.load(AGENT_ID, memory_path=config.db_uri)
     assert [m["role"] for m in loaded_old.messages] == ["system", "user"]
+
+
+async def test_per_model_compact_threshold_overrides_global(tmp_path):
+    """A model with max_compact_tokens compacts at its OWN threshold, not
+    the global MAX_COMPACT_TOKENS (which stays the subscription-API rate),
+    and the usage_update meter measures against the per-model value too."""
+    config, session = await make_test_session(tmp_path)
+    await session.add_message({"role": "user", "content": "do the big job"})
+
+    # Global stays high; the session's model ("test-model") carries a low
+    # ceiling of its own — the local-model case.
+    config.MAX_COMPACT_TOKENS = 1000
+    config.llm.providers["p"] = LLMProvider(name="p")
+    config.llm.models["local"] = LLModel(
+        name="local",
+        provider_name="p",
+        model_id="test-model",
+        max_compact_tokens=50,
+    )
+
+    llm = MultiTurnLLM(
+        [
+            [content_chunk("working on it "), usage_chunk(100)],  # >50, <1000
+            "SUMMARY of the big job",  # compact() summarization (non-stream)
+            [content_chunk("done now"), usage_chunk(10)],
+        ]
+    )
+    conn = FakeConn()
+    gen = react_loop(
+        conn=conn,
+        config=config,
+        client_capabilities=None,
+        turn_id="turn-1",
+        mcp_clients={},
+        llm=llm,
+        tools=[],
+        sessions={AGENT_ID: session},
+        agent_id=AGENT_ID,
+        state_accumulators={},
+        logger=logger,
+        hooks=[],
+    )
+    events, stop = await drive_react_loop(gen)
+    assert stop == "done", events
+
+    # Compaction fired at the per-model threshold even though usage (100)
+    # is far below the global one (1000) — and announced the right number.
+    compactions = [e for e in events if e["type"] == "compaction"]
+    assert len(compactions) == 1
+    assert "50" in compactions[0]["token"]
+
+    # Context meter measures against the per-model threshold
+    updates = [u for u in conn.updates if isinstance(u, UsageUpdate)]
+    assert updates[0].used == 100
+    assert updates[0].size == 50
+
+    # The new agent holds the summary, as in the global-threshold case
+    new_id = f"{SESSION_ID}-2"
+    loaded_new = await AgentSession.load(new_id, memory_path=config.db_uri)
+    new_text = " ".join(str(m.get("content")) for m in loaded_new.messages)
+    assert "SUMMARY of the big job" in new_text
+    assert "done now" in new_text
 
     # final_history came from the NEW session
     finals = [e for e in events if e["type"] == "final_history"]

@@ -138,10 +138,11 @@ OPTIONAL_SAMPLING_PARAMS = (
 )
 
 
-def parse_sampling_number(model_name: str, key: str, raw: Any) -> float | int:
-    """Coerce a config.yaml sampling value to its number type, failing fast
-    with a message naming the model and key instead of a bare cast error."""
-    cast = dict(OPTIONAL_SAMPLING_PARAMS)[key]
+def parse_model_number(
+    model_name: str, key: str, raw: Any, cast: type
+) -> float | int:
+    """Coerce a per-model config.yaml number, failing fast with a message
+    naming the model and key instead of a bare cast error."""
     if isinstance(raw, bool):  # YAML true/false would sneak through int()/float()
         raise ValueError(f"model {model_name!r}: {key} must be a number, got {raw!r}")
     try:
@@ -209,6 +210,20 @@ def sampling_params_for(config: "Config", model_id: str) -> dict[str, Any]:
     )
 
 
+def max_compact_tokens_for(config: "Config", model_id: str) -> int:
+    """Per-model compaction threshold: the model's own max_compact_tokens
+    when set, else the global MAX_COMPACT_TOKENS. Callers must resolve this
+    LIVE from the session's current model on every check — the model can be
+    switched mid-session (set_config_option), so never cache it at session
+    init."""
+    model = next(
+        (m for m in config.llm.models.values() if m.model_id == model_id), None
+    )
+    if model is not None and model.max_compact_tokens is not None:
+        return model.max_compact_tokens
+    return config.MAX_COMPACT_TOKENS
+
+
 @dataclass
 class LLMProvider:
     name: str
@@ -234,6 +249,10 @@ class LLModel:
     min_p: float | None = None
     presence_penalty: float | None = None
     repetition_penalty: float | None = None
+    # Per-model compaction threshold override (None = the global
+    # MAX_COMPACT_TOKENS). Local models typically get a lower ceiling than
+    # subscription API models, which keep the global rate.
+    max_compact_tokens: int | None = None
     # Input modalities. Assume vision-capable until proven otherwise;
     # ["text"] models get image/audio/video blocks stripped / routed around
     # (see model_routing).
@@ -362,10 +381,17 @@ class Config:
                 # Optional sampling pass-through; absent key = None = omit
                 # (0 / 0.0 are valid values and must survive).
                 **{
-                    key: parse_sampling_number(name, key, data[key])
-                    for key, _ in OPTIONAL_SAMPLING_PARAMS
+                    key: parse_model_number(name, key, data[key], cast)
+                    for key, cast in OPTIONAL_SAMPLING_PARAMS
                     if data.get(key) is not None
                 },
+                max_compact_tokens=(
+                    parse_model_number(
+                        name, "max_compact_tokens", data["max_compact_tokens"], int
+                    )
+                    if data.get("max_compact_tokens") is not None
+                    else None
+                ),
                 modality=modality,
                 fallbacks=list(data.get("fallbacks") or []),
             )

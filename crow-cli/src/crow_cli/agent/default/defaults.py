@@ -264,11 +264,15 @@ system_prompt_path: ~/.agents/crow/prompts/system_prompt.jinja2
 #   top_k / min_p / repetition_penalty are not standard OpenAI fields; crow
 #   sends them via extra_body, which OpenAI-compatible servers (llama.cpp,
 #   vLLM, Ollama, ...) pass straight through to the sampler.
+#   max_compact_tokens — per-model compaction threshold; overrides the
+#                        global MAX_COMPACT_TOKENS below for this model only.
+#                        Local models typically get a lower ceiling;
+#                        subscription API models keep the global rate.
 #   modality        — list of input modalities (text | image | audio | video).
 #                     Default [text, image] = assume vision-capable until
 #                     proven otherwise; [text] = strip/route images around.
 
-# Compaction parameters
+# Compaction parameters (global default; per-model: max_compact_tokens above)
 MAX_COMPACT_TOKENS: 180000
 
 MAX_TOKENS: 38192

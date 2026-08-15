@@ -20,6 +20,7 @@ from crow_cli.agent.compact import compact
 from crow_cli.agent.configure import (
     Config,
     build_sampling_params,
+    max_compact_tokens_for,
     sampling_params_for,
 )
 from crow_cli.agent.context import maximal_deserialize
@@ -784,6 +785,12 @@ async def react_loop(
         #####################################
         logger.info(f"Pre-Tool ExecutionUsage: {usage}")
 
+        # Per-model compaction threshold, resolved LIVE from the session's
+        # CURRENT model — the user can switch models mid-session
+        # (set_config_option), so this is never cached at session init.
+        # Models without their own max_compact_tokens keep the global rate.
+        compact_threshold = max_compact_tokens_for(config, session.model_identifier)
+
         # Expose token usage to the ACP client (context % against the compaction
         # threshold). usage_update is stabilized in v1; Zed renders it as a
         # context-meter. Best-effort: a dead client must not kill the react loop.
@@ -794,19 +801,19 @@ async def react_loop(
                     update=UsageUpdate(
                         session_update="usage_update",
                         used=int(usage["total_tokens"]),
-                        size=config.MAX_COMPACT_TOKENS,
+                        size=compact_threshold,
                     ),
                 )
             except Exception:
                 logger.warning("Failed to send usage_update to ACP client", exc_info=True)
 
         # 1. Check your token threshold
-        if usage and usage["total_tokens"] > config.MAX_COMPACT_TOKENS:
+        if usage and usage["total_tokens"] > compact_threshold:
             logger.info("Token threshold crossed. Initiating compaction...")
 
             yield {
                 "type": "compaction",
-                "token": f"\n\nCompaction threshold of {config.MAX_COMPACT_TOKENS} reached — compacting conversation history...\n\n",
+                "token": f"\n\nCompaction threshold of {compact_threshold} reached — compacting conversation history...\n\n",
             }
 
             old_agent_id = agent_id
