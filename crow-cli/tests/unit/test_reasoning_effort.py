@@ -28,6 +28,16 @@ from crow_cli.agent.configure import (
 )
 from crow_cli.agent.react import send_request
 
+# Qwen3.8-27B recommended Instruct (non-thinking) mode sampling — the real
+# values this pass-through exists for.
+QWEN_INSTRUCT = dict(
+    top_p=0.80,
+    top_k=20,
+    min_p=0.0,
+    presence_penalty=1.5,
+    repetition_penalty=1.0,
+)
+
 
 # ---------------------------------------------------------------------------
 # build_sampling_params — the one sampling rule shared by react loop + compact
@@ -44,6 +54,37 @@ class TestBuildSamplingParams:
 
     def test_unset_falls_back_to_temperature(self):
         assert build_sampling_params(None, 0.4) == {"temperature": 0.4}
+
+    def test_optional_params_split_standard_vs_extra_body(self):
+        # top_p / presence_penalty are OpenAI kwargs; top_k / min_p /
+        # repetition_penalty are not and must ride in extra_body.
+        assert build_sampling_params(None, 0.7, **QWEN_INSTRUCT) == {
+            "temperature": 0.7,
+            "top_p": 0.80,
+            "presence_penalty": 1.5,
+            "extra_body": {
+                "top_k": 20,
+                "min_p": 0.0,
+                "repetition_penalty": 1.0,
+            },
+        }
+
+    def test_unset_optional_params_omitted_entirely(self):
+        params = build_sampling_params(None, 0.7, top_p=0.95)
+        assert params == {"temperature": 0.7, "top_p": 0.95}
+        assert "extra_body" not in params
+
+    def test_explicit_zero_values_are_sent(self):
+        # 0 / 0.0 are falsy but valid — None alone means "omit".
+        params = build_sampling_params(None, 1.0, min_p=0.0, presence_penalty=0.0)
+        assert params["presence_penalty"] == 0.0
+        assert params["extra_body"] == {"min_p": 0.0}
+
+    def test_reasoning_effort_omits_all_other_sampling_params(self):
+        assert (
+            build_sampling_params("high", 0.6, **QWEN_INSTRUCT)
+            == {"reasoning_effort": "high"}
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +178,35 @@ def test_config_load_invalid_modality_fails_fast(test_config_dir):
         Config.load(test_config_dir)
 
 
+def test_config_load_optional_sampling_params_default_none(test_config_dir):
+    cfg = Config.load(test_config_dir)
+    model = cfg.llm.models["test-model"]
+    assert model.top_p is None
+    assert model.top_k is None
+    assert model.min_p is None
+    assert model.presence_penalty is None
+    assert model.repetition_penalty is None
+
+
+def test_config_load_parses_optional_sampling_params(test_config_dir):
+    _set_model(test_config_dir, temperature=0.7, **QWEN_INSTRUCT)
+    cfg = Config.load(test_config_dir)
+    model = cfg.llm.models["test-model"]
+    assert model.top_p == 0.80
+    assert model.top_k == 20
+    assert isinstance(model.top_k, int)
+    assert model.min_p == 0.0  # explicit zero survives
+    assert model.presence_penalty == 1.5
+    assert model.repetition_penalty == 1.0
+
+
+@pytest.mark.parametrize("bad", ["abc", True, [0.9]])
+def test_config_load_invalid_optional_param_fails_fast(test_config_dir, bad):
+    _set_model(test_config_dir, top_p=bad)
+    with pytest.raises(ValueError, match=r"test-model.*top_p"):
+        Config.load(test_config_dir)
+
+
 @pytest.mark.parametrize("stale", ["TEMPERATURE", "reasoning_effort"])
 def test_config_load_rejects_global_sampling_keys(test_config_dir, stale):
     config_file = test_config_dir / "config.yaml"
@@ -179,6 +249,37 @@ def test_sampling_params_for_temperature_model():
 def test_sampling_params_for_unknown_model_gets_defaults():
     cfg = _config_with(LLModel(name="t", provider_name="p", model_id="t-id"))
     assert sampling_params_for(cfg, "not-configured") == {"temperature": 0.6}
+
+
+def test_sampling_params_for_forwards_optional_params():
+    cfg = _config_with(
+        LLModel(
+            name="qwen",
+            provider_name="p",
+            model_id="qwen-id",
+            temperature=0.7,
+            **QWEN_INSTRUCT,
+        )
+    )
+    assert sampling_params_for(cfg, "qwen-id") == {
+        "temperature": 0.7,
+        "top_p": 0.80,
+        "presence_penalty": 1.5,
+        "extra_body": {"top_k": 20, "min_p": 0.0, "repetition_penalty": 1.0},
+    }
+
+
+def test_sampling_params_for_reasoning_model_drops_optional_params():
+    cfg = _config_with(
+        LLModel(
+            name="r",
+            provider_name="p",
+            model_id="r-id",
+            reasoning_effort="high",
+            **QWEN_INSTRUCT,
+        )
+    )
+    assert sampling_params_for(cfg, "r-id") == {"reasoning_effort": "high"}
 
 
 # ---------------------------------------------------------------------------
@@ -258,6 +359,45 @@ async def test_send_request_uses_per_model_temperature():
     await send_request(llm, _session(), tools=[], max_tokens=100, config=cfg)
     assert llm.captured["temperature"] == 0.25
     assert "reasoning_effort" not in llm.captured
+
+
+@pytest.mark.asyncio
+async def test_send_request_passes_optional_params_through():
+    cfg = _config_with(
+        LLModel(
+            name="test-model",
+            provider_name="p",
+            model_id="test-model",
+            temperature=0.7,
+            **QWEN_INSTRUCT,
+        )
+    )
+    llm = FakeLLM()
+    await send_request(llm, _session(), tools=[], max_tokens=100, config=cfg)
+    # Standard OpenAI fields go as top-level kwargs...
+    assert llm.captured["temperature"] == 0.7
+    assert llm.captured["top_p"] == 0.80
+    assert llm.captured["presence_penalty"] == 1.5
+    # ...non-standard ones via extra_body for compatible servers.
+    assert llm.captured["extra_body"] == {
+        "top_k": 20,
+        "min_p": 0.0,
+        "repetition_penalty": 1.0,
+    }
+    assert "top_k" not in llm.captured
+    assert "min_p" not in llm.captured
+    assert "repetition_penalty" not in llm.captured
+
+
+@pytest.mark.asyncio
+async def test_send_request_no_extra_body_when_params_unset():
+    cfg = _config_with(
+        LLModel(name="test-model", provider_name="p", model_id="test-model")
+    )
+    llm = FakeLLM()
+    await send_request(llm, _session(), tools=[], max_tokens=100, config=cfg)
+    assert "extra_body" not in llm.captured
+    assert "top_p" not in llm.captured
 
 
 @pytest.mark.asyncio

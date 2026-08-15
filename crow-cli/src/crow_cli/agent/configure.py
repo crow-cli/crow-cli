@@ -127,30 +127,86 @@ def parse_reasoning_effort(raw: Any) -> str:
         ) from None
 
 
+# Optional per-model sampling pass-through keys and their types. Absent key
+# = None = omitted from the request; explicit 0 / 0.0 values ARE sent.
+OPTIONAL_SAMPLING_PARAMS = (
+    ("top_p", float),
+    ("top_k", int),
+    ("min_p", float),
+    ("presence_penalty", float),
+    ("repetition_penalty", float),
+)
+
+
+def parse_sampling_number(model_name: str, key: str, raw: Any) -> float | int:
+    """Coerce a config.yaml sampling value to its number type, failing fast
+    with a message naming the model and key instead of a bare cast error."""
+    cast = dict(OPTIONAL_SAMPLING_PARAMS)[key]
+    if isinstance(raw, bool):  # YAML true/false would sneak through int()/float()
+        raise ValueError(f"model {model_name!r}: {key} must be a number, got {raw!r}")
+    try:
+        return cast(raw)
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"model {model_name!r}: {key} must be a number, got {raw!r}"
+        ) from None
+
+
 def build_sampling_params(
     reasoning_effort: str | None,
     temperature: float,
+    top_p: float | None = None,
+    top_k: int | None = None,
+    min_p: float | None = None,
+    presence_penalty: float | None = None,
+    repetition_penalty: float | None = None,
 ) -> dict[str, Any]:
     """The one sampling rule for every LLM call (react loop AND compaction):
-    reasoning_effort when set — temperature omitted, reasoning models reject
-    it — else temperature. Never both, never neither (no provider defaults)."""
-    return (
-        {"reasoning_effort": reasoning_effort}
-        if reasoning_effort
-        else {"temperature": temperature}
-    )
+    reasoning_effort when set — ALL other sampling params omitted, reasoning
+    models reject them — else temperature plus any optional params the model
+    config set (None = omit, so explicit 0 / 0.0 values ARE sent). top_k,
+    min_p and repetition_penalty are non-standard OpenAI fields and are
+    packed into extra_body for pass-through to compatible servers."""
+    if reasoning_effort:
+        return {"reasoning_effort": reasoning_effort}
+    params: dict[str, Any] = {"temperature": temperature}
+    if top_p is not None:
+        params["top_p"] = top_p
+    if presence_penalty is not None:
+        params["presence_penalty"] = presence_penalty
+    extra_body = {
+        name: value
+        for name, value in (
+            ("top_k", top_k),
+            ("min_p", min_p),
+            ("repetition_penalty", repetition_penalty),
+        )
+        if value is not None
+    }
+    if extra_body:
+        params["extra_body"] = extra_body
+    return params
 
 
 def sampling_params_for(config: "Config", model_id: str) -> dict[str, Any]:
     """Per-model sampling rule for every LLM call (react loop AND compaction):
-    the configured model's reasoning_effort XOR temperature. Models not in
-    config get the defaults (temperature 0.6, no effort)."""
+    the configured model's reasoning_effort XOR temperature (+ optional
+    top_p / top_k / min_p / presence_penalty / repetition_penalty). Models
+    not in config get the defaults (temperature 0.6, no effort)."""
     model = next(
         (m for m in config.llm.models.values() if m.model_id == model_id), None
     )
     if model is None:
         return {"temperature": 0.6}
-    return build_sampling_params(model.reasoning_effort, model.temperature)
+    return build_sampling_params(
+        model.reasoning_effort,
+        model.temperature,
+        top_p=model.top_p,
+        top_k=model.top_k,
+        min_p=model.min_p,
+        presence_penalty=model.presence_penalty,
+        repetition_penalty=model.repetition_penalty,
+    )
 
 
 @dataclass
@@ -165,10 +221,19 @@ class LLModel:
     name: str
     provider_name: str
     model_id: str
-    # Per-model sampling, XOR: reasoning_effort wins and temperature is
-    # omitted entirely (reasoning models reject it); else temperature.
+    # Per-model sampling, XOR: reasoning_effort wins and ALL other sampling
+    # params are omitted entirely (reasoning models reject them); else
+    # temperature plus any of the optional knobs below that are set.
     temperature: float = 0.6
     reasoning_effort: ReasoningEffort | None = None
+    # Optional sampling pass-through (None = omit). top_p / presence_penalty
+    # are standard OpenAI fields; top_k / min_p / repetition_penalty are not
+    # and are sent via extra_body to OpenAI-compatible servers.
+    top_p: float | None = None
+    top_k: int | None = None
+    min_p: float | None = None
+    presence_penalty: float | None = None
+    repetition_penalty: float | None = None
     # Input modalities. Assume vision-capable until proven otherwise;
     # ["text"] models get image/audio/video blocks stripped / routed around
     # (see model_routing).
@@ -294,6 +359,13 @@ class Config:
                     if raw_effort is not None
                     else None
                 ),
+                # Optional sampling pass-through; absent key = None = omit
+                # (0 / 0.0 are valid values and must survive).
+                **{
+                    key: parse_sampling_number(name, key, data[key])
+                    for key, _ in OPTIONAL_SAMPLING_PARAMS
+                    if data.get(key) is not None
+                },
                 modality=modality,
                 fallbacks=list(data.get("fallbacks") or []),
             )

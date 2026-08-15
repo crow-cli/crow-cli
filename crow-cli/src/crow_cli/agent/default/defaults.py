@@ -247,14 +247,23 @@ system_prompt_path: ~/.agents/crow/prompts/system_prompt.jinja2
 #     model: gpt-3.5-turbo
 #     temperature: 0.6
 #     # reasoning_effort: medium
+#     # top_p: 0.95  (+ top_k, min_p, presence_penalty, repetition_penalty)
 #     modality: [text, image]
 
 # Per-model sampling (all optional):
 #   temperature     — sampling temperature, default 0.6
 #   reasoning_effort — for reasoning models (gpt-5, o3, ...). When set, crow
-#                      sends it and OMITS temperature (reasoning models reject
-#                      temperature). One of: none | minimal | low | medium |
-#                      high | xhigh | max
+#                      sends it and OMITS every other sampling param
+#                      (reasoning models reject them). One of:
+#                      none | minimal | low | medium | high | xhigh | max
+#   top_p           — nucleus cutoff, 0..1; omitted if unset
+#   top_k           — keep only the top-k tokens (integer); omitted if unset
+#   min_p           — min-probability cutoff relative to the top token, 0..1
+#   presence_penalty — penalize tokens already in the context
+#   repetition_penalty — penalize repeated tokens (1.0 = off)
+#   top_k / min_p / repetition_penalty are not standard OpenAI fields; crow
+#   sends them via extra_body, which OpenAI-compatible servers (llama.cpp,
+#   vLLM, Ollama, ...) pass straight through to the sampler.
 #   modality        — list of input modalities (text | image | audio | video).
 #                     Default [text, image] = assume vision-capable until
 #                     proven otherwise; [text] = strip/route images around.

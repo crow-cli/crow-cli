@@ -290,6 +290,24 @@ async def _inspect_db(session_id, messages, limit, json_output):
 # ============================================================================
 
 
+def _sampling_label(model) -> str:
+    """One-line sampling summary for the models table: effort when set,
+    else temperature plus whichever optional params are configured."""
+    if model.reasoning_effort:
+        return model.reasoning_effort
+    parts = [f"temp={model.temperature}"]
+    for label, value in (
+        ("top_p", model.top_p),
+        ("top_k", model.top_k),
+        ("min_p", model.min_p),
+        ("presence", model.presence_penalty),
+        ("repeat", model.repetition_penalty),
+    ):
+        if value is not None:
+            parts.append(f"{label}={value}")
+    return " ".join(parts)
+
+
 @app.command()
 def models(
     config_dir: Path = typer.Option(
@@ -310,7 +328,7 @@ def models(
             "provider": m.provider_name,
             "model_id": m.model_id,
             "modality": ",".join(m.modality),
-            "sampling": m.reasoning_effort or f"temp={m.temperature}",
+            "sampling": _sampling_label(m),
             "fallbacks": list(m.fallbacks),
             "default": i == 0,
         }
