@@ -297,7 +297,7 @@ def get_prompt(engine, prompt_id: str) -> Prompt | None:
 def get_max_agent_idx(engine, session_id: str) -> int:
     with Session(engine) as db:
         rows = db.query(Agent.agent_idx).filter_by(session_id=session_id).all()
-    return max((r[0] for r in rows), default=0)
+    return max((r[0] for r in rows), default=1)
 
 
 def load_messages(

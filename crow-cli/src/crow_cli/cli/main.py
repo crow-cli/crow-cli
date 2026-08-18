@@ -192,7 +192,7 @@ async def _inspect_db(session_id, messages, limit, json_output):
     if session_id:
         # Use existing AgentSession methods to get the latest agent for this session
         max_idx = await AgentSession.get_max_agent_idx(session_id)
-        if max_idx < 0:
+        if max_idx < 1:
             if json_output:
                 print(json.dumps({"error": f"Session '{session_id}' not found"}))
             else:
