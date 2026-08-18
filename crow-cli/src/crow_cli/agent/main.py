@@ -48,6 +48,7 @@ import platform
 import sys
 import uuid
 from contextlib import AsyncExitStack
+from logging import Logger
 from pathlib import Path
 from typing import Any
 from importlib.metadata import version
@@ -185,8 +186,6 @@ class AcpAgent(Agent):
                 )
         self._memory_db_uri = self._config.db_uri
         self._exit_stack = AsyncExitStack()
-        self._agent_id: str | None = None
-        self._session_id: str | None = None  # stripped version for ACP upstream
         self._sessions: dict[str, AgentSession] = {}
         self._mcp_clients: dict[str, MCPClient] = {}  # session_id -> mcp_client
         self._tools: dict[str, list[dict]] = {}  # session_id -> tools
@@ -201,6 +200,8 @@ class AcpAgent(Agent):
         self._config_values: dict[
             str, dict[str, str]
         ] = {}  # session_id -> {config_id: value}
+        self._session_locks: dict[str, asyncio.Lock] = {}  # session_id -> prompt serialization
+        self._session_loggers: dict[str, Logger] = {}  # session_id -> per-session logger
         self._notification_queue: list[dict] = []  # queued extension notifications
 
     def _default_model_value(self) -> str:
@@ -212,6 +213,72 @@ class AcpAgent(Agent):
     def _default_model_identifier(self) -> str:
         model = self._model_override or next(iter(self._config.llm.models.values()), None)
         return model.model_id if model else ""
+
+    def _logger_for(self, session_id: str) -> Logger:
+        """Per-session logger, falling back to the agent-level logger."""
+        return self._session_loggers.get(session_id, self._logger)
+
+    async def _resolve_session(self, session_id: str) -> AgentSession | None:
+        """Resolve session_id to the live AgentSession.
+
+        The DB is the authority: compaction forks agent_idx inside a stable
+        session_id, and get_max_agent_idx always reflects the newest fork.
+        self._sessions is a cache of live objects; hydrate from the DB on a
+        miss (process restart, prompt without new/load_session, or a second
+        connection attaching to a session it did not create).
+        """
+        max_idx = await AgentSession.get_max_agent_idx(
+            session_id, memory_path=self._memory_db_uri
+        )
+        if max_idx < 1:
+            return None
+        agent_id = f"{session_id}-{max_idx}"
+        session = self._sessions.get(agent_id)
+        if session is None:
+            try:
+                session = await AgentSession.load(
+                    agent_id, memory_path=self._memory_db_uri
+                )
+            except ValueError:
+                return None
+            self._sessions[agent_id] = session
+        return session
+
+    async def _provision_session(self, session: AgentSession) -> None:
+        """Bring per-session infrastructure up for a hydrated session.
+
+        Resolution can return a session this agent instance never created
+        (process restart, second connection, prompt without new/load). The
+        react loop needs an MCP client, tools, cancel event, logger, and
+        config values per session_id — spin them up on first use. Idempotent.
+        """
+        session_id = session.session_id
+        if session_id in self._tools:
+            return
+        builtin_config = self._config.get_builtin_mcp_config()
+        config, mcp_client = create_mcp_client_from_acp(
+            mcp_servers=None,
+            cwd=session.cwd,
+            builtin_config=builtin_config,
+            logger=self._logger,
+        )
+        self._logger.info(
+            "Provisioning hydrated session %s (agent %s) with builtin MCP config",
+            session_id,
+            session.agent_id,
+        )
+        mcp_client = await self._exit_stack.enter_async_context(mcp_client)
+        tools = await get_tools(mcp_client)
+        self._mcp_clients[session_id] = mcp_client
+        self._tools[session_id] = tools
+        self._cancel_events[session_id] = asyncio.Event()
+        self._session_loggers[session_id] = setup_logger(
+            self._config.config_dir / "logs" / f"crow-cli-{session_id}.log",
+            name=f"{session_id}-crow-logger",
+        )
+        self._config_values.setdefault(
+            session_id, {"model": self._default_model_value()}
+        )
 
     def _get_config_options(self, session_id: str) -> list[SessionConfigOptionSelect]:
         """Generate the config options for a session based on current values."""
@@ -363,7 +430,6 @@ class AcpAgent(Agent):
             logger=self._logger,
         )
         self._logger.info("new_session merged config from create_mcp_client_from_acp: %s", config)
-        self._config.mcp_servers = config["mcpServers"]
         # CRITICAL: Use AsyncExitStack for lifecycle management
         mcp_client = await self._exit_stack.enter_async_context(mcp_client)
 
@@ -376,14 +442,12 @@ class AcpAgent(Agent):
             cwd,
         )
 
-        # Store in-memory references keyed on agent_id
+        # Store in-memory references keyed on agent_id / session_id
         self._sessions[session.agent_id] = session
-        self._agent_id = session.agent_id
-        self._session_id = session.session_id  # stripped for ACP upstream
         self._mcp_clients[session.session_id] = mcp_client
         self._tools[session.session_id] = tools
         self._cancel_events[session.session_id] = asyncio.Event()
-        self._session_logger = setup_logger(
+        self._session_loggers[session.session_id] = setup_logger(
             self._config.config_dir / "logs" / f"crow-cli-{session.session_id}.log",
             name=f"{session.session_id}-crow-logger",
         )
@@ -397,7 +461,7 @@ class AcpAgent(Agent):
             session.agent_id,
             len(tools),
         )
-        self._session_logger.info(
+        self._logger_for(session.session_id).info(
             "Created session: %s (agent_id: %s) with %d tools",
             session.session_id,
             session.agent_id,
@@ -480,14 +544,12 @@ class AcpAgent(Agent):
             # Get tools
             tools = await get_tools(mcp_client)
 
-            # Store in-memory references keyed on agent_id
+            # Store in-memory references keyed on agent_id / session_id
             self._sessions[session.agent_id] = session
-            self._agent_id = session.agent_id
-            self._session_id = session.session_id
             self._mcp_clients[session_id] = mcp_client
             self._tools[session_id] = tools
             self._cancel_events[session_id] = asyncio.Event()
-            self._session_logger = setup_logger(
+            self._session_loggers[session.session_id] = setup_logger(
                 self._config.config_dir / "logs" / f"crow-cli-{session.session_id}.log",
                 name=f"{session.session_id}-crow-logger",
             )
@@ -549,22 +611,15 @@ class AcpAgent(Agent):
             "Set session %s config option %s -> %s", session_id, config_id, value
         )
 
-        # Resolve session_id to agent_id (same pattern as prompt/cancel)
-        if self._session_id == session_id and self._agent_id:
-            agent_id = self._agent_id
-        else:
-            max_idx = await AgentSession.get_max_agent_idx(session_id, memory_path=self._memory_db_uri)
-            agent_id = f"{session_id}-{max_idx}"
+        session = await self._resolve_session(session_id)
+        if session is None:
+            self._logger.warning("set_config_option: unknown session %s", session_id)
+            return None
 
-        # Initialize if not set
-        if agent_id not in self._config_values:
-            self._config_values[agent_id] = {}
-
-        self._config_values[session_id][config_id] = value
+        self._config_values.setdefault(session_id, {})[config_id] = value
 
         # Update session model if the config changed was the model
-        if config_id == "model" and agent_id in self._sessions:
-            session = self._sessions[agent_id]
+        if config_id == "model":
             # Optionally split back from provider:model
             if ":" in value:
                 _, model_name = value.split(":", 1)
@@ -593,7 +648,8 @@ class AcpAgent(Agent):
         Directly iterates over react_loop without intermediate buffering.
         Cancellation is handled via try/except - state is persisted by react_loop.
         """
-        self._session_logger.info("Prompt request for session: %s", session_id)
+        session_logger = self._logger_for(session_id)
+        session_logger.info("Prompt request for session: %s", session_id)
         if not self._config.is_configured:
             await self._conn.session_update(
                 session_id=session_id,
@@ -601,28 +657,29 @@ class AcpAgent(Agent):
             )
             return PromptResponse(stop_reason="end_turn")
 
-        # Resolve session_id to agent_id
-        if self._session_id == session_id and self._agent_id:
-            agent_id = self._agent_id
-        else:
-            max_idx = await AgentSession.get_max_agent_idx(session_id, memory_path=self._memory_db_uri)
-            agent_id = f"{session_id}-{max_idx}"
-
         async def _execute_turn() -> PromptResponse:
             # Generate turn ID for this prompt (used for ACP tool call IDs)
             turn_id = str(uuid.uuid4())
 
-            # Get session
-            session = self._sessions.get(agent_id)
-            if not session:
-                self._session_logger.error("AgentSession not found: %s", agent_id)
-                return PromptResponse(stop_reason="cancelled")
+            # Resolve session_id -> live AgentSession. The DB is the authority
+            # (compaction forks agent_idx inside a stable session_id); the dict
+            # is a cache, hydrated on miss. This is what lets one agent serve
+            # many sessions — including ones it never created this process.
+            session = await self._resolve_session(session_id)
+            if session is None:
+                session_logger.error("No session found for session_id=%s", session_id)
+                return PromptResponse(stop_reason="error")
+
+            # Hydrated sessions arrive bare — spin up their MCP client/tools.
+            await self._provision_session(session)
+
+            agent_id = session.agent_id
 
             # Build user message content (supports text, images, and resource links)
-            user_content = await normalize_prompt(prompt, self._session_logger)
+            user_content = await normalize_prompt(prompt, session_logger)
             # Skip if no valid content blocks were collected
             if not user_content:
-                self._session_logger.warning("Empty user content - skipping message")
+                session_logger.warning("Empty user content - skipping message")
                 return PromptResponse(stop_reason="error")
 
             # Check for slash commands (only for text-only messages)
@@ -701,13 +758,16 @@ class AcpAgent(Agent):
                         "No LLM providers configured. Check ~/.agents/crow/config.yaml."
                     )
 
-                llm = configure_llm(provider=provider, debug=self._config.chunk_log, logger=self._session_logger)
+                llm = configure_llm(provider=provider, debug=self._config.chunk_log, logger=session_logger)
 
                 def on_compact(old_agent_id: str, compacted_session: AgentSession):
-                    """Update all agent-keyed references after compaction."""
-                    new_agent_id = compacted_session.agent_id
-                    self._sessions[new_agent_id] = compacted_session
-                    self._agent_id = new_agent_id
+                    """Register the forked agent so future prompts resolve to it.
+
+                    No scalar bookkeeping: the next prompt re-resolves
+                    session_id -> agent_id from the DB, which compaction
+                    already updated before this callback fired.
+                    """
+                    self._sessions[compacted_session.agent_id] = compacted_session
 
                 # Setup chunk log directory if chunk_log enabled
                 chunk_log_dir = None
@@ -727,7 +787,7 @@ class AcpAgent(Agent):
                     agent_id=agent_id,
                     state_accumulators=self._state_accumulators,
                     on_compact=on_compact,
-                    logger=self._session_logger,
+                    logger=session_logger,
                     hooks=self._hooks,
                     chunk_log_dir=chunk_log_dir,
                 ):
@@ -764,23 +824,30 @@ class AcpAgent(Agent):
                 return PromptResponse(stop_reason="end_turn")
 
             except asyncio.CancelledError:
-                self._session_logger.info("Prompt cancelled")
+                session_logger.info("Prompt cancelled")
                 # State is already persisted by react_loop's cancellation handler
                 raise
 
-        task = asyncio.create_task(_execute_turn())
+        # One turn at a time per session; distinct sessions run in parallel.
+        lock = self._session_locks.setdefault(session_id, asyncio.Lock())
+
+        async def _locked_turn() -> PromptResponse:
+            async with lock:
+                return await _execute_turn()
+
+        task = asyncio.create_task(_locked_turn())
         self._prompt_tasks[session_id] = task
 
         # 3. Await the task and handle the cancellation at the top level
         try:
             return await task
         except asyncio.CancelledError:
-            self._session_logger.info(
+            session_logger.info(
                 "Prompt gracefully stopped due to client cancellation"
             )
             return PromptResponse(stop_reason="cancelled")
         except Exception as e:
-            self._session_logger.error("Error in prompt handling: %s", e, exc_info=True)
+            session_logger.error("Error in prompt handling: %s", e, exc_info=True)
             # Surface the failure as an ACP JSON-RPC error (code -32603) instead
             # of a clean end_turn. A clean end_turn made the client think the
             # turn finished normally and re-fire the task/nag loop — so a
@@ -795,7 +862,7 @@ class AcpAgent(Agent):
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
         """Handle cancellation by immediately cancelling the underlying Task."""
-        self._session_logger.info("Cancel request for session: %s", session_id)
+        self._logger_for(session_id).info("Cancel request for session: %s", session_id)
 
         task = self._prompt_tasks.get(session_id)
         if task and not task.done():
@@ -809,7 +876,7 @@ class AcpAgent(Agent):
     async def ext_notification(self, method: str, params: dict[str, Any]) -> None:
         """Handle extension notifications"""
         self._logger.info("Extension notification: %s with params: %s", method, params)
-        
+
         # Queue _send notifications for processing
         if method == "_send":
             if not hasattr(self, '_notification_queue'):
@@ -834,7 +901,7 @@ class AcpAgent(Agent):
         self._logger.info("Listing sessions for working directory: %s", cwd)
         if cwd is None:
             return ListSessionsResponse(sessions=[], next_cursor=None)
-        sessions_info = await get_session_by_cwd(cwd, self._memory_path)
+        sessions_info = await get_session_by_cwd(cwd, self._memory_db_uri)
         sessions = [SessionInfo(**session) for session in sessions_info]
         return ListSessionsResponse(sessions=sessions, next_cursor=None)
 
