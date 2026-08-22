@@ -24,3 +24,14 @@ def parse_agent_id(agent_id: str) -> tuple[str, int, int]:
             f"malformed agent_id (want '<session>-<idx>-<fork>', got {agent_id!r}) — "
             "if this is a v4 database, run the schema-v5 migration first"
         ) from e
+
+
+def wire_session_id(agent_id: str) -> str:
+    """The ACP wire sessionId an agent is addressed by.
+
+    The trunk (fork_idx=1) is addressed by its bare session_id; a fork is
+    addressed by its full agent_id. State dicts, session_update tags and
+    upstream ACP calls all key on this.
+    """
+    session_id, _, fork_idx = parse_agent_id(agent_id)
+    return agent_id if fork_idx > 1 else session_id

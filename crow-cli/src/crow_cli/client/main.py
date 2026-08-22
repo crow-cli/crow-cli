@@ -504,7 +504,14 @@ async def connect_client(
 ) -> ClientSideConnection:
     """Initialize ACP connection to agent."""
     try:
-        conn = connect_to_agent(client, proc.stdin, proc.stdout)
+        conn = connect_to_agent(
+            client,
+            proc.stdin,
+            proc.stdout,
+            # session/fork is UNSTABLE — both ends must opt in or the router
+            # answers method_not_found.
+            use_unstable_protocol=True,
+        )
 
         await conn.initialize(
             protocol_version=PROTOCOL_VERSION,

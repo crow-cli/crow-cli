@@ -153,9 +153,10 @@ async def _send(llm, **kw):
 
 
 def test_session_from_agent_id():
+    # trunk routes to the bare session_id; a fork keeps its agent_id (wire id)
     assert session_from_agent_id("s-1-1") == "s"
     assert session_from_agent_id("cool-name-3-1") == "cool-name"
-    assert session_from_agent_id("cool-name-3-2") == "cool-name"
+    assert session_from_agent_id("cool-name-3-2") == "cool-name-3-2"
 
 
 def test_cancelled_tool_results_one_per_call():

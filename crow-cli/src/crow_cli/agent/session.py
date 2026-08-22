@@ -84,6 +84,26 @@ def get_coolname() -> str:
     return generate_slug(4)
 
 
+def snap_turn_cut(messages: list[dict], turn_idx: int | None) -> int | None:
+    """Compute the fork cut point for a turn anchor.
+
+    ``turn_idx`` is the 0-based turn (user message) within the agent's
+    message list, in the sense "include through the END of this turn". Cut
+    points land on user-message boundaries, so an assistant tool_calls group
+    is never split from its tool results. Returns the number of messages to
+    keep; None keeps everything (fork at HEAD).
+    """
+    if turn_idx is None:
+        return None
+    user_idxs = [i for i, m in enumerate(messages) if m.get("role") == "user"]
+    if not user_idxs:
+        return None
+    turn_idx = max(turn_idx, 0)
+    if turn_idx + 1 >= len(user_idxs):
+        return None  # last turn (or beyond) -> HEAD
+    return user_idxs[turn_idx + 1]
+
+
 async def lookup_or_create_prompt(
     template: str,
     name: str,
@@ -334,6 +354,57 @@ class AgentSession:
         session.messages = messages
 
         return session
+
+    @classmethod
+    async def fork(
+        cls,
+        session_id: str,
+        memory_path: str = DEFAULT_MEMORY_PATH,
+        cwd: str = "/tmp",
+        agent_idx: int | None = None,
+        turn_idx: int | None = None,
+    ) -> "AgentSession":
+        """Fork a TRUNK agent of the session (default: HEAD = max agent_idx).
+
+        The fork shares (session_id, agent_idx) with its source and gets the
+        next fork_idx. Its context is the trunk's prefix rows up to the turn
+        anchor (stored as forked_at, a message-id POSITION) — shared rows,
+        never copied. The fork inherits the source's prompt, tools, request
+        params and model.
+        """
+        client = MemoryClient(memory_path)
+        try:
+            if agent_idx is None:
+                agent_idx = await client.get_max_agent_idx(session_id)
+            source_id = build_agent_id(session_id, agent_idx, 1)
+            source, _ = await client.load(source_id)
+            records = await client.query_messages(agent_id=source_id)
+            if not records:
+                raise ValueError(f"source agent '{source_id}' has no messages to fork")
+            cut = snap_turn_cut([r.data for r in records], turn_idx)
+            anchor = records[-1].id if cut is None else records[cut - 1].id
+            fork_idx = await client.get_max_fork_idx(session_id, agent_idx) + 1
+            fork_id = build_agent_id(session_id, agent_idx, fork_idx)
+            await client.create_agent(
+                agent_id=fork_id,
+                session_id=session_id,
+                agent_idx=agent_idx,
+                fork_idx=fork_idx,
+                forked_at=str(anchor),
+                cwd=cwd,
+                prompt_id=source.prompt_id,
+                prompt_args=source.prompt_args,
+                system_prompt=source.system_prompt,
+                tool_definitions=source.tool_definitions,
+                request_params=source.request_params,
+                model_identifier=source.model_identifier,
+            )
+        finally:
+            await client.close()
+
+        # Reload through the normal path so the fork's message view (trunk
+        # prefix + its own rows) is assembled and hydrated.
+        return await cls.load(fork_id, memory_path=memory_path)
 
     async def close(self):
         """Close the HTTP client."""

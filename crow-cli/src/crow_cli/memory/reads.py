@@ -5,6 +5,7 @@ from pathlib import Path
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
+from .ids import build_agent_id, parse_agent_id
 from .messages import hydrate_message
 from .models import Agent, Message, Prompt
 
@@ -36,6 +37,49 @@ def get_max_agent_idx(engine, session_id: str, fork_idx: int | None = 1) -> int:
             q = q.filter_by(fork_idx=fork_idx)
         rows = q.all()
     return max((r[0] for r in rows), default=1)
+
+
+def get_max_fork_idx(engine, session_id: str, agent_idx: int) -> int:
+    """Highest fork_idx for a (session_id, agent_idx) pair — 1 when only the
+    trunk exists."""
+    with Session(engine) as db:
+        rows = (
+            db.query(Agent.fork_idx)
+            .filter_by(session_id=session_id, agent_idx=agent_idx)
+            .all()
+        )
+    return max((r[0] for r in rows), default=1)
+
+
+def load_agent_messages(
+    engine, agent, hydrate: bool = False, images_dir: Path | None = None,
+) -> list[dict]:
+    """Message VIEW for an agent row.
+
+    The trunk (fork_idx=1) sees its own rows. A fork sees the trunk's PREFIX
+    rows (id <= forked_at) followed by its own rows — the prefix is shared,
+    never copied.
+    """
+    session_id, agent_idx, fork_idx = parse_agent_id(agent.agent_id)
+    if fork_idx == 1:
+        return load_messages(engine, agent.agent_id, hydrate, images_dir)
+    trunk_id = build_agent_id(session_id, agent_idx, 1)
+    anchor = int(agent.forked_at) if agent.forked_at is not None else None
+    with Session(engine) as db:
+        q = db.query(Message).filter_by(agent_id=trunk_id).order_by(Message.id)
+        if anchor is not None:
+            q = q.filter(Message.id <= anchor)
+        msgs = [dict(r.data) for r in q.all()]
+        msgs += [
+            dict(r.data)
+            for r in db.query(Message)
+            .filter_by(agent_id=agent.agent_id)
+            .order_by(Message.id)
+            .all()
+        ]
+    if hydrate and images_dir:
+        msgs = [hydrate_message(m, images_dir) for m in msgs]
+    return msgs
 
 
 def load_messages(

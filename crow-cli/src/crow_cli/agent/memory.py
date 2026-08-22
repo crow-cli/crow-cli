@@ -209,8 +209,8 @@ class MemoryClient:
         agent = db.get_agent(self._engine, agent_id)
         if agent is None:
             raise MemoryServiceError(404, f"agent '{agent_id}' not found")
-        messages = db.load_messages(
-            self._engine, agent_id, hydrate=hydrate, images_dir=self.images_dir
+        messages = db.load_agent_messages(
+            self._engine, agent, hydrate=hydrate, images_dir=self.images_dir
         )
         return _agent_record(agent), messages
 
@@ -279,6 +279,9 @@ class MemoryClient:
 
     async def get_max_agent_idx(self, session_id: str, fork_idx: int | None = 1) -> int:
         return db.get_max_agent_idx(self._engine, session_id, fork_idx=fork_idx)
+
+    async def get_max_fork_idx(self, session_id: str, agent_idx: int) -> int:
+        return db.get_max_fork_idx(self._engine, session_id, agent_idx)
 
     async def list_sessions(self, limit: int = 50, offset: int = 0) -> list[SessionInfo]:
         return [

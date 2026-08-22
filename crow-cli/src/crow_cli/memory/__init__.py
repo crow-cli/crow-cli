@@ -28,15 +28,17 @@ Module map:
 from sqlalchemy.orm import Session
 
 from .db import create_database, get_engine, normalize_db_uri
-from .ids import build_agent_id, parse_agent_id
+from .ids import build_agent_id, parse_agent_id, wire_session_id
 from .messages import extract_images, hydrate_message, message_text
 from .models import Agent, Base, Message, Prompt, now_iso
 from .reads import (
     get_agent,
     get_max_agent_idx,
+    get_max_fork_idx,
     get_prompt,
     list_agents,
     list_sessions,
+    load_agent_messages,
     load_messages,
     query_messages,
     search_messages,
@@ -57,10 +59,12 @@ __all__ = [
     "get_agent",
     "get_engine",
     "get_max_agent_idx",
+    "get_max_fork_idx",
     "get_prompt",
     "hydrate_message",
     "list_agents",
     "list_sessions",
+    "load_agent_messages",
     "load_messages",
     "lookup_or_create_prompt",
     "message_text",
@@ -69,4 +73,5 @@ __all__ = [
     "parse_agent_id",
     "query_messages",
     "search_messages",
+    "wire_session_id",
 ]

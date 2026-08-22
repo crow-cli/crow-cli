@@ -166,6 +166,49 @@ def test_fork_schema_v5(store):
     assert hits[0]["agent_id"] == "s1-1-2"
 
 
+def test_get_max_fork_idx(store):
+    engine, images = store
+    # trunk only -> 1
+    assert db.get_max_fork_idx(engine, "s1", 1) == 1
+    db.create_agent(
+        engine, agent_id="s1-1-2", session_id="s1", agent_idx=1, fork_idx=2,
+        forked_at="1", tool_definitions=[], request_params={},
+    )
+    assert db.get_max_fork_idx(engine, "s1", 1) == 2
+    # unknown (session, agent_idx) pair -> 1, so the next fork becomes 2
+    assert db.get_max_fork_idx(engine, "s1", 99) == 1
+
+
+def test_load_agent_messages_fork_view(store):
+    """Fork view = trunk PREFIX (id <= forked_at) + fork's own rows; the
+    prefix is shared, never copied, and the trunk stays unpolluted."""
+    engine, images = store
+    for i in range(4):
+        db.add_message(engine, "s1-1-1", {"role": "user", "content": f"trunk {i}"}, images_dir=images)
+    anchor = db.query_messages(engine, ["s1-1-1"])[1].id  # keep trunk msgs 0-1
+
+    db.create_agent(
+        engine, agent_id="s1-1-2", session_id="s1", agent_idx=1, fork_idx=2,
+        forked_at=str(anchor), tool_definitions=[], request_params={},
+    )
+    db.add_message(engine, "s1-1-2", {"role": "user", "content": "fork own"}, images_dir=images)
+
+    fork_view = db.load_agent_messages(engine, db.get_agent(engine, "s1-1-2"))
+    assert [m["content"] for m in fork_view] == ["trunk 0", "trunk 1", "fork own"]
+
+    # trunk view is its own rows only — no fork pollution
+    trunk_view = db.load_agent_messages(engine, db.get_agent(engine, "s1-1-1"))
+    assert [m["content"] for m in trunk_view] == [f"trunk {i}" for i in range(4)]
+
+    # forked_at=None means "whole trunk" (fork at HEAD)
+    db.create_agent(
+        engine, agent_id="s1-1-3", session_id="s1", agent_idx=1, fork_idx=3,
+        forked_at=None, tool_definitions=[], request_params={},
+    )
+    head_view = db.load_agent_messages(engine, db.get_agent(engine, "s1-1-3"))
+    assert [m["content"] for m in head_view] == [f"trunk {i}" for i in range(4)]
+
+
 def test_add_message_rejects_v4_agent_id(store):
     engine, images = store
     with pytest.raises(ValueError, match="malformed agent_id"):
