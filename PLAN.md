@@ -20,20 +20,27 @@ Trajectory: 0 → 1 → 2 → 3 → 4 → 5 → 6 (user's order, preserved).
 - [x] Worktree + branch created (fc25a2b2). dev-crow-2.yaml written.
       Verified 2026-08-22: `crow-cli --help` runs in worktree venv.
 
-## Phase 1 — crow-mcp → crow_cli/mcp
-1.1 `git mv crow-mcp/src/crow_mcp crow-cli/src/crow_cli/mcp`; rewrite
-    `crow_mcp` → `crow_cli.mcp` imports inside moved code + crow-cli code.
-1.2 `git mv crow-mcp/tests crow-cli/tests/mcp`; fix imports; make them run
-    under crow-cli's pytest (testpaths).
-1.3 Merge crow-mcp's pyproject deps into crow-cli's; drop the `crow-mcp==`
-    pin + `[tool.uv.sources]` entry; delete the crow-mcp dir (pyproject,
-    uv.lock, README content worth keeping → note in crow-cli README).
-1.4 Wire `crow-cli mcp` subcommand (cli/main.py) to the FastMCP server entry;
-    update the builtin/default MCP config command to `crow-cli mcp`
-    (defaults.py template + get_builtin_mcp_config consumers) so behavior is
-    IDENTICAL through this phase.
-- Verify: full unit suite green (177 + moved ~115); `crow-cli mcp` boots
-  (stdio smoke); E2E gate green. Commit.
+## Phase 1 — crow-mcp → crow_cli/mcp ✅ (2026-08-22)
+- [x] 1.1 `git mv crow-mcp/src/crow_mcp crow-cli/src/crow_cli/mcp`; all
+      `crow_mcp` imports rewritten to `crow_cli.mcp` (16 files).
+- [x] 1.2 Tests moved to crow-cli/tests/mcp; duplicate tests/mcp/conftest.py
+      deleted (root conftest already had identical tier gating).
+- [x] 1.3 crow-mcp package deleted; deps merged into crow-cli pyproject
+      (fastmcp bumped >=3.4.2, added markdownify/readabilipy/opencv-python/
+      pydantic). crow-mcp was never a python dep — it was spawned over stdio.
+- [x] 1.4 `crow-cli mcp` subcommand wired (serve() extracted in
+      mcp/server/main.py, lazy import in cli/main.py); default config
+      template + init_cmd now write stdio `crow-cli mcp`; stdio integration
+      test updated to spawn `uv --project <crow-cli> run crow-cli mcp`.
+- [x] Sprint dev infra: `--config-file` now threads run → spawn_agent →
+      `python -m crow_cli.agent.main` (apply_config_overrides extracted into
+      agent/configure.py; acp command uses it too).
+- Evidence: 292 passed + 23 skipped (177 cli + 115 mcp); `crow-cli mcp`
+  boots; E2E gate green — `crow-cli run "..." -m glm-5.2 --config-file
+  dev-crow-2.yaml` round-tripped ("E2E-GATE-OK"), sessions persisted in
+  crow-2.db, real crow.db untouched.
+- GOTCHA: default model qwen3.8-27b points at llamacpp host coast-after-3
+  which is DOWN — E2E gates must pass `-m glm-5.2` (or another alibaba model).
 
 ## Phase 2 — MCP ownership inversion (client passes, agent doesn't fall back)
 2.1 Agent side: strip builtin_config from create_mcp_client_from_acp and from

@@ -429,3 +429,29 @@ class Config:
             system_prompt_path=system_prompt_path,
             **overrides,
         )
+
+
+def apply_config_overrides(config: "Config", config_file: Path | None) -> "Config":
+    """Apply a YAML override file onto a loaded Config (the --config-file
+    mechanism). Missing keys leave the loaded config untouched."""
+    if not config_file or not config_file.exists():
+        return config
+    with open(config_file) as f:
+        overrides = yaml.safe_load(f) or {}
+    if "system_prompt_path" in overrides:
+        config.system_prompt_path = Path(os.path.expanduser(overrides["system_prompt_path"]))
+    if "skills_dir" in overrides:
+        config.skills_dir = os.path.expanduser(overrides["skills_dir"])
+    if "db_uri" in overrides or "memory_path" in overrides:
+        config.db_uri = normalize_db_uri(overrides.get("db_uri") or overrides["memory_path"])
+    if "max_retries_per_step" in overrides:
+        config.max_retries_per_step = int(overrides["max_retries_per_step"])
+    if "MAX_COMPACT_TOKENS" in overrides:
+        config.MAX_COMPACT_TOKENS = int(overrides["MAX_COMPACT_TOKENS"])
+    if "MAX_TOKENS" in overrides:
+        config.MAX_TOKENS = int(overrides["MAX_TOKENS"])
+    if "chunk_log" in overrides:
+        config.chunk_log = bool(overrides["chunk_log"])
+    if "mcpServers" in overrides:
+        config.mcp_servers = overrides["mcpServers"]
+    return config

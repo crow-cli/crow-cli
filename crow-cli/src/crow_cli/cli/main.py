@@ -8,13 +8,12 @@ from pathlib import Path
 from typing import Any
 
 import typer
-import yaml
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from crow_cli.agent.configure import Config
+from crow_cli.agent.configure import Config, apply_config_overrides
 from crow_cli.agent.main import main as agent_main
 from crow_cli.agent.memory import MemoryServiceError
 from crow_cli.agent.session import AgentSession
@@ -97,28 +96,7 @@ def run_agentmain(
         config_dir = Path.home() / ".agents" / "crow"
 
     config = Config.load(config_dir=config_dir)
-
-    if config_file and config_file.exists():
-        with open(config_file) as f:
-            overrides = yaml.safe_load(f) or {}
-        if "system_prompt_path" in overrides:
-            config.system_prompt_path = Path(os.path.expanduser(overrides["system_prompt_path"]))
-        if "skills_dir" in overrides:
-            config.skills_dir = os.path.expanduser(overrides["skills_dir"])
-        if "db_uri" in overrides or "memory_path" in overrides:
-            from crow_memory import normalize_db_uri
-
-            config.db_uri = normalize_db_uri(overrides.get("db_uri") or overrides["memory_path"])
-        if "max_retries_per_step" in overrides:
-            config.max_retries_per_step = int(overrides["max_retries_per_step"])
-        if "MAX_COMPACT_TOKENS" in overrides:
-            config.MAX_COMPACT_TOKENS = int(overrides["MAX_COMPACT_TOKENS"])
-        if "MAX_TOKENS" in overrides:
-            config.MAX_TOKENS = int(overrides["MAX_TOKENS"])
-        if "chunk_log" in overrides:
-            config.chunk_log = bool(overrides["chunk_log"])
-        if "mcpServers" in overrides:
-            config.mcp_servers = overrides["mcpServers"]
+    config = apply_config_overrides(config, config_file)
 
     if system_prompt_path:
         config.system_prompt_path = system_prompt_path
@@ -127,6 +105,24 @@ def run_agentmain(
         config.chunk_log = True
 
     agent_main(config=config, model=model, http=http, host=host, port=port)
+
+
+@app.command("mcp")
+def run_mcp(
+    transport: str = typer.Option(
+        "stdio",
+        "--transport",
+        help="stdio = spawned child (default); http = streamable HTTP service",
+    ),
+    host: str = typer.Option("127.0.0.1", "--host", help="bind address for the HTTP transport"),
+    port: int = typer.Option(2769, "--port", help="port for the HTTP transport"),
+):
+    """Serve Crow's MCP tools — stdio child (default) or streamable HTTP."""
+    # Lazy import: registering the tools pulls in every tool module (incl.
+    # opencv); don't pay that for unrelated commands.
+    from crow_cli.mcp.server.main import serve
+
+    serve(transport, host, port)
 
 
 @app.command("init")
@@ -389,6 +385,12 @@ def run(
         "-d",
         help="Configuration directory (default: ~/.agents/crow)",
     ),
+    config_file: Path = typer.Option(
+        None,
+        "--config-file",
+        "-o",
+        help="YAML override file applied on top of the loaded config (forwarded to the agent)",
+    ),
     model: str | None = typer.Option(
         None,
         "--model",
@@ -485,7 +487,9 @@ def run(
         raise SystemExit(1)
 
     # Run the async main
-    asyncio.run(_run_async(prompt, interactive, session_id, cwd, config_dir, model, json_out))
+    asyncio.run(
+        _run_async(prompt, interactive, session_id, cwd, config_dir, model, json_out, config_file)
+    )
 
 
 def _emit_json(**event: Any) -> None:
@@ -500,6 +504,7 @@ async def _run_async(
     config_dir: Path | None = None,
     model: str | None = None,
     json_out: bool = False,
+    config_file: Path | None = None,
 ) -> None:
     """Async implementation of run command."""
     client._json_mode = json_out
@@ -516,7 +521,7 @@ async def _run_async(
         )
 
     # Spawn agent
-    proc = await client.spawn_agent(cwd, config_dir, model=model)
+    proc = await client.spawn_agent(cwd, config_dir, model=model, config_file=config_file)
 
     try:
         # Connect

@@ -13,9 +13,10 @@ decision section supersedes earlier same-day sections).
 
 Unordered scope capture:
 
-- [ ] Move crow-mcp package into `crow-cli/src/crow_cli/mcp` (defer splitting
+- [x] Move crow-mcp package into `crow-cli/src/crow_cli/mcp` (defer splitting
       into tool groups). Kill the crow-mcp pyproject/package. `crow-cli mcp`
-      becomes the server entry point.
+      becomes the server entry point. (2026-08-22: done, 292 tests green,
+      E2E gate green on crow-2.db — see PLAN.md Phase 1 evidence.)
 - [ ] Invert MCP ownership: agent side (`crow-cli acp`) gets NO builtin/default
       MCP servers; empty mcpServers list = zero tools (kill the ValueError at
       mcp_client.py:112 and the builtin_config fallback in

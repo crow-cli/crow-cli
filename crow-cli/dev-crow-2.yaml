@@ -1,3 +1,14 @@
 # Dev override for the session-fork worktree: isolate ALL fork work on
 # crow-2.db until the schema-v5 migration from crow.db is proven.
+# MCP servers come from THIS worktree's `crow-cli mcp`.
 db_uri: ~/.agents/crow/crow-2.db
+mcpServers:
+  crow-mcp:
+    transport: stdio
+    command: uv
+    args:
+      - --project
+      - /home/thomas/src/crow-team/crow-cli-session-fork/crow-cli
+      - run
+      - crow-cli
+      - mcp

@@ -98,7 +98,7 @@ from acp.schema import (
 from fastmcp import Client as MCPClient
 
 from crow_cli.agent.compact import compact
-from crow_cli.agent.configure import Config, get_default_config_dir
+from crow_cli.agent.configure import Config, apply_config_overrides, get_default_config_dir
 from crow_cli.agent.context import get_directory_tree
 from crow_cli.agent.hooks import (
     CommandHook,
@@ -928,6 +928,7 @@ async def serve_http(
 async def agent_run(
     config_dir: Path | None = None,
     config: Config | None = None,
+    config_file: Path | None = None,
     debug: bool = False,
     model: str | None = None,
     http: bool = False,
@@ -936,6 +937,7 @@ async def agent_run(
 ) -> None:
     if config is None:
         config = Config.load(config_dir=config_dir)
+        config = apply_config_overrides(config, config_file)
     if debug:
         config.chunk_log = True
     if http:
@@ -947,6 +949,7 @@ async def agent_run(
 def main(
     config_dir: Path | None = None,
     config: Config | None = None,
+    config_file: Path | None = None,
     debug: bool = False,
     model: str | None = None,
     http: bool = False,
@@ -957,6 +960,7 @@ def main(
         agent_run(
             config_dir=config_dir,
             config=config,
+            config_file=config_file,
             debug=debug,
             model=model,
             http=http,
@@ -969,7 +973,13 @@ def main(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config-dir", type=Path, default=None)
+    parser.add_argument("--config-file", type=Path, default=None)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--model", type=str, default=None)
     args = parser.parse_args()
-    main(config_dir=args.config_dir, debug=args.debug, model=args.model)
+    main(
+        config_dir=args.config_dir,
+        config_file=args.config_file,
+        debug=args.debug,
+        model=args.model,
+    )

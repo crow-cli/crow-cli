@@ -215,8 +215,10 @@ CONFIG_YAML = """# config.yaml — crow-cli configuration
 # DEFAULT mcpServers
 mcpServers:
   crow-mcp:
-    transport: http
-    url: http://127.0.0.1:2770/mcp
+    transport: stdio
+    command: crow-cli
+    args:
+      - mcp
 
 # Memory is a SQL database reached via a SQLAlchemy db_uri — sqlite by
 # default, any SQLAlchemy URI (e.g. postgresql://) works. Owned by the

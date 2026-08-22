@@ -310,7 +310,7 @@ def run_init(config_dir: Path, yes: bool = False):
     s_table.add_column("Status", style="green")
     s_table.add_row("SearXNG", "✓ Docker" if setup_searxng else "✗ Skip")
     s_table.add_row("Memory", "sqlite (crow.db, in-process)")
-    s_table.add_row("MCP", "crow-mcp over HTTP (:2770)")
+    s_table.add_row("MCP", "crow-cli mcp over stdio")
     console.print(s_table)
 
     console.print(f"\n[dim]Config directory: {config_dir}[/dim]")
@@ -341,8 +341,9 @@ def run_init(config_dir: Path, yes: bool = False):
     config_data: dict[str, Any] = {
         "mcpServers": {
             "crow-mcp": {
-                "transport": "http",
-                "url": "http://127.0.0.1:2770/mcp",
+                "transport": "stdio",
+                "command": "crow-cli",
+                "args": ["mcp"],
             }
         },
         "db_uri": db_uri,
