@@ -17,7 +17,7 @@ from logging import Logger
 
 from openai import AsyncOpenAI
 
-from crow_cli.agent.configure import Config, sampling_params_for
+from crow_cli.config import Config, sampling_params_for
 from crow_cli.agent.session import (
     AgentSession,
     make_agent_session,

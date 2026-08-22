@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from crow_cli.agent.configure import Config
+from crow_cli.config import Config
 from crow_cli.agent.memory import AgentRecord, MemoryServiceError, PromptRecord
 
 

@@ -27,7 +27,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
-from crow_cli.agent.default import (
+from crow_cli.config.default import (
     COMPOSE_YAML,
     SEARXNG_SETTINGS_YML,
     SYSTEM_PROMPT,

@@ -71,12 +71,16 @@ Trajectory: 0 → 1 → 2 → 3 → 4 → 5 → 6 (user's order, preserved).
 - Evidence: 308 passed + 23 skipped (299 + the 9 moved store tests); E2E
   gate green on crow-2.db ("PHASE3-GATE-OK").
 
-## Phase 4 — config → crow_cli/config
-4.1 Extract Config/load/defaults/get_default_config_dir from
-    agent/configure.py into crow_cli/config/ package; agent/configure.py keeps
-    only interactive configure UX (or moves to cli/) — all importers updated.
-- Verify: full suite green; `crow-cli init`/configure flow intact; E2E gate
-  green. Commit.
+## Phase 4 — config → crow_cli/config ✅ (2026-08-22)
+- [x] 4.1 agent/configure.py had NO interactive UX (that is `crow-cli init`
+      in cli/init_cmd.py, untouched), so the whole module moved:
+      `git mv agent/configure.py config/config.py` + `git mv agent/default
+      config/default`; new crow_cli/config/__init__.py re-exports the public
+      API; every importer rewritten (agent/*, cli/*, tests, PyInstaller spec,
+      CONFIG_YAML template comment).
+- Evidence: 308 passed + 23 skipped; `crow-cli init -d <tmp> -y` writes all
+  defaults from the moved templates; E2E gate green on crow-2.db
+  ("PHASE4-GATE-OK" via -j JSONL).
 
 ## Phase 5 — fork-idx (schema v5) on crow-2.db
 5.1 memory: agents.fork_idx + messages.fork_idx columns (Integer, default 1);

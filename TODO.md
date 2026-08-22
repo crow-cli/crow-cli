@@ -27,8 +27,9 @@ Unordered scope capture:
 - [x] Move crow-memory package into `crow-cli/src/crow_cli/memory`. Kill the
       crow-memory pyproject/package. (2026-08-22: done — see PLAN.md Phase 3
       evidence.)
-- [ ] Move config out of `crow_cli/agent` into `crow_cli/config` ("because
-      everybody's using it!").
+- [x] Move config out of `crow_cli/agent` into `crow_cli/config` ("because
+      everybody's using it!"). (2026-08-22: done — see PLAN.md Phase 4
+      evidence.)
 - [ ] Fork support (schema v5): agent_id = `{session_id}-{agent_idx}-{fork_idx}`,
       all 1-based, trunk carries the pointless `-1`. Update memory, agent, mcp.
       `session/fork` handler reads `_meta` agentIdx/turnIdx (flattened into

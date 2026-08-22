@@ -17,7 +17,7 @@ from crow_cli.memory import normalize_db_uri
 from dotenv import load_dotenv
 from pydantic import BaseModel, ValidationError
 
-from crow_cli.agent.default import (
+from crow_cli.config.default import (
     COMPOSE_YAML,
     CONFIG_YAML,
     SEARXNG_SETTINGS_YML,

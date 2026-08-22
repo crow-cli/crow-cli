@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import crow_cli.memory as db
-from crow_cli.agent.configure import Config
+from crow_cli.config import Config
 
 log = logging.getLogger(__name__)
 

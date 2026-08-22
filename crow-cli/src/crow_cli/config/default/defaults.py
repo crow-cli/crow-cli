@@ -210,7 +210,7 @@ volumes:
 """
 
 CONFIG_YAML = """# config.yaml — crow-cli configuration
-# (loaded by crow_cli/agent/configure.py)
+# (loaded by crow_cli/config)
 
 # MCP servers — consumed by the CLIENT: `crow-cli run` converts these to ACP
 # mcpServers and passes them to the agent in new_session/load_session. The

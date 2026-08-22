@@ -36,7 +36,7 @@ from mcp.types import (
     TextContent,
 )
 
-from crow_cli.agent.configure import Config
+from crow_cli.config import Config
 from crow_cli.agent.hooks import CommandHook, FileSnapshotHook
 from crow_cli.agent.session import AgentSession
 

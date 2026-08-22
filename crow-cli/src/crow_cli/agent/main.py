@@ -98,7 +98,7 @@ from acp.schema import (
 from fastmcp import Client as MCPClient
 
 from crow_cli.agent.compact import compact
-from crow_cli.agent.configure import Config, apply_config_overrides, get_default_config_dir
+from crow_cli.config import Config, apply_config_overrides, get_default_config_dir
 from crow_cli.agent.context import get_directory_tree
 from crow_cli.agent.hooks import (
     CommandHook,

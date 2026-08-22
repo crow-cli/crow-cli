@@ -3,7 +3,7 @@
 import pytest
 import yaml
 
-from crow_cli.agent.configure import Config
+from crow_cli.config import Config
 from crow_cli.agent.main import AcpAgent
 
 

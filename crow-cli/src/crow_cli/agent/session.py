@@ -20,7 +20,7 @@ from crow_cli.agent.memory import DEFAULT_MEMORY_PATH, MemoryClient, MemoryServi
 from crow_cli.agent.prompt import render_template
 from crow_cli.agent.context import get_directory_tree
 
-from crow_cli.agent.configure import (
+from crow_cli.config import (
     AGENTS_DIR,
     NOTES_DIR,
     SKILLS_DIR,

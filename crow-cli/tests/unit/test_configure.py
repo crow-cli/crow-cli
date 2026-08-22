@@ -4,7 +4,7 @@ from pathlib import Path
 
 import yaml
 
-from crow_cli.agent.configure import SKILLS_DIR, Config
+from crow_cli.config import SKILLS_DIR, Config
 from crow_cli.agent.memory import MemoryClient
 
 

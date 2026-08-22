@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from crow_cli.agent.configure import (
+from crow_cli.config import (
     Config,
     LLMConfig,
     LLModel,

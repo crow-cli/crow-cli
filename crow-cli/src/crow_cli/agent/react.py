@@ -17,7 +17,7 @@ from openai import APIConnectionError, APIError, AsyncOpenAI, RateLimitError
 from openai._exceptions import APITimeoutError
 
 from crow_cli.agent.compact import compact
-from crow_cli.agent.configure import (
+from crow_cli.config import (
     Config,
     build_sampling_params,
     max_compact_tokens_for,

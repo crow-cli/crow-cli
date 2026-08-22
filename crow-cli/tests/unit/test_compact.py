@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from crow_cli.agent.compact import compact
-from crow_cli.agent.configure import Config, LLModel
+from crow_cli.config import Config, LLModel
 from crow_cli.agent.session import AgentSession, lookup_or_create_prompt
 
 

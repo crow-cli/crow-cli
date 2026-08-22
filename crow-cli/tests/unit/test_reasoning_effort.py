@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from crow_cli.agent.configure import (
+from crow_cli.config import (
     REASONING_EFFORT_VALUES,
     Config,
     LLMConfig,

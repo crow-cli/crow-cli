@@ -32,7 +32,7 @@ a = Analysis(
         'crow_cli.agent.compact',
         'crow_cli.agent.slash',
         'crow_cli.agent.context',
-        'crow_cli.agent.configure',
+        'crow_cli.config',
         'crow_cli.client',
         'crow_cli.client.main',
         'crow_cli.agent_runner',

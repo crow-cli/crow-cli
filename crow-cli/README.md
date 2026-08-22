@@ -165,6 +165,7 @@ uv run --project crow-cli pytest crow-cli/tests --run-e2e           # live LLM c
 
 ```
 src/crow_cli/           the agent — ACP server, ReAct loop, CLI
+src/crow_cli/config/    config loading, defaults, overrides (shared by every layer)
 src/crow_cli/mcp/       built-in MCP tool server (`crow-cli mcp`)
 src/crow_cli/memory/    shared SQL persistence (sqlite default, postgres-ready)
 ```

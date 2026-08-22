@@ -13,7 +13,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from crow_cli.agent.configure import Config, apply_config_overrides
+from crow_cli.config import Config, apply_config_overrides
 from crow_cli.agent.main import main as agent_main
 from crow_cli.agent.mcp_client import fastmcp_config_to_acp_servers
 from crow_cli.agent.memory import MemoryServiceError

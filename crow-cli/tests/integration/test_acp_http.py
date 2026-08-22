@@ -15,7 +15,7 @@ from acp import connect_to_agent
 from acp.http import create_http_stream
 from acp.interfaces import Client
 
-from crow_cli.agent.configure import Config
+from crow_cli.config import Config
 from crow_cli.agent.main import serve_http
 
 
