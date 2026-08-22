@@ -45,6 +45,12 @@ Unordered scope capture:
       migration — real crow.db → NEW db file, appending `-1` to every
       agent_id (agents, messages, FTS), preserving message ids/created_at.
       Until then dev just uses fresh v5 databases.
+      (2026-08-22: script WRITTEN + PROVEN — crow-cli/scripts/migrate_v5.py,
+      4 unit tests on the verbatim v4 DDL, dry-run on a real-crow.db
+      snapshot migrated 100 agents / 5983 messages with full verification,
+      telemetry green against the migrated copy. Only the CUTOVER remains
+      and it must run when no crow process is writing crow.db — see PLAN.md
+      Phase 7 for the 4-step procedure.)
 - [x] Delegate tool + async task interiority: native delegate tool launches
       subagents; react loop exit condition = model done AND outstanding-task
       registry empty; loop PARKS (asyncio queue wait, zero tokens, no busywork)

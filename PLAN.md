@@ -204,3 +204,29 @@ databases; nothing is ever migrated mid-sprint.
     (builtin MCP command = `crow-cli mcp`).
 - Verify: migrated-DB round-trip + memory tools green + row counts match.
   Commit. Tag.
+- 7.1 DONE (script + tests + dry-run on real data): crow-cli/scripts/
+  migrate_v5.py (the path _require_v5 already advertises). Source opens
+  READ-ONLY and is never modified; destination is created fresh v5; FTS is
+  REBUILT with the current message_text extractor; built-in verify() exits
+  non-zero on any count/id/created_at drift. Tests: tests/memory/
+  test_migrate_v5.py (4 — synthetic v4 DDL copied verbatim from the real
+  db; counts/ids/timestamps, memory-layer round-trip incl. search over the
+  rebuilt FTS, refuses v5 source + non-crow db). DRY-RUN on a snapshot of
+  the REAL crow.db: 1 prompt, 100 agents, 5983 messages migrated +
+  verified; list-sessions/query-memory/query-session against the migrated
+  copy all green (live session reads back with all 4 compaction agents;
+  BM25 finds this sprint's own design messages). 372 passed.
+- CUTOVER (the remaining 5 minutes) is deliberately NOT run mid-sprint:
+  the real crow.db is LIVE — the agent process serving the current session
+  writes to it right now, so migrating-and-swapping under it would
+  split-brain the session's own history. When no crow process is running
+  (session ended):
+    1. cp ~/.agents/crow/crow.db ~/.agents/crow/crow.db.v4-backup
+    2. uv --project crow-cli run python crow-cli/scripts/migrate_v5.py \
+         ~/.agents/crow/crow.db ~/.agents/crow/crow-v5.db
+    3. point ~/.agents/crow/config.yaml db_uri at crow-v5.db and drop the
+       dev-crow-2.yaml override from any consumer still using it (the MCP
+       server command is already `crow-cli mcp` everywhere; the store
+       resolves config.yaml db_uri on its own).
+    4. smoke: crow-cli list-sessions + one `run` round-trip; keep the
+       v4 backup until confident, then retire crow-2.db/crow-3.db.
