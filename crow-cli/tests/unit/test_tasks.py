@@ -1,5 +1,7 @@
 """TaskRegistry — the in-process shared state behind delegation interiority."""
 
+import asyncio
+
 import pytest
 
 from crow_cli.agent.tasks import TaskRegistry
@@ -56,8 +58,52 @@ async def test_wake_queue_receives_completion():
     assert q.get_nowait() is info
 
 
-async def test_wake_queue_only_for_registered_sessions():
+async def test_launch_creates_wake_queue():
+    """The queue exists from LAUNCH time: a fast subagent that finishes
+    while the owner is still streaming cannot be lost (finish puts iff the
+    queue exists; the owner drains it whenever it first parks)."""
     r = TaskRegistry()
     info = r.launch("delegate", "sess-1", "c")
-    r.finish(info.task_id, "done!")  # no queue registered -> nothing to wake
+    r.finish(info.task_id, "done!")  # owner never parked yet
     assert r.pending() == []
+    assert r.wake_queue("sess-1").get_nowait() is info
+
+
+async def test_cancel_all_marks_cancelled_and_cancels_handles():
+    async def hang():
+        await asyncio.Event().wait()
+
+    r = TaskRegistry()
+    a = r.launch("delegate", "sess-1", "c1", sub_session="sub-a")
+    b = r.launch("delegate", "sess-1", "c2", sub_session="sub-b")
+    other = r.launch("delegate", "sess-2", "c3")
+    a.handle = asyncio.create_task(hang())
+    b.handle = asyncio.create_task(hang())
+    other.handle = asyncio.create_task(hang())
+
+    handles = r.cancel_all("sess-1")
+    assert {id(h) for h in handles} == {id(a.handle), id(b.handle)}
+    assert r.get(a.task_id).status == "cancelled"
+    assert r.get(b.task_id).status == "cancelled"
+    # other session untouched
+    assert r.get(other.task_id).status == "running"
+    assert [t.task_id for t in r.pending("sess-1")] == []
+    # the subagent's own cleanup finish() is an idempotent no-op now
+    r.finish(a.task_id, "late result")
+    assert r.get(a.task_id).result is None
+    assert r.get(a.task_id).status == "cancelled"
+    # let the cancelled tasks settle so no warnings leak
+    for h in (a.handle, b.handle):
+        with pytest.raises(asyncio.CancelledError):
+            await h
+    other.handle.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await other.handle
+
+
+def test_cancel_all_ignores_finished_tasks():
+    r = TaskRegistry()
+    done = r.launch("delegate", "sess-1", "c1")
+    r.finish(done.task_id, "answer")
+    assert r.cancel_all("sess-1") == []
+    assert r.get(done.task_id).status == "done"

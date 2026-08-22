@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 from asyncio import Event
@@ -6,10 +7,12 @@ from logging import Logger
 from pathlib import Path
 from typing import Any
 
+from acp import text_block
 from acp.interfaces import Client
 from acp.schema import (
     ClientCapabilities,
     ToolCallProgress,
+    UserMessageChunk,
     UsageUpdate,
 )
 from fastmcp import Client as MCPClient
@@ -17,8 +20,12 @@ from openai import APIConnectionError, APIError, AsyncOpenAI, RateLimitError
 from openai._exceptions import APITimeoutError
 
 from crow_cli.agent.compact import compact
-from crow_cli.agent.delegate import DELEGATE_TOOL_NAME, execute_delegate
-from crow_cli.agent.tasks import TaskRegistry
+from crow_cli.agent.delegate import (
+    DELEGATE_TOOL_NAME,
+    launch_delegate,
+    synthetic_completion_message,
+)
+from crow_cli.agent.tasks import TaskInfo, TaskRegistry
 from crow_cli.config import (
     Config,
     build_sampling_params,
@@ -65,6 +72,102 @@ def cancelled_tool_results(tool_call_inputs: list[dict]) -> list[dict]:
         }
         for tc in tool_call_inputs
     ]
+
+
+# ---------------------------------------------------------------------------
+# Park/wake (Milestone B): "model done" only ends the turn when nothing we
+# launched is still running. Otherwise the loop PARKS on the session's wake
+# queue — zero tokens — until a completion lands, then injects it as a
+# synthetic plain message and lets the model react.
+# ---------------------------------------------------------------------------
+
+PARK_HEARTBEAT_S = 15.0
+
+
+def _drain_queue(queue: asyncio.Queue) -> list[TaskInfo]:
+    items: list[TaskInfo] = []
+    while not queue.empty():
+        items.append(queue.get_nowait())
+    return items
+
+
+async def park_until_completion(
+    registry: TaskRegistry,
+    session_id: str,
+    turn_id: str,
+    conn: Client,
+    logger: Logger,
+    heartbeat_s: float | None = None,
+) -> list[TaskInfo]:
+    """Park with zero tokens until at least one outstanding task completes.
+
+    Returns the completed TaskInfos drained from the wake queue. Returns []
+    only when nothing is pending AND nothing is queued — the true "model
+    done AND registry empty" exit condition. While parked, re-emits each
+    pending task's tool_call_update surface periodically so a long park
+    stays visible on the client.
+    """
+    interval = PARK_HEARTBEAT_S if heartbeat_s is None else heartbeat_s
+    queue = registry.wake_queue(session_id)
+    # Atomic (no awaits between the two reads): finish() is synchronous and
+    # single-threaded asyncio never preempts it, so a task either still shows
+    # as pending or its TaskInfo is already on the queue — never half-done.
+    pending = registry.pending(session_id)
+    drained = _drain_queue(queue)
+    if drained:
+        return drained
+    if not pending:
+        return []
+    logger.info("PARK: %s parked on %d task(s)", session_id, len(pending))
+    while True:
+        try:
+            info = await asyncio.wait_for(queue.get(), timeout=interval)
+        except asyncio.TimeoutError:
+            pending = registry.pending(session_id)
+            drained = _drain_queue(queue)
+            if drained:
+                return drained
+            if not pending:
+                return []
+            # Heartbeat: keep the client-side tool call(s) alive.
+            for task in pending:
+                with contextlib.suppress(Exception):
+                    await conn.session_update(
+                        session_id=session_id,
+                        update=ToolCallProgress(
+                            session_update="tool_call_update",
+                            tool_call_id=(
+                                f"{turn_id}/{task.task_id}"
+                                if turn_id
+                                else task.task_id
+                            ),
+                            status="in_progress",
+                            title=f"delegate: {task.sub_session}",
+                        ),
+                    )
+            continue
+        drained = [info, *_drain_queue(queue)]
+        logger.info(
+            "WAKE: %s woke with %d completion(s)", session_id, len(drained)
+        )
+        return drained
+
+
+async def cancel_outstanding_delegates(
+    registry: TaskRegistry | None, session_id: str, logger: Logger
+) -> None:
+    """Cancel tree: cancel every delegate this session launched and await
+    each handle, so the subagents' cancelled state is persisted before the
+    cancelled turn returns. Subagents cancel their own delegates in their
+    own react loop handlers — the whole stack falls together."""
+    if registry is None:
+        return
+    handles = registry.cancel_all(session_id)
+    for handle in handles:
+        try:
+            await handle
+        except BaseException:
+            logger.debug("delegate handle cleanup", exc_info=True)
 
 
 # Provider-side transient faults that surface as HTTP 400 and so are never
@@ -734,7 +837,10 @@ async def _execute_tool_calls_inner(
                         }
                     )
                     return
-                result_content = await execute_delegate(
+                # Non-blocking (Milestone B): provisions the subagent,
+                # launches its background lifetime, returns the ack at once.
+                # The completion wakes the parked loop via the registry.
+                result_content = await launch_delegate(
                     conn=conn,
                     parent_session=parent_session,
                     turn_id=turn_id,
@@ -868,6 +974,9 @@ async def react_loop(
                 await session.add_tool_response(
                     cancelled_tool_results(tool_call_inputs), logger
                 )
+            # Cancel tree: delegates launched on earlier turns of this prompt
+            # are still running in the background — kill them before we go.
+            await cancel_outstanding_delegates(registry, session_id, logger)
             raise
 
         ################################################
@@ -927,7 +1036,11 @@ async def react_loop(
             # Start fresh turn with compacted session [system, user]
             continue
 
-        # This ends the react loop — NO TOOLS!!
+        # This ends the react loop — NO TOOLS!! But with delegation
+        # interiority, "model done" ends the turn ONLY when nothing we
+        # launched is still running. Otherwise park (zero tokens) until a
+        # completion lands, inject it as a synthetic message, and let the
+        # model react to it. No end_turn before completion lands.
         if not tool_call_inputs and len(content) > 0:
             await session.add_assistant_response(
                 thinking,
@@ -936,6 +1049,42 @@ async def react_loop(
                 logger,
                 usage,
             )
+            completions: list[TaskInfo] = []
+            if registry is not None:
+                try:
+                    completions = await park_until_completion(
+                        registry, session_id, turn_id, conn, logger
+                    )
+                except asyncio.CancelledError:
+                    # Cancelled mid-park: kill the whole delegate stack,
+                    # then let the cancellation propagate.
+                    await cancel_outstanding_delegates(
+                        registry, session_id, logger
+                    )
+                    raise
+            if completions:
+                for info in completions:
+                    message = synthetic_completion_message(info)
+                    await session.add_message(
+                        {"role": "user", "content": message}
+                    )
+                    # Best-effort visibility of the injection itself; clients
+                    # that don't render user_message_chunk ignore it safely.
+                    with contextlib.suppress(Exception):
+                        await conn.session_update(
+                            session_id=session_id,
+                            update=UserMessageChunk(
+                                session_update="user_message_chunk",
+                                content=text_block(message),
+                            ),
+                        )
+                    logger.info(
+                        "WAKE: injected %s (%s) into %s",
+                        info.task_id,
+                        info.status,
+                        session_id,
+                    )
+                continue
             logger.info(f"Final React Turn Usage: {usage}")
             yield {"type": "final_history", "messages": session.messages}
             # I guess we need to check context length here too?
@@ -981,6 +1130,9 @@ async def react_loop(
                     usage,
                 )
                 await session.add_tool_response(tool_results, logger)
+                # Cancel tree: any delegates already launched (this batch or
+                # earlier turns) die with the prompt task.
+                await cancel_outstanding_delegates(registry, session_id, logger)
                 raise
 
             await session.add_assistant_response(

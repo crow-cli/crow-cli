@@ -124,7 +124,7 @@ real crow.db happens in the FINAL phase, once the schema has settled.
   and `run --fork-idx 3` resumed it (model recalled its own fork-only turn);
   trunk still exactly 5 rows; CliRunner validation tests for the flags.
 
-## Phase 6 — delegation interiority (delegate tool + park/wake)
+## Phase 6 — delegation interiority (delegate tool + park/wake) ✅ (2026-08-22)
 6.1 Task registry: in-process shared state between tools and react loop
     (this is why everything lives in one package now).
 6.2 Milestone A — blocking delegation: native delegate tool launches a
@@ -138,6 +138,36 @@ real crow.db happens in the FINAL phase, once the schema has settled.
 - Verify: e2e on the fresh dev db — delegate a task, parent reacts to the
   injected completion; cancel mid-delegation cancels the delegate; no
   end_turn emitted before completion lands. Commit.
+- Evidence: 6.1+6.2 (2d8501bd): TaskRegistry (agent/tasks.py) + blocking
+  execute_delegate + gather over parallel delegates; E2E parent delegated
+  "SUBAGENT-OK" and both sessions persisted. 6.3: delegate tool went
+  NON-BLOCKING — launch_delegate provisions the subagent, launches its
+  background lifetime (asyncio.create_task, handle on the TaskInfo), returns
+  the ack as the launch call's ONE result. React loop exit is now "model
+  done AND registry empty AND wake queue empty": otherwise park_until_
+  completion awaits the session's queue (zero tokens) with 15s heartbeats
+  re-emitting each pending task's tool_call_update surface (`<turn>/<task-N>`
+  stays in_progress until the subagent flips it completed/failed). Wake =
+  synthetic plain user message `[task-N: delegate <sid> finished]\n<answer>`
+  (synthetic_completion_message; also surfaced best-effort as
+  user_message_chunk) — never role=tool. Wake queue exists from LAUNCH time
+  so a fast subagent can't be lost before the owner's first park. Cancel
+  tree: cancel_outstanding_delegates (registry.cancel_all + await handles)
+  runs in ALL THREE cancel paths (mid-stream, mid-tool, mid-park); subagents
+  cancel their own delegates in their own handlers — the whole stack falls
+  together, cancelled state persisted before the cancel response returns.
+  prompt() unchanged: the JSON-RPC request stays open across the park (100%
+  legal v1). Tests: 361 passed + 23 skipped (test_tasks.py cancel_all +
+  launch-time queue; test_delegate.py rewritten for B — ack semantics, full
+  park/wake cycle with heartbeat proof, drain path, parallel delegates both
+  injected, cancel-during-park persists subagent partial state, cancel-mid-
+  batch kills launched delegates). E2E on crow-3.db: parent audacious-
+  lobster-of-pastoral-stamina delegated to academic-solemn-fossa-of-debate,
+  ended its turn ("Ending my turn now to wait"), was WOKEN by the injection,
+  answered DELEGATION-COMPLETE SUBAGENT-OK in the SAME prompt request (no
+  premature end_turn — CLI would have exited); sqlite shows ack tool msg +
+  synthetic user msg + subagent session intact; no-delegate regression gate
+  green.
 
 ## Phase 7 — THE migration + cutover (only when 1–6 proven, schema settled)
 The ONE AND ONLY migration. Everything before this phase runs on fresh v5

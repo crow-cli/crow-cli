@@ -22,6 +22,7 @@ class TaskInfo:
     sub_session: str = ""     # the delegate's own session id
     status: str = "running"   # running | done | failed | cancelled
     result: str | None = None
+    handle: "asyncio.Task | None" = None  # the task's background lifetime
 
 
 class TaskRegistry:
@@ -54,6 +55,11 @@ class TaskRegistry:
             sub_session=sub_session,
         )
         self._tasks[info.task_id] = info
+        # The wake queue exists from LAUNCH time, so a completion can never
+        # land before the owner has somewhere to receive it. (finish puts iff
+        # the queue exists; a queue created lazily at first park would lose a
+        # fast subagent that finished while the owner was still streaming.)
+        self._wake_queues.setdefault(owner_session, asyncio.Queue())
         return info
 
     def finish(self, task_id: str, result: str | None, status: str = "done") -> None:
@@ -73,6 +79,24 @@ class TaskRegistry:
             if t.status == "running"
             and (owner_session is None or t.owner_session == owner_session)
         ]
+
+    def cancel_all(self, owner_session: str) -> list["asyncio.Task"]:
+        """Cancel every running task owned by this session — the cancel tree.
+
+        Marks each task cancelled synchronously (so its own finish() cleanup
+        is an idempotent no-op that never re-wakes the owner) and cancels the
+        background handles. Returns the handles so the caller can await the
+        subagents' cancelled-state persistence before returning.
+        """
+        handles: list[asyncio.Task] = []
+        for info in self._tasks.values():
+            if info.status != "running" or info.owner_session != owner_session:
+                continue
+            info.status = "cancelled"
+            if info.handle is not None and not info.handle.done():
+                info.handle.cancel()
+                handles.append(info.handle)
+        return handles
 
     def get(self, task_id: str) -> TaskInfo | None:
         return self._tasks.get(task_id)

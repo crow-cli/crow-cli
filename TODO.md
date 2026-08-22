@@ -45,7 +45,7 @@ Unordered scope capture:
       migration — real crow.db → NEW db file, appending `-1` to every
       agent_id (agents, messages, FTS), preserving message ids/created_at.
       Until then dev just uses fresh v5 databases.
-- [ ] Delegate tool + async task interiority: native delegate tool launches
+- [x] Delegate tool + async task interiority: native delegate tool launches
       subagents; react loop exit condition = model done AND outstanding-task
       registry empty; loop PARKS (asyncio queue wait, zero tokens, no busywork)
       instead of emitting PromptResponse(end_turn); completions injected as
@@ -55,6 +55,11 @@ Unordered scope capture:
       down the task tree. session/prompt is A ROUTE to the react loop, not THE
       route. First milestone: parallel blocking delegate calls (asyncio.gather)
       to prove launch/cancel/result plumbing before park/wake.
+      (2026-08-22: done — Milestone A blocking (2d8501bd) then Milestone B
+      park/wake: non-blocking launch_delegate, park_until_completion +
+      heartbeats, synthetic-message wake injection, cancel tree on all three
+      cancel paths; 361 tests + real E2E wake cycle on crow-3.db. See PLAN.md
+      Phase 6 evidence.)
 - [ ] End-to-end testing throughout: every phase punctuated by a real e2e gate
       (real LLM round-trip via `crow-cli run --config-file dev-crow-2.yaml`
       plus ACP-level initialize/new_session/prompt through the client code).
