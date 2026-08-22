@@ -392,6 +392,19 @@ def run(
     session_id: str | None = typer.Option(
         None, "--session", "-s", help="Load existing session"
     ),
+    fork: bool = typer.Option(
+        False,
+        "--fork",
+        help="Spawn a FORK of -s/--session and run inside it (requires -s). "
+        "The fork shares the source's history (no copying) and persists under "
+        "its own three-part id, which is printed so you can continue it with -s.",
+    ),
+    fork_idx: int | None = typer.Option(
+        None,
+        "--fork-idx",
+        help="Continue existing fork N of -s/--session (requires -s). "
+        "Fork 1 is the trunk — plain -s already does that.",
+    ),
     cwd: str = typer.Option(os.getcwd(), "--cwd", "-c", help="Working directory"),
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Enable verbose logging"
@@ -464,6 +477,25 @@ def run(
     That's the whole mechanism: delegate with `run -s`, read thoughts with
     query_session, verify artifacts on disk. No bespoke agent-to-agent protocol
     — just a shared database and a read query.
+
+    FORKS — branch a session's history without copying it:
+
+    1. Spawn a fork of a session and run inside it (the fork sees the whole
+       trunk history; the trunk never sees the fork):
+
+        crow-cli-dev run -s <session-id> --fork "what would you do differently?"
+
+    2. The fork persists under its own three-part id (printed on creation).
+       Continue it like any session:
+
+        crow-cli-dev run -s <session-id>-<agent-idx>-<fork-idx> "keep going"
+
+    3. Or continue fork N of a session directly:
+
+        crow-cli-dev run -s <session-id> --fork-idx 2 "keep going"
+
+    Forks are hidden from the telemetry surfaces (inspect, query_session,
+    query_memory, list_sessions) unless include_forks/--include-forks is set.
     """
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
@@ -491,6 +523,18 @@ def run(
         prompt = sys.stdin.read()
 
     # Validate arguments
+    if fork and fork_idx is not None:
+        client._console.print(
+            "[red]Error: --fork and --fork-idx are mutually exclusive "
+            "(spawn a fork OR continue one)[/red]"
+        )
+        raise SystemExit(1)
+    if (fork or fork_idx is not None) and not session_id:
+        client._console.print(
+            "[red]Error: --fork/--fork-idx require -s/--session (the fork source)[/red]"
+        )
+        raise SystemExit(1)
+
     if not interactive and prompt is None:
         client._console.print(
             "[red]Error: Either provide a prompt or use -i for interactive mode[/red]"
@@ -505,7 +549,10 @@ def run(
 
     # Run the async main
     asyncio.run(
-        _run_async(prompt, interactive, session_id, cwd, config_dir, model, json_out, config_file)
+        _run_async(
+            prompt, interactive, session_id, cwd, config_dir, model, json_out,
+            config_file, fork=fork, fork_idx=fork_idx,
+        )
     )
 
 
@@ -522,6 +569,8 @@ async def _run_async(
     model: str | None = None,
     json_out: bool = False,
     config_file: Path | None = None,
+    fork: bool = False,
+    fork_idx: int | None = None,
 ) -> None:
     """Async implementation of run command."""
     client._json_mode = json_out
@@ -557,14 +606,41 @@ async def _run_async(
         # Connect
         conn = await connect_client(proc, client)
 
-        # Create or load session
-        if session_id:
+        # Create, fork, or load session
+        if fork:
+            # session/fork (UNSTABLE): the fork shares the source's history
+            # (prefix rows, never copied) and gets its own three-part wire id.
             if not json_out:
-                client._console.print(f"[cyan]Loading session: {session_id}[/cyan]")
-            await conn.load_session(
-                session_id=session_id, mcp_servers=mcp_servers, cwd=cwd
+                client._console.print(f"[cyan]Forking session: {session_id}[/cyan]")
+            forked = await conn.fork_session(
+                session_id=session_id, cwd=cwd, mcp_servers=mcp_servers
             )
-            actual_session_id = session_id
+            actual_session_id = forked.session_id
+            if not json_out:
+                client._console.print(f"[green]Fork created: {actual_session_id}[/green]")
+        elif session_id:
+            wire_id = session_id
+            if fork_idx is not None:
+                # Continue fork N: resolve its three-part wire id through the
+                # shared db. A fork shares its agent_idx with the trunk HEAD
+                # it was spawned from; trunk HEAD resolution follows fork 1.
+                mc = MemoryClient(path=config.db_uri, config_dir=config_dir)
+                try:
+                    max_agent = await mc.get_max_agent_idx(session_id)
+                finally:
+                    await mc.close()
+                if max_agent < 1:
+                    client._console.print(
+                        f"[red]Session '{session_id}' not found[/red]"
+                    )
+                    raise SystemExit(1)
+                wire_id = build_agent_id(session_id, max_agent, fork_idx)
+            if not json_out:
+                client._console.print(f"[cyan]Loading session: {wire_id}[/cyan]")
+            await conn.load_session(
+                session_id=wire_id, mcp_servers=mcp_servers, cwd=cwd
+            )
+            actual_session_id = wire_id
         else:
             if not json_out:
                 client._console.print("[cyan]Creating new session...[/cyan]")

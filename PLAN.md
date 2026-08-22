@@ -83,7 +83,7 @@ Trajectory: 0 → 1 → 2 → 3 → 4 → 5 → 6 (user's order, preserved).
   defaults from the moved templates; E2E gate green on crow-2.db
   ("PHASE4-GATE-OK" via -j JSONL).
 
-## Phase 5 — fork-idx (schema v5) on a FRESH dev db
+## Phase 5 — fork-idx (schema v5) on a FRESH dev db ✅ (2026-08-22)
 NO per-phase migration work. Dev runs on a brand-new sqlite file (created
 v5 from scratch by create_database); the one-and-only v4→v5 migration of the
 real crow.db happens in the FINAL phase, once the schema has settled.
@@ -106,6 +106,23 @@ real crow.db happens in the FINAL phase, once the schema has settled.
   filtering; E2E on the fresh dev db: fork a real session with zero tools,
   interrogate it, confirm trunk unpolluted + fork persisted + `--fork-idx`
   resumes it. Commit.
+- Evidence: 336 passed + 23 skipped. 5.1 (5c50da4d): three-part ids at every
+  construction site, _require_v5 fail-fast, 312 passed + fresh crow-3.db E2E.
+  5.2 (aad1d519): wire_session_id addressing (trunk=bare id, fork=agent_id),
+  AgentSession.fork + snap_turn_cut (turn anchors never split tool pairs),
+  fork_session handler (forked_at message-id anchor, zero-mcpServers
+  honored), use_unstable_protocol both ends, ForkSessionCapabilities
+  advertised; tests/unit/test_fork.py on a REAL tmp sqlite (FakeMemoryClient
+  has no id anchors), memory-layer load_agent_messages/get_max_fork_idx.
+  E2E: fork answered ZEBRA-42 from the shared prefix, sqlite showed
+  forked_at=6 + fork own-rows-only + trunk unpolluted.
+  5.3 (64dd1a00): include_forks=False on list_sessions/query_session/
+  query_memory (MCP tools) + `inspect --include-forks`; fork rows/agents/
+  hits hidden by default everywhere, verified against the real forked
+  session (counts 1/5 default vs 2/7 with flag; fork ids never leak).
+  5.4: `run --fork` spawned fork -1-3 (idx incremented past existing fork 2)
+  and `run --fork-idx 3` resumed it (model recalled its own fork-only turn);
+  trunk still exactly 5 rows; CliRunner validation tests for the flags.
 
 ## Phase 6 — delegation interiority (delegate tool + park/wake)
 6.1 Task registry: in-process shared state between tools and react loop

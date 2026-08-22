@@ -31,13 +31,16 @@ Unordered scope capture:
 - [x] Move config out of `crow_cli/agent` into `crow_cli/config` ("because
       everybody's using it!"). (2026-08-22: done — see PLAN.md Phase 4
       evidence.)
-- [ ] Fork support (schema v5): agent_id = `{session_id}-{agent_idx}-{fork_idx}`,
+- [x] Fork support (schema v5): agent_id = `{session_id}-{agent_idx}-{fork_idx}`,
       all 1-based, trunk carries the pointless `-1`. Update memory, agent, mcp.
       `session/fork` handler reads `_meta` agentIdx/turnIdx (flattened into
       kwargs by the SDK router), default = fork at HEAD (max agent_idx, all
       messages). query_session/query_memory/list_sessions hide forks unless
       include_forks=True; session summary/repr never shows fork id unless
-      include_forks=True.
+      include_forks=True. (2026-08-22: done — PLAN.md Phase 5 evidence:
+      schema v5 + wire ids (5.1), fork_session handler + turn-snapped anchors
+      (5.2), include_forks=False everywhere (5.3), `run --fork` /
+      `--fork-idx N` (5.4); 336 tests + real E2E forks on crow-3.db.)
 - [ ] Migration (FINAL phase, when the schema has settled): the ONE v4→v5
       migration — real crow.db → NEW db file, appending `-1` to every
       agent_id (agents, messages, FTS), preserving message ids/created_at.
@@ -60,8 +63,11 @@ Unordered scope capture:
       — list_sessions/query_session/query_memory as CLI surfaces sharing one
       implementation (dissolves into the consolidation: same functions, two
       facades).
-- [ ] Zero-tool interrogation e2e: fork a session with no mcpServers, ask it
+- [x] Zero-tool interrogation e2e: fork a session with no mcpServers, ask it
       "why did you do X", verify trunk unpolluted and fork persisted.
+      (2026-08-22: done in the 5.2 gate — fork created with mcp_servers=[],
+      answered the secret from the shared prefix, sqlite verified forked_at
+      anchor + fork own-rows-only + trunk untouched.)
 
 Explicitly rejected / not doing:
 - forked_from column (provenance is already session_id+agent_idx in the row).
