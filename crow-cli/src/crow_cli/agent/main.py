@@ -100,6 +100,8 @@ from acp.schema import (
 from fastmcp import Client as MCPClient
 
 from crow_cli.agent.compact import compact
+from crow_cli.agent.delegate import DELEGATE_TOOL
+from crow_cli.agent.tasks import TaskRegistry
 from crow_cli.config import Config, apply_config_overrides, get_default_config_dir
 from crow_cli.agent.context import get_directory_tree
 from crow_cli.agent.hooks import (
@@ -206,6 +208,11 @@ class AcpAgent(Agent):
         self._session_locks: dict[str, asyncio.Lock] = {}  # session_id -> prompt serialization
         self._session_loggers: dict[str, Logger] = {}  # session_id -> per-session logger
         self._notification_queue: list[dict] = []  # queued extension notifications
+        # Delegation interiority: the task registry is the in-process shared
+        # state between the react loop and its native tools; the per-session
+        # mcpServers lists are what subagents inherit when they launch.
+        self._task_registry = TaskRegistry()
+        self._session_mcp_servers: dict[str, list] = {}  # wire id -> mcp_servers
 
     def _default_model_value(self) -> str:
         model = self._model_override or next(iter(self._config.llm.models.values()), None)
@@ -276,6 +283,8 @@ class AcpAgent(Agent):
         if mcp_client is not None:
             mcp_client = await self._exit_stack.enter_async_context(mcp_client)
         tools = await get_tools(mcp_client)
+        tools = [*tools, DELEGATE_TOOL]  # delegate is native, not MCP
+        self._session_mcp_servers.setdefault(session_id, [])
         self._logger.info(
             "Provisioning hydrated session %s (agent %s) — no client mcp_servers, %d tools",
             session_id,
@@ -443,8 +452,10 @@ class AcpAgent(Agent):
         if mcp_client is not None:
             mcp_client = await self._exit_stack.enter_async_context(mcp_client)
 
-        # Get tools from MCP server ([] when the client passed none)
-        tools = await get_tools(mcp_client)
+        # Get tools from MCP server ([] when the client passed none); the
+        # delegate tool is NATIVE (react-loop interiority), so it rides along
+        # regardless of the client's tool supply.
+        tools = [*await get_tools(mcp_client), DELEGATE_TOOL]
         session = await make_agent_session(
             self._config,
             tools,
@@ -456,6 +467,7 @@ class AcpAgent(Agent):
         self._sessions[session.agent_id] = session
         self._mcp_clients[session.session_id] = mcp_client
         self._tools[session.session_id] = tools
+        self._session_mcp_servers[session.session_id] = list(mcp_servers or [])
         self._cancel_events[session.session_id] = asyncio.Event()
         self._session_loggers[session.session_id] = setup_logger(
             self._config.config_dir / "logs" / f"crow-cli-{session.session_id}.log",
@@ -541,14 +553,15 @@ class AcpAgent(Agent):
             if mcp_client is not None:
                 mcp_client = await self._exit_stack.enter_async_context(mcp_client)
 
-            # Get tools ([] when the client passed none)
-            tools = await get_tools(mcp_client)
+            # Get tools ([] when the client passed none) + native delegate
+            tools = [*await get_tools(mcp_client), DELEGATE_TOOL]
 
             # Store in-memory references keyed on agent_id / WIRE session id
             # (bare session for the trunk, agent_id for a fork).
             self._sessions[session.agent_id] = session
             self._mcp_clients[session_id] = mcp_client
             self._tools[session_id] = tools
+            self._session_mcp_servers[session_id] = list(mcp_servers or [])
             self._cancel_events[session_id] = asyncio.Event()
             self._session_loggers[session_id] = setup_logger(
                 self._config.config_dir / "logs" / f"crow-cli-{session.session_id}.log",
@@ -649,11 +662,12 @@ class AcpAgent(Agent):
         )
         if mcp_client is not None:
             mcp_client = await self._exit_stack.enter_async_context(mcp_client)
-        tools = await get_tools(mcp_client)
+        tools = [*await get_tools(mcp_client), DELEGATE_TOOL]
 
         self._sessions[session.agent_id] = session
         self._mcp_clients[wire_id] = mcp_client
         self._tools[wire_id] = tools
+        self._session_mcp_servers[wire_id] = list(mcp_servers or [])
         self._cancel_events[wire_id] = asyncio.Event()
         self._session_loggers[wire_id] = setup_logger(
             self._config.config_dir / "logs" / f"crow-cli-{session.session_id}.log",
@@ -881,6 +895,8 @@ class AcpAgent(Agent):
                     logger=session_logger,
                     hooks=self._hooks,
                     chunk_log_dir=chunk_log_dir,
+                    registry=self._task_registry,
+                    session_mcp_servers=self._session_mcp_servers.get(session_id),
                 ):
                     chunk_type = chunk.get("type")
 

@@ -17,6 +17,8 @@ from openai import APIConnectionError, APIError, AsyncOpenAI, RateLimitError
 from openai._exceptions import APITimeoutError
 
 from crow_cli.agent.compact import compact
+from crow_cli.agent.delegate import DELEGATE_TOOL_NAME, execute_delegate
+from crow_cli.agent.tasks import TaskRegistry
 from crow_cli.config import (
     Config,
     build_sampling_params,
@@ -488,6 +490,8 @@ async def execute_tool_calls(
     hooks: list[CommandHook],
     snapshot_hooks: list[FileSnapshotHook] | None = None,
     tool_results: list[dict] | None = None,
+    registry: TaskRegistry | None = None,
+    session_mcp_servers: list | None = None,
 ) -> list[dict]:
     """
     Execute tool calls via MCP or ACP client terminal.
@@ -498,6 +502,10 @@ async def execute_tool_calls(
         tool_call_inputs: List of tool calls to execute
         tool_results: Optional accumulator filled in-place, so callers can
             still see completed results when the call is cancelled mid-flight.
+        registry: Task registry for delegation interiority (None = the
+            delegate tool answers with an error instead of launching).
+        session_mcp_servers: The session's own mcpServers list, inherited by
+            subagents launched through the delegate tool.
 
     Returns:
         List of tool results
@@ -529,6 +537,8 @@ async def execute_tool_calls(
             use_acp_terminal=use_acp_terminal,
             use_acp_write=use_acp_write,
             use_acp_read=use_acp_read,
+            registry=registry,
+            session_mcp_servers=session_mcp_servers,
         )
     except asyncio.CancelledError:
         # Cancelled mid-execution: every tool call still needs a response so
@@ -564,9 +574,21 @@ async def _execute_tool_calls_inner(
     use_acp_terminal: bool,
     use_acp_write: bool,
     use_acp_read: bool,
+    registry: TaskRegistry | None = None,
+    session_mcp_servers: list | None = None,
 ) -> list[dict]:
+    # Delegates are pulled out of the sequential path: they are long-running
+    # and run CONCURRENTLY (asyncio.gather), everything else stays
+    # sequential. Results are matched by tool_call_id, so order is free.
+    delegate_calls = [
+        tc
+        for tc in tool_call_inputs
+        if tc["function"]["name"] == DELEGATE_TOOL_NAME
+    ]
     for tool_call in tool_call_inputs:
         tool_name = tool_call["function"]["name"]
+        if tool_name == DELEGATE_TOOL_NAME:
+            continue
         tool_args = tool_call["function"]["arguments"]
         llm_tool_call_id = tool_call["id"]
         acp_tool_call_id = (
@@ -676,6 +698,77 @@ async def _execute_tool_calls_inner(
                     "content": f"Error: {str(e)}",
                 }
             )
+
+    if delegate_calls:
+        parent_session = sessions.get(agent_id)
+
+        async def _run_delegate(tool_call: dict) -> None:
+            llm_tool_call_id = tool_call["id"]
+            acp_tool_call_id = (
+                f"{turn_id}/{llm_tool_call_id}" if turn_id else llm_tool_call_id
+            )
+            try:
+                arg_dict = maximal_deserialize(tool_call["function"]["arguments"])
+                if not isinstance(arg_dict, dict):
+                    raw_args = tool_call["function"]["arguments"]
+                    tool_call["function"]["arguments"] = "{}"
+                    tool_results.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": llm_tool_call_id,
+                            "content": (
+                                f"Error: Your tool call for 'delegate' had malformed "
+                                f"arguments that could not be parsed as JSON. Raw "
+                                f"arguments: {raw_args!r}\nPlease retry with valid "
+                                f"JSON arguments matching the tool schema."
+                            ),
+                        }
+                    )
+                    return
+                if registry is None or parent_session is None:
+                    tool_results.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": llm_tool_call_id,
+                            "content": "Error: delegation is not available in this context.",
+                        }
+                    )
+                    return
+                result_content = await execute_delegate(
+                    conn=conn,
+                    parent_session=parent_session,
+                    turn_id=turn_id,
+                    tool_call_id=llm_tool_call_id,
+                    acp_tool_call_id=acp_tool_call_id,
+                    args=arg_dict,
+                    config=config,
+                    mcp_servers=session_mcp_servers,
+                    registry=registry,
+                    logger=logger,
+                )
+                tool_results.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": llm_tool_call_id,
+                        "content": result_content,
+                    }
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Error executing delegate: {e}", exc_info=True)
+                tool_results.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": llm_tool_call_id,
+                        "content": f"Error: {str(e)}",
+                    }
+                )
+
+        # Cancellation of the awaiting task cancels the gather's children —
+        # that IS the cancel tree for milestone A.
+        await asyncio.gather(*[_run_delegate(tc) for tc in delegate_calls])
+
     return tool_results
 
 
@@ -696,6 +789,8 @@ async def react_loop(
     hooks: list[CommandHook] | None = None,
     snapshot_hooks: list[FileSnapshotHook] | None = None,
     chunk_log_dir: str | None = None,
+    registry: TaskRegistry | None = None,
+    session_mcp_servers: list | None = None,
 ):
     """
     Main ReAct loop with cancellation support.
@@ -866,6 +961,8 @@ async def react_loop(
                     hooks=hooks or [],
                     snapshot_hooks=snapshot_hooks,
                     tool_results=tool_results,
+                    registry=registry,
+                    session_mcp_servers=session_mcp_servers,
                 )
             except asyncio.CancelledError:
                 # Cancelled mid-tool-execution. execute_tool_calls already
