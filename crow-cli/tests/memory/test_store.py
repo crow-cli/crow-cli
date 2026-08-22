@@ -209,6 +209,28 @@ def test_load_agent_messages_fork_view(store):
     assert [m["content"] for m in head_view] == [f"trunk {i}" for i in range(4)]
 
 
+def test_list_sessions_include_forks(store):
+    """list_sessions hides the fork dimension by default: trunk agents and
+    their messages only (fork rows are keyed by fork agent_ids, so dropping
+    the fork agent rows drops their messages from the join)."""
+    engine, images = store
+    for i in range(3):
+        db.add_message(engine, "s1-1-1", {"role": "user", "content": f"t{i}"}, images_dir=images)
+    db.create_agent(
+        engine, agent_id="s1-1-2", session_id="s1", agent_idx=1, fork_idx=2,
+        forked_at=None, tool_definitions=[], request_params={},
+    )
+    db.add_message(engine, "s1-1-2", {"role": "user", "content": "fork msg"}, images_dir=images)
+
+    (s1,) = [s for s in db.list_sessions(engine) if s["session_id"] == "s1"]
+    assert s1["agent_count"] == 1
+    assert s1["message_count"] == 3
+
+    (s1,) = [s for s in db.list_sessions(engine, include_forks=True) if s["session_id"] == "s1"]
+    assert s1["agent_count"] == 2
+    assert s1["message_count"] == 4
+
+
 def test_add_message_rejects_v4_agent_id(store):
     engine, images = store
     with pytest.raises(ValueError, match="malformed agent_id"):

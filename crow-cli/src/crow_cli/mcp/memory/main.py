@@ -249,9 +249,12 @@ async def _session_records(
     roles: list[str] | None,
     after: str | None,
     before: str | None,
+    include_forks: bool,
 ) -> list[Msg]:
     """All of a session's messages (ascending), filtered, across its agents."""
-    return store.session_records(session_id, agent_idx, roles, after, before)
+    return store.session_records(
+        session_id, agent_idx, roles, after, before, include_forks=include_forks
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +262,7 @@ async def _session_records(
 # ---------------------------------------------------------------------------
 
 @mcp.tool
-async def list_sessions(limit: int = 50, offset: int = 0) -> str:
+async def list_sessions(limit: int = 50, offset: int = 0, include_forks: bool = False) -> str:
     """List agent sessions, most-recently-active first.
 
     A session can contain multiple agents (delegation). Sessions are ordered by
@@ -270,6 +273,8 @@ async def list_sessions(limit: int = 50, offset: int = 0) -> str:
     Args:
         limit: Max sessions to return (default 50, hard cap 200).
         offset: Pagination offset.
+        include_forks: Forks are HIDDEN by default (agent counts and message
+            counts reflect the trunk only). Set True to fold fork agents in.
 
     Returns:
         Markdown table: session_id, last active, agent count, message count,
@@ -277,7 +282,7 @@ async def list_sessions(limit: int = 50, offset: int = 0) -> str:
     """
     limit = min(max(limit, 1), 200)
     offset = max(offset, 0)
-    sessions = store.list_sessions(limit=limit, offset=offset)
+    sessions = store.list_sessions(limit=limit, offset=offset, include_forks=include_forks)
     if not sessions:
         return "No sessions found."
 
@@ -312,6 +317,7 @@ async def query_memory(
     search_type: SearchType = SearchType.SEMANTIC,
     limit: int = 20,
     offset: int = 0,
+    include_forks: bool = False,
 ) -> str:
     """Search conversation history ACROSS all sessions (discovery).
 
@@ -325,6 +331,8 @@ async def query_memory(
         search_type: Accepted for compatibility; all search is BM25 keyword now.
         limit: Max matches (default 20, hard cap 200).
         offset: Pagination offset.
+        include_forks: Matches from fork agents' own rows are HIDDEN by
+            default. Set True to include them.
 
     Returns:
         Markdown table of matches: session_id, agent, time, role, score, excerpt.
@@ -333,7 +341,7 @@ async def query_memory(
     offset = max(offset, 0)
 
     roles = _MODE_ROLES.get(mode)
-    hits = store.search(query, limit=limit + offset)
+    hits = store.search(query, limit=limit + offset, include_forks=include_forks)
     if roles:
         hits = [h for h in hits if h.role in roles]
     hits = hits[offset:offset + limit]
@@ -374,6 +382,7 @@ async def query_session(
     limit: int | None = None,
     offset: int = 0,
     search_type: SearchType = SearchType.SEMANTIC,
+    include_forks: bool = False,
 ) -> str:
     """Read or search a single session's conversation history.
 
@@ -403,6 +412,8 @@ async def query_session(
             Hard cap 200.
         offset: Pagination offset (into the past when order="desc").
         search_type: "semantic" (default, BM25), "keyword" (substring), or "both". Search only.
+        include_forks: Fork agents' own messages are HIDDEN by default (you
+            see the trunk only). Set True to fold fork agents into the view.
 
     Returns:
         Markdown transcript (newest-first by default), each message tagged with
@@ -415,19 +426,20 @@ async def query_session(
     if query:
         return await _search_session(
             session_id, query, agent_idx, mode, roles, order,
-            context, after, before, limit, offset, search_type,
+            context, after, before, limit, offset, search_type, include_forks,
         )
     return await _browse_session(
         session_id, agent_idx, mode, roles, order, after, before, limit, offset,
+        include_forks,
     )
 
 
 async def _browse_session(session_id, agent_idx, mode, roles, order,
-                          after, before, limit, offset) -> str:
+                          after, before, limit, offset, include_forks) -> str:
     if limit is None:
         limit = 1  # bare call = the tail peek, don't drown the agent
     limit = min(max(limit, 1), 200)
-    recs = await _session_records(session_id, agent_idx, roles, after, before)
+    recs = await _session_records(session_id, agent_idx, roles, after, before, include_forks)
     if order == "desc":
         recs.reverse()
     recs = recs[offset:offset + limit]
@@ -440,20 +452,23 @@ async def _browse_session(session_id, agent_idx, mode, roles, order,
 
 
 async def _search_session(session_id, query, agent_idx, mode, roles, order,
-                          context, after, before, limit, offset, search_type) -> str:
+                          context, after, before, limit, offset, search_type,
+                          include_forks) -> str:
     if limit is None:
         limit = 20
     limit = min(max(limit, 1), 200)
 
     # Full ordered list for the context window + keyword matching.
-    all_recs = await _session_records(session_id, agent_idx, roles, after, before)
+    all_recs = await _session_records(session_id, agent_idx, roles, after, before, include_forks)
 
     match_indices: set[int] = set()
 
     if search_type in (SearchType.SEMANTIC, SearchType.BOTH):
         # BM25 over the FTS5 index, scoped to this session's agents.
         agent_ids = {r.agent_id for r in all_recs}
-        sem_hits = store.search(query, limit=limit * 4, agent_ids=agent_ids)
+        sem_hits = store.search(
+            query, limit=limit * 4, agent_ids=agent_ids, include_forks=include_forks
+        )
         if roles:
             sem_hits = [h for h in sem_hits if h.role in roles]
         id_to_idx = {r.id: i for i, r in enumerate(all_recs)}

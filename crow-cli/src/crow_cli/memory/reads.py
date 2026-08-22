@@ -115,25 +115,35 @@ def query_messages(
         return q.offset(offset).limit(limit).all()
 
 
-def list_sessions(engine, limit: int = 50, offset: int = 0) -> list[dict]:
-    """Sessions ordered by most recent message activity (desc)."""
+def list_sessions(engine, limit: int = 50, offset: int = 0, include_forks: bool = False) -> list[dict]:
+    """Sessions ordered by most recent message activity (desc).
+
+    include_forks=False (default) hides the fork dimension entirely: only
+    trunk agent rows (fork_idx=1) are counted, and since fork messages are
+    keyed by their fork agent_id, dropping the fork agent rows drops their
+    messages from the join too.
+    """
     with Session(engine) as db:
+        q = db.query(
+            Agent.session_id,
+            func.max(Message.created_at),
+            func.count(func.distinct(Message.id)),
+            func.count(func.distinct(Agent.agent_id)),
+        ).join(Message, Message.agent_id == Agent.agent_id, isouter=True)
+        if not include_forks:
+            q = q.filter(Agent.fork_idx == 1)
         rows = (
-            db.query(
-                Agent.session_id,
-                func.max(Message.created_at),
-                func.count(func.distinct(Message.id)),
-                func.count(func.distinct(Agent.agent_id)),
-            )
-            .join(Message, Message.agent_id == Agent.agent_id, isouter=True)
-            .group_by(Agent.session_id)
+            q.group_by(Agent.session_id)
             .order_by(func.max(Message.created_at).desc())
             .offset(offset)
             .limit(limit)
             .all()
         )
         models = {}
-        for a in db.query(Agent).all():
+        agent_q = db.query(Agent)
+        if not include_forks:
+            agent_q = agent_q.filter(Agent.fork_idx == 1)
+        for a in agent_q.all():
             models.setdefault(a.session_id, a.model_identifier)
     return [
         {

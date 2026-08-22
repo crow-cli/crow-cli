@@ -58,6 +58,7 @@ class Msg:
     role: str
     created_at: str
     data: dict
+    fork_idx: int = 1
     score: float | None = None
 
 
@@ -74,13 +75,14 @@ class SessionRow:
     last_message: Msg | None = None
 
 
-def _msg(row, amap: dict[str, tuple[str, int]], score: float | None = None) -> Msg:
-    sid, aidx = amap.get(row.agent_id, ("", 0))
+def _msg(row, amap: dict[str, tuple[str, int, int]], score: float | None = None) -> Msg:
+    sid, aidx, fidx = amap.get(row.agent_id, ("", 0, 1))
     return Msg(
         id=row.id,
         agent_id=row.agent_id,
         session_id=sid,
         agent_idx=aidx,
+        fork_idx=fidx,
         role=row.role,
         created_at=row.created_at,
         data=dict(row.data),
@@ -88,12 +90,15 @@ def _msg(row, amap: dict[str, tuple[str, int]], score: float | None = None) -> M
     )
 
 
-def list_sessions(limit: int = 50, offset: int = 0) -> list[SessionRow]:
+def list_sessions(limit: int = 50, offset: int = 0, include_forks: bool = False) -> list[SessionRow]:
+    """Sessions by last message activity. include_forks=False (default)
+    hides the fork dimension: trunk agent rows only, and since fork messages
+    are keyed by their fork agent_id, they drop out of the join too."""
     engine = _ro_engine()
     if engine is None:
         return []
     with cm.Session(engine) as s:
-        rows = (
+        q = (
             s.query(
                 cm.Agent.session_id,
                 func.max(cm.Message.created_at),
@@ -101,14 +106,21 @@ def list_sessions(limit: int = 50, offset: int = 0) -> list[SessionRow]:
                 func.count(func.distinct(cm.Agent.agent_id)),
             )
             .join(cm.Message, cm.Message.agent_id == cm.Agent.agent_id, isouter=True)
-            .group_by(cm.Agent.session_id)
+        )
+        if not include_forks:
+            q = q.filter(cm.Agent.fork_idx == 1)
+        rows = (
+            q.group_by(cm.Agent.session_id)
             .order_by(func.max(cm.Message.created_at).desc())
             .offset(offset)
             .limit(limit)
             .all()
         )
-        agents = s.query(cm.Agent).all()
-        amap = {a.agent_id: (a.session_id, a.agent_idx) for a in agents}
+        agents_q = s.query(cm.Agent)
+        if not include_forks:
+            agents_q = agents_q.filter(cm.Agent.fork_idx == 1)
+        agents = agents_q.all()
+        amap = {a.agent_id: (a.session_id, a.agent_idx, a.fork_idx) for a in agents}
         out = []
         for sid, last, n_msg, n_agent in rows:
             mine = sorted((a for a in agents if a.session_id == sid), key=lambda a: a.agent_idx)
@@ -142,36 +154,53 @@ def session_records(
     roles: list[str] | None = None,
     after: str | None = None,
     before: str | None = None,
+    include_forks: bool = False,
 ) -> list[Msg]:
+    """Messages of a session's agents. include_forks=False (default) reads
+    only trunk agents — fork agents' own rows are keyed by the fork agent_id,
+    so they are excluded with them."""
     engine = _ro_engine()
     if engine is None:
         return []
     with cm.Session(engine) as s:
-        agents = s.query(cm.Agent).filter_by(session_id=session_id).all()
+        agents_q = s.query(cm.Agent).filter_by(session_id=session_id)
+        if not include_forks:
+            agents_q = agents_q.filter(cm.Agent.fork_idx == 1)
+        agents = agents_q.all()
     aids = [a.agent_id for a in agents if agent_idx is None or a.agent_idx == agent_idx]
     if not aids:
         return []
-    amap = {a.agent_id: (a.session_id, a.agent_idx) for a in agents}
+    amap = {a.agent_id: (a.session_id, a.agent_idx, a.fork_idx) for a in agents}
     rows = cm.query_messages(engine, aids, roles=roles, after=after, before=before)
     return [_msg(r, amap) for r in rows]
 
 
-def search(query: str, limit: int = 20, agent_ids: set[str] | None = None) -> list[Msg]:
-    """BM25 keyword search, best match first. Quoted tokens = implicit AND."""
+def search(
+    query: str,
+    limit: int = 20,
+    agent_ids: set[str] | None = None,
+    include_forks: bool = False,
+) -> list[Msg]:
+    """BM25 keyword search, best match first. Quoted tokens = implicit AND.
+    include_forks=False (default) drops hits from fork agents' own rows."""
     engine = _ro_engine()
     if engine is None:
         return []
-    hits = cm.search_messages(engine, query, limit=limit, agent_ids=agent_ids)
+    # Overfetch when forks are filtered out so the page still fills.
+    fetch = limit * 2 if not include_forks else limit
+    hits = cm.search_messages(engine, query, limit=fetch, agent_ids=agent_ids)
     return [
         Msg(
             id=h["id"],
             agent_id=h["agent_id"],
             session_id=h["session_id"],
             agent_idx=h["agent_idx"],
+            fork_idx=h["fork_idx"],
             role=h["role"],
             created_at=h["created_at"],
             data=h["data"],
             score=h["score"],
         )
         for h in hits
+        if include_forks or h["fork_idx"] == 1
     ]

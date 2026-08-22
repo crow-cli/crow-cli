@@ -312,11 +312,18 @@ class AgentSession:
         limit: int = 50,
         offset: int = 0,
         memory_path: str = DEFAULT_MEMORY_PATH,
+        include_forks: bool = False,
     ) -> list[dict]:
-        """List sessions ordered by most-recent message activity (desc)."""
+        """List sessions ordered by most-recent message activity (desc).
+
+        include_forks=False (default) hides the fork dimension: trunk agents
+        and their messages only.
+        """
         client = MemoryClient(memory_path)
         try:
-            return await client.list_sessions(limit=limit, offset=offset)
+            return await client.list_sessions(
+                limit=limit, offset=offset, include_forks=include_forks
+            )
         finally:
             await client.close()
 

@@ -17,7 +17,7 @@ from crow_cli.config import Config, apply_config_overrides
 from crow_cli.agent.main import main as agent_main
 from crow_cli.agent.mcp_client import fastmcp_config_to_acp_servers
 from crow_cli.memory import build_agent_id
-from crow_cli.agent.memory import MemoryServiceError
+from crow_cli.agent.memory import MemoryClient, MemoryServiceError
 from crow_cli.agent.session import AgentSession
 from crow_cli.cli.init_cmd import init_command
 from crow_cli.cli.install import app as install_app
@@ -181,12 +181,17 @@ def inspect_db(
     messages: bool = typer.Option(False, "--messages", "-m", help="Show messages"),
     limit: int = typer.Option(20, "--limit", "-l", help="Limit number of rows"),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
+    include_forks: bool = typer.Option(
+        False,
+        "--include-forks",
+        help="Fold fork agents into counts/listings (hidden by default)",
+    ),
 ):
     """Inspect Crow sessions — state, messages, etc."""
-    asyncio.run(_inspect_db(session_id, messages, limit, json_output))
+    asyncio.run(_inspect_db(session_id, messages, limit, json_output, include_forks))
 
 
-async def _inspect_db(session_id, messages, limit, json_output):
+async def _inspect_db(session_id, messages, limit, json_output, include_forks=False):
     if session_id:
         # Use existing AgentSession methods to get the latest agent for this session
         max_idx = await AgentSession.get_max_agent_idx(session_id)
@@ -207,6 +212,14 @@ async def _inspect_db(session_id, messages, limit, json_output):
             "model_identifier": session_obj.model_identifier,
             "agent_idx": session_obj.agent_idx,
         }
+        if include_forks:
+            # Fork ids never appear unless explicitly asked for.
+            mc = MemoryClient()
+            try:
+                agents = await mc.list_agents(session_id)
+            finally:
+                await mc.close()
+            session_data["forks"] = [a.agent_id for a in agents if a.fork_idx > 1]
 
         msgs_data = []
         if messages:
@@ -241,7 +254,9 @@ async def _inspect_db(session_id, messages, limit, json_output):
     else:
         # List all sessions, most-recently-active first.
         try:
-            sessions_list = await AgentSession.list_sessions(limit=limit)
+            sessions_list = await AgentSession.list_sessions(
+                limit=limit, include_forks=include_forks
+            )
         except MemoryServiceError as e:
             if json_output:
                 print(json.dumps({"error": f"memory error: {e.detail}"}))

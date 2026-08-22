@@ -283,7 +283,9 @@ class MemoryClient:
     async def get_max_fork_idx(self, session_id: str, agent_idx: int) -> int:
         return db.get_max_fork_idx(self._engine, session_id, agent_idx)
 
-    async def list_sessions(self, limit: int = 50, offset: int = 0) -> list[SessionInfo]:
+    async def list_sessions(
+        self, limit: int = 50, offset: int = 0, include_forks: bool = False
+    ) -> list[SessionInfo]:
         return [
             SessionInfo(
                 session_id=s["session_id"],
@@ -292,7 +294,7 @@ class MemoryClient:
                 agent_count=s["agent_count"],
                 model_identifier=s["model_identifier"],
             )
-            for s in db.list_sessions(self._engine, limit, offset)
+            for s in db.list_sessions(self._engine, limit, offset, include_forks=include_forks)
         ]
 
     # ---- prompts ----
