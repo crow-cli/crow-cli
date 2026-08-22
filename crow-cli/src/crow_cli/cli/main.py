@@ -299,6 +299,190 @@ async def _inspect_db(session_id, messages, limit, json_output, include_forks=Fa
 
 
 # ============================================================================
+# Telemetry — the MCP query tools as CLI surfaces.
+# Same functions, two facades: the agent meets them as MCP tools
+# (list_sessions/query_memory/query_session), the human meets them here.
+# ============================================================================
+
+
+def _telemetry_db_override(config_file: Path | None) -> None:
+    """Point the memory store at the SAME db the rest of the CLI would use.
+
+    The store resolves CROW_DB_URI env -> config.yaml; --config-file must
+    win here exactly like it does for `run` (e.g. dev overrides pointing at
+    a fresh db).
+    """
+    if config_file is None:
+        return
+    config = apply_config_overrides(Config.load(), config_file)
+    os.environ["CROW_DB_URI"] = config.db_uri
+
+
+def _print_telemetry(result: str, raw: bool) -> None:
+    if raw:
+        print(result)
+    else:
+        from rich.markdown import Markdown
+
+        console.print(Markdown(result))
+
+
+def _content_mode(value: str):
+    from crow_cli.mcp.memory.main import ContentMode
+
+    try:
+        return ContentMode(value)
+    except ValueError:
+        choices = ", ".join(m.value for m in ContentMode)
+        console.print(f"[red]Invalid --mode '{value}' (one of: {choices})[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("list-sessions")
+def cli_list_sessions(
+    limit: int = typer.Option(50, "--limit", "-l", help="Max sessions (cap 200)"),
+    offset: int = typer.Option(0, "--offset", help="Pagination offset"),
+    include_forks: bool = typer.Option(
+        False,
+        "--include-forks",
+        help="Fold fork agents into the listing (hidden by default)",
+    ),
+    config_file: Path = typer.Option(
+        None, "--config-file", "-o", help="YAML file with config values to override"
+    ),
+    raw: bool = typer.Option(
+        False, "--raw", help="Print the raw markdown instead of rendering it"
+    ),
+):
+    """List agent sessions, most-recently-active first (who's working now).
+
+    Same implementation as the list_sessions MCP tool."""
+    _telemetry_db_override(config_file)
+    from crow_cli.mcp.memory.main import list_sessions
+
+    result = asyncio.run(
+        list_sessions(limit=limit, offset=offset, include_forks=include_forks)
+    )
+    _print_telemetry(result, raw)
+
+
+@app.command("query-memory")
+def cli_query_memory(
+    query: str = typer.Argument(..., help="Search term"),
+    mode: str = typer.Option(
+        "conversation",
+        "--mode",
+        "-m",
+        help="conversation | with_thinking | with_tools | full",
+    ),
+    limit: int = typer.Option(20, "--limit", "-l", help="Max matches (cap 200)"),
+    offset: int = typer.Option(0, "--offset", help="Pagination offset"),
+    include_forks: bool = typer.Option(
+        False,
+        "--include-forks",
+        help="Include matches from fork agents' own rows (hidden by default)",
+    ),
+    config_file: Path = typer.Option(
+        None, "--config-file", "-o", help="YAML file with config values to override"
+    ),
+    raw: bool = typer.Option(
+        False, "--raw", help="Print the raw markdown instead of rendering it"
+    ),
+):
+    """Search conversation history ACROSS all sessions (BM25 discovery).
+
+    Same implementation as the query_memory MCP tool."""
+    _telemetry_db_override(config_file)
+    from crow_cli.mcp.memory.main import query_memory
+
+    result = asyncio.run(
+        query_memory(
+            query=query,
+            mode=_content_mode(mode),
+            limit=limit,
+            offset=offset,
+            include_forks=include_forks,
+        )
+    )
+    _print_telemetry(result, raw)
+
+
+@app.command("query-session")
+def cli_query_session(
+    session_id: str = typer.Argument(..., help="The session to read"),
+    query: str = typer.Option(None, "--query", "-q", help="Search within the session"),
+    agent_idx: int = typer.Option(
+        None, "--agent-idx", help="Narrow to one agent (default: all agents)"
+    ),
+    mode: str = typer.Option(
+        "conversation",
+        "--mode",
+        "-m",
+        help="conversation | with_thinking | with_tools | full",
+    ),
+    order: str = typer.Option(
+        "desc", "--order", help="desc = newest-first (default); asc = oldest-first"
+    ),
+    context: int = typer.Option(
+        0, "--context", "-C", help="Messages around each match (search only)"
+    ),
+    after: str = typer.Option(None, "--after", help="ISO datetime lower bound"),
+    before: str = typer.Option(None, "--before", help="ISO datetime upper bound"),
+    limit: int = typer.Option(
+        None, "--limit", "-l", help="Max messages (browse default 1, search 20; cap 200)"
+    ),
+    offset: int = typer.Option(0, "--offset", help="Pagination offset into the past"),
+    search_type: str = typer.Option(
+        "semantic", "--search-type", help="semantic (BM25) | keyword | both"
+    ),
+    include_forks: bool = typer.Option(
+        False,
+        "--include-forks",
+        help="Fold fork agents into the view (hidden by default)",
+    ),
+    config_file: Path = typer.Option(
+        None, "--config-file", "-o", help="YAML file with config values to override"
+    ),
+    raw: bool = typer.Option(
+        False, "--raw", help="Print the raw markdown instead of rendering it"
+    ),
+):
+    """Read or search one session's history across all its agents.
+
+    Browse (no --query) returns the tail by default; --query searches.
+    Same implementation as the query_session MCP tool."""
+    _telemetry_db_override(config_file)
+    from crow_cli.mcp.memory.main import SearchType, query_session
+
+    try:
+        st = SearchType(search_type)
+    except ValueError:
+        choices = ", ".join(s.value for s in SearchType)
+        console.print(
+            f"[red]Invalid --search-type '{search_type}' (one of: {choices})[/red]"
+        )
+        raise typer.Exit(1)
+
+    result = asyncio.run(
+        query_session(
+            session_id=session_id,
+            query=query,
+            agent_idx=agent_idx,
+            mode=_content_mode(mode),
+            order=order,
+            context=context,
+            after=after,
+            before=before,
+            limit=limit,
+            offset=offset,
+            search_type=st,
+            include_forks=include_forks,
+        )
+    )
+    _print_telemetry(result, raw)
+
+
+# ============================================================================
 # Main Commands
 # ============================================================================
 

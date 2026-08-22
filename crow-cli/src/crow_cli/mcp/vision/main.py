@@ -5,7 +5,7 @@ import cv2
 from fastmcp import FastMCP
 from fastmcp.utilities.types import Image
 
-from crow_cli.mcp.server.main import mcp
+from crow_cli.mcp.server.app import mcp
 
 
 @mcp.tool

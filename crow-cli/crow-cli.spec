@@ -36,6 +36,17 @@ a = Analysis(
         'crow_cli.client',
         'crow_cli.client.main',
         'crow_cli.agent_runner',
+        # Lazy (PEP 562) facades resolve through importlib at runtime —
+        # invisible to static analysis, so pin them here.
+        'crow_cli.mcp.server.app',
+        'crow_cli.mcp.server.main',
+        'crow_cli.mcp.memory.main',
+        'crow_cli.mcp.editor.main',
+        'crow_cli.mcp.read.main',
+        'crow_cli.mcp.terminal',
+        'crow_cli.mcp.web_fetch',
+        'crow_cli.mcp.web_search',
+        'crow_cli.mcp.write.main',
         'typer',
         'rich',
         'acp',

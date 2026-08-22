@@ -64,10 +64,14 @@ Unordered scope capture:
       (real LLM round-trip via `crow-cli run --config-file dev-crow-2.yaml`
       plus ACP-level initialize/new_session/prompt through the client code).
       Keep it working and viable through every big change.
-- [ ] Telemetry tools in crow-cli mirroring the (now internal) MCP query tools
+- [x] Telemetry tools in crow-cli mirroring the (now internal) MCP query tools
       — list_sessions/query_session/query_memory as CLI surfaces sharing one
       implementation (dissolves into the consolidation: same functions, two
-      facades).
+      facades). (2026-08-22: done — `list-sessions` / `query-memory` /
+      `query-session` commands call the MCP tool functions directly, with
+      --config-file db override + include_forks parity; enabling refactor
+      made the memory facade cheaply importable (lazy PEP 562 package
+      inits + mcp/server/app.py). See PLAN.md "Telemetry CLI facade".)
 - [x] Zero-tool interrogation e2e: fork a session with no mcpServers, ask it
       "why did you do X", verify trunk unpolluted and fork persisted.
       (2026-08-22: done in the 5.2 gate — fork created with mcp_servers=[],

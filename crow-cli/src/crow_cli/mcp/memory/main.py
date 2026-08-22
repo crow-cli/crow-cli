@@ -20,7 +20,7 @@ from enum import Enum
 
 from crow_cli.mcp.memory import store
 from crow_cli.mcp.memory.store import Msg
-from crow_cli.mcp.server.main import mcp
+from crow_cli.mcp.server.app import mcp
 
 
 # ---------------------------------------------------------------------------

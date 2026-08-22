@@ -169,6 +169,31 @@ real crow.db happens in the FINAL phase, once the schema has settled.
   synthetic user msg + subagent session intact; no-delegate regression gate
   green.
 
+## Telemetry CLI facade (unphased TODO item) ✅ (2026-08-22)
+The MCP query tools as CLI surfaces — same functions, two facades:
+`list-sessions` / `query-memory` / `query-session` commands call the exact
+functions the MCP server exposes (crow_cli.mcp.memory.main), with the same
+include_forks semantics and a --config-file db override (CROW_DB_URI env is
+the store's documented hook; the CLI sets it from the overridden Config so
+dev-crow-2.yaml points the telemetry at crow-3.db just like `run`).
+- Enabling refactor: the FastMCP instance moved to mcp/server/app.py (leaf
+  module, fastmcp-only) and crow_cli/__init__, crow_cli/agent/__init__,
+  crow_cli/mcp/__init__ became lazy PEP 562 facades — importing the memory
+  facade no longer drags in the agent stack or the other tool groups (1.6s
+  + terminal-log side effects -> 0.9s, nothing extra loaded). This also
+  unmasked a latent import circle (config -> agent.logger -> agent/__init__
+  -> agent.main -> compact -> config) that the old eager top-level import
+  order happened to dodge; lazy agent/__init__ closes it properly.
+  PyInstaller spec pins the lazy modules as hiddenimports.
+- Evidence: 368 passed + 23 skipped (7 new tests in tests/unit/
+  test_cli_telemetry.py on a real tmp v5 db: listing, browse, search,
+  cross-session discovery, include_forks parity, invalid-mode rejection —
+  commands run via asyncio.to_thread so their asyncio.run() gets a fresh
+  loop). Live smoke on crow-3.db: list-sessions shows the delegation
+  sessions; query-session renders the full park/wake transcript (ack ->
+  synthetic injection -> final answer); `crow-cli mcp` still boots and
+  serves all 11 tools.
+
 ## Phase 7 — THE migration + cutover (only when 1–6 proven, schema settled)
 The ONE AND ONLY migration. Everything before this phase runs on fresh v5
 databases; nothing is ever migrated mid-sprint.

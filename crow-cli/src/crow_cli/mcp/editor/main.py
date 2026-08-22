@@ -17,7 +17,7 @@ import re
 from collections.abc import Generator
 from pathlib import Path
 
-from crow_cli.mcp.server.main import mcp
+from crow_cli.mcp.server.app import mcp
 
 # Similarity thresholds for block anchor fallback matching
 SINGLE_CANDIDATE_SIMILARITY_THRESHOLD = 0.0

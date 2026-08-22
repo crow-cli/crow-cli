@@ -16,31 +16,9 @@ Env overrides: CROW_MCP_TRANSPORT, CROW_MCP_HOST, CROW_MCP_PORT.
 import argparse
 import os
 
-from fastmcp import FastMCP
-
-mcp = FastMCP(
-    name="crow-mcp",
-    instructions="""
-        A comprehensive MCP server for coding agent tools, including:
-            - read
-            Read file contents with line numbering.
-
-            - write
-            Write content to files, creating or overwriting.
-
-            - edit
-            Edit files with fuzzy string matching.
-
-            - terminal
-            Execute bash commands in a shell session.
-
-            - web_fetch
-            Fetch and parse web pages.
-
-            - web_search
-            Search the web via SearXNG.
-    """,
-)
+# The instance lives in app.py (leaf module, fastmcp-only) so single tool
+# facades can import it without dragging in every other tool group.
+from crow_cli.mcp.server.app import mcp
 
 # Import tools to register them with the mcp instance
 import crow_cli.mcp.editor.main  # noqa: F401

@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from crow_cli.mcp.server.main import mcp
+from crow_cli.mcp.server.app import mcp
 
 DEFAULT_LINE_LIMIT = 2000
 MAX_LINE_LENGTH = 2000

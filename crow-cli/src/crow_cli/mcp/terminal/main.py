@@ -3,7 +3,7 @@
 import os
 from logging import getLogger
 
-from crow_cli.mcp.server.main import mcp
+from crow_cli.mcp.server.app import mcp
 
 from .session import TerminalSession
 
