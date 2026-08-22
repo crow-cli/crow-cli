@@ -40,21 +40,24 @@ Trajectory: 0 → 1 → 2 → 3 → 4 → 5 → 6 (user's order, preserved).
   dev-crow-2.yaml` round-tripped ("E2E-GATE-OK"), sessions persisted in
   crow-2.db, real crow.db untouched.
 - GOTCHA: default model qwen3.8-27b points at llamacpp host coast-after-3
-  which is DOWN — E2E gates must pass `-m glm-5.2` (or another alibaba model).
+  which is DOWN — E2E gates pass `-m qwen3.8-max-preview`.
 
-## Phase 2 — MCP ownership inversion (client passes, agent doesn't fall back)
-2.1 Agent side: strip builtin_config from create_mcp_client_from_acp and from
-    new_session/load_session; empty mcpServers = zero tools (remove
-    ValueError, mcp_client.py:~112; get_tools returns []).
-2.2 Client side: CrowClient/run builds ACP mcp_servers from config.mcp_servers
-    (FastMCP dict → McpServerStdio converter; inverse of acp_to_fastmcp_config)
-    and passes them to new_session — `crow-cli mcp` included: the CLI passes
-    itself through as the MCP server to its own ACP agent.
-2.3 Config plumbing: config.yaml mcpServers now consumed by the CLIENT;
-    document in defaults template.
-- Verify: new unit tests — zero-tool session answers a prompt; client passes
-  configured servers; E2E gate green WITH tools (terminal tool reachable) and
-  a zero-server config run answers toolless. Commit.
+## Phase 2 — MCP ownership inversion (client passes, agent doesn't fall back) ✅ (2026-08-22)
+- [x] 2.1 Agent side: create_mcp_client_from_acp takes only what the client
+      passed (None/[] -> ({"mcpServers": {}}, None)); ValueError gone;
+      get_tools(None) -> []; new_session/load_session/_provision_session all
+      off the builtin path; Config.get_builtin_mcp_config deleted.
+- [x] 2.2 Client side: _run_async loads Config (+--config-file overrides) and
+      passes fastmcp_config_to_acp_servers(config.mcp_servers) to BOTH
+      new_session and load_session — `crow-cli mcp` rides along as a normal
+      mcpServers entry (the CLI passes itself through to its own agent).
+- [x] 2.3 CONFIG_YAML defaults template documents mcpServers as client-owned
+      (empty/absent = zero tools).
+- Evidence: 299 passed + 23 skipped (7 new tests in tests/unit/
+  test_mcp_client.py: converter stdio/http/sse, round-trip, zero-tool paths).
+  E2E gates green on crow-2.db: WITH tools (dev-crow-2.yaml crow-mcp ->
+  terminal tool ran, "E2E-GATE-OK"), zero-server override answered toolless
+  (1161), and load_session -s round-trip with passed servers ("LOAD-OK").
 
 ## Phase 3 — crow-memory → crow_cli/memory
 3.1 `git mv crow-memory/src/crow_memory crow-cli/src/crow_cli/memory`; rewrite

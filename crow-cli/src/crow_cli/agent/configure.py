@@ -285,11 +285,6 @@ class Config:
     def log_path(self) -> str:
         return str(self.config_dir / "logs" / "crow-cli.log")
 
-    def get_builtin_mcp_config(self) -> dict[str, Any]:
-        """Return MCP config dict in FastMCP format."""
-        cfg = {"mcpServers": dict(self.mcp_servers or {})}
-        return cfg
-
     @property
     def is_configured(self) -> bool:
         """Check if the config has at least one LLM provider and model."""

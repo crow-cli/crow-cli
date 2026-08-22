@@ -212,7 +212,11 @@ volumes:
 CONFIG_YAML = """# config.yaml — crow-cli configuration
 # (loaded by crow_cli/agent/configure.py)
 
-# DEFAULT mcpServers
+# MCP servers — consumed by the CLIENT: `crow-cli run` converts these to ACP
+# mcpServers and passes them to the agent in new_session/load_session. The
+# agent itself has NO builtin servers; empty or absent mcpServers means the
+# session runs with zero tools. `crow-mcp` below is crow-cli's own MCP server
+# (terminal, memory query tools, ...) — the CLI passes itself through.
 mcpServers:
   crow-mcp:
     transport: stdio

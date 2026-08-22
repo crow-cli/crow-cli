@@ -15,6 +15,7 @@ from rich.text import Text
 
 from crow_cli.agent.configure import Config, apply_config_overrides
 from crow_cli.agent.main import main as agent_main
+from crow_cli.agent.mcp_client import fastmcp_config_to_acp_servers
 from crow_cli.agent.memory import MemoryServiceError
 from crow_cli.agent.session import AgentSession
 from crow_cli.cli.init_cmd import init_command
@@ -520,6 +521,19 @@ async def _run_async(
             )
         )
 
+    # The CLIENT owns tool supply: load config here and hand our mcpServers
+    # to the agent in new_session/load_session (config.yaml -> FastMCP dict ->
+    # ACP server objects, the inverse of the agent's acp_to_fastmcp_config).
+    # `crow-cli mcp` rides along because it is an mcpServers entry like any
+    # other. Empty/absent mcpServers = the session runs with zero tools.
+    config = Config.load(config_dir)
+    apply_config_overrides(config, config_file)
+    mcp_servers = fastmcp_config_to_acp_servers(config.mcp_servers)
+    if not json_out:
+        client._console.print(
+            f"[cyan]MCP servers: {', '.join(s.name for s in mcp_servers) or '[dim]none — zero tools[/dim]'}[/cyan]"
+        )
+
     # Spawn agent
     proc = await client.spawn_agent(cwd, config_dir, model=model, config_file=config_file)
 
@@ -531,12 +545,14 @@ async def _run_async(
         if session_id:
             if not json_out:
                 client._console.print(f"[cyan]Loading session: {session_id}[/cyan]")
-            await conn.load_session(session_id=session_id, mcp_servers=[], cwd=cwd)
+            await conn.load_session(
+                session_id=session_id, mcp_servers=mcp_servers, cwd=cwd
+            )
             actual_session_id = session_id
         else:
             if not json_out:
                 client._console.print("[cyan]Creating new session...[/cyan]")
-            session = await conn.new_session(mcp_servers=[], cwd=cwd)
+            session = await conn.new_session(mcp_servers=mcp_servers, cwd=cwd)
             actual_session_id = session.session_id
             if not json_out:
                 client._console.print(

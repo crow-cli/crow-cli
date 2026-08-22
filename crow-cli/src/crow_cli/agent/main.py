@@ -255,20 +255,22 @@ class AcpAgent(Agent):
         session_id = session.session_id
         if session_id in self._tools:
             return
-        builtin_config = self._config.get_builtin_mcp_config()
+        # No builtin MCP fallback: a hydrated session that no client handed
+        # mcp_servers for runs toolless until a load/new_session provides them.
         config, mcp_client = create_mcp_client_from_acp(
             mcp_servers=None,
             cwd=session.cwd,
-            builtin_config=builtin_config,
             logger=self._logger,
         )
+        if mcp_client is not None:
+            mcp_client = await self._exit_stack.enter_async_context(mcp_client)
+        tools = await get_tools(mcp_client)
         self._logger.info(
-            "Provisioning hydrated session %s (agent %s) with builtin MCP config",
+            "Provisioning hydrated session %s (agent %s) — no client mcp_servers, %d tools",
             session_id,
             session.agent_id,
+            len(tools),
         )
-        mcp_client = await self._exit_stack.enter_async_context(mcp_client)
-        tools = await get_tools(mcp_client)
         self._mcp_clients[session_id] = mcp_client
         self._tools[session_id] = tools
         self._cancel_events[session_id] = asyncio.Event()
@@ -418,22 +420,18 @@ class AcpAgent(Agent):
 
         self._logger.info("new_session mcp_servers from ACP: %s", mcp_servers)
 
-        # Use default MCP config if no servers provided
-        builtin_config = self._config.get_builtin_mcp_config()
-        self._logger.info("builtin_config: %s", builtin_config)
-
-        # Create MCP client (builtin if no servers provided)
+        # Client owns tool supply: use exactly what it passed (empty = zero tools)
         config, mcp_client = create_mcp_client_from_acp(
             mcp_servers=mcp_servers,
             cwd=cwd,
-            builtin_config=builtin_config,
             logger=self._logger,
         )
         self._logger.info("new_session merged config from create_mcp_client_from_acp: %s", config)
         # CRITICAL: Use AsyncExitStack for lifecycle management
-        mcp_client = await self._exit_stack.enter_async_context(mcp_client)
+        if mcp_client is not None:
+            mcp_client = await self._exit_stack.enter_async_context(mcp_client)
 
-        # Get tools from MCP server
+        # Get tools from MCP server ([] when the client passed none)
         tools = await get_tools(mcp_client)
         session = await make_agent_session(
             self._config,
@@ -513,35 +511,20 @@ class AcpAgent(Agent):
             )
             self._logger.info("LOAD_SESSION: Step 1 complete: Agent loaded from DB")
 
-            # Setup MCP client (same as new_session)
-            # Use default config if no servers given
+            # Setup MCP client (same as new_session): client owns tool supply
             self._logger.info("LOAD_SESSION: mcp_servers from ACP: %s", mcp_servers)
-            self._logger.info("LOAD_SESSION: Step 2: Getting builtin config")
-            builtin_config = self._config.get_builtin_mcp_config()
-            self._logger.info(
-                "LOAD_SESSION: Step 2 complete: builtin_config = %s", builtin_config
-            )
-
-            self._logger.info(
-                "LOAD_SESSION: Step 3: Creating MCP client with fallback config"
-            )
             config, mcp_client = create_mcp_client_from_acp(
                 mcp_servers=mcp_servers,
                 cwd=cwd,
-                builtin_config=builtin_config,
                 logger=self._logger,
             )
             self._logger.info("LOAD_SESSION merged config: %s", config)
-            self._logger.info("LOAD_SESSION: Step 3 complete: MCP client created")
 
             # CRITICAL: Use AsyncExitStack for lifecycle management
-            self._logger.info("LOAD_SESSION: Step 4: Entering async context")
-            mcp_client = await self._exit_stack.enter_async_context(mcp_client)
-            self._logger.info(
-                "LOAD_SESSION: Step 4 complete: MCP client context entered"
-            )
+            if mcp_client is not None:
+                mcp_client = await self._exit_stack.enter_async_context(mcp_client)
 
-            # Get tools
+            # Get tools ([] when the client passed none)
             tools = await get_tools(mcp_client)
 
             # Store in-memory references keyed on agent_id / session_id
