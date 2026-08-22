@@ -1,0 +1,3 @@
+# Dev override for the session-fork worktree: isolate ALL fork work on
+# crow-2.db until the schema-v5 migration from crow.db is proven.
+db_uri: ~/.agents/crow/crow-2.db
