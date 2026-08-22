@@ -225,8 +225,8 @@ mcpServers:
       - mcp
 
 # Memory is a SQL database reached via a SQLAlchemy db_uri — sqlite by
-# default, any SQLAlchemy URI (e.g. postgresql://) works. Owned by the
-# crow-memory package. Images are stored as files next to it (images/) and
+# default, any SQLAlchemy URI (e.g. postgresql://) works. Owned by 
+# crow_cli.memory. Images are stored as files next to it (images/) and
 # hydrated to base64 only when sent to the LLM.
 db_uri: sqlite:///~/.agents/crow/crow.db
 

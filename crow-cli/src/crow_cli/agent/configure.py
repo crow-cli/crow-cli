@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from crow_memory import normalize_db_uri
+from crow_cli.memory import normalize_db_uri
 from dotenv import load_dotenv
 from pydantic import BaseModel, ValidationError
 

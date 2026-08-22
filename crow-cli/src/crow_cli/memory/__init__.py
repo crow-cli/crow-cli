@@ -1,5 +1,5 @@
 """
-crow-memory — the one memory contract for crow.
+crow_cli.memory — the one memory contract for crow.
 
 SQLAlchemy over a caller-supplied ``db_uri`` (sqlite by default; the schema
 is plain SQLAlchemy so postgres is a seam away — except FTS5 keyword search,
@@ -7,7 +7,7 @@ which is sqlite-specific and lives behind ``search_messages``).
 
 This package reads NO config. Apps resolve their own db_uri and pass it in:
 
-    engine = crow_memory.get_engine("sqlite:///~/.agents/crow/crow.db")
+    engine = crow_cli.memory.get_engine("sqlite:///~/.agents/crow/crow.db")
 
 Schema v4: one row = one message, agent-centric. agent_id = "{session_id}-{idx}"
 is the primary key; session_id is the logical parent (multiple agents per

@@ -5,7 +5,7 @@ import base64
 
 import pytest
 
-import crow_memory as db
+import crow_cli.memory as db
 
 PNG = base64.b64encode(bytes([0x89, 0x50, 0x4E, 0x47, 1, 2, 3])).decode()
 

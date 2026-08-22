@@ -59,14 +59,17 @@ Trajectory: 0 → 1 → 2 → 3 → 4 → 5 → 6 (user's order, preserved).
   terminal tool ran, "E2E-GATE-OK"), zero-server override answered toolless
   (1161), and load_session -s round-trip with passed servers ("LOAD-OK").
 
-## Phase 3 — crow-memory → crow_cli/memory
-3.1 `git mv crow-memory/src/crow_memory crow-cli/src/crow_cli/memory`; rewrite
-    `crow_memory` → `crow_cli.memory` (agent/memory.py `import crow_memory as
-    db`, mcp/memory/store.py `import crow_memory as cm`, cli/main.py, tests).
-3.2 `git mv crow-memory/tests crow-cli/tests/memory`; merge pyproject deps
-    (sqlalchemy, coolname), drop pin + source, delete crow-memory dir.
-- Verify: full suite green (incl. moved 9 memory tests); E2E gate green.
-  Commit.
+## Phase 3 — crow-memory → crow_cli/memory ✅ (2026-08-22)
+- [x] 3.1 `git mv crow-memory/src/crow_memory crow-cli/src/crow_cli/memory`
+      (internal imports all relative — moved as-is); external importers
+      rewritten: agent/configure.py, agent/memory.py (`import crow_cli.memory
+      as db`), mcp/memory/store.py (`as cm`), moved test_store.py.
+- [x] 3.2 tests moved to crow-cli/tests/memory (default tier, path-gated
+      conftest picks them up); pyproject: sqlalchemy>=2.0 added, coolname
+      already present, crow-memory pin + [tool.uv.sources] entry dropped;
+      crow-memory dir deleted (uv sync uninstalled it).
+- Evidence: 308 passed + 23 skipped (299 + the 9 moved store tests); E2E
+  gate green on crow-2.db ("PHASE3-GATE-OK").
 
 ## Phase 4 — config → crow_cli/config
 4.1 Extract Config/load/defaults/get_default_config_dir from

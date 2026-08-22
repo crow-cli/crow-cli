@@ -1,6 +1,6 @@
-"""Memory layer for crow-cli — SQL via crow-memory, images on disk.
+"""Memory layer for crow-cli — SQL via crow_cli.memory, images on disk.
 
-The store contract lives in the ``crow-memory`` package (schema v4): this
+The store contract lives in ``crow_cli.memory`` (schema v4): this
 class only resolves the db_uri from config and wraps the sync helpers in the
 async shape session.py / main.py expect. One wrinkle: image blobs never
 enter the database. Writes extract inline base64 blocks to
@@ -18,7 +18,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import crow_memory as db
+import crow_cli.memory as db
 from crow_cli.agent.configure import Config
 
 log = logging.getLogger(__name__)
@@ -126,7 +126,7 @@ def _agent_record(a: db.Agent) -> AgentRecord:
 
 
 class MemoryClient:
-    """crow-memory-backed store. `path` overrides the configured db_uri."""
+    """crow_cli.memory-backed store. `path` overrides the configured db_uri."""
 
     def __init__(self, path: str | None = None, config_dir: Path | None = None, **_kwargs):
         cfg = Config.load(config_dir)

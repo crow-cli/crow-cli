@@ -24,8 +24,9 @@ Unordered scope capture:
       passes mcpServers from config into new_session — including `crow-cli mcp`
       itself (the CLI passes itself through as the MCP server to its own ACP
       agent). (2026-08-22: done — see PLAN.md Phase 2 evidence.)
-- [ ] Move crow-memory package into `crow-cli/src/crow_cli/memory`. Kill the
-      crow-memory pyproject/package.
+- [x] Move crow-memory package into `crow-cli/src/crow_cli/memory`. Kill the
+      crow-memory pyproject/package. (2026-08-22: done — see PLAN.md Phase 3
+      evidence.)
 - [ ] Move config out of `crow_cli/agent` into `crow_cli/config` ("because
       everybody's using it!").
 - [ ] Fork support (schema v5): agent_id = `{session_id}-{agent_idx}-{fork_idx}`,

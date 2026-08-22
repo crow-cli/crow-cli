@@ -117,7 +117,7 @@ class FakeMemoryClient:
 def memory_service(monkeypatch):
     """Patch the persistence client with the in-memory fake; reset per test.
 
-    Persistence itself is tested in crow-memory/tests/test_store.py. crow-cli
+    Persistence itself is tested in tests/memory/test_store.py. crow-cli
     unit tests that touch sessions use this fake so they stay hermetic (no
     real db).
     """
@@ -228,7 +228,7 @@ def sample_workspace(tmp_path):
 #   tests/integration/  spawn the agent / real environment — opt-in
 #   tests/e2e/          make live LLM calls via the configured provider — opt-in
 #
-# Persistence itself is tested in crow-memory/tests/test_store.py (sqlite +
+# Persistence itself is tested in tests/memory/test_store.py (sqlite +
 # FTS5 + image extract/hydrate). The agent is fully decoupled from
 # persistence: it talks to MemoryClient, which owns the sqlite file.
 #
