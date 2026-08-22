@@ -4,9 +4,10 @@
 ## **DO NOT ASK USER FOR NEXT STEPS — THESE ARE THE NEXT STEPS.**
 
 Branch: `session-fork` in worktree `/home/thomas/src/crow-team/crow-cli-session-fork`.
-ALL dev work runs against `~/.agents/crow/crow-2.db` via `dev-crow-2.yaml`
-(`crow-cli ... --config-file dev-crow-2.yaml`). The real `crow.db` is NOT
-touched until the schema-v5 migration is proven.
+ALL dev work runs against a FRESH `~/.agents/crow/crow-3.db` via
+`dev-crow-2.yaml` (`crow-cli ... --config-file dev-crow-2.yaml`) — created
+v5 from scratch. NO migration work mid-sprint: the one and only v4→v5
+migration of the real crow.db is the FINAL phase, when the schema settles.
 
 Design docs: `~/.agents/notes/dev/crow-fork-design.md` (fork identity, FINAL
 decision section supersedes earlier same-day sections).
@@ -37,9 +38,10 @@ Unordered scope capture:
       messages). query_session/query_memory/list_sessions hide forks unless
       include_forks=True; session summary/repr never shows fork id unless
       include_forks=True.
-- [ ] Migration: copy crow.db → v5 schema appending `-1` to every agent_id
-      (agents, messages, FTS). Prove on crow-2.db first; real cutover only
-      after everything is proven.
+- [ ] Migration (FINAL phase, when the schema has settled): the ONE v4→v5
+      migration — real crow.db → NEW db file, appending `-1` to every
+      agent_id (agents, messages, FTS), preserving message ids/created_at.
+      Until then dev just uses fresh v5 databases.
 - [ ] Delegate tool + async task interiority: native delegate tool launches
       subagents; react loop exit condition = model done AND outstanding-task
       registry empty; loop PARKS (asyncio queue wait, zero tokens, no busywork)

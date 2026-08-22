@@ -4,8 +4,9 @@ Agent session management - persistence layer for conversation state.
 One row = One message. No conv_index gymnastics. No reconstruction headaches.
 Just serialize the message dict, deserialize it back.
 
-Agent owns the session. agent_id = "{session_id}-{agent_idx}" is the PK.
-session_id is derived from agent_id for ACP upstream routing.
+Agent owns the session. agent_id = "{session_id}-{agent_idx}-{fork_idx}"
+is the PK (schema v5; trunk carries fork_idx=1). session_id is derived from
+agent_id for ACP upstream routing.
 """
 
 import os
@@ -17,6 +18,7 @@ import yaml
 from coolname import generate_slug
 
 from crow_cli.agent.memory import DEFAULT_MEMORY_PATH, MemoryClient, MemoryServiceError
+from crow_cli.memory import build_agent_id
 from crow_cli.agent.prompt import render_template
 from crow_cli.agent.context import get_directory_tree
 
@@ -101,7 +103,7 @@ class AgentSession:
     """
     Manages conversation state and persistence via an in-process sqlite db.
 
-    agent_id = "{session_id}-{agent_idx}" is the key.
+    agent_id = "{session_id}-{agent_idx}-{fork_idx}" is the key.
     session_id is derived for ACP upstream routing only.
     """
 
@@ -112,10 +114,14 @@ class AgentSession:
         agent_idx: int = 0,
         memory_path: str = DEFAULT_MEMORY_PATH,
         cwd: str = "/tmp",
+        fork_idx: int = 1,
+        forked_at: str | None = None,
     ):
         self.agent_id = agent_id
         self.session_id = session_id
         self.agent_idx = agent_idx
+        self.fork_idx = fork_idx
+        self.forked_at = forked_at
         self.memory_path = memory_path
         self.cwd = cwd
         self.messages: list[dict] = []
@@ -197,6 +203,8 @@ class AgentSession:
         memory_path: str = DEFAULT_MEMORY_PATH,
         cwd: str = "/tmp",
         agent_idx: int = 1,
+        fork_idx: int = 1,
+        forked_at: str | None = None,
         session_id: str | None = None,
         initial_messages: list[dict[str, Any]] | None = None,
     ) -> "AgentSession":
@@ -214,13 +222,15 @@ class AgentSession:
         system_prompt = render_template(prompt.template, **prompt_args)
         if session_id is None:
             session_id = get_coolname()
-        agent_id = f"{session_id}-{agent_idx}"
+        agent_id = build_agent_id(session_id, agent_idx, fork_idx)
 
         # Create agent record
         await client.create_agent(
             agent_id=agent_id,
             session_id=session_id,
             agent_idx=agent_idx,
+            fork_idx=fork_idx,
+            forked_at=forked_at,
             cwd=cwd,
             prompt_id=prompt_id,
             prompt_args=prompt_args,
@@ -232,7 +242,15 @@ class AgentSession:
         await client.close()
 
         # Build session instance
-        session = cls(agent_id, session_id, agent_idx, memory_path, cwd=cwd)
+        session = cls(
+            agent_id,
+            session_id,
+            agent_idx,
+            memory_path,
+            cwd=cwd,
+            fork_idx=fork_idx,
+            forked_at=forked_at,
+        )
         session.model_identifier = model_identifier
         session.tools = tool_definitions
         session.request_params = request_params
@@ -256,11 +274,15 @@ class AgentSession:
         cls,
         session_id: str,
         memory_path: str = DEFAULT_MEMORY_PATH,
+        fork_idx: int | None = 1,
     ) -> int:
-        """Return the highest agent_idx for a given session_id."""
+        """Return the highest agent_idx for a given session_id.
+
+        fork_idx=1 (default) follows the trunk; None scans all forks.
+        """
         client = MemoryClient(memory_path)
         try:
-            return await client.get_max_agent_idx(session_id)
+            return await client.get_max_agent_idx(session_id, fork_idx=fork_idx)
         finally:
             await client.close()
 
@@ -301,6 +323,8 @@ class AgentSession:
             agent_idx=agent.agent_idx,
             memory_path=memory_path,
             cwd=agent.cwd,
+            fork_idx=agent.fork_idx,
+            forked_at=agent.forked_at,
         )
         session.model_identifier = agent.model_identifier
         session.tools = agent.tool_definitions
@@ -440,6 +464,8 @@ async def make_agent_session(
     cwd: str,
     session_id: str | None = None,
     agent_idx: int | None = None,
+    fork_idx: int = 1,
+    forked_at: str | None = None,
 ):
     if config.system_prompt_path:
         template = config.system_prompt_path.read_text()
@@ -475,5 +501,7 @@ async def make_agent_session(
         memory_path=config.db_uri,
         cwd=cwd,
         agent_idx=agent_idx,
+        fork_idx=fork_idx,
+        forked_at=forked_at,
         session_id=session_id,
     )

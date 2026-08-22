@@ -17,6 +17,7 @@ import pytest
 from crow_cli.agent.compact import compact
 from crow_cli.config import Config, LLModel
 from crow_cli.agent.session import AgentSession, lookup_or_create_prompt
+from crow_cli.memory import build_agent_id
 
 
 class TestCompaction:
@@ -121,7 +122,11 @@ class TestCompaction:
         result = await compact(session, mock_llm, compact_config, logger=MagicMock())
 
         assert result.agent_idx == session.agent_idx + 1
-        assert result.agent_id == f"{session.session_id}-{session.agent_idx + 1}"
+        # schema v5: three-part id, compaction stays on the same fork
+        assert result.fork_idx == session.fork_idx
+        assert result.agent_id == build_agent_id(
+            session.session_id, session.agent_idx + 1, session.fork_idx
+        )
         assert result.agent_id != session.agent_id
 
         # The new record is persisted and loadable.

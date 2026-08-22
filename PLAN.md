@@ -4,8 +4,9 @@
 ## **DO NOT ASK USER FOR NEXT STEPS — THESE ARE THE NEXT STEPS.**
 
 Worktree: `/home/thomas/src/crow-team/crow-cli-session-fork` (branch `session-fork`).
-Dev DB: `~/.agents/crow/crow-2.db` via `dev-crow-2.yaml` — NEVER point dev
-work at `~/.agents/crow/crow.db`.
+Dev DB: `~/.agents/crow/crow-3.db` via `dev-crow-2.yaml` — a FRESH file,
+created v5 from scratch (no migration work until the final phase). NEVER
+point dev work at `~/.agents/crow/crow.db`.
 
 Build/test commands:
 - Unit: `cd crow-cli && uv --project . run pytest tests -q`
@@ -82,28 +83,29 @@ Trajectory: 0 → 1 → 2 → 3 → 4 → 5 → 6 (user's order, preserved).
   defaults from the moved templates; E2E gate green on crow-2.db
   ("PHASE4-GATE-OK" via -j JSONL).
 
-## Phase 5 — fork-idx (schema v5) on crow-2.db
+## Phase 5 — fork-idx (schema v5) on a FRESH dev db
+NO per-phase migration work. Dev runs on a brand-new sqlite file (created
+v5 from scratch by create_database); the one-and-only v4→v5 migration of the
+real crow.db happens in the FINAL phase, once the schema has settled.
+
 5.1 memory: agents.fork_idx + messages.fork_idx columns (Integer, default 1);
     agent_id format becomes {session}-{idx}-{fork} everywhere it is
     constructed (session.py create, compact.py, main.py _resolve_session);
     parse via rsplit("-", 2) (coolnames contain hyphens); FTS table gains
     fork_idx UNINDEXED column; agents.forked_at anchor column (message id).
-5.2 Migration script: crow.db → crow-2.db copy with `-1` appended to every
-    agent_id (agents, messages, FTS) — run it, verify row counts + three-part
-    ids + list_sessions/query round-trips on crow-2.db.
-5.3 fork_session handler on AcpAgent + use_unstable_protocol=True on
+5.2 fork_session handler on AcpAgent + use_unstable_protocol=True on
     run_agent AND client connection. _meta agentIdx/turnIdx kwargs (SDK
     flattens them); default = HEAD fork (max agent_idx, all messages);
     turnIdx snaps to turn boundaries (never split tool_calls from results);
     response sessionId = fork's agent_id; zero mcpServers honored (interrogation).
-5.4 include_forks=False default on query_session/query_memory/list_sessions
+5.3 include_forks=False default on query_session/query_memory/list_sessions
     (MCP tools + CLI telemetry surfaces); session summary/repr shows no fork
     id unless include_forks=True.
-5.5 CLI: `--fork` (spawn fork) / `--fork-idx N` (continue fork N) on run.
-- Verify: unit tests for schema, migration, fork-at-HEAD, fork-at-turn,
-  include_forks filtering; E2E on crow-2.db: fork a real session with zero
-  tools, interrogate it, confirm trunk unpolluted + fork persisted +
-  `--fork-idx` resumes it. Commit.
+5.4 CLI: `--fork` (spawn fork) / `--fork-idx N` (continue fork N) on run.
+- Verify: unit tests for schema, fork-at-HEAD, fork-at-turn, include_forks
+  filtering; E2E on the fresh dev db: fork a real session with zero tools,
+  interrogate it, confirm trunk unpolluted + fork persisted + `--fork-idx`
+  resumes it. Commit.
 
 ## Phase 6 — delegation interiority (delegate tool + park/wake)
 6.1 Task registry: in-process shared state between tools and react loop
@@ -116,12 +118,17 @@ Trajectory: 0 → 1 → 2 → 3 → 4 → 5 → 6 (user's order, preserved).
     synthetic message (never role=tool on the launch's tool_call_id);
     tool_call_update stream keeps the client-side tool call alive; cancel
     kills the whole stack.
-- Verify: e2e on crow-2.db — delegate a task, parent reacts to the injected
-  completion; cancel mid-delegation cancels the delegate; no end_turn emitted
-  before completion lands. Commit.
+- Verify: e2e on the fresh dev db — delegate a task, parent reacts to the
+  injected completion; cancel mid-delegation cancels the delegate; no
+  end_turn emitted before completion lands. Commit.
 
-## Phase 7 — cutover (only when 1–6 proven)
-7.1 Run migration against the real crow.db (backup first), point default
-    config at it, retire dev-crow-2.yaml; update crow-mcp consumers' configs
+## Phase 7 — THE migration + cutover (only when 1–6 proven, schema settled)
+The ONE AND ONLY migration. Everything before this phase runs on fresh v5
+databases; nothing is ever migrated mid-sprint.
+7.1 Write the v4→v5 migration (append `-1` to every agent_id in agents,
+    messages, FTS; preserve message ids + created_at). Run it: real
+    crow.db → NEW db file (backup the original first), point default config
+    at the new db, retire the dev override; update MCP consumers' configs
     (builtin MCP command = `crow-cli mcp`).
-- Verify: real-DB round-trip + memory tools green. Commit. Tag.
+- Verify: migrated-DB round-trip + memory tools green + row counts match.
+  Commit. Tag.

@@ -43,16 +43,29 @@ def get_engine(db_uri: str):
     return engine
 
 
+FTS_DDL = (
+    "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5("
+    "agent_id UNINDEXED, role UNINDEXED, fork_idx UNINDEXED, text)"
+)
+
+
+def _require_v5(engine) -> None:
+    """Fail fast on an unmigrated v4 database (no fork_idx column)."""
+    with engine.connect() as conn:
+        cols = {r[1] for r in conn.execute(text("PRAGMA table_info(agents)"))}
+    if cols and "fork_idx" not in cols:
+        raise RuntimeError(
+            "schema v4 database detected (agents.fork_idx missing) — run the "
+            "schema-v5 migration (crow-cli/scripts/migrate_v5.py) before using it"
+        )
+
+
 def create_database(db_uri: str) -> None:
-    """Create tables + the FTS5 keyword index."""
+    """Create tables + the FTS5 keyword index (schema v5)."""
     engine = get_engine(db_uri)
     Base.metadata.create_all(engine)
+    _require_v5(engine)
     with engine.connect() as conn:
-        conn.execute(
-            text(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5("
-                "agent_id UNINDEXED, role UNINDEXED, text)"
-            )
-        )
+        conn.execute(text(FTS_DDL))
         conn.commit()
     engine.dispose()

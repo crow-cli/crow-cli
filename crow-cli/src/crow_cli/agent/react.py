@@ -32,6 +32,7 @@ from crow_cli.agent.model_routing import (
 )
 from crow_cli.agent.prompt import normalize_blocks
 from crow_cli.agent.session import AgentSession
+from crow_cli.memory import parse_agent_id
 from crow_cli.agent.tools import (
     execute_acp_edit,
     execute_acp_read,
@@ -49,7 +50,7 @@ TOOL_CALL_CANCELLED_MESSAGE = "Tool call cancelled by user"
 
 
 def session_from_agent_id(agent_id):
-    return agent_id.rsplit("-", 1)[0]
+    return parse_agent_id(agent_id)[0]
 
 
 def cancelled_tool_results(tool_call_inputs: list[dict]) -> list[dict]:

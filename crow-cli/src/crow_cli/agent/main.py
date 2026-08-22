@@ -108,6 +108,7 @@ from crow_cli.agent.llm import configure_llm
 from crow_cli.agent.logger import setup_logger
 from crow_cli.agent.mcp_client import create_mcp_client_from_acp, get_tools
 from crow_cli.agent.prompt import normalize_prompt
+from crow_cli.memory import build_agent_id
 from crow_cli.agent.react import react_loop
 from crow_cli.agent.session import (
     AgentSession,
@@ -232,7 +233,7 @@ class AcpAgent(Agent):
         )
         if max_idx < 1:
             return None
-        agent_id = f"{session_id}-{max_idx}"
+        agent_id = build_agent_id(session_id, max_idx)
         session = self._sessions.get(agent_id)
         if session is None:
             try:
@@ -501,7 +502,7 @@ class AcpAgent(Agent):
         try:
             # Find the highest-indexed agent for this session
             max_idx = await AgentSession.get_max_agent_idx(session_id, memory_path=self._memory_db_uri)
-            agent_id = f"{session_id}-{max_idx}"
+            agent_id = build_agent_id(session_id, max_idx)
             self._logger.info(
                 "LOAD_SESSION: Step 1: Loading agent %s from DB", agent_id
             )

@@ -16,6 +16,7 @@ from rich.text import Text
 from crow_cli.config import Config, apply_config_overrides
 from crow_cli.agent.main import main as agent_main
 from crow_cli.agent.mcp_client import fastmcp_config_to_acp_servers
+from crow_cli.memory import build_agent_id
 from crow_cli.agent.memory import MemoryServiceError
 from crow_cli.agent.session import AgentSession
 from crow_cli.cli.init_cmd import init_command
@@ -196,7 +197,7 @@ async def _inspect_db(session_id, messages, limit, json_output):
                 client._console.print(f"[red]Session '{session_id}' not found[/red]")
             raise SystemExit(1)
 
-        agent_id = f"{session_id}-{max_idx}"
+        agent_id = build_agent_id(session_id, max_idx)
         session_obj = await AgentSession.load(agent_id)
 
         session_data = {

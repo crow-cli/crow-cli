@@ -46,6 +46,8 @@ class AgentRecord:
     agent_id: str
     session_id: str
     agent_idx: int
+    fork_idx: int = 1
+    forked_at: str | None = None
     cwd: str = "/tmp"
     prompt_id: str | None = None
     prompt_args: dict | None = None
@@ -70,6 +72,7 @@ class MessageRecord:
     role: str
     created_at: str
     data: dict
+    fork_idx: int = 1
 
 
 @dataclass
@@ -113,6 +116,8 @@ def _agent_record(a: db.Agent) -> AgentRecord:
         agent_id=a.agent_id,
         session_id=a.session_id,
         agent_idx=a.agent_idx,
+        fork_idx=a.fork_idx,
+        forked_at=a.forked_at,
         cwd=a.cwd,
         prompt_id=a.prompt_id,
         prompt_args=a.prompt_args,
@@ -166,6 +171,8 @@ class MemoryClient:
         agent_id: str,
         session_id: str,
         agent_idx: int = 1,
+        fork_idx: int = 1,
+        forked_at: str | None = None,
         cwd: str = "/tmp",
         prompt_id: str | None = None,
         prompt_args: dict | None = None,
@@ -180,6 +187,8 @@ class MemoryClient:
             agent_id=agent_id,
             session_id=session_id,
             agent_idx=agent_idx,
+            fork_idx=fork_idx,
+            forked_at=forked_at,
             cwd=cwd,
             prompt_id=prompt_id,
             prompt_args=prompt_args or {},
@@ -261,14 +270,15 @@ class MemoryClient:
                     role=row.role,
                     created_at=row.created_at,
                     data=dict(row.data),
+                    fork_idx=row.fork_idx,
                 )
             )
         return recs
 
     # ---- sessions ----
 
-    async def get_max_agent_idx(self, session_id: str) -> int:
-        return db.get_max_agent_idx(self._engine, session_id)
+    async def get_max_agent_idx(self, session_id: str, fork_idx: int | None = 1) -> int:
+        return db.get_max_agent_idx(self._engine, session_id, fork_idx=fork_idx)
 
     async def list_sessions(self, limit: int = 50, offset: int = 0) -> list[SessionInfo]:
         return [
@@ -322,6 +332,7 @@ class MemoryClient:
                     role=h["role"],
                     created_at=h["created_at"],
                     data=h["data"],
+                    fork_idx=h["fork_idx"],
                 )
                 for h in hits
             ]

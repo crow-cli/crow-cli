@@ -65,12 +65,14 @@ class FakeMemoryClient:
         return PromptRecord.from_dict(self._prompts[prompt_id])
 
     # ---- agents ----
-    async def create_agent(self, *, agent_id, session_id, agent_idx=1, cwd="/tmp",
+    async def create_agent(self, *, agent_id, session_id, agent_idx=1,
+                     fork_idx=1, forked_at=None, cwd="/tmp",
                      prompt_id=None, prompt_args=None, system_prompt="",
                      tool_definitions=None, request_params=None,
                      model_identifier="", **kwargs) -> AgentRecord:
         self._agents[agent_id] = {
             "agent_id": agent_id, "session_id": session_id, "agent_idx": agent_idx,
+            "fork_idx": fork_idx, "forked_at": forked_at,
             "cwd": cwd, "prompt_id": prompt_id or "", "prompt_args": prompt_args or {},
             "system_prompt": system_prompt, "tool_definitions": tool_definitions or [],
             "request_params": request_params or {}, "model_identifier": model_identifier,
@@ -94,8 +96,13 @@ class FakeMemoryClient:
             if session_id is None or a["session_id"] == session_id
         ]
 
-    async def get_max_agent_idx(self, session_id: str) -> int:
-        idxs = [a["agent_idx"] for a in self._agents.values() if a["session_id"] == session_id]
+    async def get_max_agent_idx(self, session_id: str, fork_idx: int | None = 1) -> int:
+        idxs = [
+            a["agent_idx"]
+            for a in self._agents.values()
+            if a["session_id"] == session_id
+            and (fork_idx is None or a.get("fork_idx", 1) == fork_idx)
+        ]
         return max(idxs) if idxs else -1
 
     async def list_sessions(self, limit: int = 50, offset: int = 0) -> list[dict]:

@@ -39,11 +39,12 @@ from mcp.types import (
 from crow_cli.config import Config
 from crow_cli.agent.hooks import CommandHook, FileSnapshotHook
 from crow_cli.agent.session import AgentSession
+from crow_cli.memory import parse_agent_id
 
 
 def route_to_session_id(agent_id: str) -> str:
-    """Strip agent-idx suffix for ACP upstream calls."""
-    return agent_id.rsplit("-", 1)[0]
+    """Strip agent-idx/fork-idx suffixes for ACP upstream calls."""
+    return parse_agent_id(agent_id)[0]
 
 
 def tool_match(tool_name: str, terms: tuple[str]) -> bool:

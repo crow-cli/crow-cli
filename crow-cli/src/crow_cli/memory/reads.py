@@ -27,9 +27,14 @@ def get_prompt(engine, prompt_id: str) -> Prompt | None:
         return db.query(Prompt).filter_by(id=prompt_id).first()
 
 
-def get_max_agent_idx(engine, session_id: str) -> int:
+def get_max_agent_idx(engine, session_id: str, fork_idx: int | None = 1) -> int:
+    """Highest agent_idx for a session. fork_idx=1 (default) follows the
+    trunk; None scans all forks."""
     with Session(engine) as db:
-        rows = db.query(Agent.agent_idx).filter_by(session_id=session_id).all()
+        q = db.query(Agent.agent_idx).filter_by(session_id=session_id)
+        if fork_idx is not None:
+            q = q.filter_by(fork_idx=fork_idx)
+        rows = q.all()
     return max((r[0] for r in rows), default=1)
 
 
@@ -112,7 +117,7 @@ def search_messages(
     idx = {}
     with Session(engine) as db:
         for a in db.query(Agent).all():
-            idx[a.agent_id] = (a.session_id, a.agent_idx)
+            idx[a.agent_id] = (a.session_id, a.agent_idx, a.fork_idx)
     # Quote each token so arbitrary user input stays a valid FTS5 query
     # (implicit AND of phrases).
     match = " ".join(f'"{t}"' for t in query.split() if t)
@@ -134,7 +139,7 @@ def search_messages(
         row = by_id.get(rid)
         if row is None:
             continue
-        sid, aidx = idx.get(row.agent_id, ("", 0))
+        sid, aidx, fidx = idx.get(row.agent_id, ("", 0, 1))
         if session_id is not None and sid != session_id:
             continue
         if agent_idx is not None and aidx != agent_idx:
@@ -147,6 +152,7 @@ def search_messages(
                 "agent_id": row.agent_id,
                 "session_id": sid,
                 "agent_idx": aidx,
+                "fork_idx": fidx,
                 "role": row.role,
                 "created_at": row.created_at,
                 "data": dict(row.data),

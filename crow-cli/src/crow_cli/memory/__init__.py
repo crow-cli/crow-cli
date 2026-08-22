@@ -9,14 +9,16 @@ This package reads NO config. Apps resolve their own db_uri and pass it in:
 
     engine = crow_cli.memory.get_engine("sqlite:///~/.agents/crow/crow.db")
 
-Schema v4: one row = one message, agent-centric. agent_id = "{session_id}-{idx}"
-is the primary key; session_id is the logical parent (multiple agents per
-session).
+Schema v5: one row = one message, agent-centric, fork-aware.
+agent_id = "{session_id}-{agent_idx}-{fork_idx}" is the primary key (all
+1-based; the trunk carries fork_idx=1); session_id is the logical parent
+(multiple agents per session, multiple forks per agent_idx).
 
 Search is SQLite FTS5 + bm25 (keyword). No embeddings, no service, no lance.
 
 Module map:
     models    — ORM schema (Prompt, Agent, Message)
+    ids       — agent_id build/parse (v5 three-part format)
     db        — db_uri normalization, engine factory, create_database
     messages  — image extract/hydrate, searchable text
     writes    — add_message, create_agent, lookup_or_create_prompt
@@ -26,6 +28,7 @@ Module map:
 from sqlalchemy.orm import Session
 
 from .db import create_database, get_engine, normalize_db_uri
+from .ids import build_agent_id, parse_agent_id
 from .messages import extract_images, hydrate_message, message_text
 from .models import Agent, Base, Message, Prompt, now_iso
 from .reads import (
@@ -47,6 +50,7 @@ __all__ = [
     "Prompt",
     "Session",
     "add_message",
+    "build_agent_id",
     "create_agent",
     "create_database",
     "extract_images",
@@ -62,6 +66,7 @@ __all__ = [
     "message_text",
     "normalize_db_uri",
     "now_iso",
+    "parse_agent_id",
     "query_messages",
     "search_messages",
 ]
