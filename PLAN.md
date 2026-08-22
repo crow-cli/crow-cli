@@ -243,16 +243,14 @@ databases; nothing is ever migrated mid-sprint.
   model option — shared by session/set_config_option and the -m override
   in load_session/fork_session. +4 regression tests (376 passed).
 - CUTOVER is now a simple OFFLINE RENAME (user does it when no crow
-  process is running — the live crow.db keeps growing until then, so):
-    1. re-run the migration to capture the post-snapshot messages (the
-       stale gap — includes the rest of the migrating session itself):
-       uv --project crow-cli run python crow-cli/scripts/migrate_v5.py \
-         ~/.agents/crow/crow.db ~/.agents/crow/crow-2.db --force
-    2. mv ~/.agents/crow/crow.db ~/.agents/crow/crow.db.v4-backup
-    3. mv ~/.agents/crow/crow-2.db ~/.agents/crow/crow.db
+  process is running). User call 2026-08-22: the migration ALREADY RAN —
+  NO re-run; the small stale gap (messages written to crow.db after the
+  18:42 snapshot, mostly the tail of the migrating session) is accepted.
+    1. mv ~/.agents/crow/crow.db ~/.agents/crow/crow.db.v4-backup
+    2. mv ~/.agents/crow/crow-2.db ~/.agents/crow/crow.db
        (config.yaml memory_path already says ~/.agents/crow/crow.db —
        zero config edits; drop dev-crow-2.yaml / validate-crow-2.yaml
        overrides from any consumer still using them)
-    4. smoke: crow-cli list-sessions + one `run` round-trip; keep the v4
+    3. smoke: crow-cli list-sessions + one `run` round-trip; keep the v4
        backup + crow-2.db.pre-v5.bak until confident, then retire them
        and crow-3.db.

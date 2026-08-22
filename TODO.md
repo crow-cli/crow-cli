@@ -52,9 +52,10 @@ Unordered scope capture:
       facades, E2E new session, E2E load of a 238-msg migrated session,
       E2E fork (trunk unpolluted). Validation exposed+fixed the -m
       override bug via _apply_model_option (ACP session config options
-      path). 376 passed. ONLY the offline rename remains for the user:
-      re-run migrate --force, crow.db → v4-backup, crow-2.db → crow.db —
-      4-step procedure in PLAN.md Phase 7.)
+      path). 376 passed. ONLY the offline rename remains for the user —
+      NO re-run (user call: migration already ran; the small post-
+      snapshot tail gap is accepted): crow.db → v4-backup, crow-2.db →
+      crow.db, smoke. Procedure in PLAN.md Phase 7.)
 - [x] Delegate tool + async task interiority: native delegate tool launches
       subagents; react loop exit condition = model done AND outstanding-task
       registry empty; loop PARKS (asyncio queue wait, zero tokens, no busywork)
