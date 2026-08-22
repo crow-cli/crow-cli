@@ -2,6 +2,12 @@
 
 instructions for agents to follow
 
+# ACTIVE SPRINT (2026-08-22)
+Consolidation + session-fork + delegation sprint runs in the git worktree
+`../crow-cli-session-fork` (branch `session-fork`). Pickup = read that
+worktree's `TODO.md` + `PLAN.md` first (mandate headers apply). Design
+background: `~/.agents/notes/dev/crow-fork-design.md`.
+
 # RULES
 1. Make no mistakes
 
