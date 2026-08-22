@@ -41,16 +41,20 @@ Unordered scope capture:
       schema v5 + wire ids (5.1), fork_session handler + turn-snapped anchors
       (5.2), include_forks=False everywhere (5.3), `run --fork` /
       `--fork-idx N` (5.4); 336 tests + real E2E forks on crow-3.db.)
-- [ ] Migration (FINAL phase, when the schema has settled): the ONE v4→v5
-      migration — real crow.db → NEW db file, appending `-1` to every
-      agent_id (agents, messages, FTS), preserving message ids/created_at.
-      Until then dev just uses fresh v5 databases.
-      (2026-08-22: script WRITTEN + PROVEN — crow-cli/scripts/migrate_v5.py,
-      4 unit tests on the verbatim v4 DDL, dry-run on a real-crow.db
-      snapshot migrated 100 agents / 5983 messages with full verification,
-      telemetry green against the migrated copy. Only the CUTOVER remains
-      and it must run when no crow process is writing crow.db — see PLAN.md
-      Phase 7 for the 4-step procedure.)
+- [x] Migration (FINAL phase): the ONE v4→v5 migration — real crow.db →
+      NEW db file, appending `-1` to every agent_id (agents, messages,
+      FTS), preserving message ids/created_at.
+      (2026-08-22: DONE + VALIDATED. Live crow.db → crow-2.db per user
+      directive: 1 prompt, 101 agents, 6022 messages +FTS, verified
+      against a pinned snapshot (script now wraps fetch+verify in ONE read
+      transaction for live-source safety). Old v4 dev db preserved as
+      crow-2.db.pre-v5.bak. All gates green against crow-2.db: telemetry
+      facades, E2E new session, E2E load of a 238-msg migrated session,
+      E2E fork (trunk unpolluted). Validation exposed+fixed the -m
+      override bug via _apply_model_option (ACP session config options
+      path). 376 passed. ONLY the offline rename remains for the user:
+      re-run migrate --force, crow.db → v4-backup, crow-2.db → crow.db —
+      4-step procedure in PLAN.md Phase 7.)
 - [x] Delegate tool + async task interiority: native delegate tool launches
       subagents; react loop exit condition = model done AND outstanding-task
       registry empty; loop PARKS (asyncio queue wait, zero tokens, no busywork)

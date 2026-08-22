@@ -216,17 +216,43 @@ databases; nothing is ever migrated mid-sprint.
   verified; list-sessions/query-memory/query-session against the migrated
   copy all green (live session reads back with all 4 compaction agents;
   BM25 finds this sprint's own design messages). 372 passed.
-- CUTOVER (the remaining 5 minutes) is deliberately NOT run mid-sprint:
-  the real crow.db is LIVE — the agent process serving the current session
-  writes to it right now, so migrating-and-swapping under it would
-  split-brain the session's own history. When no crow process is running
-  (session ended):
-    1. cp ~/.agents/crow/crow.db ~/.agents/crow/crow.db.v4-backup
-    2. uv --project crow-cli run python crow-cli/scripts/migrate_v5.py \
-         ~/.agents/crow/crow.db ~/.agents/crow/crow-v5.db
-    3. point ~/.agents/crow/config.yaml db_uri at crow-v5.db and drop the
-       dev-crow-2.yaml override from any consumer still using it (the MCP
-       server command is already `crow-cli mcp` everywhere; the store
-       resolves config.yaml db_uri on its own).
-    4. smoke: crow-cli list-sessions + one `run` round-trip; keep the
-       v4 backup until confident, then retire crow-2.db/crow-3.db.
+- 7.2 DONE — LIVE migration into crow-2.db (user directive: "migrate the
+  crow.db just call it like crow-2.db and validate it works with new code.
+  then I can do simple rename offline"). Hardening for migrating a LIVE db:
+  the script now pins ONE read transaction (explicit BEGIN; COMMIT moved
+  AFTER verify()) so fetches and verification all see the same snapshot
+  even with a writer mid-WAL. The retired v4 dev db was preserved first:
+  ~/.agents/crow/crow-2.db.pre-v5.bak (WAL consolidated, 29 messages
+  verified intact). Migration ran against the LIVE crow.db: 1 prompt,
+  101 agents, 6022 messages (+FTS) — verified. VALIDATION against
+  crow-2.db with the new code, all green:
+    * list-sessions / query-session / query-memory (BM25 over rebuilt FTS)
+    * E2E NEW session (create_database idempotent on migrated v5):
+      godlike-cooperative-lynx-of-romance replied MIGRATED-DB-OK
+    * E2E LOAD: hissing-speedy-seal-of-respect (238 migrated messages)
+      hydrated and recalled its design-doc path from hours earlier
+    * E2E FORK: --fork of the same session -> wire id
+      hissing-speedy-seal-of-respect-1-2, forked_at=trunk HEAD, 2 own
+      rows, trunk unpolluted (v5 no-prefix-copy semantics intact)
+  Validation exposed + fixed ONE latent bug (7.2b): the -m override at
+  load/fork time set _config_values (provider routing + the model config
+  option's currentValue) but NOT session.model_identifier — which is what
+  react.py sends to the API. Loading a session saved under a dead model
+  404'd at the gateway ("Model not exist"). Fix per ACP session config
+  options: _apply_model_option() is now the ONE path that applies the
+  model option — shared by session/set_config_option and the -m override
+  in load_session/fork_session. +4 regression tests (376 passed).
+- CUTOVER is now a simple OFFLINE RENAME (user does it when no crow
+  process is running — the live crow.db keeps growing until then, so):
+    1. re-run the migration to capture the post-snapshot messages (the
+       stale gap — includes the rest of the migrating session itself):
+       uv --project crow-cli run python crow-cli/scripts/migrate_v5.py \
+         ~/.agents/crow/crow.db ~/.agents/crow/crow-2.db --force
+    2. mv ~/.agents/crow/crow.db ~/.agents/crow/crow.db.v4-backup
+    3. mv ~/.agents/crow/crow-2.db ~/.agents/crow/crow.db
+       (config.yaml memory_path already says ~/.agents/crow/crow.db —
+       zero config edits; drop dev-crow-2.yaml / validate-crow-2.yaml
+       overrides from any consumer still using them)
+    4. smoke: crow-cli list-sessions + one `run` round-trip; keep the v4
+       backup + crow-2.db.pre-v5.bak until confident, then retire them
+       and crow-3.db.

@@ -56,6 +56,10 @@ def migrate(src_path: Path, dst_path: Path) -> dict:
     create_database(f"sqlite:///{dst_path}")
     dst = sqlite3.connect(dst_path)
 
+    # One explicit read transaction pins a single snapshot for the fetches
+    # AND for verify() — the source may be LIVE (writer mid-WAL), and the
+    # copy must be atomically consistent. Committed after verify.
+    src.execute("BEGIN")
     prompts = src.execute("SELECT id, name, template, created_at FROM prompts").fetchall()
     agents = src.execute(
         "SELECT agent_id, session_id, agent_idx, cwd, prompt_id, prompt_args, "
@@ -104,6 +108,7 @@ def migrate(src_path: Path, dst_path: Path) -> dict:
         "messages": len(messages),
     }
     verify(src, dst, counts)
+    src.execute("COMMIT")
     src.close()
     dst.close()
     return counts

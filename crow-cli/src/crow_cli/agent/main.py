@@ -329,6 +329,20 @@ class AcpAgent(Agent):
             )
         ]
 
+    def _apply_model_option(self, session_id: str, value: str, session) -> None:
+        """Apply the session's model config option (ACP session config options).
+
+        The ONE code path for "this session now uses model X" — shared by
+        session/set_config_option and the -m override at load/fork time.
+        Stores the provider:model value (provider routing + the option's
+        currentValue) AND points session.model_identifier at the model,
+        because that is what react.py sends to the API. Doing only one of
+        the two makes the option display a model the request doesn't use.
+        """
+        self._config_values.setdefault(session_id, {})["model"] = value
+        _, model_name = value.split(":", 1) if ":" in value else ("", value)
+        session.model_identifier = model_name
+
     def on_connect(self, conn: Client) -> None:
         """Store connection for sending updates"""
         self._conn = conn
@@ -580,27 +594,33 @@ class AcpAgent(Agent):
                             self._model_override.name,
                             session.model_identifier,
                         )
-                elif session.model_identifier:
-                    match = next(
-                        (
-                            m
-                            for m in self._config.llm.models.values()
-                            if m.model_id == session.model_identifier
-                        ),
-                        None,
-                    )
-                    if match is not None:
-                        resolved = f"{match.provider_name}:{match.model_id}"
-                    else:
-                        # Don't fall back silently: the session's behavior
-                        # would change with no notice (critique item).
-                        self._logger.warning(
-                            "load_session: saved model %r is not in config.yaml; "
-                            "falling back to default %r",
-                            session.model_identifier,
-                            resolved,
+                    # The override IS this session's model config option:
+                    # apply it exactly like session/set_config_option so the
+                    # API request (react.py sends session.model_identifier)
+                    # is routed at the override, not at the saved model.
+                    self._apply_model_option(session_id, resolved, session)
+                else:
+                    if session.model_identifier:
+                        match = next(
+                            (
+                                m
+                                for m in self._config.llm.models.values()
+                                if m.model_id == session.model_identifier
+                            ),
+                            None,
                         )
-                self._config_values[session_id] = {"model": resolved}
+                        if match is not None:
+                            resolved = f"{match.provider_name}:{match.model_id}"
+                        else:
+                            # Don't fall back silently: the session's behavior
+                            # would change with no notice (critique item).
+                            self._logger.warning(
+                                "load_session: saved model %r is not in config.yaml; "
+                                "falling back to default %r",
+                                session.model_identifier,
+                                resolved,
+                            )
+                    self._config_values[session_id] = {"model": resolved}
 
             # TODO: Replay conversation history to client
 
@@ -673,21 +693,30 @@ class AcpAgent(Agent):
             self._config.config_dir / "logs" / f"crow-cli-{session.session_id}.log",
             name=f"{session.session_id}-crow-logger",
         )
-        # Model resolution: the fork inherits the source's model; resolve it
-        # to provider:model like load_session does.
+        # Model resolution: the fork inherits the source's model unless -m
+        # overrides it; resolve to provider:model like load_session does.
         resolved = self._default_model_value()
-        if session.model_identifier:
-            match = next(
-                (
-                    m
-                    for m in self._config.llm.models.values()
-                    if m.model_id == session.model_identifier
-                ),
-                None,
-            )
-            if match is not None:
-                resolved = f"{match.provider_name}:{match.model_id}"
-        self._config_values[wire_id] = {"model": resolved}
+        if self._model_override is not None:
+            if session.model_identifier != self._model_override.model_id:
+                self._logger.info(
+                    "fork_session: -m override %r supersedes inherited model %r",
+                    self._model_override.name,
+                    session.model_identifier,
+                )
+            self._apply_model_option(wire_id, resolved, session)
+        else:
+            if session.model_identifier:
+                match = next(
+                    (
+                        m
+                        for m in self._config.llm.models.values()
+                        if m.model_id == session.model_identifier
+                    ),
+                    None,
+                )
+                if match is not None:
+                    resolved = f"{match.provider_name}:{match.model_id}"
+            self._config_values[wire_id] = {"model": resolved}
 
         self._logger.info(
             "FORK_SESSION: created %s (forked_at=%s, %d messages in view, %d tools)",
@@ -721,16 +750,10 @@ class AcpAgent(Agent):
             self._logger.warning("set_config_option: unknown session %s", session_id)
             return None
 
-        self._config_values.setdefault(session_id, {})[config_id] = value
-
-        # Update session model if the config changed was the model
         if config_id == "model":
-            # Optionally split back from provider:model
-            if ":" in value:
-                _, model_name = value.split(":", 1)
-                session.model_identifier = model_name
-            else:
-                session.model_identifier = value
+            self._apply_model_option(session_id, value, session)
+        else:
+            self._config_values.setdefault(session_id, {})[config_id] = value
 
         config_options = self._get_config_options(session_id)
         return SetSessionConfigOptionResponse(config_options=config_options)
