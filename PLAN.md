@@ -47,7 +47,7 @@ tests/unit/test_session_mcp_servers_wiring.py (9, incl. real ACP objects
 name required, env/headers are {name,value} lists, type const explicit).
 413 fast-tier tests green.
 
-## Phase 1 — `task` tool schema prototype (FastMCP experiment)
+## Phase 1 — `task` tool schema prototype (FastMCP experiment) — DONE 2026-08-23
 
 EXPERIMENT FIRST: before any plumbing, prove the tool shape.
 
@@ -68,7 +68,15 @@ EXPERIMENT FIRST: before any plumbing, prove the tool shape.
 Verified when: the prototype tests are green and the generated schema is
 something a model can follow (eyeball it in the test output once).
 
-## Phase 2 — task state in sqlite
+Verified: tests/unit/test_task_tool_schema.py — 8 green. Ambiguity proven
+(one dict validates as BOTH naive variants); discriminated union parses
+launch/re-prompt/cancel+follow-up; omitted action REJECTED (pydantic
+discriminator is strict — the model must state intent, the schema marks
+action const per variant); model-visible schema names PromptItem +
+CancelTurn + action + high/low; mixed batch round-trips through the real
+FastMCP call path; unknown action rejected, not guessed.
+
+## Phase 2 — task state in sqlite — DONE 2026-08-23
 
 - 2.1 `tasks` + `task_deliveries` tables (additive v5): see TODO.md for
       columns. deliveries = durable mailbox; status pending|delivered.
@@ -80,6 +88,12 @@ something a model can follow (eyeball it in the test output once).
 
 Verified when: unit tests green incl. the two-engine case and idempotent
 double-finish (a second finish on a terminal task is a no-op).
+
+Verified: tests/memory/test_task_state.py — 7 green: launch registers
+running state cross-engine; finish flips status AND lands the delivery in
+ONE commit (read back through a second engine); double-finish no-op;
+unknown-task no-op; mark_delivered drains in arrival order; priority rides
+both rows; mailboxes per-session.
 
 ## Phase 3 — SubagentClient + the wake experiment
 

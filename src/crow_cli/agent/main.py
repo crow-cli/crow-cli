@@ -96,6 +96,7 @@ from acp.schema import (
     SetSessionModeResponse,
     SseMcpServer,
     TextContentBlock,
+    UserMessageChunk,
 )
 from fastmcp import Client as MCPClient
 
@@ -1013,6 +1014,124 @@ class AcpAgent(Agent):
             raise RequestError.internal_error({"error": str(e)})
         finally:
             # 4. Cleanup the task reference when done
+            self._prompt_tasks.pop(session_id, None)
+
+    async def _run_internal_round(self, session_id: str, text: str) -> None:
+        """A synthesized prompt round with NO client request behind it.
+
+        The task system's wake mechanism: on a registered completion the
+        agent wakes itself, emits session/update exactly like a
+        client-prompted turn (user_message_chunk first — a client that
+        renders it shows the synthetic message as if IT had sent it), and
+        the round persists in sqlite. There is no PromptResponse: nothing
+        was requested.
+
+        Serialized with client prompts on the same per-session lock and
+        registered in _prompt_tasks, so a client cancel sees it exactly
+        like a normal turn.
+        """
+        session_logger = self._logger_for(session_id)
+
+        async def _execute() -> None:
+            session = await self._resolve_session(session_id)
+            if session is None:
+                raise ValueError(f"no session '{session_id}' for internal round")
+            await self._provision_session(session)
+
+            # The synthetic message leads, exactly as a client-sent one would.
+            await self._conn.session_update(
+                session_id=session.session_id,
+                update=UserMessageChunk(
+                    session_update="user_message_chunk",
+                    content=text_block(text),
+                ),
+            )
+            await session.add_message(
+                {"role": "user", "content": [{"type": "text", "text": text}]}
+            )
+
+            cancel_event = self._cancel_events.get(session_id)
+            if cancel_event:
+                cancel_event.clear()
+            self._state_accumulators[session_id] = {
+                "thinking": [],
+                "content": [],
+                "tool_calls": {},
+            }
+
+            tools = self._tools[session_id]
+            current_config = self._config_values.get(session_id, {})
+            current_model_value = (
+                current_config.get("model") or self._default_model_value()
+            )
+            provider_name = (
+                current_model_value.split(":", 1)[0]
+                if ":" in current_model_value
+                else ""
+            )
+            provider = self._config.llm.providers.get(provider_name)
+            if not provider and self._config.llm.providers:
+                provider = next(iter(self._config.llm.providers.values()))
+            if not provider:
+                raise RuntimeError(
+                    "No LLM providers configured for internal round."
+                )
+            llm = configure_llm(
+                provider=provider, debug=self._config.chunk_log, logger=session_logger
+            )
+
+            def on_compact(old_agent_id: str, compacted_session: AgentSession):
+                self._sessions[compacted_session.agent_id] = compacted_session
+
+            turn_id = str(uuid.uuid4())
+            async for chunk in react_loop(
+                conn=self._conn,
+                config=self._config,
+                client_capabilities=self._client_capabilities,
+                turn_id=turn_id,
+                mcp_clients=self._mcp_clients,
+                llm=llm,
+                tools=tools,
+                sessions=self._sessions,
+                agent_id=session.agent_id,
+                state_accumulators=self._state_accumulators,
+                on_compact=on_compact,
+                logger=session_logger,
+                hooks=self._hooks,
+                registry=self._task_registry,
+                session_mcp_servers=self._session_mcp_servers.get(session_id),
+            ):
+                chunk_type = chunk.get("type")
+                if chunk_type == "content":
+                    await self._conn.session_update(
+                        session_id=session.session_id,
+                        update=update_agent_message(text_block(chunk["token"])),
+                    )
+                elif chunk_type == "thinking":
+                    await self._conn.session_update(
+                        session_id=session.session_id,
+                        update=update_agent_thought(text_block(chunk["token"])),
+                    )
+                elif chunk_type == "compaction":
+                    await self._conn.session_update(
+                        session_id=session.session_id,
+                        update=update_agent_message(text_block(chunk["token"])),
+                    )
+                elif chunk_type == "final_history":
+                    break
+
+        lock = self._session_locks.setdefault(session_id, asyncio.Lock())
+
+        async def _locked() -> None:
+            async with lock:
+                await _execute()
+
+        session_logger.info("INTERNAL ROUND: waking session %s", session_id)
+        task = asyncio.create_task(_locked())
+        self._prompt_tasks[session_id] = task
+        try:
+            await task
+        finally:
             self._prompt_tasks.pop(session_id, None)
 
     async def cancel(self, session_id: str, **kwargs: Any) -> None:

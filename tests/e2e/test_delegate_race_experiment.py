@@ -5,10 +5,13 @@ calling `date` via terminal — and then (2) keep itself busy investigating
 crow-cli via web search. The subagent finishes in seconds, long before the
 parent's web-search turns do. This test records EVERY session_update that
 crosses the wire, timestamped, so we can see what the current machinery
-does with a completion that arrives mid-turn: does it get enmeshed with
-the parent's in-flight work, parked, dropped, injected?
+does with a completion that arrives mid-turn.
 
-Assertions are deliberately loose — the recorded timeline is the point.
+DIAGNOSIS (user-confirmed): there is NO STATE around finished tasks and
+no queue — the completion registers nowhere, no state updates, the turn
+hangs. This test is the SENTINEL for that bug (taskmaster PLAN 6.1): it
+PASSES while the hang exists and FAILS loudly the day the task system
+lands, forcing the flip into the positive regression test.
 """
 
 import asyncio
@@ -30,6 +33,7 @@ from crow_cli.config import Config
 logger = logging.getLogger(__name__)
 
 MODEL = "qwen3.8-max-preview"
+HANG_WINDOW_S = 150.0  # ample for launch + fast child; the hang is forever
 DIRECTIVE = (
     "do two things. first delegate a subagent to call date with terminal "
     "(this is a test) and then investigate crow-cli via web search please sir"
@@ -139,11 +143,16 @@ async def test_subagent_finishes_while_parent_mid_turn(tmp_path):
         try:
             await conn.initialize(protocol_version=1)
             ns = await conn.new_session(cwd=str(tmp_path), mcp_servers=MCP_SERVERS)
-            resp = await asyncio.wait_for(
-                conn.prompt(session_id=ns.session_id, prompt=[text_block(DIRECTIVE)]),
-                timeout=420,
-            )
-            stop_reason = resp.stop_reason
+            try:
+                resp = await asyncio.wait_for(
+                    conn.prompt(
+                        session_id=ns.session_id, prompt=[text_block(DIRECTIVE)]
+                    ),
+                    timeout=HANG_WINDOW_S,
+                )
+                stop_reason = resp.stop_reason
+            except asyncio.TimeoutError:
+                stop_reason = None  # the hang
         finally:
             await conn.close()
             await transport.close()
@@ -164,6 +173,13 @@ async def test_subagent_finishes_while_parent_mid_turn(tmp_path):
                 tool_ids.append(tcid)
     print(f"=== tool surfaces seen: {tool_ids} ===")
 
-    # Loose: the turn ended and the model really delegated.
-    assert stop_reason == "end_turn", f"turn ended {stop_reason!r}"
+    # The model really delegated within the window.
     assert any("/task-" in i for i in tool_ids), f"no delegate surface in {tool_ids}"
+    # SENTINEL (taskmaster PLAN 6.1): no state around finished tasks, no
+    # queue — the completion never registers, so the turn cannot end. This
+    # passes while the bug exists; the day the task system lands it FAILS,
+    # and gets flipped into the regression (assert end_turn + delivery).
+    assert stop_reason is None, (
+        "the turn ENDED — the race no longer hangs. Phase 6.1: flip this "
+        "experiment into the regression test (assert end_turn + delivery)."
+    )
