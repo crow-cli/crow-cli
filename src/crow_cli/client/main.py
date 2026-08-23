@@ -65,6 +65,7 @@ from acp.schema import (
     WaitForTerminalExitResponse,
     WriteTextFileResponse,
 )
+from crow_cli.client.subagent import spawn_agent_process
 from crow_cli.client.terminal import TerminalManager
 from rich.console import Console
 from rich.panel import Panel
@@ -362,46 +363,14 @@ class CrowClient(Client):
         model: str | None = None,
         config_file: Path | None = None,
     ) -> asyncio.subprocess.Process:
-        """Spawn the crow-acp agent subprocess."""
-        # Check if running in PyInstaller frozen build
-        is_frozen = getattr(sys, "frozen", False)
-
-        # The agent loads its OWN config in its own process — forward the
-        # config dir/file so `run --config-dir/--config-file` routes the whole
-        # stack (memory port, mcpServers, providers) and not just this client.
-        dir_args = ["--config-dir", str(config_dir)] if config_dir else []
-        if config_file:
-            dir_args += ["--config-file", str(config_file)]
-        model_args = ["--model", model] if model else []
-
-        if is_frozen:
-            # For frozen builds, use the 'acp' subcommand
-            proc = await asyncio.create_subprocess_exec(
-                sys.executable,
-                "acp",
-                *dir_args,
-                *model_args,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=cwd,
+        """Spawn the crow-acp agent subprocess (shared machinery with the
+        task system's SubagentDriver — crow_cli.client.subagent)."""
+        try:
+            proc = await spawn_agent_process(
+                cwd, config_dir=config_dir, model=model, config_file=config_file
             )
-        else:
-            # Development mode - use -m to run the module
-            proc = await asyncio.create_subprocess_exec(
-                sys.executable,
-                "-m",
-                "crow_cli.agent.main",
-                *dir_args,
-                *model_args,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=cwd,
-            )
-
-        if proc.stdin is None or proc.stdout is None:
-            self._console.print("[red]Agent process does not expose stdio pipes[/red]")
+        except RuntimeError as e:
+            self._console.print(f"[red]{e}[/red]")
             raise SystemExit(1)
         # Store stderr reader for later error reporting
         proc._stderr_reader = asyncio.create_task(proc.stderr.read())
