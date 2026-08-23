@@ -33,7 +33,7 @@ By default ollama's `API_KEY` is `empty` and the base url is [http://localhost:1
 # Configure `crow-cli`
 Now you're guaranteed to have an API key and a base url to access an LLM, run the following and throw your url and keys in there.
 ```bash
-crow-cli-dev init
+crow-cli init
 ```
 
 Then restart your agent.
@@ -412,7 +412,7 @@ class AcpAgent(Agent):
                     field_meta={
                         "terminal-auth": {
                             "command": "uvx",
-                            "args": ["--from", "crow-cli", "crow-cli-dev", "acp"],
+                            "args": ["--from", "crow-cli", "crow-cli", "acp"],
                             "label": "Crow Auth",
                             "env": {},
                             "type": "terminal",

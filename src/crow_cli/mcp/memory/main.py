@@ -1,8 +1,8 @@
 """Memory MCP tools — read-mostly client of the crow-cli sqlite database.
 
-The database (~/.agents/crow/crow.db, written by crow-cli) is the only
-integration point; crow-mcp never imports crow-cli. Search is SQLite FTS5 +
-bm25 (keyword). See store.py for the accessor.
+The database (~/.agents/crow/crow.db, written by the agent) is the only
+integration point; MCP stays a runtime protocol boundary. Search is SQLite
+FTS5 + bm25 (keyword). See store.py for the accessor.
 
 Three tools, split along the backend's own seams:
 

@@ -1,10 +1,9 @@
 """Read-mostly accessor for the crow memory database, built on crow_cli.memory.
 
-crow-mcp never imports crow-cli (MCP is a runtime protocol boundary); the
-shared contract is crow_cli.memory — one schema, one FTS5
-implementation, no drift. The db_uri resolves from: CROW_DB_URI env (URI) ->
-CROW_MEMORY_DB env (path) -> config.yaml db_uri/memory_path -> default.
-Search is FTS5 + bm25 (keyword).
+MCP stays a runtime protocol boundary: the shared contract is
+crow_cli.memory — one schema, one FTS5 implementation, no drift. The db_uri
+resolves from: CROW_DB_URI env (URI) -> CROW_MEMORY_DB env (path) ->
+config.yaml db_uri/memory_path -> default. Search is FTS5 + bm25 (keyword).
 """
 
 import os

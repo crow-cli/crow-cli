@@ -16,7 +16,7 @@ Builds crow-cli binaries for:
 - `crow-cli-darwin-x86_64.tar.gz`
 - `crow-cli-darwin-aarch64.tar.gz`
 
-### 2. PyInstaller Spec File: `crow-cli/crow-cli.spec`
+### 2. PyInstaller Spec File: `crow-cli.spec`
 
 Configured with:
 - **Metadata copying** for all packages using `importlib.metadata` (fastmcp, agent-client-protocol, typer, rich, openai, etc.)
@@ -24,7 +24,7 @@ Configured with:
 - **Data files** included (config.yaml, system_prompt.jinja2, settings.yml, etc.)
 - **One-file executable** with UPX compression
 
-### 3. Dependencies: `crow-cli/pyproject.toml`
+### 3. Dependencies: `pyproject.toml`
 
 Added `pyinstaller>=6.0.0` to dev dependency group
 
@@ -44,8 +44,8 @@ dist/crow-cli --help
 1. Commit and push the workflow:
 ```bash
 git add .github/workflows/build-binaries.yml
-git add crow-cli/crow-cli.spec
-git add crow-cli/pyproject.toml
+git add crow-cli.spec
+git add pyproject.toml
 git commit -m "Add PyInstaller binary build workflow"
 git push
 ```
@@ -60,7 +60,7 @@ git push origin v0.1.13-test
 
 ### To update the ACP Registry:
 
-After binaries are built, update `crow-cli/agent.json`:
+After binaries are built, update `agent.json`:
 
 ```json
 {

@@ -1,9 +1,9 @@
 """Manual smoke script for the three memory tools.
 
-Runs against a live crow-mcp server (which must be reachable) reading the
+Runs against a live MCP server (which must be reachable) reading the
 shared sqlite db (~/.agents/crow/crow.db). Not part of pytest — run directly:
 
-    uv --project crow-mcp run python src/crow_mcp/memory/client.py [session_id]
+    uv run python src/crow_cli/mcp/memory/client.py [session_id]
 """
 
 import asyncio

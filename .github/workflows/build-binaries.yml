@@ -48,37 +48,31 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version-file: "crow-cli/pyproject.toml"
+          python-version-file: "pyproject.toml"
 
       - name: Install dependencies
-        working-directory: ./crow-cli
         run: |
           uv pip install --system pyinstaller
 
       - name: Build with PyInstaller
-        working-directory: ./crow-cli
         run: |
           uv run pyinstaller crow-cli.spec --noconfirm
 
       - name: Create archive
         shell: bash
         run: |
-          cd crow-cli
+          cd dist
           if [ "${{ runner.os }}" == "Windows" ]; then
-            cd dist
             7z a -tzip ${{ matrix.archive_name }} crow-cli.exe
-            mv ${{ matrix.archive_name }} ../
           else
-            cd dist
             tar -czvf ${{ matrix.archive_name }} crow-cli
-            mv ${{ matrix.archive_name }} ../
           fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: crow-cli-${{ matrix.target }}
-          path: crow-cli/${{ matrix.archive_name }}
+          path: ${{ matrix.archive_name }}
           retention-days: 30
 
   release:

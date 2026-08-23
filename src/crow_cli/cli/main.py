@@ -27,10 +27,10 @@ app = typer.Typer(
     name="crow-cli",
     help=(
         "Transparent CLI for the Crow agent — full observability into agent state.\n\n"
-        "Talk to an agent with `crow-cli-dev run \"prompt\"` and continue a session with "
+        "Talk to an agent with `crow-cli run \"prompt\"` and continue a session with "
         "`-s <session-id>`. This is also how agents delegate to subagents: launch a "
         "worker with `run`, then read its thoughts via the query_session MCP tool. "
-        "See `crow-cli-dev run --help` for the full delegation recipe."
+        "See `crow-cli run --help` for the full delegation recipe."
     ),
 )
 
@@ -39,7 +39,7 @@ app.add_typer(install_app, name="install")
 
 
 console = Console()
-# we need to work on a crow-cli-dev init command to set up configuration
+# we need to work on a crow-cli init command to set up configuration
 # until then...
 client = CrowClient(console=console)
 
@@ -642,17 +642,17 @@ def run(
 
     1. Launch a worker (it gets a coolname session id):
 
-        crow-cli-dev run "refactor the parser into its own module"
+        crow-cli run "refactor the parser into its own module"
 
     2. Continue that session with -s (give it a hellacious timeout if the
     prompt is big):
 
-        crow-cli-dev run -s <session-id> "now add tests"
+        crow-cli run -s <session-id> "now add tests"
 
     3. Send a long, pre-written delegation prompt from a file or stdin:
 
-        crow-cli-dev run -f delegation.md -s <session-id>
-        cat delegation.md | crow-cli-dev run -
+        crow-cli run -f delegation.md -s <session-id>
+        cat delegation.md | crow-cli run -
 
     4. From another agent, read what the worker did with the query_session MCP
     tool: query_session(session_id="<session-id>") — a bare call returns the
@@ -667,16 +667,16 @@ def run(
     1. Spawn a fork of a session and run inside it (the fork sees the whole
        trunk history; the trunk never sees the fork):
 
-        crow-cli-dev run -s <session-id> --fork "what would you do differently?"
+        crow-cli run -s <session-id> --fork "what would you do differently?"
 
     2. The fork persists under its own three-part id (printed on creation).
        Continue it like any session:
 
-        crow-cli-dev run -s <session-id>-<agent-idx>-<fork-idx> "keep going"
+        crow-cli run -s <session-id>-<agent-idx>-<fork-idx> "keep going"
 
     3. Or continue fork N of a session directly:
 
-        crow-cli-dev run -s <session-id> --fork-idx 2 "keep going"
+        crow-cli run -s <session-id> --fork-idx 2 "keep going"
 
     Forks are hidden from the telemetry surfaces (inspect, query_session,
     query_memory, list_sessions) unless include_forks/--include-forks is set.
@@ -724,11 +724,11 @@ def run(
             "[red]Error: Either provide a prompt or use -i for interactive mode[/red]"
         )
         client._console.print("\n[yellow]Examples:[/yellow]")
-        client._console.print("  crow-cli-dev run 'list the files'")
-        client._console.print("  crow-cli-dev run -i")
-        client._console.print("  crow-cli-dev run -s <session-id> -i")
-        client._console.print("  crow-cli-dev run -f prompt.md -s <session-id>")
-        client._console.print("  cat prompt.md | crow-cli-dev run -")
+        client._console.print("  crow-cli run 'list the files'")
+        client._console.print("  crow-cli run -i")
+        client._console.print("  crow-cli run -s <session-id> -i")
+        client._console.print("  crow-cli run -f prompt.md -s <session-id>")
+        client._console.print("  cat prompt.md | crow-cli run -")
         raise SystemExit(1)
 
     # Run the async main
@@ -854,7 +854,7 @@ async def _run_async(
             else:
                 client._console.print(f"\n[dim]Session: {actual_session_id}[/dim]")
                 client._console.print(
-                    f'[dim]Use crow-cli-dev run -s {actual_session_id} "<your—message>" to continue this conversation[/dim]'
+                    f'[dim]Use crow-cli run -s {actual_session_id} "<your—message>" to continue this conversation[/dim]'
                 )
     except Exception as e:
         # Surface the agent's stderr (e.g. a startup failure like an unknown

@@ -419,7 +419,7 @@ def run_init(config_dir: Path, yes: bool = False):
     ]
     if active_services:
         done_lines.append(f"Compose:  [cyan]{compose_file}[/cyan]")
-    done_lines.append(f'[dim]Test:[/dim] [bold white]crow-cli-dev run "hey"[/bold white]')
+    done_lines.append(f'[dim]Test:[/dim] [bold white]crow-cli run "hey"[/bold white]')
     console.print(Panel.fit("\n".join(done_lines), border_style="green"))
 
 
