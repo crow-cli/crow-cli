@@ -265,11 +265,25 @@ async def test_launch_returns_ack_immediately(delegate_env, monkeypatch):
     # The launch call's client surface completed; the per-task surface is
     # in_progress and stays alive until the subagent finishes.
     assert [getattr(u, "status", None) for u in conn.tool_updates("t1/call-1")] == [
-        "completed"
+        "pending",
+        "completed",
     ]
     assert [getattr(u, "status", None) for u in conn.tool_updates("t1/task-1")] == [
         "in_progress"
     ]
+    # Bug fix: every surface gets a tool_call CREATION event before any
+    # tool_call_update, or the client renders "tool call not found".
+    for surface in ("t1/call-1", "t1/task-1"):
+        updates = conn.tool_updates(surface)
+        assert updates, f"no updates for {surface}"
+        assert getattr(updates[0], "session_update", None) == "tool_call", (
+            f"{surface}: first event must be a tool_call creation, got "
+            f"{getattr(updates[0], 'session_update', None)!r}"
+        )
+        assert all(
+            getattr(u, "session_update", None) == "tool_call_update"
+            for u in updates[1:]
+        ), f"{surface}: events after creation must be tool_call_update"
 
     release.set()
     await info.handle
@@ -643,6 +657,72 @@ async def test_cancel_during_park_kills_stack(delegate_env, monkeypatch):
     assistant = [m for m in sub.messages if m["role"] == "assistant"]
     assert assistant and assistant[-1]["content"] == "partial "
     await sub.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_delegate_surfaced_on_next_prompt(delegate_env, monkeypatch):
+    """Bug 2: cancel_all marks a delegate cancelled BEFORE its finish() runs,
+    so nothing reaches the wake queue and the owner never learns it died. The
+    NEXT prompt must inject '[task-N ... cancelled]' at start so the model is
+    told."""
+    config, parent = delegate_env
+    from crow_cli.agent import react as react_mod
+
+    monkeypatch.setattr(react_mod, "PARK_HEARTBEAT_S", 0.05)
+    await parent.add_message({"role": "user", "content": "delegate a long thing"})
+
+    async def create(**kwargs):
+        return fake_stream([content_chunk("partial ")], hang_after=True)
+
+    _patch_subagent_llm(
+        monkeypatch,
+        SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create))),
+    )
+    parent_llm = ScriptedLLM(
+        [
+            [_delegate_call(prompt="long task"), usage_chunk(100)],
+            [content_chunk("I will wait."), usage_chunk(100)],
+        ],
+        repeat_last=True,
+    )
+
+    registry = TaskRegistry()
+    conn = FakeConn()
+    task, chunks = await _run_react(
+        _react_kwargs(config, parent, conn, parent_llm, registry)
+    )
+    await _wait_for(lambda: len(conn.tool_updates("t1/task-1")) >= 2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    (info,) = list(registry._tasks.values())
+    assert info.status == "cancelled"
+    assert info.delivered is False
+    # nothing on the wake queue — the invisibility this test exists for
+    assert registry.wake_queue("parent-sess").empty()
+
+    # NEXT prompt, same session + registry: the cancelled delegate must be
+    # surfaced before the model's first response.
+    next_llm = ScriptedLLM([[content_chunk("ACK-CANCEL"), usage_chunk(100)]])
+    task2, chunks2 = await _run_react(
+        _react_kwargs(config, parent, FakeConn(), next_llm, registry)
+    )
+    await asyncio.wait_for(task2, timeout=10)
+
+    messages = chunks2[-1]["messages"]
+    synthetic = [
+        m
+        for m in messages
+        if m["role"] == "user"
+        and isinstance(m["content"], str)
+        and m["content"].startswith("[task-1")
+        and "cancelled]" in m["content"]
+    ]
+    assert len(synthetic) == 1
+    assert info.delivered is True
+    assert messages[-1]["role"] == "assistant"
+    assert messages[-1]["content"] == "ACK-CANCEL"
 
 
 @pytest.mark.asyncio

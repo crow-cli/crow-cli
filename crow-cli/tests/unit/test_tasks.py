@@ -107,3 +107,61 @@ def test_cancel_all_ignores_finished_tasks():
     r.finish(done.task_id, "answer")
     assert r.cancel_all("sess-1") == []
     assert r.get(done.task_id).status == "done"
+
+
+# ---------------------------------------------------------------------------
+# drain_dead — surfacing a cancelled turn's stranded tasks on the next prompt
+# ---------------------------------------------------------------------------
+
+
+def test_drain_dead_returns_cancelled_tasks_never_queued():
+    """cancel_all marks cancelled BEFORE finish() runs, so finish() no-ops
+    and nothing reaches the wake queue — drain_dead must still find them."""
+    r = TaskRegistry()
+    info = r.launch("delegate", "sess-1", "c1", sub_session="sub-1")
+    r.cancel_all("sess-1")  # marks cancelled; nothing queued
+    assert r.wake_queue("sess-1").empty()
+    dead = r.drain_dead("sess-1")
+    assert [t.task_id for t in dead] == ["task-1"]
+    assert dead[0].status == "cancelled"
+
+
+def test_drain_dead_returns_queued_completions():
+    """A completion that landed on the wake queue but was never injected
+    (cancel between park and injection) is also dead and must be surfaced."""
+    r = TaskRegistry()
+    info = r.launch("delegate", "sess-1", "c1")
+    r.finish(info.task_id, "the answer")  # now sitting on the queue
+    dead = r.drain_dead("sess-1")
+    assert [t.task_id for t in dead] == ["task-1"]
+    assert dead[0].status == "done"
+    # the queue is cleared so a later park cannot re-deliver it
+    assert r.wake_queue("sess-1").empty()
+
+
+def test_drain_dead_is_idempotent():
+    r = TaskRegistry()
+    info = r.launch("delegate", "sess-1", "c1")
+    r.cancel_all("sess-1")
+    assert len(r.drain_dead("sess-1")) == 1
+    assert r.drain_dead("sess-1") == []  # delivered once, never again
+
+
+def test_drain_dead_skips_running_and_other_sessions():
+    r = TaskRegistry()
+    running = r.launch("delegate", "sess-1", "c1")
+    other = r.launch("delegate", "sess-2", "c2")
+    r.cancel_all("sess-2")  # other session's task dies
+    dead = r.drain_dead("sess-1")
+    assert dead == []  # running task not dead; other session not ours
+    assert r.get(running.task_id).status == "running"
+    assert [t.task_id for t in r.drain_dead("sess-2")] == ["task-2"]
+
+
+def test_drain_dead_dedupes_queued_and_registered():
+    """A task both on the queue and in _tasks is returned exactly once."""
+    r = TaskRegistry()
+    info = r.launch("delegate", "sess-1", "c1")
+    r.finish(info.task_id, "x")  # on the queue AND terminal in _tasks
+    dead = r.drain_dead("sess-1")
+    assert [t.task_id for t in dead] == ["task-1"]

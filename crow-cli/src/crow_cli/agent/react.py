@@ -913,6 +913,31 @@ async def react_loop(
     cwd = session.cwd
     session_id = session_from_agent_id(agent_id)
     chunk_index = 0
+
+    # Delegation wake-up: a cancelled turn strands dead tasks (cancelled /
+    # failed / done) that never reached the model — cancel_all marks them
+    # cancelled before finish() runs, so nothing hits the wake queue. The
+    # owner SESSION survives the cancel, so surface them here, before the
+    # first LLM call, and this prompt starts knowing the delegate died.
+    if registry is not None:
+        for info in registry.drain_dead(session_id):
+            message = synthetic_completion_message(info)
+            await session.add_message({"role": "user", "content": message})
+            with contextlib.suppress(Exception):
+                await conn.session_update(
+                    session_id=session_id,
+                    update=UserMessageChunk(
+                        session_update="user_message_chunk",
+                        content=text_block(message),
+                    ),
+                )
+            logger.info(
+                "WAKE: injected stranded %s (%s) into %s at prompt start",
+                info.task_id,
+                info.status,
+                session_id,
+            )
+
     for turn in range(max_turns):
         # Under --debug, log both the request payload and the response chunks
         # for this turn into the same chunk_log_dir (sibling filenames).
@@ -1068,6 +1093,7 @@ async def react_loop(
                     await session.add_message(
                         {"role": "user", "content": message}
                     )
+                    info.delivered = True
                     # Best-effort visibility of the injection itself; clients
                     # that don't render user_message_chunk ignore it safely.
                     with contextlib.suppress(Exception):

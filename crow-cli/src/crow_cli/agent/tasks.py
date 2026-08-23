@@ -22,6 +22,10 @@ class TaskInfo:
     sub_session: str = ""     # the delegate's own session id
     status: str = "running"   # running | done | failed | cancelled
     result: str | None = None
+    # True once the completion has been surfaced to the model (synthetic
+    # message injected). Lets a cancelled turn's dead tasks be delivered
+    # exactly once on the NEXT prompt instead of re-injected every turn.
+    delivered: bool = False
     handle: "asyncio.Task | None" = None  # the task's background lifetime
 
 
@@ -79,6 +83,40 @@ class TaskRegistry:
             if t.status == "running"
             and (owner_session is None or t.owner_session == owner_session)
         ]
+
+    def drain_dead(self, owner_session: str) -> list[TaskInfo]:
+        """Every terminal task (done | failed | cancelled) owned by this
+        session that was never surfaced to the model, marked delivered.
+
+        A cancelled turn strands these: cancel_all marks status=cancelled
+        before the subagent's finish() runs, so finish() no-ops and nothing
+        reaches the wake queue — and even queued completions can be left
+        sitting if the cancel lands between park and injection. The owner
+        SESSION survives, so the next prompt must be told the delegate died.
+        Drains the wake queue as well so a later park cannot re-deliver the
+        same TaskInfo. Idempotent via the delivered flag.
+        """
+        dead: list[TaskInfo] = []
+        seen: set[str] = set()
+        queue = self._wake_queues.get(owner_session)
+        if queue is not None:
+            while not queue.empty():
+                info = queue.get_nowait()
+                if not info.delivered and info.task_id not in seen:
+                    dead.append(info)
+                    seen.add(info.task_id)
+        for info in self._tasks.values():
+            if (
+                info.owner_session == owner_session
+                and info.status in ("done", "failed", "cancelled")
+                and not info.delivered
+                and info.task_id not in seen
+            ):
+                dead.append(info)
+                seen.add(info.task_id)
+        for info in dead:
+            info.delivered = True
+        return dead
 
     def cancel_all(self, owner_session: str) -> list["asyncio.Task"]:
         """Cancel every running task owned by this session — the cancel tree.

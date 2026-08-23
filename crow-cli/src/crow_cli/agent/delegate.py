@@ -31,7 +31,7 @@ from logging import Logger
 from typing import Any
 
 from acp.interfaces import Client
-from acp.schema import ToolCallProgress
+from acp.schema import ToolCallProgress, ToolCallStart
 from crow_cli.config import Config
 from crow_cli.agent.llm import configure_llm
 from crow_cli.agent.mcp_client import create_mcp_client_from_acp, get_tools
@@ -249,7 +249,20 @@ async def launch_delegate(
     # Two client surfaces: the launch call COMPLETES (its one result is the
     # ack returned below); the per-task surface stays in_progress until the
     # subagent finishes — that stream keeps the delegation visible through
-    # the parent's zero-token park.
+    # the parent's zero-token park. Each surface needs a tool_call CREATION
+    # event first (like every regular tool) or the client renders "tool call
+    # not found" when the updates arrive for an id it never saw born.
+    with contextlib.suppress(Exception):
+        await conn.session_update(
+            session_id=parent_wire,
+            update=ToolCallStart(
+                session_update="tool_call",
+                tool_call_id=acp_tool_call_id,
+                title=f"delegate: {sub_session.session_id}",
+                kind="other",
+                status="pending",
+            ),
+        )
     with contextlib.suppress(Exception):
         await conn.session_update(
             session_id=parent_wire,
@@ -263,11 +276,12 @@ async def launch_delegate(
     with contextlib.suppress(Exception):
         await conn.session_update(
             session_id=parent_wire,
-            update=ToolCallProgress(
-                session_update="tool_call_update",
+            update=ToolCallStart(
+                session_update="tool_call",
                 tool_call_id=_task_surface_id(turn_id, info),
-                status="in_progress",
                 title=f"delegate: {sub_session.session_id}",
+                kind="other",
+                status="in_progress",
             ),
         )
 
