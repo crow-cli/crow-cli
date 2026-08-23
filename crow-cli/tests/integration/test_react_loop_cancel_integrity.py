@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 from mcp.types import TextContent
 
-from crow_cli.agent.configure import Config
+from crow_cli.config import Config
 from crow_cli.agent.react import TOOL_CALL_CANCELLED_MESSAGE, react_loop
 from crow_cli.agent.session import AgentSession, make_agent_session
 

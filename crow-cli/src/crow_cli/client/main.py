@@ -356,16 +356,22 @@ class CrowClient(Client):
         return ReleaseTerminalResponse()
 
     async def spawn_agent(
-        self, cwd: str, config_dir: Path | None = None, model: str | None = None
+        self,
+        cwd: str,
+        config_dir: Path | None = None,
+        model: str | None = None,
+        config_file: Path | None = None,
     ) -> asyncio.subprocess.Process:
         """Spawn the crow-acp agent subprocess."""
         # Check if running in PyInstaller frozen build
         is_frozen = getattr(sys, "frozen", False)
 
         # The agent loads its OWN config in its own process — forward the
-        # config dir so `run --config-dir` routes the whole stack (memory
-        # port, mcpServers, providers) and not just this client.
+        # config dir/file so `run --config-dir/--config-file` routes the whole
+        # stack (memory port, mcpServers, providers) and not just this client.
         dir_args = ["--config-dir", str(config_dir)] if config_dir else []
+        if config_file:
+            dir_args += ["--config-file", str(config_file)]
         model_args = ["--model", model] if model else []
 
         if is_frozen:
@@ -498,7 +504,14 @@ async def connect_client(
 ) -> ClientSideConnection:
     """Initialize ACP connection to agent."""
     try:
-        conn = connect_to_agent(client, proc.stdin, proc.stdout)
+        conn = connect_to_agent(
+            client,
+            proc.stdin,
+            proc.stdout,
+            # session/fork is UNSTABLE — both ends must opt in or the router
+            # answers method_not_found.
+            use_unstable_protocol=True,
+        )
 
         await conn.initialize(
             protocol_version=PROTOCOL_VERSION,

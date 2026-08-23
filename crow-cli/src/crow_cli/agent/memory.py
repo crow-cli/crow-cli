@@ -1,6 +1,6 @@
-"""Memory layer for crow-cli — SQL via crow-memory, images on disk.
+"""Memory layer for crow-cli — SQL via crow_cli.memory, images on disk.
 
-The store contract lives in the ``crow-memory`` package (schema v4): this
+The store contract lives in ``crow_cli.memory`` (schema v4): this
 class only resolves the db_uri from config and wraps the sync helpers in the
 async shape session.py / main.py expect. One wrinkle: image blobs never
 enter the database. Writes extract inline base64 blocks to
@@ -18,8 +18,8 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import crow_memory as db
-from crow_cli.agent.configure import Config
+import crow_cli.memory as db
+from crow_cli.config import Config
 
 log = logging.getLogger(__name__)
 
@@ -46,6 +46,8 @@ class AgentRecord:
     agent_id: str
     session_id: str
     agent_idx: int
+    fork_idx: int = 1
+    forked_at: str | None = None
     cwd: str = "/tmp"
     prompt_id: str | None = None
     prompt_args: dict | None = None
@@ -70,6 +72,7 @@ class MessageRecord:
     role: str
     created_at: str
     data: dict
+    fork_idx: int = 1
 
 
 @dataclass
@@ -113,6 +116,8 @@ def _agent_record(a: db.Agent) -> AgentRecord:
         agent_id=a.agent_id,
         session_id=a.session_id,
         agent_idx=a.agent_idx,
+        fork_idx=a.fork_idx,
+        forked_at=a.forked_at,
         cwd=a.cwd,
         prompt_id=a.prompt_id,
         prompt_args=a.prompt_args,
@@ -126,7 +131,7 @@ def _agent_record(a: db.Agent) -> AgentRecord:
 
 
 class MemoryClient:
-    """crow-memory-backed store. `path` overrides the configured db_uri."""
+    """crow_cli.memory-backed store. `path` overrides the configured db_uri."""
 
     def __init__(self, path: str | None = None, config_dir: Path | None = None, **_kwargs):
         cfg = Config.load(config_dir)
@@ -166,6 +171,8 @@ class MemoryClient:
         agent_id: str,
         session_id: str,
         agent_idx: int = 1,
+        fork_idx: int = 1,
+        forked_at: str | None = None,
         cwd: str = "/tmp",
         prompt_id: str | None = None,
         prompt_args: dict | None = None,
@@ -180,6 +187,8 @@ class MemoryClient:
             agent_id=agent_id,
             session_id=session_id,
             agent_idx=agent_idx,
+            fork_idx=fork_idx,
+            forked_at=forked_at,
             cwd=cwd,
             prompt_id=prompt_id,
             prompt_args=prompt_args or {},
@@ -200,8 +209,8 @@ class MemoryClient:
         agent = db.get_agent(self._engine, agent_id)
         if agent is None:
             raise MemoryServiceError(404, f"agent '{agent_id}' not found")
-        messages = db.load_messages(
-            self._engine, agent_id, hydrate=hydrate, images_dir=self.images_dir
+        messages = db.load_agent_messages(
+            self._engine, agent, hydrate=hydrate, images_dir=self.images_dir
         )
         return _agent_record(agent), messages
 
@@ -261,16 +270,22 @@ class MemoryClient:
                     role=row.role,
                     created_at=row.created_at,
                     data=dict(row.data),
+                    fork_idx=row.fork_idx,
                 )
             )
         return recs
 
     # ---- sessions ----
 
-    async def get_max_agent_idx(self, session_id: str) -> int:
-        return db.get_max_agent_idx(self._engine, session_id)
+    async def get_max_agent_idx(self, session_id: str, fork_idx: int | None = 1) -> int:
+        return db.get_max_agent_idx(self._engine, session_id, fork_idx=fork_idx)
 
-    async def list_sessions(self, limit: int = 50, offset: int = 0) -> list[SessionInfo]:
+    async def get_max_fork_idx(self, session_id: str, agent_idx: int) -> int:
+        return db.get_max_fork_idx(self._engine, session_id, agent_idx)
+
+    async def list_sessions(
+        self, limit: int = 50, offset: int = 0, include_forks: bool = False
+    ) -> list[SessionInfo]:
         return [
             SessionInfo(
                 session_id=s["session_id"],
@@ -279,7 +294,7 @@ class MemoryClient:
                 agent_count=s["agent_count"],
                 model_identifier=s["model_identifier"],
             )
-            for s in db.list_sessions(self._engine, limit, offset)
+            for s in db.list_sessions(self._engine, limit, offset, include_forks=include_forks)
         ]
 
     # ---- prompts ----
@@ -322,6 +337,7 @@ class MemoryClient:
                     role=h["role"],
                     created_at=h["created_at"],
                     data=h["data"],
+                    fork_idx=h["fork_idx"],
                 )
                 for h in hits
             ]

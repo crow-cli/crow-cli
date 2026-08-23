@@ -78,6 +78,7 @@ from acp.schema import (
     AvailableCommandsUpdate,
     ClientCapabilities,
     EmbeddedResourceContentBlock,
+    ForkSessionResponse,
     HttpMcpServer,
     ImageContentBlock,
     Implementation,
@@ -88,6 +89,7 @@ from acp.schema import (
     SessionCapabilities,
     SessionConfigOptionSelect,
     SessionConfigSelectOption,
+    SessionForkCapabilities,
     SessionInfo,
     SessionListCapabilities,
     SetSessionConfigOptionResponse,
@@ -98,7 +100,9 @@ from acp.schema import (
 from fastmcp import Client as MCPClient
 
 from crow_cli.agent.compact import compact
-from crow_cli.agent.configure import Config, get_default_config_dir
+from crow_cli.agent.delegate import DELEGATE_TOOL
+from crow_cli.agent.tasks import TaskRegistry
+from crow_cli.config import Config, apply_config_overrides, get_default_config_dir
 from crow_cli.agent.context import get_directory_tree
 from crow_cli.agent.hooks import (
     CommandHook,
@@ -108,6 +112,7 @@ from crow_cli.agent.llm import configure_llm
 from crow_cli.agent.logger import setup_logger
 from crow_cli.agent.mcp_client import create_mcp_client_from_acp, get_tools
 from crow_cli.agent.prompt import normalize_prompt
+from crow_cli.memory import build_agent_id, parse_agent_id, wire_session_id
 from crow_cli.agent.react import react_loop
 from crow_cli.agent.session import (
     AgentSession,
@@ -203,6 +208,11 @@ class AcpAgent(Agent):
         self._session_locks: dict[str, asyncio.Lock] = {}  # session_id -> prompt serialization
         self._session_loggers: dict[str, Logger] = {}  # session_id -> per-session logger
         self._notification_queue: list[dict] = []  # queued extension notifications
+        # Delegation interiority: the task registry is the in-process shared
+        # state between the react loop and its native tools; the per-session
+        # mcpServers lists are what subagents inherit when they launch.
+        self._task_registry = TaskRegistry()
+        self._session_mcp_servers: dict[str, list] = {}  # wire id -> mcp_servers
 
     def _default_model_value(self) -> str:
         model = self._model_override or next(iter(self._config.llm.models.values()), None)
@@ -226,13 +236,20 @@ class AcpAgent(Agent):
         self._sessions is a cache of live objects; hydrate from the DB on a
         miss (process restart, prompt without new/load_session, or a second
         connection attaching to a session it did not create).
+
+        A bare session_id resolves to the trunk HEAD (max agent_idx, fork 1);
+        a three-part wire id names an exact agent (a fork).
         """
-        max_idx = await AgentSession.get_max_agent_idx(
-            session_id, memory_path=self._memory_db_uri
-        )
-        if max_idx < 1:
-            return None
-        agent_id = f"{session_id}-{max_idx}"
+        try:
+            parse_agent_id(session_id)
+            agent_id = session_id
+        except ValueError:
+            max_idx = await AgentSession.get_max_agent_idx(
+                session_id, memory_path=self._memory_db_uri
+            )
+            if max_idx < 1:
+                return None
+            agent_id = build_agent_id(session_id, max_idx)
         session = self._sessions.get(agent_id)
         if session is None:
             try:
@@ -251,24 +268,29 @@ class AcpAgent(Agent):
         (process restart, second connection, prompt without new/load). The
         react loop needs an MCP client, tools, cancel event, logger, and
         config values per session_id — spin them up on first use. Idempotent.
+        Keyed by WIRE id: the trunk's bare session_id, a fork's agent_id.
         """
-        session_id = session.session_id
+        session_id = wire_session_id(session.agent_id)
         if session_id in self._tools:
             return
-        builtin_config = self._config.get_builtin_mcp_config()
+        # No builtin MCP fallback: a hydrated session that no client handed
+        # mcp_servers for runs toolless until a load/new_session provides them.
         config, mcp_client = create_mcp_client_from_acp(
             mcp_servers=None,
             cwd=session.cwd,
-            builtin_config=builtin_config,
             logger=self._logger,
         )
+        if mcp_client is not None:
+            mcp_client = await self._exit_stack.enter_async_context(mcp_client)
+        tools = await get_tools(mcp_client)
+        tools = [*tools, DELEGATE_TOOL]  # delegate is native, not MCP
+        self._session_mcp_servers.setdefault(session_id, [])
         self._logger.info(
-            "Provisioning hydrated session %s (agent %s) with builtin MCP config",
+            "Provisioning hydrated session %s (agent %s) — no client mcp_servers, %d tools",
             session_id,
             session.agent_id,
+            len(tools),
         )
-        mcp_client = await self._exit_stack.enter_async_context(mcp_client)
-        tools = await get_tools(mcp_client)
         self._mcp_clients[session_id] = mcp_client
         self._tools[session_id] = tools
         self._cancel_events[session_id] = asyncio.Event()
@@ -306,6 +328,20 @@ class AcpAgent(Agent):
                 options=options_list,
             )
         ]
+
+    def _apply_model_option(self, session_id: str, value: str, session) -> None:
+        """Apply the session's model config option (ACP session config options).
+
+        The ONE code path for "this session now uses model X" — shared by
+        session/set_config_option and the -m override at load/fork time.
+        Stores the provider:model value (provider routing + the option's
+        currentValue) AND points session.model_identifier at the model,
+        because that is what react.py sends to the API. Doing only one of
+        the two makes the option display a model the request doesn't use.
+        """
+        self._config_values.setdefault(session_id, {})["model"] = value
+        _, model_name = value.split(":", 1) if ":" in value else ("", value)
+        session.model_identifier = model_name
 
     def on_connect(self, conn: Client) -> None:
         """Store connection for sending updates"""
@@ -360,6 +396,7 @@ class AcpAgent(Agent):
                 load_session=True,  # We support session loading
                 session_capabilities=SessionCapabilities(
                     list=SessionListCapabilities(),  # We support session/list
+                    fork=SessionForkCapabilities(),  # We support session/fork (unstable)
                 ),
                 prompt_capabilities=PromptCapabilities(
                     image=True,  # We support image content blocks for vision models
@@ -418,23 +455,21 @@ class AcpAgent(Agent):
 
         self._logger.info("new_session mcp_servers from ACP: %s", mcp_servers)
 
-        # Use default MCP config if no servers provided
-        builtin_config = self._config.get_builtin_mcp_config()
-        self._logger.info("builtin_config: %s", builtin_config)
-
-        # Create MCP client (builtin if no servers provided)
+        # Client owns tool supply: use exactly what it passed (empty = zero tools)
         config, mcp_client = create_mcp_client_from_acp(
             mcp_servers=mcp_servers,
             cwd=cwd,
-            builtin_config=builtin_config,
             logger=self._logger,
         )
         self._logger.info("new_session merged config from create_mcp_client_from_acp: %s", config)
         # CRITICAL: Use AsyncExitStack for lifecycle management
-        mcp_client = await self._exit_stack.enter_async_context(mcp_client)
+        if mcp_client is not None:
+            mcp_client = await self._exit_stack.enter_async_context(mcp_client)
 
-        # Get tools from MCP server
-        tools = await get_tools(mcp_client)
+        # Get tools from MCP server ([] when the client passed none); the
+        # delegate tool is NATIVE (react-loop interiority), so it rides along
+        # regardless of the client's tool supply.
+        tools = [*await get_tools(mcp_client), DELEGATE_TOOL]
         session = await make_agent_session(
             self._config,
             tools,
@@ -446,6 +481,7 @@ class AcpAgent(Agent):
         self._sessions[session.agent_id] = session
         self._mcp_clients[session.session_id] = mcp_client
         self._tools[session.session_id] = tools
+        self._session_mcp_servers[session.session_id] = list(mcp_servers or [])
         self._cancel_events[session.session_id] = asyncio.Event()
         self._session_loggers[session.session_id] = setup_logger(
             self._config.config_dir / "logs" / f"crow-cli-{session.session_id}.log",
@@ -501,9 +537,14 @@ class AcpAgent(Agent):
         self._logger.info("LOAD_SESSION: Loading session: %s", session_id)
 
         try:
-            # Find the highest-indexed agent for this session
-            max_idx = await AgentSession.get_max_agent_idx(session_id, memory_path=self._memory_db_uri)
-            agent_id = f"{session_id}-{max_idx}"
+            # A three-part wire id names an exact agent (a fork); a bare
+            # session_id resolves to the trunk HEAD (max agent_idx, fork 1).
+            try:
+                parse_agent_id(session_id)
+                agent_id = session_id
+            except ValueError:
+                max_idx = await AgentSession.get_max_agent_idx(session_id, memory_path=self._memory_db_uri)
+                agent_id = build_agent_id(session_id, max_idx)
             self._logger.info(
                 "LOAD_SESSION: Step 1: Loading agent %s from DB", agent_id
             )
@@ -513,48 +554,35 @@ class AcpAgent(Agent):
             )
             self._logger.info("LOAD_SESSION: Step 1 complete: Agent loaded from DB")
 
-            # Setup MCP client (same as new_session)
-            # Use default config if no servers given
+            # Setup MCP client (same as new_session): client owns tool supply
             self._logger.info("LOAD_SESSION: mcp_servers from ACP: %s", mcp_servers)
-            self._logger.info("LOAD_SESSION: Step 2: Getting builtin config")
-            builtin_config = self._config.get_builtin_mcp_config()
-            self._logger.info(
-                "LOAD_SESSION: Step 2 complete: builtin_config = %s", builtin_config
-            )
-
-            self._logger.info(
-                "LOAD_SESSION: Step 3: Creating MCP client with fallback config"
-            )
             config, mcp_client = create_mcp_client_from_acp(
                 mcp_servers=mcp_servers,
                 cwd=cwd,
-                builtin_config=builtin_config,
                 logger=self._logger,
             )
             self._logger.info("LOAD_SESSION merged config: %s", config)
-            self._logger.info("LOAD_SESSION: Step 3 complete: MCP client created")
 
             # CRITICAL: Use AsyncExitStack for lifecycle management
-            self._logger.info("LOAD_SESSION: Step 4: Entering async context")
-            mcp_client = await self._exit_stack.enter_async_context(mcp_client)
-            self._logger.info(
-                "LOAD_SESSION: Step 4 complete: MCP client context entered"
-            )
+            if mcp_client is not None:
+                mcp_client = await self._exit_stack.enter_async_context(mcp_client)
 
-            # Get tools
-            tools = await get_tools(mcp_client)
+            # Get tools ([] when the client passed none) + native delegate
+            tools = [*await get_tools(mcp_client), DELEGATE_TOOL]
 
-            # Store in-memory references keyed on agent_id / session_id
+            # Store in-memory references keyed on agent_id / WIRE session id
+            # (bare session for the trunk, agent_id for a fork).
             self._sessions[session.agent_id] = session
             self._mcp_clients[session_id] = mcp_client
             self._tools[session_id] = tools
+            self._session_mcp_servers[session_id] = list(mcp_servers or [])
             self._cancel_events[session_id] = asyncio.Event()
-            self._session_loggers[session.session_id] = setup_logger(
+            self._session_loggers[session_id] = setup_logger(
                 self._config.config_dir / "logs" / f"crow-cli-{session.session_id}.log",
                 name=f"{session.session_id}-crow-logger",
             )
             # Initialize session config if not present
-            if session.session_id not in self._config_values:
+            if session_id not in self._config_values:
                 # Resolve model_identifier to "provider_name:model_id" format.
                 # A -m override wins over the session's saved model: the CLI
                 # flag is an explicit "use THIS model for this run".
@@ -566,35 +594,141 @@ class AcpAgent(Agent):
                             self._model_override.name,
                             session.model_identifier,
                         )
-                elif session.model_identifier:
-                    match = next(
-                        (
-                            m
-                            for m in self._config.llm.models.values()
-                            if m.model_id == session.model_identifier
-                        ),
-                        None,
-                    )
-                    if match is not None:
-                        resolved = f"{match.provider_name}:{match.model_id}"
-                    else:
-                        # Don't fall back silently: the session's behavior
-                        # would change with no notice (critique item).
-                        self._logger.warning(
-                            "load_session: saved model %r is not in config.yaml; "
-                            "falling back to default %r",
-                            session.model_identifier,
-                            resolved,
+                    # The override IS this session's model config option:
+                    # apply it exactly like session/set_config_option so the
+                    # API request (react.py sends session.model_identifier)
+                    # is routed at the override, not at the saved model.
+                    self._apply_model_option(session_id, resolved, session)
+                else:
+                    if session.model_identifier:
+                        match = next(
+                            (
+                                m
+                                for m in self._config.llm.models.values()
+                                if m.model_id == session.model_identifier
+                            ),
+                            None,
                         )
-                self._config_values[session.session_id] = {"model": resolved}
+                        if match is not None:
+                            resolved = f"{match.provider_name}:{match.model_id}"
+                        else:
+                            # Don't fall back silently: the session's behavior
+                            # would change with no notice (critique item).
+                            self._logger.warning(
+                                "load_session: saved model %r is not in config.yaml; "
+                                "falling back to default %r",
+                                session.model_identifier,
+                                resolved,
+                            )
+                    self._config_values[session_id] = {"model": resolved}
 
             # TODO: Replay conversation history to client
 
-            config_options = self._get_config_options(session.session_id)
+            config_options = self._get_config_options(session_id)
             return LoadSessionResponse(config_options=config_options)
         except Exception as e:
             self._logger.error("Failed to load session %s: %s", session_id, e)
             return None
+
+    async def fork_session(
+        self,
+        session_id: str,
+        cwd: str,
+        mcp_servers: list[HttpMcpServer | SseMcpServer | McpServerStdio] | None = None,
+        additional_directories: list[str] | None = None,
+        agentIdx: int | None = None,
+        turnIdx: int | None = None,
+        **kwargs: Any,
+    ) -> ForkSessionResponse:
+        """Fork an existing session (UNSTABLE session/fork).
+
+        ``agentIdx``/``turnIdx`` ride the request ``_meta`` and arrive
+        flattened into kwargs by the SDK router. Defaults fork at HEAD: the
+        newest trunk agent, all messages. turnIdx snaps to turn boundaries —
+        an assistant tool_calls group is never split from its tool results.
+        The fork's wire sessionId is its own agent_id; the client owns tool
+        supply exactly like new/load_session (empty mcpServers = zero tools,
+        which is what an interrogation fork wants).
+        """
+        self._logger.info(
+            "FORK_SESSION: %s agentIdx=%s turnIdx=%s cwd=%s mcp_servers=%s",
+            session_id,
+            agentIdx,
+            turnIdx,
+            cwd,
+            mcp_servers,
+        )
+        try:
+            session = await AgentSession.fork(
+                session_id,
+                memory_path=self._memory_db_uri,
+                cwd=cwd,
+                agent_idx=agentIdx,
+                turn_idx=turnIdx,
+            )
+        except Exception as e:
+            self._logger.error("Failed to fork session %s: %s", session_id, e)
+            raise RequestError.invalid_params(
+                f"cannot fork session '{session_id}': {e}"
+            )
+
+        wire_id = session.agent_id  # forks are addressed by their agent_id
+
+        # Provision exactly like load_session: client owns tool supply.
+        config, mcp_client = create_mcp_client_from_acp(
+            mcp_servers=mcp_servers,
+            cwd=cwd,
+            logger=self._logger,
+        )
+        if mcp_client is not None:
+            mcp_client = await self._exit_stack.enter_async_context(mcp_client)
+        tools = [*await get_tools(mcp_client), DELEGATE_TOOL]
+
+        self._sessions[session.agent_id] = session
+        self._mcp_clients[wire_id] = mcp_client
+        self._tools[wire_id] = tools
+        self._session_mcp_servers[wire_id] = list(mcp_servers or [])
+        self._cancel_events[wire_id] = asyncio.Event()
+        self._session_loggers[wire_id] = setup_logger(
+            self._config.config_dir / "logs" / f"crow-cli-{session.session_id}.log",
+            name=f"{session.session_id}-crow-logger",
+        )
+        # Model resolution: the fork inherits the source's model unless -m
+        # overrides it; resolve to provider:model like load_session does.
+        resolved = self._default_model_value()
+        if self._model_override is not None:
+            if session.model_identifier != self._model_override.model_id:
+                self._logger.info(
+                    "fork_session: -m override %r supersedes inherited model %r",
+                    self._model_override.name,
+                    session.model_identifier,
+                )
+            self._apply_model_option(wire_id, resolved, session)
+        else:
+            if session.model_identifier:
+                match = next(
+                    (
+                        m
+                        for m in self._config.llm.models.values()
+                        if m.model_id == session.model_identifier
+                    ),
+                    None,
+                )
+                if match is not None:
+                    resolved = f"{match.provider_name}:{match.model_id}"
+            self._config_values[wire_id] = {"model": resolved}
+
+        self._logger.info(
+            "FORK_SESSION: created %s (forked_at=%s, %d messages in view, %d tools)",
+            wire_id,
+            session.forked_at,
+            len(session.messages),
+            len(tools),
+        )
+        return ForkSessionResponse(
+            session_id=wire_id,
+            config_options=self._get_config_options(wire_id),
+        )
 
     async def set_session_mode(
         self, mode_id: str, session_id: str, **kwargs: Any
@@ -616,16 +750,10 @@ class AcpAgent(Agent):
             self._logger.warning("set_config_option: unknown session %s", session_id)
             return None
 
-        self._config_values.setdefault(session_id, {})[config_id] = value
-
-        # Update session model if the config changed was the model
         if config_id == "model":
-            # Optionally split back from provider:model
-            if ":" in value:
-                _, model_name = value.split(":", 1)
-                session.model_identifier = model_name
-            else:
-                session.model_identifier = value
+            self._apply_model_option(session_id, value, session)
+        else:
+            self._config_values.setdefault(session_id, {})[config_id] = value
 
         config_options = self._get_config_options(session_id)
         return SetSessionConfigOptionResponse(config_options=config_options)
@@ -790,6 +918,8 @@ class AcpAgent(Agent):
                     logger=session_logger,
                     hooks=self._hooks,
                     chunk_log_dir=chunk_log_dir,
+                    registry=self._task_registry,
+                    session_mcp_servers=self._session_mcp_servers.get(session_id),
                 ):
                     chunk_type = chunk.get("type")
 
@@ -928,6 +1058,7 @@ async def serve_http(
 async def agent_run(
     config_dir: Path | None = None,
     config: Config | None = None,
+    config_file: Path | None = None,
     debug: bool = False,
     model: str | None = None,
     http: bool = False,
@@ -936,17 +1067,21 @@ async def agent_run(
 ) -> None:
     if config is None:
         config = Config.load(config_dir=config_dir)
+        config = apply_config_overrides(config, config_file)
     if debug:
         config.chunk_log = True
     if http:
         await serve_http(config, model, host, port)
     else:
-        await run_agent(AcpAgent(config=config, model=model))
+        # use_unstable_protocol: session/fork (and resume/close) are UNSTABLE
+        # ACP methods — without the flag the router answers method_not_found.
+        await run_agent(AcpAgent(config=config, model=model), use_unstable_protocol=True)
 
 
 def main(
     config_dir: Path | None = None,
     config: Config | None = None,
+    config_file: Path | None = None,
     debug: bool = False,
     model: str | None = None,
     http: bool = False,
@@ -957,6 +1092,7 @@ def main(
         agent_run(
             config_dir=config_dir,
             config=config,
+            config_file=config_file,
             debug=debug,
             model=model,
             http=http,
@@ -969,7 +1105,13 @@ def main(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config-dir", type=Path, default=None)
+    parser.add_argument("--config-file", type=Path, default=None)
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--model", type=str, default=None)
     args = parser.parse_args()
-    main(config_dir=args.config_dir, debug=args.debug, model=args.model)
+    main(
+        config_dir=args.config_dir,
+        config_file=args.config_file,
+        debug=args.debug,
+        model=args.model,
+    )

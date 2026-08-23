@@ -1,0 +1,17 @@
+# Dev override for the session-fork worktree: isolate ALL fork work from the
+# real crow.db (PLAN.md Phase 7). crow-3.db is a FRESH file created schema-v5
+# from scratch — no migration work mid-sprint. crow-2.db now holds the
+# MIGRATED copy of the live v4 crow.db (validated; user does the offline
+# rename to crow.db when no crow process is running).
+# MCP servers come from THIS worktree's `crow-cli mcp`.
+db_uri: ~/.agents/crow/crow-3.db
+mcpServers:
+  crow-mcp:
+    transport: stdio
+    command: uv
+    args:
+      - --project
+      - /home/thomas/src/crow-team/crow-cli-session-fork/crow-cli
+      - run
+      - crow-cli
+      - mcp

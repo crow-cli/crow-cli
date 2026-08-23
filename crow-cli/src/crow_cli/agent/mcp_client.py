@@ -1,18 +1,23 @@
 """
 MCP client setup and tool extraction.
 
-MCP servers are passed by the ACP client in new_session/load_session calls.
-We convert ACP MCP server objects to FastMCP clients.
+MCP servers are passed by the ACP client in new_session/load_session calls —
+the CLIENT owns tool supply; the agent has no builtin fallback. We convert
+ACP MCP server objects to FastMCP clients (and back, for the client side).
 """
 
 from logging import Logger
 from typing import Any
 
-from acp.schema import HttpMcpServer, McpServerStdio, SseMcpServer
+from acp.schema import (
+    EnvVariable,
+    HttpHeader,
+    HttpMcpServer,
+    McpServerStdio,
+    SseMcpServer,
+)
 from fastmcp import Client as MCPClient
 from fastmcp.client.transports import MCPConfigTransport
-
-from crow_cli.agent.configure import Config
 
 
 def acp_to_fastmcp_config(
@@ -72,49 +77,71 @@ def acp_to_fastmcp_config(
 def create_mcp_client_from_acp(
     mcp_servers: list[HttpMcpServer | SseMcpServer | McpServerStdio] | None,
     cwd: str,
-    builtin_config: dict[str, Any] | None,
     logger: Logger,
-) -> MCPClient:
+) -> tuple[dict[str, Any], MCPClient | None]:
     """
-    Create an MCP client from ACP client provided configurations or builtin config.
+    Create an MCP client from the servers the ACP client passed in.
+
+    The agent has NO builtin fallback — tool supply is owned by the client
+    (new_session/load_session mcpServers). An empty/missing list means the
+    session runs with zero tools.
 
     Args:
-        mcp_servers: List of MCP server configurations from ACP client (can be None or empty)
+        mcp_servers: MCP server configurations from the ACP client
         cwd: Working directory (passed to MCP tools)
-        builtin_config: FastMCP config dict with "mcpServers" key
 
     Returns:
-        FastMCP Client instance (must be used with async with)
+        (config dict, MCPClient | None) — client is None for zero servers.
     """
-    logger.info("create_mcp_client_from_acp called")
-    logger.info("  mcp_servers param: %s", mcp_servers)
-    logger.info("  builtin_config param: %s", builtin_config)
+    logger.info("create_mcp_client_from_acp: mcp_servers from client: %s", mcp_servers)
 
-    # Start with fallback config as base
-    config: dict[str, Any] = (
-        dict(builtin_config) if builtin_config else {"mcpServers": {}}
-    )
-    logger.info("  base config after builtin: %s", config)
-
-    # Convert any ACP mcp_servers and merge into config
+    config: dict[str, Any] = {"mcpServers": {}}
     if mcp_servers:
-        acp_config = acp_to_fastmcp_config(mcp_servers, logger=logger)
-        logger.info("  acp_config converted: %s", acp_config)
-        config["mcpServers"].update(acp_config["mcpServers"])
-        logger.info("  config after merging acp: %s", config)
+        config = acp_to_fastmcp_config(mcp_servers, logger=logger)
 
-    # Add cwd to each server config
-    for name, server_config in config["mcpServers"].items():
+    for server_config in config["mcpServers"].values():
         server_config["cwd"] = cwd
-        logger.info("  server '%s' env: %s", name, server_config.get("env"))
 
-    logger.info("  final config (before transport): %s", config)
     if not config.get("mcpServers"):
-        raise ValueError("No MCP servers defined in the config")
+        logger.info("create_mcp_client_from_acp: no MCP servers -> zero tools")
+        return config, None
 
-    logger.info(f"Creating MCP client with {len(config['mcpServers'])} server(s)")
+    logger.info("Creating MCP client with %d server(s)", len(config["mcpServers"]))
     transport = MCPConfigTransport(config, name_as_prefix=False)
     return config, MCPClient(transport)
+
+
+def fastmcp_config_to_acp_servers(
+    mcp_servers: dict[str, Any] | None,
+) -> list[McpServerStdio | HttpMcpServer | SseMcpServer]:
+    """
+    Convert a FastMCP-format mcpServers dict (config.yaml shape) into ACP MCP
+    server objects. Inverse of acp_to_fastmcp_config — used by the client to
+    hand its MCP configuration to the agent over ACP.
+    """
+    servers: list[McpServerStdio | HttpMcpServer | SseMcpServer] = []
+    for name, cfg in (mcp_servers or {}).items():
+        transport = cfg.get("transport", "stdio")
+        if transport == "stdio":
+            servers.append(
+                McpServerStdio(
+                    name=name,
+                    command=cfg["command"],
+                    args=list(cfg.get("args") or []),
+                    env=[
+                        EnvVariable(name=k, value=str(v))
+                        for k, v in (cfg.get("env") or {}).items()
+                    ],
+                )
+            )
+        elif transport in ("http", "sse"):
+            headers = [
+                HttpHeader(name=k, value=str(v))
+                for k, v in (cfg.get("headers") or {}).items()
+            ]
+            cls = HttpMcpServer if transport == "http" else SseMcpServer
+            servers.append(cls(name=name, url=cfg["url"], headers=headers, type=transport))
+    return servers
 
 
 def create_mcp_client_from_config(config: dict[str, Any]) -> MCPClient:
@@ -132,21 +159,18 @@ def create_mcp_client_from_config(config: dict[str, Any]) -> MCPClient:
     return MCPClient(config)
 
 
-async def get_tools(mcp_client: MCPClient) -> list[dict[str, Any]]:
+async def get_tools(mcp_client: MCPClient | None) -> list[dict[str, Any]]:
     """
     Extract tools from an MCP client.
 
-    Strips the 'crow-mcp_' prefix from tool names to normalize them
-    (e.g., 'crow-mcp_read' -> 'read'). This ensures consistent tool
-    naming regardless of whether MCP servers are passed from a client
-    or loaded from the fallback config.
-
     Args:
-        mcp_client: Connected MCP client
+        mcp_client: Connected MCP client (None -> zero tools)
 
     Returns:
         List of tool definitions in OpenAI format
     """
+    if mcp_client is None:
+        return []
     tools_result = await mcp_client.list_tools()
     tools = []
     for t in tools_result:

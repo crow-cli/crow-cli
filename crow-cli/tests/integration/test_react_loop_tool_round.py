@@ -19,7 +19,7 @@ from types import SimpleNamespace
 
 from acp.schema import UsageUpdate
 
-from crow_cli.agent.configure import LLModel, LLMProvider
+from crow_cli.config import LLModel, LLMProvider
 from crow_cli.agent.react import react_loop
 from crow_cli.agent.session import AgentSession
 

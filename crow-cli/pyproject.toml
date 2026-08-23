@@ -6,23 +6,23 @@ readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
     "agent-client-protocol[http]>=0.12.0,<0.13.0",
-    "crow-memory==0.1.34",
     "hypercorn>=0.17",
     "coolname>=2.2.0",
     "directory-tree>=1.0.0",
     "docker>=7.2.0",
-    "fastmcp>=2.14.5",
+    "fastmcp>=3.4.2",
     "httpx>=0.28.1",
     "jinja2>=3.1.6",
+    "markdownify>=0.14.0",
     "openai>=2.21.0",
+    "opencv-python>=4.13.0.92",
+    "pydantic>=2.12.5",
     "pyyaml>=6.0.3",
+    "readabilipy>=0.3.0",
     "rich>=14.3.3",
+    "sqlalchemy>=2.0",
     "typer>=0.24.1",
 ]
-
-[tool.uv.sources]
-crow-memory = { path = "../crow-memory", editable = true }
-
 
 [project.urls]
 Homepage = "https://github.com/crow-cli/crow-cli"

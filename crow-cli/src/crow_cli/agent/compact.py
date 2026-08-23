@@ -17,7 +17,8 @@ from logging import Logger
 
 from openai import AsyncOpenAI
 
-from crow_cli.agent.configure import Config, sampling_params_for
+from crow_cli.config import Config, sampling_params_for
+from crow_cli.memory import build_agent_id
 from crow_cli.agent.session import (
     AgentSession,
     make_agent_session,
@@ -144,9 +145,9 @@ async def compact(
     if logger:
         logger.info(f"Compact usage: {usage}")
 
-    # 5. Create new agent record: same session_id, next agent_idx
+    # 5. Create new agent record: same session_id AND fork, next agent_idx
     new_agent_idx = original_agent_idx + 1
-    new_agent_id = f"{original_session_id}-{new_agent_idx}"
+    new_agent_id = build_agent_id(original_session_id, new_agent_idx, session.fork_idx)
     new_session = await make_agent_session(
         config,
         session.tools,
@@ -154,6 +155,7 @@ async def compact(
         session.cwd,
         session_id=original_session_id,
         agent_idx=new_agent_idx,
+        fork_idx=session.fork_idx,
     )
 
     last_msgs = last_messages(session)

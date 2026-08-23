@@ -154,7 +154,7 @@ Run the unit tests — fast and hermetic, no services required (unit tests that 
 uv run --project crow-cli pytest crow-cli/tests/unit
 ```
 
-The persistence layer itself lives in the `crow-memory` package and is tested in `crow-memory/tests/test_store.py`. Integration and end-to-end tiers are opt-in:
+The persistence layer itself lives in `crow_cli/memory` and is tested in `crow-cli/tests/memory/test_store.py`. Integration and end-to-end tiers are opt-in:
 
 ```bash
 uv run --project crow-cli pytest crow-cli/tests --run-integration   # spawn the agent
@@ -164,9 +164,10 @@ uv run --project crow-cli pytest crow-cli/tests --run-e2e           # live LLM c
 ## Project layout
 
 ```
-crow-cli/               the agent — ACP server, ReAct loop, CLI
-crow-mcp/               built-in MCP tool server
-crow-memory/            shared SQL persistence (sqlite default, postgres-ready)
+src/crow_cli/           the agent — ACP server, ReAct loop, CLI
+src/crow_cli/config/    config loading, defaults, overrides (shared by every layer)
+src/crow_cli/mcp/       built-in MCP tool server (`crow-cli mcp`)
+src/crow_cli/memory/    shared SQL persistence (sqlite default, postgres-ready)
 ```
 
 ## License

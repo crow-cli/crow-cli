@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from crow_cli.agent.configure import Config
+from crow_cli.config import Config
 from crow_cli.agent.memory import AgentRecord, MemoryServiceError, PromptRecord
 
 
@@ -65,12 +65,14 @@ class FakeMemoryClient:
         return PromptRecord.from_dict(self._prompts[prompt_id])
 
     # ---- agents ----
-    async def create_agent(self, *, agent_id, session_id, agent_idx=1, cwd="/tmp",
+    async def create_agent(self, *, agent_id, session_id, agent_idx=1,
+                     fork_idx=1, forked_at=None, cwd="/tmp",
                      prompt_id=None, prompt_args=None, system_prompt="",
                      tool_definitions=None, request_params=None,
                      model_identifier="", **kwargs) -> AgentRecord:
         self._agents[agent_id] = {
             "agent_id": agent_id, "session_id": session_id, "agent_idx": agent_idx,
+            "fork_idx": fork_idx, "forked_at": forked_at,
             "cwd": cwd, "prompt_id": prompt_id or "", "prompt_args": prompt_args or {},
             "system_prompt": system_prompt, "tool_definitions": tool_definitions or [],
             "request_params": request_params or {}, "model_identifier": model_identifier,
@@ -94,8 +96,13 @@ class FakeMemoryClient:
             if session_id is None or a["session_id"] == session_id
         ]
 
-    async def get_max_agent_idx(self, session_id: str) -> int:
-        idxs = [a["agent_idx"] for a in self._agents.values() if a["session_id"] == session_id]
+    async def get_max_agent_idx(self, session_id: str, fork_idx: int | None = 1) -> int:
+        idxs = [
+            a["agent_idx"]
+            for a in self._agents.values()
+            if a["session_id"] == session_id
+            and (fork_idx is None or a.get("fork_idx", 1) == fork_idx)
+        ]
         return max(idxs) if idxs else -1
 
     async def list_sessions(self, limit: int = 50, offset: int = 0) -> list[dict]:
@@ -117,7 +124,7 @@ class FakeMemoryClient:
 def memory_service(monkeypatch):
     """Patch the persistence client with the in-memory fake; reset per test.
 
-    Persistence itself is tested in crow-memory/tests/test_store.py. crow-cli
+    Persistence itself is tested in tests/memory/test_store.py. crow-cli
     unit tests that touch sessions use this fake so they stay hermetic (no
     real db).
     """
@@ -228,7 +235,7 @@ def sample_workspace(tmp_path):
 #   tests/integration/  spawn the agent / real environment — opt-in
 #   tests/e2e/          make live LLM calls via the configured provider — opt-in
 #
-# Persistence itself is tested in crow-memory/tests/test_store.py (sqlite +
+# Persistence itself is tested in tests/memory/test_store.py (sqlite +
 # FTS5 + image extract/hydrate). The agent is fully decoupled from
 # persistence: it talks to MemoryClient, which owns the sqlite file.
 #

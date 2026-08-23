@@ -5,7 +5,7 @@ LLM (Large Language Model) utilities.
 import httpx
 from openai import AsyncOpenAI
 
-from crow_cli.agent.configure import LLMProvider
+from crow_cli.config import LLMProvider
 from logging import Logger
 from importlib.metadata import version
 

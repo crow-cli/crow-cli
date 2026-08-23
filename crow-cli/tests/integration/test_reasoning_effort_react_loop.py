@@ -9,7 +9,7 @@ temperature; otherwise the model's per-model temperature applies.
 
 import logging
 
-from crow_cli.agent.configure import LLModel
+from crow_cli.config import LLModel
 from crow_cli.agent.react import react_loop
 from crow_cli.agent.session import AgentSession
 

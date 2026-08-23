@@ -1,7 +1,7 @@
 """Unit tests for session helpers.
 
 The session/persistence contract (create/load/add_message round-trips) is
-tested in crow-memory/tests/test_store.py, which owns the storage layer.
+tested in tests/memory/test_store.py, which owns the storage layer.
 Here we cover the pure helpers and the cancellation-persistence contract
 (thinking-only turns must survive), the latter against the in-memory fake
 client.

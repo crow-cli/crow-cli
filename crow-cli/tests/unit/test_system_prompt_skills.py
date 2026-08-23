@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from crow_cli.agent.default.defaults import SYSTEM_PROMPT
+from crow_cli.config.default.defaults import SYSTEM_PROMPT
 from crow_cli.agent.prompt import render_template
 
 SKILLS_URL = "https://crow-ai.dev/llms.txt"

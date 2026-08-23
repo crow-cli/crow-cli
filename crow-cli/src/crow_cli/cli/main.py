@@ -8,15 +8,16 @@ from pathlib import Path
 from typing import Any
 
 import typer
-import yaml
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from crow_cli.agent.configure import Config
+from crow_cli.config import Config, apply_config_overrides
 from crow_cli.agent.main import main as agent_main
-from crow_cli.agent.memory import MemoryServiceError
+from crow_cli.agent.mcp_client import fastmcp_config_to_acp_servers
+from crow_cli.memory import build_agent_id
+from crow_cli.agent.memory import MemoryClient, MemoryServiceError
 from crow_cli.agent.session import AgentSession
 from crow_cli.cli.init_cmd import init_command
 from crow_cli.cli.install import app as install_app
@@ -97,28 +98,7 @@ def run_agentmain(
         config_dir = Path.home() / ".agents" / "crow"
 
     config = Config.load(config_dir=config_dir)
-
-    if config_file and config_file.exists():
-        with open(config_file) as f:
-            overrides = yaml.safe_load(f) or {}
-        if "system_prompt_path" in overrides:
-            config.system_prompt_path = Path(os.path.expanduser(overrides["system_prompt_path"]))
-        if "skills_dir" in overrides:
-            config.skills_dir = os.path.expanduser(overrides["skills_dir"])
-        if "db_uri" in overrides or "memory_path" in overrides:
-            from crow_memory import normalize_db_uri
-
-            config.db_uri = normalize_db_uri(overrides.get("db_uri") or overrides["memory_path"])
-        if "max_retries_per_step" in overrides:
-            config.max_retries_per_step = int(overrides["max_retries_per_step"])
-        if "MAX_COMPACT_TOKENS" in overrides:
-            config.MAX_COMPACT_TOKENS = int(overrides["MAX_COMPACT_TOKENS"])
-        if "MAX_TOKENS" in overrides:
-            config.MAX_TOKENS = int(overrides["MAX_TOKENS"])
-        if "chunk_log" in overrides:
-            config.chunk_log = bool(overrides["chunk_log"])
-        if "mcpServers" in overrides:
-            config.mcp_servers = overrides["mcpServers"]
+    config = apply_config_overrides(config, config_file)
 
     if system_prompt_path:
         config.system_prompt_path = system_prompt_path
@@ -127,6 +107,24 @@ def run_agentmain(
         config.chunk_log = True
 
     agent_main(config=config, model=model, http=http, host=host, port=port)
+
+
+@app.command("mcp")
+def run_mcp(
+    transport: str = typer.Option(
+        "stdio",
+        "--transport",
+        help="stdio = spawned child (default); http = streamable HTTP service",
+    ),
+    host: str = typer.Option("127.0.0.1", "--host", help="bind address for the HTTP transport"),
+    port: int = typer.Option(2769, "--port", help="port for the HTTP transport"),
+):
+    """Serve Crow's MCP tools — stdio child (default) or streamable HTTP."""
+    # Lazy import: registering the tools pulls in every tool module (incl.
+    # opencv); don't pay that for unrelated commands.
+    from crow_cli.mcp.server.main import serve
+
+    serve(transport, host, port)
 
 
 @app.command("init")
@@ -183,12 +181,17 @@ def inspect_db(
     messages: bool = typer.Option(False, "--messages", "-m", help="Show messages"),
     limit: int = typer.Option(20, "--limit", "-l", help="Limit number of rows"),
     json_output: bool = typer.Option(False, "--json", "-j", help="Output as JSON"),
+    include_forks: bool = typer.Option(
+        False,
+        "--include-forks",
+        help="Fold fork agents into counts/listings (hidden by default)",
+    ),
 ):
     """Inspect Crow sessions — state, messages, etc."""
-    asyncio.run(_inspect_db(session_id, messages, limit, json_output))
+    asyncio.run(_inspect_db(session_id, messages, limit, json_output, include_forks))
 
 
-async def _inspect_db(session_id, messages, limit, json_output):
+async def _inspect_db(session_id, messages, limit, json_output, include_forks=False):
     if session_id:
         # Use existing AgentSession methods to get the latest agent for this session
         max_idx = await AgentSession.get_max_agent_idx(session_id)
@@ -199,7 +202,7 @@ async def _inspect_db(session_id, messages, limit, json_output):
                 client._console.print(f"[red]Session '{session_id}' not found[/red]")
             raise SystemExit(1)
 
-        agent_id = f"{session_id}-{max_idx}"
+        agent_id = build_agent_id(session_id, max_idx)
         session_obj = await AgentSession.load(agent_id)
 
         session_data = {
@@ -209,6 +212,14 @@ async def _inspect_db(session_id, messages, limit, json_output):
             "model_identifier": session_obj.model_identifier,
             "agent_idx": session_obj.agent_idx,
         }
+        if include_forks:
+            # Fork ids never appear unless explicitly asked for.
+            mc = MemoryClient()
+            try:
+                agents = await mc.list_agents(session_id)
+            finally:
+                await mc.close()
+            session_data["forks"] = [a.agent_id for a in agents if a.fork_idx > 1]
 
         msgs_data = []
         if messages:
@@ -243,7 +254,9 @@ async def _inspect_db(session_id, messages, limit, json_output):
     else:
         # List all sessions, most-recently-active first.
         try:
-            sessions_list = await AgentSession.list_sessions(limit=limit)
+            sessions_list = await AgentSession.list_sessions(
+                limit=limit, include_forks=include_forks
+            )
         except MemoryServiceError as e:
             if json_output:
                 print(json.dumps({"error": f"memory error: {e.detail}"}))
@@ -283,6 +296,190 @@ async def _inspect_db(session_id, messages, limit, json_output):
             client._console.print(
                 f"\n[dim]Use --session <id> --messages to inspect a specific session[/dim]"
             )
+
+
+# ============================================================================
+# Telemetry — the MCP query tools as CLI surfaces.
+# Same functions, two facades: the agent meets them as MCP tools
+# (list_sessions/query_memory/query_session), the human meets them here.
+# ============================================================================
+
+
+def _telemetry_db_override(config_file: Path | None) -> None:
+    """Point the memory store at the SAME db the rest of the CLI would use.
+
+    The store resolves CROW_DB_URI env -> config.yaml; --config-file must
+    win here exactly like it does for `run` (e.g. dev overrides pointing at
+    a fresh db).
+    """
+    if config_file is None:
+        return
+    config = apply_config_overrides(Config.load(), config_file)
+    os.environ["CROW_DB_URI"] = config.db_uri
+
+
+def _print_telemetry(result: str, raw: bool) -> None:
+    if raw:
+        print(result)
+    else:
+        from rich.markdown import Markdown
+
+        console.print(Markdown(result))
+
+
+def _content_mode(value: str):
+    from crow_cli.mcp.memory.main import ContentMode
+
+    try:
+        return ContentMode(value)
+    except ValueError:
+        choices = ", ".join(m.value for m in ContentMode)
+        console.print(f"[red]Invalid --mode '{value}' (one of: {choices})[/red]")
+        raise typer.Exit(1)
+
+
+@app.command("list-sessions")
+def cli_list_sessions(
+    limit: int = typer.Option(50, "--limit", "-l", help="Max sessions (cap 200)"),
+    offset: int = typer.Option(0, "--offset", help="Pagination offset"),
+    include_forks: bool = typer.Option(
+        False,
+        "--include-forks",
+        help="Fold fork agents into the listing (hidden by default)",
+    ),
+    config_file: Path = typer.Option(
+        None, "--config-file", "-o", help="YAML file with config values to override"
+    ),
+    raw: bool = typer.Option(
+        False, "--raw", help="Print the raw markdown instead of rendering it"
+    ),
+):
+    """List agent sessions, most-recently-active first (who's working now).
+
+    Same implementation as the list_sessions MCP tool."""
+    _telemetry_db_override(config_file)
+    from crow_cli.mcp.memory.main import list_sessions
+
+    result = asyncio.run(
+        list_sessions(limit=limit, offset=offset, include_forks=include_forks)
+    )
+    _print_telemetry(result, raw)
+
+
+@app.command("query-memory")
+def cli_query_memory(
+    query: str = typer.Argument(..., help="Search term"),
+    mode: str = typer.Option(
+        "conversation",
+        "--mode",
+        "-m",
+        help="conversation | with_thinking | with_tools | full",
+    ),
+    limit: int = typer.Option(20, "--limit", "-l", help="Max matches (cap 200)"),
+    offset: int = typer.Option(0, "--offset", help="Pagination offset"),
+    include_forks: bool = typer.Option(
+        False,
+        "--include-forks",
+        help="Include matches from fork agents' own rows (hidden by default)",
+    ),
+    config_file: Path = typer.Option(
+        None, "--config-file", "-o", help="YAML file with config values to override"
+    ),
+    raw: bool = typer.Option(
+        False, "--raw", help="Print the raw markdown instead of rendering it"
+    ),
+):
+    """Search conversation history ACROSS all sessions (BM25 discovery).
+
+    Same implementation as the query_memory MCP tool."""
+    _telemetry_db_override(config_file)
+    from crow_cli.mcp.memory.main import query_memory
+
+    result = asyncio.run(
+        query_memory(
+            query=query,
+            mode=_content_mode(mode),
+            limit=limit,
+            offset=offset,
+            include_forks=include_forks,
+        )
+    )
+    _print_telemetry(result, raw)
+
+
+@app.command("query-session")
+def cli_query_session(
+    session_id: str = typer.Argument(..., help="The session to read"),
+    query: str = typer.Option(None, "--query", "-q", help="Search within the session"),
+    agent_idx: int = typer.Option(
+        None, "--agent-idx", help="Narrow to one agent (default: all agents)"
+    ),
+    mode: str = typer.Option(
+        "conversation",
+        "--mode",
+        "-m",
+        help="conversation | with_thinking | with_tools | full",
+    ),
+    order: str = typer.Option(
+        "desc", "--order", help="desc = newest-first (default); asc = oldest-first"
+    ),
+    context: int = typer.Option(
+        0, "--context", "-C", help="Messages around each match (search only)"
+    ),
+    after: str = typer.Option(None, "--after", help="ISO datetime lower bound"),
+    before: str = typer.Option(None, "--before", help="ISO datetime upper bound"),
+    limit: int = typer.Option(
+        None, "--limit", "-l", help="Max messages (browse default 1, search 20; cap 200)"
+    ),
+    offset: int = typer.Option(0, "--offset", help="Pagination offset into the past"),
+    search_type: str = typer.Option(
+        "semantic", "--search-type", help="semantic (BM25) | keyword | both"
+    ),
+    include_forks: bool = typer.Option(
+        False,
+        "--include-forks",
+        help="Fold fork agents into the view (hidden by default)",
+    ),
+    config_file: Path = typer.Option(
+        None, "--config-file", "-o", help="YAML file with config values to override"
+    ),
+    raw: bool = typer.Option(
+        False, "--raw", help="Print the raw markdown instead of rendering it"
+    ),
+):
+    """Read or search one session's history across all its agents.
+
+    Browse (no --query) returns the tail by default; --query searches.
+    Same implementation as the query_session MCP tool."""
+    _telemetry_db_override(config_file)
+    from crow_cli.mcp.memory.main import SearchType, query_session
+
+    try:
+        st = SearchType(search_type)
+    except ValueError:
+        choices = ", ".join(s.value for s in SearchType)
+        console.print(
+            f"[red]Invalid --search-type '{search_type}' (one of: {choices})[/red]"
+        )
+        raise typer.Exit(1)
+
+    result = asyncio.run(
+        query_session(
+            session_id=session_id,
+            query=query,
+            agent_idx=agent_idx,
+            mode=_content_mode(mode),
+            order=order,
+            context=context,
+            after=after,
+            before=before,
+            limit=limit,
+            offset=offset,
+            search_type=st,
+            include_forks=include_forks,
+        )
+    )
+    _print_telemetry(result, raw)
 
 
 # ============================================================================
@@ -379,6 +576,19 @@ def run(
     session_id: str | None = typer.Option(
         None, "--session", "-s", help="Load existing session"
     ),
+    fork: bool = typer.Option(
+        False,
+        "--fork",
+        help="Spawn a FORK of -s/--session and run inside it (requires -s). "
+        "The fork shares the source's history (no copying) and persists under "
+        "its own three-part id, which is printed so you can continue it with -s.",
+    ),
+    fork_idx: int | None = typer.Option(
+        None,
+        "--fork-idx",
+        help="Continue existing fork N of -s/--session (requires -s). "
+        "Fork 1 is the trunk — plain -s already does that.",
+    ),
     cwd: str = typer.Option(os.getcwd(), "--cwd", "-c", help="Working directory"),
     verbose: bool = typer.Option(
         False, "--verbose", "-v", help="Enable verbose logging"
@@ -388,6 +598,12 @@ def run(
         "--config-dir",
         "-d",
         help="Configuration directory (default: ~/.agents/crow)",
+    ),
+    config_file: Path = typer.Option(
+        None,
+        "--config-file",
+        "-o",
+        help="YAML override file applied on top of the loaded config (forwarded to the agent)",
     ),
     model: str | None = typer.Option(
         None,
@@ -445,6 +661,25 @@ def run(
     That's the whole mechanism: delegate with `run -s`, read thoughts with
     query_session, verify artifacts on disk. No bespoke agent-to-agent protocol
     — just a shared database and a read query.
+
+    FORKS — branch a session's history without copying it:
+
+    1. Spawn a fork of a session and run inside it (the fork sees the whole
+       trunk history; the trunk never sees the fork):
+
+        crow-cli-dev run -s <session-id> --fork "what would you do differently?"
+
+    2. The fork persists under its own three-part id (printed on creation).
+       Continue it like any session:
+
+        crow-cli-dev run -s <session-id>-<agent-idx>-<fork-idx> "keep going"
+
+    3. Or continue fork N of a session directly:
+
+        crow-cli-dev run -s <session-id> --fork-idx 2 "keep going"
+
+    Forks are hidden from the telemetry surfaces (inspect, query_session,
+    query_memory, list_sessions) unless include_forks/--include-forks is set.
     """
     if verbose:
         logging.basicConfig(level=logging.DEBUG)
@@ -472,6 +707,18 @@ def run(
         prompt = sys.stdin.read()
 
     # Validate arguments
+    if fork and fork_idx is not None:
+        client._console.print(
+            "[red]Error: --fork and --fork-idx are mutually exclusive "
+            "(spawn a fork OR continue one)[/red]"
+        )
+        raise SystemExit(1)
+    if (fork or fork_idx is not None) and not session_id:
+        client._console.print(
+            "[red]Error: --fork/--fork-idx require -s/--session (the fork source)[/red]"
+        )
+        raise SystemExit(1)
+
     if not interactive and prompt is None:
         client._console.print(
             "[red]Error: Either provide a prompt or use -i for interactive mode[/red]"
@@ -485,7 +732,12 @@ def run(
         raise SystemExit(1)
 
     # Run the async main
-    asyncio.run(_run_async(prompt, interactive, session_id, cwd, config_dir, model, json_out))
+    asyncio.run(
+        _run_async(
+            prompt, interactive, session_id, cwd, config_dir, model, json_out,
+            config_file, fork=fork, fork_idx=fork_idx,
+        )
+    )
 
 
 def _emit_json(**event: Any) -> None:
@@ -500,6 +752,9 @@ async def _run_async(
     config_dir: Path | None = None,
     model: str | None = None,
     json_out: bool = False,
+    config_file: Path | None = None,
+    fork: bool = False,
+    fork_idx: int | None = None,
 ) -> None:
     """Async implementation of run command."""
     client._json_mode = json_out
@@ -515,23 +770,65 @@ async def _run_async(
             )
         )
 
+    # The CLIENT owns tool supply: load config here and hand our mcpServers
+    # to the agent in new_session/load_session (config.yaml -> FastMCP dict ->
+    # ACP server objects, the inverse of the agent's acp_to_fastmcp_config).
+    # `crow-cli mcp` rides along because it is an mcpServers entry like any
+    # other. Empty/absent mcpServers = the session runs with zero tools.
+    config = Config.load(config_dir)
+    apply_config_overrides(config, config_file)
+    mcp_servers = fastmcp_config_to_acp_servers(config.mcp_servers)
+    if not json_out:
+        client._console.print(
+            f"[cyan]MCP servers: {', '.join(s.name for s in mcp_servers) or '[dim]none — zero tools[/dim]'}[/cyan]"
+        )
+
     # Spawn agent
-    proc = await client.spawn_agent(cwd, config_dir, model=model)
+    proc = await client.spawn_agent(cwd, config_dir, model=model, config_file=config_file)
 
     try:
         # Connect
         conn = await connect_client(proc, client)
 
-        # Create or load session
-        if session_id:
+        # Create, fork, or load session
+        if fork:
+            # session/fork (UNSTABLE): the fork shares the source's history
+            # (prefix rows, never copied) and gets its own three-part wire id.
             if not json_out:
-                client._console.print(f"[cyan]Loading session: {session_id}[/cyan]")
-            await conn.load_session(session_id=session_id, mcp_servers=[], cwd=cwd)
-            actual_session_id = session_id
+                client._console.print(f"[cyan]Forking session: {session_id}[/cyan]")
+            forked = await conn.fork_session(
+                session_id=session_id, cwd=cwd, mcp_servers=mcp_servers
+            )
+            actual_session_id = forked.session_id
+            if not json_out:
+                client._console.print(f"[green]Fork created: {actual_session_id}[/green]")
+        elif session_id:
+            wire_id = session_id
+            if fork_idx is not None:
+                # Continue fork N: resolve its three-part wire id through the
+                # shared db. A fork shares its agent_idx with the trunk HEAD
+                # it was spawned from; trunk HEAD resolution follows fork 1.
+                mc = MemoryClient(path=config.db_uri, config_dir=config_dir)
+                try:
+                    max_agent = await mc.get_max_agent_idx(session_id)
+                finally:
+                    await mc.close()
+                if max_agent < 1:
+                    client._console.print(
+                        f"[red]Session '{session_id}' not found[/red]"
+                    )
+                    raise SystemExit(1)
+                wire_id = build_agent_id(session_id, max_agent, fork_idx)
+            if not json_out:
+                client._console.print(f"[cyan]Loading session: {wire_id}[/cyan]")
+            await conn.load_session(
+                session_id=wire_id, mcp_servers=mcp_servers, cwd=cwd
+            )
+            actual_session_id = wire_id
         else:
             if not json_out:
                 client._console.print("[cyan]Creating new session...[/cyan]")
-            session = await conn.new_session(mcp_servers=[], cwd=cwd)
+            session = await conn.new_session(mcp_servers=mcp_servers, cwd=cwd)
             actual_session_id = session.session_id
             if not json_out:
                 client._console.print(

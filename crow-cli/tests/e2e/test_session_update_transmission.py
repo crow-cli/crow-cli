@@ -30,7 +30,7 @@ def get_llm_client():
     provider, and fall back to the first configured provider.
     """
     try:
-        from crow_cli.agent.configure import Config
+        from crow_cli.config import Config
         from crow_cli.agent.llm import configure_llm
 
         config = Config.load()

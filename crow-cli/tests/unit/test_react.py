@@ -153,8 +153,10 @@ async def _send(llm, **kw):
 
 
 def test_session_from_agent_id():
-    assert session_from_agent_id("s-1") == "s"
-    assert session_from_agent_id("cool-name-3") == "cool-name"
+    # trunk routes to the bare session_id; a fork keeps its agent_id (wire id)
+    assert session_from_agent_id("s-1-1") == "s"
+    assert session_from_agent_id("cool-name-3-1") == "cool-name"
+    assert session_from_agent_id("cool-name-3-2") == "cool-name-3-2"
 
 
 def test_cancelled_tool_results_one_per_call():
@@ -349,7 +351,7 @@ async def test_malformed_tool_args_produce_error_result_and_repair_in_place():
         config=None,
         mcp_clients={},
         sessions={},
-        agent_id="s-1",
+        agent_id="s-1-1",
         tool_call_inputs=calls,
         logger=logger,
         hooks=[],
@@ -376,7 +378,7 @@ async def test_tool_exception_yields_error_result_and_failed_progress():
         config=None,
         mcp_clients={"s": ExplodingMCP()},
         sessions={},
-        agent_id="s-1",
+        agent_id="s-1-1",
         tool_call_inputs=[_tool_call("c1", "search", '{"q": "x"}')],
         logger=logger,
         hooks=[],
@@ -412,7 +414,7 @@ async def test_cancel_keeps_finished_results_and_fills_placeholders():
             config=None,
             mcp_clients={"s": OneThenHangMCP()},
             sessions={},
-            agent_id="s-1",
+            agent_id="s-1-1",
             tool_call_inputs=[
                 _tool_call("c1", "search", '{"q": "a"}'),
                 _tool_call("c2", "search", '{"q": "b"}'),

@@ -15,7 +15,7 @@ import httpx
 import pytest
 from openai import BadRequestError, AuthenticationError
 
-from crow_cli.agent.configure import Config, LLMConfig, LLMProvider, LLModel
+from crow_cli.config import Config, LLMConfig, LLMProvider, LLModel
 from crow_cli.agent.model_routing import (
     modalities_in_messages,
     route_model,

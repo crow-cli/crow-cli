@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from crow_cli.agent.configure import Config
+from crow_cli.config import Config
 
 logger = logging.getLogger(__name__)
 

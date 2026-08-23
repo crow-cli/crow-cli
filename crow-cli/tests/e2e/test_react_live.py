@@ -11,7 +11,7 @@ import logging
 
 import pytest
 
-from crow_cli.agent.configure import Config
+from crow_cli.config import Config
 from crow_cli.agent.react import react_loop
 from crow_cli.agent.session import make_agent_session
 
