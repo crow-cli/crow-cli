@@ -24,8 +24,6 @@ from crow_cli.agent.context import get_directory_tree
 
 from crow_cli.config import (
     AGENTS_DIR,
-    NOTES_DIR,
-    SKILLS_DIR,
     Config,
 )
 
@@ -488,25 +486,16 @@ def _read_agents_file(directory: str) -> str | None:
     return None
 
 
-def build_display_tree(cwd: str, skills_dir: str | Path | None = None) -> str:
+def build_display_tree(cwd: str) -> str:
     """Build the directory-tree context block shown to an agent.
 
-    Every agent sees the two shared workspaces — ``~/.agents/notes`` and
-    ``~/.agents/skills`` — because the edit tool no longer sandboxes to cwd, so
-    any agent can read and edit them. Agents working inside a real project also
-    get their own cwd tree. The notes agent (cwd == $HOME) is the exception: it
-    skips the cwd tree, since treeing $HOME is dominated by logs, the db, and
-    VSCode-extension noise.
+    Renders exactly one tree, rooted at cwd — even when cwd is $HOME. Mixing
+    the shared ``~/.agents`` workspaces into the tree made models join cwd to
+    entries that live elsewhere, producing 404 paths; skills stay discoverable
+    through the SKILLS catalog block instead. Returns ``""`` when the tree
+    cannot be generated, keeping the ``-> str`` contract.
     """
-    home = str(Path.home())
-    notes_dir = str(NOTES_DIR)
-    skills_dir = str(skills_dir or SKILLS_DIR)
-    trees = [get_directory_tree(notes_dir), get_directory_tree(skills_dir)]
-    if os.path.realpath(cwd) != os.path.realpath(home):
-        trees.append(get_directory_tree(cwd))
-    # Drop any tree that failed to generate (get_directory_tree returns "" in
-    # that case) so we don't emit stray blank sections.
-    return "\n\n".join(t for t in trees if t)
+    return get_directory_tree(cwd)
 
 
 def build_agents_content(cwd: str) -> str:
@@ -554,10 +543,10 @@ async def make_agent_session(
     )
     skills = get_skills(Path(config.skills_dir))
 
-    # Context blocks: the directory tree (notes + skills, plus cwd unless cwd
-    # is $HOME) and the persistent-memory AGENTS.md (global, plus the cwd's own
-    # when cwd is not $HOME). See build_display_tree / build_agents_content.
-    display_tree = build_display_tree(cwd, config.skills_dir)
+    # Context blocks: the directory tree (cwd only) and the persistent-memory
+    # AGENTS.md (global, plus the cwd's own when cwd is not $HOME).
+    # See build_display_tree / build_agents_content.
+    display_tree = build_display_tree(cwd)
     agents_content = build_agents_content(cwd)
     if session_id is None:
         session_id = get_coolname()

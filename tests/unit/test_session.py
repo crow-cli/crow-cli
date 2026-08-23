@@ -8,12 +8,15 @@ client.
 """
 
 import logging
+import os
+from pathlib import Path
 
 import pytest
 
 from crow_cli.agent.session import (
     AgentSession,
     _parse_frontmatter,
+    build_display_tree,
     get_skills,
     lookup_or_create_prompt,
 )
@@ -68,6 +71,48 @@ class TestGetSkills:
 
     def test_missing_dir_returns_empty(self, tmp_path):
         assert get_skills(tmp_path / "does-not-exist") == []
+
+
+class TestBuildDisplayTree:
+    """The system prompt shows exactly one tree, rooted at cwd — never the
+    shared ~/.agents workspaces, and no $HOME special case."""
+
+    def test_only_cwd_tree_is_rendered(self, tmp_path):
+        cwd = tmp_path / "project"
+        cwd.mkdir()
+        (cwd / "cwd_marker.txt").write_text("cwd")
+        (cwd / "src").mkdir()
+        (cwd / "src" / "main.py").write_text("")
+
+        # Workspace-style trees living OUTSIDE cwd must not leak into the
+        # output (this is what the old notes+skills+cwd rendering did).
+        for name, marker in (("notes", "notes_marker.md"), ("skills", "SKILL.md")):
+            ws = tmp_path / name
+            ws.mkdir()
+            (ws / marker).write_text("shared workspace")
+
+        tree = build_display_tree(str(cwd))
+        assert "cwd_marker.txt" in tree
+        assert "main.py" in tree
+        assert "notes_marker.md" not in tree
+        assert "SKILL.md" not in tree
+        # One tree block only — the old implementation joined notes/skills/cwd
+        # sections with blank lines.
+        assert "\n\n" not in tree
+
+    def test_cwd_equal_to_home_still_renders_cwd_tree(self, tmp_path, monkeypatch):
+        home = tmp_path / "home"
+        home.mkdir()
+        (home / "home_marker.txt").write_text("home")
+        monkeypatch.setenv("HOME", str(home))
+        # Precondition: cwd really is $HOME, the case the old code skipped.
+        assert os.path.realpath(str(home)) == os.path.realpath(Path.home())
+
+        tree = build_display_tree(str(home))
+        assert "home_marker.txt" in tree
+
+    def test_missing_cwd_returns_empty_string(self, tmp_path):
+        assert build_display_tree(str(tmp_path / "does-not-exist")) == ""
 
 
 class TestCancelledTurnPersistence:
