@@ -20,6 +20,7 @@ from typing import Annotated, Literal, Union
 
 from fastmcp import Context
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 
 import crow_cli.memory as cm
 from crow_cli.client.subagent import SubagentDriver
@@ -163,22 +164,36 @@ async def _watch(task_id: str, sub: str, text: str, engine) -> None:
         _LIVE.pop(sub, None)
 
 
+def _register_task(engine, owner: str, item: PromptItem) -> str:
+    """STATE FIRST: the running row exists before any ACP traffic, so a fast
+    completion can never outrun the record.
+
+    task-N numbering is GLOBAL — task_id is UNIQUE globally, so a per-owner
+    counter collides the moment a second session launches its first task.
+    The retry absorbs races (concurrent launches) and deleted-row gaps."""
+    n = count_tasks(engine) + 1
+    while True:
+        task_id = f"task-{n}"
+        try:
+            launch_task(
+                engine,
+                task_id=task_id,
+                owner_session=owner,
+                prompt=item.prompt,
+                model=item.model,
+                priority=item.priority,
+            )
+            return task_id
+        except IntegrityError:
+            n += 1
+
+
 async def _launch(engine, owner: str, item: PromptItem) -> str:
     cwd = os.getcwd()
-    task_id = f"task-{count_tasks(engine, owner) + 1}"
     # Phase 0 round trip: the child inherits the owner's client-defined
     # mcpServers — the [] cascade regression stops here.
     servers = get_session_mcp_servers(engine, owner)
-    # STATE FIRST: the running row exists before any ACP traffic, so a fast
-    # completion can never outrun the record.
-    launch_task(
-        engine,
-        task_id=task_id,
-        owner_session=owner,
-        prompt=item.prompt,
-        model=item.model,
-        priority=item.priority,
-    )
+    task_id = _register_task(engine, owner, item)
     driver = SubagentDriver()
     try:
         await driver.start(cwd, model=item.model, **_child_config())

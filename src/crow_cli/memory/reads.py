@@ -72,10 +72,14 @@ def task_by_sub_session(engine, sub_session: str) -> Task | None:
         )
 
 
-def count_tasks(engine, owner_session: str) -> int:
-    """Total tasks ever launched by a session — the task-N numbering."""
+def count_tasks(engine, owner_session: str | None = None) -> int:
+    """Total tasks ever launched — globally (the task-N numbering, whose
+    UNIQUE constraint is global) or by one session."""
     with Session(engine) as db:
-        return db.query(Task).filter_by(owner_session=owner_session).count()
+        query = db.query(Task)
+        if owner_session is not None:
+            query = query.filter_by(owner_session=owner_session)
+        return query.count()
 
 
 def running_tasks(engine, owner_session: str) -> list[Task]:
