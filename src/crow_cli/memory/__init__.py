@@ -17,12 +17,11 @@ agent_id = "{session_id}-{agent_idx}-{fork_idx}" is the primary key (all
 Search is SQLite FTS5 + bm25 (keyword). No embeddings, no service, no lance.
 
 Module map:
-    models    — ORM schema (Prompt, Agent, SessionMcpServers, Task,
-                TaskDelivery, Message)
+    models    — ORM schema (Prompt, Agent, Task, TaskDelivery, Message)
     ids       — agent_id build/parse (v5 three-part format)
     db        — db_uri normalization, engine factory, create_database
     messages  — image extract/hydrate, searchable text
-    writes    — add_message, create_agent, set_session_mcp_servers,
+    writes    — add_message, create_agent, set_agent_mcp_servers,
                 launch_task, finish_task, mark_delivered,
                 claim_deliveries, lookup_or_create_prompt
     reads     — queries, list_sessions, get_session_mcp_servers,
@@ -40,7 +39,6 @@ from .models import (
     Base,
     Message,
     Prompt,
-    SessionMcpServers,
     Task,
     TaskDelivery,
     now_iso,
@@ -69,7 +67,7 @@ from .writes import (
     launch_task,
     lookup_or_create_prompt,
     mark_delivered,
-    set_session_mcp_servers,
+    set_agent_mcp_servers,
 )
 
 __all__ = [
@@ -78,7 +76,6 @@ __all__ = [
     "Message",
     "Prompt",
     "Session",
-    "SessionMcpServers",
     "Task",
     "TaskDelivery",
     "add_message",
@@ -111,6 +108,6 @@ __all__ = [
     "query_messages",
     "running_tasks",
     "search_messages",
-    "set_session_mcp_servers",
+    "set_agent_mcp_servers",
     "wire_session_id",
 ]

@@ -33,7 +33,7 @@ from fastmcp import Client
 
 from crow_cli.memory.db import create_database, get_engine
 from crow_cli.memory.reads import get_task, pending_deliveries
-from crow_cli.memory.writes import set_session_mcp_servers
+from crow_cli.memory.writes import create_agent, set_agent_mcp_servers
 
 MODEL = "qwen3.8-max-preview"
 WORKTREE = "/home/thomas/src/crow-team/crow-cli-taskmaster"
@@ -190,9 +190,13 @@ async def test_owner_mcp_servers_pass_through(task_e2e):
     directive needs the terminal tool, which only exists if the crow-mcp
     round trip survived launch."""
     mcp, engine = task_e2e
-    set_session_mcp_servers(
+    # mcpServers ride the agents table: provision the owner's trunk row, then
+    # store the client's list on it (exactly what session/new does).
+    owner_agent = f"{OWNER}-1-1"
+    create_agent(engine, agent_id=owner_agent, session_id=OWNER, agent_idx=1, fork_idx=1)
+    set_agent_mcp_servers(
         engine,
-        OWNER,
+        owner_agent,
         [
             {
                 "name": "crow-mcp",

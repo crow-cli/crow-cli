@@ -13,6 +13,7 @@ from crow_cli.agent.memory import (
     MessageRecord,
     PromptRecord,
 )
+from crow_cli.memory.ids import parse_agent_id
 
 
 class FakeMemoryClient:
@@ -29,7 +30,6 @@ class FakeMemoryClient:
     _agents: dict = {}
     _messages: dict = {}
     _prompts: dict = {}
-    _session_mcp_servers: dict = {}
     _pid = [0]
 
     def __init__(self, base_url: str | None = None, *args, **kwargs):
@@ -40,7 +40,6 @@ class FakeMemoryClient:
         cls._agents.clear()
         cls._messages.clear()
         cls._prompts.clear()
-        cls._session_mcp_servers.clear()
         cls._pid[0] = 0
 
     async def close(self):
@@ -83,6 +82,7 @@ class FakeMemoryClient:
             "system_prompt": system_prompt, "tool_definitions": tool_definitions or [],
             "request_params": request_params or {}, "model_identifier": model_identifier,
             "status": "active", "created_at": "2026-01-01T00:00:00+00:00",
+            "mcp_servers": None,
         }
         self._messages.setdefault(agent_id, [])
         return AgentRecord.from_dict(self._agents[agent_id])
@@ -122,12 +122,30 @@ class FakeMemoryClient:
     async def list_sessions(self, limit: int = 50, offset: int = 0) -> list[dict]:
         return []
 
-    # ---- session mcp servers (task system round trip) ----
-    async def set_session_mcp_servers(self, session_id: str, servers: list) -> None:
-        type(self)._session_mcp_servers[session_id] = list(servers)
+    # ---- mcp servers (ride the agents table, like the real store) ----
+    async def set_agent_mcp_servers(self, agent_id: str, servers: list) -> None:
+        if agent_id not in self._agents:
+            raise MemoryServiceError(404, f"agent '{agent_id}' not found")
+        self._agents[agent_id]["mcp_servers"] = list(servers)
 
-    async def get_session_mcp_servers(self, session_id: str) -> list:
-        return list(type(self)._session_mcp_servers.get(session_id, []))
+    async def get_session_mcp_servers(self, wire_id: str) -> list:
+        try:
+            session_id, _, fork_idx = parse_agent_id(wire_id)
+        except ValueError:
+            session_id, fork_idx = wire_id, 1
+        chain = sorted(
+            (
+                a
+                for a in self._agents.values()
+                if a["session_id"] == session_id and a.get("fork_idx", 1) == fork_idx
+            ),
+            key=lambda a: a["agent_idx"],
+            reverse=True,
+        )
+        for a in chain:
+            if a.get("mcp_servers") is not None:
+                return list(a["mcp_servers"])
+        return []
 
     # ---- messages ----
     async def add_message(self, agent_id: str, message: dict, usage: dict | None = None) -> int:

@@ -1,9 +1,12 @@
 """Wiring: new/load/fork persist the client's mcpServers to sqlite.
 
 The round trip's agent side: whatever mcpServers the client hands over on
-session/new, session/load or fork must land in the session_mcp_servers
-table (wire JSON dicts, keyed by wire id) so the separate-process task
-tool can read them and pass them through to a delegated agent.
+session/new, session/load or fork must land on the session's agent row
+(wire JSON dicts) so the separate-process task tool can read them — via the
+wire session id — and pass them through to a delegated agent.
+
+Assertions go through the SAME read path the task tool uses
+(``get_session_mcp_servers(wire_id)``), not by poking storage internals.
 
 Transport isolation: the non-empty cases monkeypatch ONLY the MCP client
 factory (no real server subprocesses in unit tests); the empty-list cases
@@ -53,6 +56,11 @@ def agent(test_config):
     return a
 
 
+async def _read(memory_service, wire_id: str) -> list:
+    """The task tool's view: read the session's mcpServers by wire id."""
+    return await memory_service().get_session_mcp_servers(wire_id)
+
+
 class TestSerializer:
     def test_wire_dicts_parse_back_to_the_same_objects(self):
         wire = _mcp_servers_to_wire([STDIO, HTTP, SSE])
@@ -69,18 +77,18 @@ class TestNewSessionPersists:
     ):
         resp = await agent.new_session(cwd="/tmp", mcp_servers=[STDIO, HTTP])
 
-        stored = memory_service._session_mcp_servers[resp.session_id]
+        stored = await _read(memory_service, resp.session_id)
         assert stored == _mcp_servers_to_wire([STDIO, HTTP])
         # and what's stored parses back to exactly what the client sent
         assert WIRE_LIST.validate_python(stored) == [STDIO, HTTP]
 
     async def test_empty_list_is_explicitly_toolless(self, agent, memory_service):
         resp = await agent.new_session(cwd="/tmp", mcp_servers=[])
-        assert memory_service._session_mcp_servers[resp.session_id] == []
+        assert await _read(memory_service, resp.session_id) == []
 
     async def test_absent_list_persists_as_empty(self, agent, memory_service):
         resp = await agent.new_session(cwd="/tmp")
-        assert memory_service._session_mcp_servers[resp.session_id] == []
+        assert await _read(memory_service, resp.session_id) == []
 
 
 class TestLoadSessionPersists:
@@ -101,17 +109,18 @@ class TestLoadSessionPersists:
     async def test_load_overwrites_with_the_new_client_list(
         self, agent, memory_service, saved_session, no_transport
     ):
-        memory_service._session_mcp_servers[saved_session.session_id] = [
-            {"command": "old"}
-        ]
+        # Seed the row the way an earlier provisioning would have.
+        await memory_service().set_agent_mcp_servers(
+            saved_session.agent_id, [{"command": "old"}]
+        )
 
         resp = await agent.load_session(
             cwd="/tmp", session_id=saved_session.session_id, mcp_servers=[SSE]
         )
         assert resp is not None
-        assert memory_service._session_mcp_servers[
-            saved_session.session_id
-        ] == _mcp_servers_to_wire([SSE])
+        assert await _read(memory_service, saved_session.session_id) == (
+            _mcp_servers_to_wire([SSE])
+        )
 
 
 class TestForkSessionPersists:
@@ -139,7 +148,8 @@ class TestForkSessionPersists:
         resp = await agent.fork_session(
             session_id=saved_session.session_id, cwd="/tmp", mcp_servers=[]
         )
-        assert memory_service._session_mcp_servers[resp.session_id] == []
+        # a fork is addressed by its full agent_id on the wire
+        assert await _read(memory_service, resp.session_id) == []
 
     async def test_fork_inherits_parent_list_when_client_says_so(
         self, agent, memory_service, saved_session, no_transport
@@ -149,9 +159,9 @@ class TestForkSessionPersists:
             cwd="/tmp",
             mcp_servers=[STDIO],
         )
-        assert memory_service._session_mcp_servers[
-            resp.session_id
-        ] == _mcp_servers_to_wire([STDIO])
+        assert await _read(memory_service, resp.session_id) == (
+            _mcp_servers_to_wire([STDIO])
+        )
 
 
 class TestMemoryClientRealDb:
@@ -164,8 +174,16 @@ class TestMemoryClientRealDb:
         writer = MemoryClient(path=db_path, config_dir=test_config_dir)
         reader = MemoryClient(path=db_path, config_dir=test_config_dir)
 
+        # Storage rides the agents table: provision the row first.
+        await writer.create_agent(
+            agent_id="quick-zephyr-otter-1-1",
+            session_id="quick-zephyr-otter",
+            agent_idx=1,
+            fork_idx=1,
+        )
+
         wire = _mcp_servers_to_wire([STDIO, HTTP])
-        await writer.set_session_mcp_servers("quick-zephyr-otter", wire)
+        await writer.set_agent_mcp_servers("quick-zephyr-otter-1-1", wire)
         assert await reader.get_session_mcp_servers("quick-zephyr-otter") == wire
         assert await reader.get_session_mcp_servers("never-seen") == []
 

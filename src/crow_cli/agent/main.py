@@ -143,7 +143,7 @@ def _mcp_servers_to_wire(mcp_servers: list | None) -> list[dict]:
 
     The stored dicts are exactly what a subagent's session/new
     receives: the task tool (a separate MCP server process) reads them from
-    the session_mcp_servers table and passes them through unchanged.
+    the agents table and passes them through unchanged.
     """
     return [s.model_dump(mode="json", exclude_none=True) for s in (mcp_servers or [])]
 
@@ -499,8 +499,8 @@ class AcpAgent(Agent):
         # Task system round trip: the separate-process task tool reads the
         # parent's client-defined mcpServers from sqlite to pass them
         # through to the subagent's session/new.
-        await session.client.set_session_mcp_servers(
-            session.session_id, _mcp_servers_to_wire(mcp_servers)
+        await session.client.set_agent_mcp_servers(
+            session.agent_id, _mcp_servers_to_wire(mcp_servers)
         )
         self._cancel_events[session.session_id] = asyncio.Event()
         self._session_loggers[session.session_id] = setup_logger(
@@ -597,8 +597,8 @@ class AcpAgent(Agent):
             self._mcp_clients[session_id] = mcp_client
             self._tools[session_id] = tools
             self._ensure_delivery_watcher(session_id)
-            await session.client.set_session_mcp_servers(
-                session_id, _mcp_servers_to_wire(mcp_servers)
+            await session.client.set_agent_mcp_servers(
+                session.agent_id, _mcp_servers_to_wire(mcp_servers)
             )
             self._cancel_events[session_id] = asyncio.Event()
             self._session_loggers[session_id] = setup_logger(
@@ -712,8 +712,8 @@ class AcpAgent(Agent):
         self._mcp_clients[wire_id] = mcp_client
         self._tools[wire_id] = tools
         self._ensure_delivery_watcher(wire_id)
-        await session.client.set_session_mcp_servers(
-            wire_id, _mcp_servers_to_wire(mcp_servers)
+        await session.client.set_agent_mcp_servers(
+            session.agent_id, _mcp_servers_to_wire(mcp_servers)
         )
         self._cancel_events[wire_id] = asyncio.Event()
         self._session_loggers[wire_id] = setup_logger(

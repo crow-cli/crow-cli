@@ -47,27 +47,16 @@ class Agent(Base):
     prompt_args = Column(JSON, nullable=True)
     system_prompt = Column(Text, nullable=False, default="")
     tool_definitions = Column(JSON, nullable=False, default=list)
+    # Client-defined mcpServers (wire JSON dicts) for the session this agent
+    # belongs to, stored on the row that was provisioned with them.
+    # Cross-process coupling: a separate MCP server process (e.g. the task
+    # tool) reads them to pass through to a subagent's session/new.
+    # NULL = never supplied; [] = EXPLICITLY toolless.
+    mcp_servers = Column(JSON, nullable=True)
     request_params = Column(JSON, nullable=False, default=dict)
     model_identifier = Column(Text, nullable=False, default="")
     status = Column(Text, nullable=False, default="active")
     created_at = Column(Text, nullable=False, default=now_iso)
-
-
-class SessionMcpServers(Base):
-    """Client-defined mcpServers per session, persisted for cross-process reads.
-
-    MCP tools (e.g. the task tool that launches delegated agents) run in a
-    SEPARATE process from the ACP agent; the coupling between them is this
-    table, not in-process state. The agent writes whatever mcpServers the
-    client sent on session/new, session/load or fork (wire JSON dicts); the
-    tool process reads them to pass through to the child's session/new.
-    """
-
-    __tablename__ = "session_mcp_servers"
-
-    session_id = Column(Text, primary_key=True)
-    servers = Column(JSON, nullable=False, default=list)
-    updated_at = Column(Text, nullable=False, default=now_iso)
 
 
 class Task(Base):

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from .ids import parse_agent_id
 from .messages import extract_images, message_text
-from .models import Agent, Message, Prompt, SessionMcpServers, Task, TaskDelivery, now_iso
+from .models import Agent, Message, Prompt, Task, TaskDelivery, now_iso
 
 
 def add_message(
@@ -55,19 +55,19 @@ def create_agent(engine, **fields) -> None:
         db.commit()
 
 
-def set_session_mcp_servers(engine, session_id: str, servers: list) -> None:
-    """Upsert a session's client-defined mcpServers (wire JSON dicts).
+def set_agent_mcp_servers(engine, agent_id: str, servers: list) -> None:
+    """Store the client-defined mcpServers (wire JSON dicts) on the agent
+    row that was provisioned with them — no separate table.
 
     An explicit [] means EXPLICITLY toolless — it overwrites, it is not
-    'unknown'.
+    'unknown'. The row must already exist (it is created by the same
+    session/new, load or fork that carries the mcpServers).
     """
     with Session(engine) as db:
-        row = db.query(SessionMcpServers).filter_by(session_id=session_id).first()
+        row = db.query(Agent).filter_by(agent_id=agent_id).first()
         if row is None:
-            row = SessionMcpServers(session_id=session_id)
-            db.add(row)
-        row.servers = list(servers)
-        row.updated_at = now_iso()
+            raise ValueError(f"no agent row '{agent_id}' to store mcpServers on")
+        row.mcp_servers = list(servers)
         db.commit()
 
 

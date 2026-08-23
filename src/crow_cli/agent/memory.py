@@ -285,14 +285,14 @@ class MemoryClient:
 
     # ---- session mcp servers (task system round trip) ----
 
-    async def set_session_mcp_servers(self, session_id: str, servers: list) -> None:
-        """Persist the client-defined mcpServers for a session (wire JSON
-        dicts). Keyed by WIRE id, exactly like AcpAgent._session_mcp_servers.
+    async def set_agent_mcp_servers(self, agent_id: str, servers: list) -> None:
+        """Persist the client-defined mcpServers (wire JSON dicts) on the
+        agent row provisioned with them — storage rides the agents table.
         """
-        db.set_session_mcp_servers(self._engine, session_id, servers)
+        db.set_agent_mcp_servers(self._engine, agent_id, servers)
 
-    async def get_session_mcp_servers(self, session_id: str) -> list:
-        return db.get_session_mcp_servers(self._engine, session_id)
+    async def get_session_mcp_servers(self, wire_id: str) -> list:
+        return db.get_session_mcp_servers(self._engine, wire_id)
 
     async def list_sessions(
         self, limit: int = 50, offset: int = 0, include_forks: bool = False
