@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Literal, Union
 
+from fastmcp import Context
 from pydantic import BaseModel, Field
 
 import crow_cli.memory as cm
@@ -243,7 +244,7 @@ async def _cancel(engine, item: CancelTurn) -> str:
 
 
 @mcp.tool
-async def task(updates: list[TaskUpdate]) -> str:
+async def task(updates: list[TaskUpdate], ctx: Context) -> str:
     """Launch, re-prompt, or cancel background subagent sessions.
 
     updates is a list of items, each one of:
@@ -255,9 +256,13 @@ async def task(updates: list[TaskUpdate]) -> str:
     Launches are NON-BLOCKING: each item returns an ack immediately, and
     the subagent's result arrives later as a message in this session.
     """
-    owner = os.environ.get("CROW_SESSION_ID", "")
+    # Owner attribution rides the call's _meta, injected by the calling
+    # agent (execute_acp_task) — the Context param is filtered out of the
+    # LLM schema, so the model can neither see nor forge it.
+    meta = ctx.request_context.meta if ctx.request_context else None
+    owner = getattr(meta, "session_id", None) if meta else None
     if not owner:
-        return "error: CROW_SESSION_ID is not set — cannot attribute tasks"
+        return "error: no session_id in call meta — cannot attribute tasks"
     engine = _engine()
     acks: list[str] = []
     for item in updates:

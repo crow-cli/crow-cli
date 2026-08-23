@@ -45,6 +45,7 @@ from crow_cli.memory import parse_agent_id, wire_session_id
 from crow_cli.agent.tools import (
     execute_acp_edit,
     execute_acp_read,
+    execute_acp_task,
     execute_acp_terminal,
     execute_acp_tool,
     execute_acp_write,
@@ -765,6 +766,16 @@ async def _execute_tool_calls_inner(
                     args=arg_dict,
                     logger=logger,
                     snapshot_hooks=snapshot_hooks,
+                )
+            elif tool_name == "task":
+                result_content = await execute_acp_task(
+                    conn=conn,
+                    turn_id=turn_id,
+                    mcp_clients=mcp_clients,
+                    agent_id=agent_id,
+                    tool_call_id=llm_tool_call_id,
+                    args=arg_dict,
+                    logger=logger,
                 )
             else:
                 result_content = await execute_acp_tool(

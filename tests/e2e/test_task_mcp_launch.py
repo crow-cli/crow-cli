@@ -17,14 +17,19 @@ What this proves:
 Isolation: the tool writes state to a tmp db (CROW_DB_URI); the child
 gets a tmp config (CROW_CONFIG_FILE forwarded as --config-file) whose
 memory_path points at the SAME tmp db — tool and child couple through
-that file, exactly the production shape.
+that file, exactly the production shape. Owner attribution rides the
+call's _meta (injected by execute_acp_task in production; by this test
+directly), never the environment.
 """
 
 import asyncio
+import os
 import re
+import signal
 from pathlib import Path
 
 import pytest
+from fastmcp import Client
 
 from crow_cli.memory.db import create_database, get_engine
 from crow_cli.memory.reads import get_task, pending_deliveries
@@ -72,7 +77,6 @@ async def task_e2e(tmp_path, monkeypatch):
     cfg.write_text("\n".join(lines) + "\n")
 
     monkeypatch.setenv("CROW_DB_URI", uri)
-    monkeypatch.setenv("CROW_SESSION_ID", OWNER)
     monkeypatch.setenv("CROW_CONFIG_FILE", str(cfg))
 
     from crow_cli.mcp.server.app import mcp
@@ -90,9 +94,11 @@ async def task_e2e(tmp_path, monkeypatch):
     task_mod._LIVE.clear()
 
 
-async def _call(mcp, updates):
-    r = await mcp.call_tool("task", {"updates": updates})
-    return r.structured_content["result"]
+async def _call(mcp, updates, owner=OWNER):
+    async with Client(mcp) as client:
+        kwargs = {"meta": {"session_id": owner}} if owner else {}
+        r = await client.call_tool("task", {"updates": updates}, **kwargs)
+    return r.data
 
 
 async def _wait_terminal(engine, task_id, timeout=240):
@@ -247,3 +253,38 @@ async def test_cancel_with_follow_up(task_e2e):
     deliveries = pending_deliveries(engine, OWNER)
     assert len(deliveries) == 1
     assert "FOLLOWED UP" in deliveries[0].content
+
+
+async def test_child_crash_registers_failed(task_e2e):
+    """A child that dies mid-turn must register failed + deliver — never
+    hang. Kill -9 the subprocess; the watcher's prompt future breaks on
+    the dead transport and finish_task lands the failure."""
+    mcp, engine = task_e2e
+
+    import crow_cli.mcp.task.main as task_mod
+
+    ack = await _call(
+        mcp,
+        [
+            {
+                "action": "prompt",
+                "prompt": (
+                    "Write a 3000-word essay about the history of lighthouses. "
+                    "Take your time and be thorough."
+                ),
+                "model": MODEL,
+            }
+        ],
+    )
+    assert ack.startswith("launched task-1")
+    sub = await _wait_sub_session(engine, "task-1")
+    await asyncio.sleep(8)  # let the child get mid-turn
+
+    live = task_mod._LIVE[sub]
+    os.kill(live.driver.proc.pid, signal.SIGKILL)
+
+    task = await _wait_terminal(engine, "task-1", timeout=60)
+    assert task.status == "failed"
+    deliveries = pending_deliveries(engine, OWNER)
+    assert len(deliveries) == 1
+    assert "failed" in deliveries[0].content

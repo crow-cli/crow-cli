@@ -95,29 +95,57 @@ ONE commit (read back through a second engine); double-finish no-op;
 unknown-task no-op; mark_delivered drains in arrival order; priority rides
 both rows; mailboxes per-session.
 
-## Phase 3 — SubagentClient + the wake experiment
+## Phase 3 — client driver + task tool + live e2e — DONE 2026-08-23
 
-- 3.1 WAKE EXPERIMENT (the riskiest unknown, do it early): can an
-      AcpAgent emit a synthetic prompt round OUTSIDE any client
-      session/prompt — session/update user_message_chunk + agent chunks —
-      and have a RecordingClient record it exactly like a client-sent
-      turn? Current version never does this (the park lives INSIDE the
-      client's open prompt call — that's why the frontend thinks it sent
-      the message: the turn never ended). If spontaneous emission breaks
-      clients, fall back is documented in the test.
-- 3.2 SubagentClient in src/crow_cli/agent/subagent_client.py: spawn
-      `python -m crow_cli.agent.main` (pattern: CrowClient.spawn_agent +
-      connect_client in src/crow_cli/client/main.py,
-      use_unstable_protocol=True), initialize → session/new(cwd,
-      mcpServers from get_session_mcp_servers) → session/prompt.
-- 3.3 Watcher: owns the child's PromptResponse future; on resolution →
-      finish_task (STATE FIRST) → signal per priority/owner state.
-- 3.4 session/cancel through the client; child exit/crash paths register
-      failed/cancelled, never hang.
+Placement (user-corrected, verbatim): "IT PROBABLY SHOULD BE SPLIT
+INTELLIGENTLY BETWEEN CLIENT AND MCP" — client package owns the ACP
+machinery (headless, no state knowledge), mcp package owns the `task`
+tool (schema + sqlite coupling + dispatch), agent package gets NOTHING
+new. The two couple through sqlite, never in-process.
 
-Verified when: echo-style tests (no LLM — a scripted child agent or the
-real one with a canned model) cover launch, fast-finish, cancel, crash;
-the wake experiment records a synthetic round end to end.
+- 3.1 WAKE EXPERIMENT — DONE (de4e6596): `_run_internal_round` in
+      agent/main.py, synthetic round with NO client request; live-model
+      e2e green (tests/e2e/test_wake_experiment.py). Race sentinel
+      converted (150s, expects the hang) — flips into the regression at
+      Phase 6.1.
+- 3.2a CLIENT DRIVER — DONE (b139549e): src/crow_cli/client/subagent.py —
+      spawn_agent_process() free fn, HeadlessClient (swallows updates;
+      fs/permission = method_not_found), SubagentDriver (start/
+      new_session/load_session/prompt/cancel/close; terminal=False at
+      handshake). CrowClient.spawn_agent delegates to the shared spawn
+      fn — one spawn path.
+- 3.2b THE TASK TOOL — DONE (a6211824): src/crow_cli/mcp/task/main.py —
+      ONE `task` tool, `updates: list[PromptItem | CancelTurn]`
+      discriminated on action (Phase 1 models promoted). Launch: STATE
+      FIRST → driver start → session/new with the OWNER's mcpServers
+      passthrough (Phase 0 round trip consumed) → watcher. Re-prompt:
+      live mid-turn refuses; terminal row reopens + session/load (the
+      agent implements load, NOT resume). Cancel: driver.cancel() →
+      pending prompt resolves cancelled; optional follow-up reopens the
+      row and the watcher loop continues. New state fns:
+      set_task_sub_session, reopen_task, task_by_sub_session,
+      count_tasks (task-N numbering). Owner = CROW_SESSION_ID env
+      (injection is Phase 5.1); config context forwarded via
+      CROW_CONFIG_FILE/CROW_CONFIG_DIR. Registered in server/main.py.
+- 3.3 LIVE E2E — DONE (6d9316aa): tests/e2e/test_task_mcp_launch.py —
+      launch→completion (answer lands in the delivery), mcpServers
+      passthrough (child USES the passed-through terminal tool: date
+      output in its answer — [] cascade stays dead), cancel mid-turn,
+      cancel→follow-up (one delivery, follow-up answered). Isolation =
+      production shape: CROW_DB_URI for the tool, CROW_CONFIG_FILE
+      (same tmp db) for the child.
+- 3.4 CRASH PATH — DONE (this commit): SIGKILL the child mid-turn →
+      watcher's prompt future breaks on the dead transport → failed
+      status + delivery, never hangs (test_child_crash_registers_failed).
+
+Found en route (3.3): the SDK SILENTLY DROPS mcpServers request items
+that fail validation (a stdio dict missing the required env list
+vanished; the child came up toolless with no error anywhere). The driver
+now parses wire dicts item-by-item BEFORE sending (_parse_mcp_servers —
+loud failures, fills required-but-emptyable args/env); pinned by
+tests/unit/test_subagent_parse_servers.py. Also observed: a child that
+still carries DELEGATE_TOOL may delegate instead of using its
+passed-through tools — structurally resolved by Phase 5.3's deletion.
 
 ## Phase 4 — react loop: kill the hostage machinery, consult state
 
@@ -137,25 +165,29 @@ Verified when: integration tests cover all three arrival states
 (active-low, active-high, idle) with a controllable child; the old
 park/wake tests are deleted, not adapted.
 
-## Phase 5 — the `task` MCP tool + kill delegate.py
+## Phase 5 — session-context injection + kill delegate.py
 
-- 5.1 Session context: the crow MCP server process must know its parent
-      session id to read mcpServers/task state — implement + test the
-      chosen channel (candidate: env var injected at the per-session MCP
-      server spawn; the agent owns that spawn).
-- 5.2 `task` tool on the crow MCP server (fastmcp), schema from Phase 1,
-      body from Phases 2–3: PromptItem(None) → SubagentClient launch;
-      PromptItem(session_id) → resume/re-prompt; CancelTurnItem →
-      session/cancel (+ follow-up prompt). Returns per-session status
-      strings.
-- 5.3 DELETE src/crow_cli/agent/delegate.py, DELEGATE_TOOL imports, the
+(The `task` tool itself shipped in Phase 3.2b — it reads CROW_SESSION_ID
+/ CROW_CONFIG_FILE from its env; this phase builds the production
+channel that supplies them and deletes the machinery it replaces.)
+
+- 5.1 Session context: the agent spawns per-session stdio MCP servers
+      (agent/mcp_client.py create_mcp_client_from_acp) — inject
+      CROW_SESSION_ID (the owning wire session) + CROW_CONFIG_FILE/
+      CROW_CONFIG_DIR into their env at spawn, so the task tool inside
+      crow-mcp attributes tasks and forwards the right config to
+      children. Test the channel end to end.
+- 5.2 DELETE src/crow_cli/agent/delegate.py, DELEGATE_TOOL imports, the
       TaskRegistry in tasks.py (replaced by sqlite state). Nothing may
-      reference them afterward (rg comes back empty).
-- 5.4 System prompt delegation recipe rewritten for `task`.
+      reference them afterward (rg comes back empty). This also removes
+      the child's ability to delegate instead of using its passed-
+      through tools (observed in Phase 3.3).
+- 5.3 System prompt delegation recipe rewritten for `task` (launch =
+      PromptItem no session_id; checking on children = query_session;
+      cancel/re-prompt = CancelTurn / PromptItem with session_id).
 
-Verified when: unit/integration tests drive the tool through a real MCP
-client connection (fastmcp in-process client is fine); rg "delegate"
-finds no live code path.
+Verified when: rg "delegate" finds no live code path; an agent with
+crow-mcp launches a subagent through `task` with zero delegate code.
 
 ## Phase 6 — regression + live E2E + full suite
 

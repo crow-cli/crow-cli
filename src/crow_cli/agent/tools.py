@@ -56,7 +56,7 @@ def get_tool_kind(tool_name: str) -> ToolKind:
     """Map tool names to ACP ToolKind."""
     # Orchestration tools: exact-match first so the substring rules below don't
     # misclassify them (task_read->read, task_write->edit, send_prompt->execute).
-    if tool_name in ("send_prompt", "task_read", "task_write", "task_send"):
+    if tool_name in ("send_prompt", "task", "task_read", "task_write", "task_send"):
         return "other"
     # Common MCP tool patterns
     if tool_match(tool_name, ("read_file", "read", "view", "list_directory", "list")):
@@ -574,6 +574,85 @@ async def execute_acp_edit(
 
     except Exception as e:
         logger.error(f"Error executing edit: {e}", exc_info=True)
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(acp_tool_call_id, status="failed"),
+        )
+        return f"Error: {str(e)}"
+
+
+async def execute_acp_task(
+    conn: Client,
+    turn_id: str,
+    mcp_clients: dict[str, MCPClient],
+    agent_id: str,
+    tool_call_id: str,
+    args: dict[str, Any],
+    logger: Logger,
+) -> str:
+    """
+    Execute the `task` tool with the calling session's wire id attached.
+
+    The MCP-side tool's Context param is filtered out of the LLM schema;
+    the model supplies only `updates`, and the owner session rides the
+    call's _meta — attribution passes through the function call, never
+    the environment, and the model can neither see nor forge it.
+
+    Args:
+        conn: ACP client connection
+        turn_id: Turn ID for ACP tool call IDs
+        mcp_clients: Per-session MCP clients
+        agent_id: Agent ID (internal key)
+        tool_call_id: LLM tool call ID
+        args: Tool arguments from LLM (updates)
+        logger: Logger instance
+
+    Returns:
+        Result string from the tool
+    """
+    session_id = route_to_session_id(agent_id)
+    acp_tool_call_id = f"{turn_id}/{tool_call_id}"
+    try:
+        await conn.session_update(
+            session_id=session_id,
+            update=ToolCallStart(
+                session_update="tool_call",
+                tool_call_id=acp_tool_call_id,
+                title="task",
+                kind="other",
+                status="pending",
+            ),
+        )
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(acp_tool_call_id, status="in_progress"),
+        )
+
+        logger.info(f"Executing task tool via MCP for session {session_id}")
+        mcp_client = mcp_clients.get(session_id)
+        if not mcp_client:
+            raise RuntimeError(f"No MCP client for session {session_id}")
+        result = await mcp_client.call_tool(
+            "task", args, meta={"session_id": session_id}
+        )
+
+        acp_content_blocks = mcp_content_to_acp_blocks(result.content)
+        result_content = mcp_content_to_openai_format(result.content)
+
+        status = "completed" if not getattr(result, "isError", False) else "failed"
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(
+                acp_tool_call_id,
+                status=status,
+                content=acp_content_blocks,
+            ),
+        )
+
+        return result_content
+
+    except Exception as e:
+        logger.error(f"Error executing task tool: {e}", exc_info=True)
         await conn.session_update(
             session_id=session_id,
             update=update_tool_call(acp_tool_call_id, status="failed"),
