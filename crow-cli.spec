@@ -19,6 +19,7 @@ a = Analysis(
       + copy_metadata('pyyaml')
       + copy_metadata('coolname')
       + copy_metadata('directory-tree')
+      + copy_metadata('crow-cli')
     ),
     hiddenimports=[
         'crow_cli',
