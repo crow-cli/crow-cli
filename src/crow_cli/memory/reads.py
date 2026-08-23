@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from .ids import build_agent_id, parse_agent_id
 from .messages import hydrate_message
-from .models import Agent, Message, Prompt, SessionMcpServers
+from .models import Agent, Message, Prompt, SessionMcpServers, Task, TaskDelivery
 
 
 def get_agent(engine, agent_id: str) -> Agent | None:
@@ -35,6 +35,32 @@ def get_session_mcp_servers(engine, session_id: str) -> list:
     with Session(engine) as db:
         row = db.query(SessionMcpServers).filter_by(session_id=session_id).first()
         return list(row.servers) if row is not None else []
+
+
+def get_task(engine, task_id: str) -> Task | None:
+    with Session(engine) as db:
+        return db.query(Task).filter_by(task_id=task_id).first()
+
+
+def running_tasks(engine, owner_session: str) -> list[Task]:
+    with Session(engine) as db:
+        return (
+            db.query(Task)
+            .filter_by(owner_session=owner_session, status="running")
+            .order_by(Task.created_at)
+            .all()
+        )
+
+
+def pending_deliveries(engine, session_id: str) -> list[TaskDelivery]:
+    """The session's undelivered completions, in ARRIVAL order."""
+    with Session(engine) as db:
+        return (
+            db.query(TaskDelivery)
+            .filter_by(session_id=session_id, status="pending")
+            .order_by(TaskDelivery.id)
+            .all()
+        )
 
 
 def get_max_agent_idx(engine, session_id: str, fork_idx: int | None = 1) -> int:

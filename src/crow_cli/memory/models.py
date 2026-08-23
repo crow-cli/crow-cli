@@ -70,6 +70,46 @@ class SessionMcpServers(Base):
     updated_at = Column(Text, nullable=False, default=now_iso)
 
 
+class Task(Base):
+    """One async task (Phase 1: subagents only). Status lives in sqlite,
+    not in a process — a completion is REGISTERED the moment it arrives,
+    which is what makes the old delegate hang structurally impossible."""
+
+    __tablename__ = "tasks"
+
+    task_id = Column(Text, primary_key=True)
+    kind = Column(Text, nullable=False, default="subagent")
+    owner_session = Column(Text, nullable=False, index=True)  # wire id
+    tool_call_id = Column(Text, nullable=True)
+    sub_session = Column(Text, nullable=True, index=True)  # child wire id
+    prompt = Column(Text, nullable=False, default="")
+    model = Column(Text, nullable=True)
+    priority = Column(Text, nullable=False, default="low")  # high | low
+    status = Column(Text, nullable=False, default="running")
+    result = Column(Text, nullable=True)
+    created_at = Column(Text, nullable=False, default=now_iso)
+    finished_at = Column(Text, nullable=True)
+
+
+class TaskDelivery(Base):
+    """Durable mailbox: completions land here THE MOMENT they arrive
+    (inserted in the SAME commit as the task's status flip). The agent
+    process drains it — at end-turn (held lows), on prompt start (idle
+    arrivals), or as cancel->prompt (high priority). Survives process
+    death."""
+
+    __tablename__ = "task_deliveries"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(Text, nullable=False, index=True)  # owner mailbox
+    task_id = Column(Text, nullable=False, index=True)
+    priority = Column(Text, nullable=False, default="low")
+    content = Column(Text, nullable=False)  # the synthetic message text
+    status = Column(Text, nullable=False, default="pending")  # pending|delivered
+    created_at = Column(Text, nullable=False, default=now_iso)
+    delivered_at = Column(Text, nullable=True)
+
+
 class Message(Base):
     """One row = One message; the message dict serialized into `data`."""
 

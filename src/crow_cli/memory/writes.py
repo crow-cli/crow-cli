@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from .ids import parse_agent_id
 from .messages import extract_images, message_text
-from .models import Agent, Message, Prompt, SessionMcpServers, now_iso
+from .models import Agent, Message, Prompt, SessionMcpServers, Task, TaskDelivery, now_iso
 
 
 def add_message(
@@ -68,6 +68,77 @@ def set_session_mcp_servers(engine, session_id: str, servers: list) -> None:
             db.add(row)
         row.servers = list(servers)
         row.updated_at = now_iso()
+        db.commit()
+
+
+def launch_task(
+    engine,
+    *,
+    task_id: str,
+    owner_session: str,
+    kind: str = "subagent",
+    tool_call_id: str | None = None,
+    sub_session: str | None = None,
+    prompt: str = "",
+    model: str | None = None,
+    priority: str = "low",
+) -> None:
+    """Register a launched task — the RUNNING state exists in sqlite from
+    launch time, so a fast completion can never outrun the record."""
+    with Session(engine) as db:
+        db.add(
+            Task(
+                task_id=task_id,
+                kind=kind,
+                owner_session=owner_session,
+                tool_call_id=tool_call_id,
+                sub_session=sub_session,
+                prompt=prompt,
+                model=model,
+                priority=priority,
+            )
+        )
+        db.commit()
+
+
+def finish_task(
+    engine,
+    task_id: str,
+    *,
+    result: str | None,
+    status: str = "completed",
+    content: str = "",
+) -> bool:
+    """STATE FIRST: flip the task to terminal AND land its delivery in the
+    owner's mailbox, in ONE commit. Idempotent — a task already terminal
+    (cancel racing completion, crash-retry) returns False and delivers
+    nothing a second time."""
+    with Session(engine) as db:
+        task = db.query(Task).filter_by(task_id=task_id).first()
+        if task is None or task.status != "running":
+            return False
+        task.status = status
+        task.result = result
+        task.finished_at = now_iso()
+        db.add(
+            TaskDelivery(
+                session_id=task.owner_session,
+                task_id=task_id,
+                priority=task.priority,
+                content=content,
+            )
+        )
+        db.commit()
+        return True
+
+
+def mark_delivered(engine, delivery_ids: list[int]) -> None:
+    with Session(engine) as db:
+        rows = db.query(TaskDelivery).filter(TaskDelivery.id.in_(delivery_ids)).all()
+        stamp = now_iso()
+        for row in rows:
+            row.status = "delivered"
+            row.delivered_at = stamp
         db.commit()
 
 
