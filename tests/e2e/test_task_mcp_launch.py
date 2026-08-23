@@ -10,9 +10,11 @@ What this proves:
 - mcpServers passthrough: the child inherits the owner's client-defined
   servers (Phase 0 round trip) and actually USES them — the [] cascade
   regression stays dead.
-- cancel: session/cancel mid-turn -> cancelled status + delivery.
-- cancel -> follow-up: the row reopens and the child answers the
-  follow-up in the same task.
+- cancel: SYNCHRONOUS — the ack returns only after the task row is
+  terminal, and NO delivery lands (the caller knows; it called cancel).
+- cancel -> re-prompt: the redirect workflow as two tool updates —
+  cancel, then a prompt with the same session_id. The SAME subagent
+  answers with its history intact.
 
 Isolation: the tool writes state to a tmp db (CROW_DB_URI); the child
 gets a tmp config (CROW_CONFIG_FILE forwarded as --config-file) whose
@@ -231,6 +233,9 @@ async def test_owner_mcp_servers_pass_through(task_e2e):
 
 
 async def test_cancel_mid_turn(task_e2e):
+    """Cancel is SYNCHRONOUS: when the ack returns, the task row is
+    already terminal — and no delivery lands, because the caller is the
+    one who cancelled."""
     mcp, engine = task_e2e
     ack = await _call(
         mcp,
@@ -250,18 +255,19 @@ async def test_cancel_mid_turn(task_e2e):
     await asyncio.sleep(10)  # let the child get mid-turn
 
     ack = await _call(mcp, [{"action": "cancel", "session_id": sub}])
-    assert "cancel sent" in ack
+    assert ack.startswith("cancelled ")
 
-    task = await _wait_terminal(engine, "task-1", timeout=90)
+    # No wait: the ack is the guarantee.
+    task = get_task(engine, "task-1")
     assert task.status == "cancelled"
-    deliveries = pending_deliveries(engine, OWNER)
-    assert len(deliveries) == 1
-    assert "was cancelled" in deliveries[0].content
+    assert pending_deliveries(engine, OWNER) == []
 
 
-async def test_cancel_with_follow_up(task_e2e):
-    """CancelTurn + prompt: the cancel lands, the task row REOPENS, and
-    the child answers the follow-up in the same task — one delivery."""
+async def test_cancel_then_reprompt_same_session(task_e2e):
+    """The redirect workflow, end to end: launch a long task, cancel it
+    mid-turn, then re-prompt the SAME session_id. The same subagent
+    answers — with the history of the cancelled turn intact — and the
+    completion delivers exactly once."""
     mcp, engine = task_e2e
     ack = await _call(
         mcp,
@@ -269,7 +275,8 @@ async def test_cancel_with_follow_up(task_e2e):
             {
                 "action": "prompt",
                 "prompt": (
-                    "Write a 3000-word essay about the history of lighthouses. "
+                    "First tell me what 12 * 12 is (just the number), then "
+                    "write a 3000-word essay about the history of lighthouses. "
                     "Take your time and be thorough."
                 ),
                 "model": MODEL,
@@ -280,24 +287,33 @@ async def test_cancel_with_follow_up(task_e2e):
     sub = await _wait_sub_session(engine, "task-1")
     await asyncio.sleep(10)
 
+    ack = await _call(mcp, [{"action": "cancel", "session_id": sub}])
+    assert ack.startswith("cancelled ")
+    assert get_task(engine, "task-1").status == "cancelled"
+
+    # Redirect: a prompt with the same session_id re-attaches and reopens.
     ack = await _call(
         mcp,
         [
             {
-                "action": "cancel",
+                "action": "prompt",
+                "prompt": (
+                    "Stop the essay, it was just a test. Reply with exactly: "
+                    "REDIRECTED"
+                ),
                 "session_id": sub,
-                "prompt": "Reply with exactly: FOLLOWED UP",
             }
         ],
     )
-    assert "follow-up queued" in ack
+    assert "re-prompted task-1" in ack
 
     task = await _wait_terminal(engine, "task-1", timeout=120)
     assert task.status == "completed"
-    assert "FOLLOWED UP" in task.result
+    assert "REDIRECTED" in task.result
     deliveries = pending_deliveries(engine, OWNER)
     assert len(deliveries) == 1
-    assert "FOLLOWED UP" in deliveries[0].content
+    assert "REDIRECTED" in deliveries[0].content
+    assert "was cancelled" not in deliveries[0].content
 
 
 async def test_child_crash_registers_failed(task_e2e):

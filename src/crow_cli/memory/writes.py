@@ -112,7 +112,7 @@ def set_task_sub_session(engine, task_id: str, sub_session: str) -> None:
 
 
 def reopen_task(engine, task_id: str) -> bool:
-    """Terminal -> running again (re-prompt, or a cancel's follow-up).
+    """Terminal -> running again (re-prompt of an ended/cancelled session).
     False when the task is missing or ALREADY running — callers must not
     double-launch on one task row."""
     with Session(engine) as db:
@@ -152,6 +152,21 @@ def finish_task(
                 content=content,
             )
         )
+        db.commit()
+        return True
+
+
+def cancel_task(engine, task_id: str) -> bool:
+    """Flip a running task to cancelled with NO delivery — the cancel was
+    a synchronous tool call by the owner, so a "was cancelled" message in
+    its mailbox would just tell it what it did. Idempotent like
+    finish_task: an already-terminal task returns False."""
+    with Session(engine) as db:
+        task = db.query(Task).filter_by(task_id=task_id).first()
+        if task is None or task.status != "running":
+            return False
+        task.status = "cancelled"
+        task.finished_at = now_iso()
         db.commit()
         return True
 

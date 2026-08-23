@@ -22,7 +22,7 @@ Module map:
     db        — db_uri normalization, engine factory, create_database
     messages  — image extract/hydrate, searchable text
     writes    — add_message, create_agent, set_agent_mcp_servers,
-                launch_task, finish_task, mark_delivered,
+                launch_task, finish_task, cancel_task, mark_delivered,
                 claim_deliveries, lookup_or_create_prompt
     reads     — queries, list_sessions, get_session_mcp_servers,
                 get_task, running_tasks, pending_deliveries,

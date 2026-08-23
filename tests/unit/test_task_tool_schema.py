@@ -49,12 +49,12 @@ class PromptItem(BaseModel):
 
 
 class CancelTurn(BaseModel):
-    """session/cancel a running session mid-turn. The optional prompt sends
-    a follow-up right after the cancel, in the same tool call."""
+    """session/cancel a running session mid-turn. No follow-up argument —
+    redirecting is TWO updates: cancel, then a prompt with the same
+    session_id."""
 
     action: Literal["cancel"] = "cancel"
     session_id: str
-    prompt: str | None = None
 
 
 TaskUpdate = Annotated[Union[PromptItem, CancelTurn], Field(discriminator="action")]
@@ -72,7 +72,7 @@ def task_mcp():
         updates is a list of items, each either:
           - {"action": "prompt", "prompt": ..., "session_id": null}  launch
           - {"action": "prompt", "prompt": ..., "session_id": "..."}  re-prompt
-          - {"action": "cancel", "session_id": "...", "prompt": null} cancel
+          - {"action": "cancel", "session_id": "..."}                 cancel
         """
         return repr(updates)
 
@@ -114,15 +114,11 @@ class TestDiscriminatedUnion:
         "session_id": "swift-fox",
         "priority": "high",
     }
-    CANCEL_THEN_PROMPT = {
-        "action": "cancel",
-        "session_id": "swift-fox",
-        "prompt": "start over, but gently",
-    }
+    CANCEL = {"action": "cancel", "session_id": "swift-fox"}
 
     def test_all_three_shapes_parse(self):
         parsed = DISCRIMINATED_LIST.validate_python(
-            [self.LAUNCH, self.RE_PROMPT, self.CANCEL_THEN_PROMPT]
+            [self.LAUNCH, self.RE_PROMPT, self.CANCEL]
         )
         launch, re_prompt, cancel = parsed
         assert isinstance(launch, PromptItem) and launch.session_id is None
@@ -131,7 +127,17 @@ class TestDiscriminatedUnion:
         assert re_prompt.session_id == "swift-fox"
         assert re_prompt.priority == "high"
         assert isinstance(cancel, CancelTurn)
-        assert cancel.prompt == "start over, but gently"
+        assert cancel.session_id == "swift-fox"
+
+    def test_redirect_is_two_updates(self):
+        """The redirect workflow: cancel + a prompt to the SAME session.
+        Both parse, in order, as distinct variants."""
+        parsed = DISCRIMINATED_LIST.validate_python(
+            [self.CANCEL, self.RE_PROMPT]
+        )
+        assert isinstance(parsed[0], CancelTurn)
+        assert isinstance(parsed[1], PromptItem)
+        assert parsed[0].session_id == parsed[1].session_id
 
     def test_overlapping_payload_is_no_longer_ambiguous(self):
         """The ambiguous dict now REQUIRES a verdict via action."""
@@ -174,10 +180,11 @@ class TestFastMcpRoundTrip:
             {
                 "updates": [
                     {"action": "prompt", "prompt": "launch me"},
+                    {"action": "cancel", "session_id": "swift-fox"},
                     {
-                        "action": "cancel",
-                        "session_id": "swift-fox",
+                        "action": "prompt",
                         "prompt": "actually do this instead",
+                        "session_id": "swift-fox",
                     },
                 ]
             },

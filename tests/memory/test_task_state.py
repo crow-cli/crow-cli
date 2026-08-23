@@ -104,6 +104,25 @@ def test_finish_unknown_task_is_a_noop(tmp_path):
     assert finish_task(engine, "ghost", result="x", content="x") is False
 
 
+def test_cancel_flips_state_without_a_delivery(tmp_path):
+    """The caller CANCELLED — a mailbox message telling it so is noise.
+    cancel_task flips the row to terminal and lands NOTHING."""
+    from crow_cli.memory.writes import cancel_task
+
+    engine = get_engine(_uri(tmp_path))
+    launch_task(engine, task_id="task-1", owner_session="s")
+
+    assert cancel_task(engine, "task-1") is True
+    task = get_task(engine, "task-1")
+    assert task.status == "cancelled"
+    assert task.finished_at is not None
+    assert pending_deliveries(engine, "s") == []
+
+    # idempotent: already terminal
+    assert cancel_task(engine, "task-1") is False
+    assert cancel_task(engine, "ghost") is False
+
+
 def test_mark_delivered_drains_the_mailbox(tmp_path):
     engine = get_engine(_uri(tmp_path))
     launch_task(engine, task_id="task-1", owner_session="s")
