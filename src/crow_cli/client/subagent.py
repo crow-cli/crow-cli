@@ -116,6 +116,16 @@ class SubagentDriver:
         ns = await self.conn.new_session(cwd=cwd, mcp_servers=mcp_servers or [])
         return ns.session_id
 
+    async def load_session(
+        self, session_id: str, cwd: str, mcp_servers: list | None = None
+    ) -> None:
+        """Re-attach to an existing session (re-prompt after its turn
+        ended). The agent restores state from sqlite; no history is
+        emitted back to us."""
+        await self.conn.load_session(
+            cwd=cwd, session_id=session_id, mcp_servers=mcp_servers or []
+        )
+
     async def prompt(self, session_id: str, text: str) -> PromptResponse:
         return await self.conn.prompt(
             session_id=session_id, prompt=[text_block(text)]

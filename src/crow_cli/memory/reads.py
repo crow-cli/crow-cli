@@ -42,6 +42,23 @@ def get_task(engine, task_id: str) -> Task | None:
         return db.query(Task).filter_by(task_id=task_id).first()
 
 
+def task_by_sub_session(engine, sub_session: str) -> Task | None:
+    """The task that owns a child session (latest, if several re-opened)."""
+    with Session(engine) as db:
+        return (
+            db.query(Task)
+            .filter_by(sub_session=sub_session)
+            .order_by(Task.created_at.desc())
+            .first()
+        )
+
+
+def count_tasks(engine, owner_session: str) -> int:
+    """Total tasks ever launched by a session — the task-N numbering."""
+    with Session(engine) as db:
+        return db.query(Task).filter_by(owner_session=owner_session).count()
+
+
 def running_tasks(engine, owner_session: str) -> list[Task]:
     with Session(engine) as db:
         return (

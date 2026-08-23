@@ -148,3 +148,31 @@ def test_mailboxes_are_per_session(tmp_path):
 
     assert [d.content for d in pending_deliveries(engine, "session-a")] == ["for a"]
     assert [d.content for d in pending_deliveries(engine, "session-b")] == ["for b"]
+
+
+def test_set_sub_session_and_reopen_cycle(tmp_path):
+    """launch registers the row BEFORE the child exists; the sub session
+    id lands once session/new does; reopen flips terminal -> running for
+    re-prompts, and refuses to double-open a running task."""
+    from crow_cli.memory.reads import count_tasks, task_by_sub_session
+    from crow_cli.memory.writes import reopen_task, set_task_sub_session
+
+    engine = get_engine(_uri(tmp_path))
+    launch_task(engine, task_id="task-1", owner_session="owner")
+    assert get_task(engine, "task-1").sub_session is None
+
+    set_task_sub_session(engine, "task-1", "child-wire-id")
+    assert get_task(engine, "task-1").sub_session == "child-wire-id"
+    assert task_by_sub_session(engine, "child-wire-id").task_id == "task-1"
+    assert task_by_sub_session(engine, "no-such-session") is None
+    assert count_tasks(engine, "owner") == 1
+
+    # still running -> reopen refuses
+    assert reopen_task(engine, "task-1") is False
+    assert finish_task(engine, "task-1", result="done", content="d")
+    assert reopen_task(engine, "task-1") is True
+    task = get_task(engine, "task-1")
+    assert task.status == "running" and task.finished_at is None
+    # idempotent finish guard: already-terminal flip returned True once;
+    # a reopen does NOT re-deliver the old completion.
+    assert pending_deliveries(engine, "owner") != []

@@ -101,6 +101,30 @@ def launch_task(
         db.commit()
 
 
+def set_task_sub_session(engine, task_id: str, sub_session: str) -> None:
+    """Record the child's wire session id on the task row (after the
+    driver's session/new lands)."""
+    with Session(engine) as db:
+        task = db.query(Task).filter_by(task_id=task_id).first()
+        if task is not None:
+            task.sub_session = sub_session
+            db.commit()
+
+
+def reopen_task(engine, task_id: str) -> bool:
+    """Terminal -> running again (re-prompt, or a cancel's follow-up).
+    False when the task is missing or ALREADY running — callers must not
+    double-launch on one task row."""
+    with Session(engine) as db:
+        task = db.query(Task).filter_by(task_id=task_id).first()
+        if task is None or task.status == "running":
+            return False
+        task.status = "running"
+        task.finished_at = None
+        db.commit()
+        return True
+
+
 def finish_task(
     engine,
     task_id: str,
