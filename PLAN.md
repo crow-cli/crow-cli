@@ -151,25 +151,54 @@ tests/unit/test_subagent_parse_servers.py. Also observed: a child that
 still carries DELEGATE_TOOL may delegate instead of using its
 passed-through tools — structurally resolved by Phase 5.3's deletion.
 
-## Phase 4 — react loop: kill the hostage machinery, consult state
+## Phase 4 — react loop: kill the hostage machinery, consult state — DONE 2026-08-23
 
-- 4.1 Delete park_until_completion, wake queues, drain_dead, cancel_all
-      propagation; react exit condition returns to "model done" — then
-      the NEW end-turn check: pending low-priority deliveries registered
-      during this turn → inject as synthetic user messages, loop
+The loop CONSULTS STATE at natural breakpoints — no polling in-loop, no
+parking, no hostage. Completions register in sqlite (finish_task lands
+them in task_deliveries the moment they arrive); the loop looks at the
+mailbox at three points and the quiescent watcher covers the fourth.
+
+- 4.1 DONE. park_until_completion, wake queues, drain_dead,
+      synthetic_completion_message, cancel_all propagation — all gone
+      from react.py. End-turn check: consult_deliveries() claims ALL
+      pending deliveries → inject as synthetic user messages + loop
       continues; none → end_turn.
-- 4.2 Prompt-start drain: pending deliveries (idle arrivals) injected
-      before the first model call.
-- 4.3 High priority: owner-active delivery cancels the in-flight turn
-      (the prompt task), then a synthesized round delivers it
-      (cancel→prompt). Owner-idle: synthesized round at once.
-- 4.4 Parent cancel does NOT touch children (bg semantics).
+- 4.2 DONE. Prompt-start drain: consult_deliveries() before the first
+      model call — idle arrivals are known at prompt start.
+- 4.3 DONE (breakpoint form). After each tool batch:
+      consult_deliveries(high_only=True) — highs inject at the next
+      batch boundary, lows stay pending for end of turn. Cancelling a
+      mid-STREAM model response would need polling in the streaming
+      loop (rejected), so the batch boundary is the earliest injection
+      point; a high that lands while the session is idle wakes it at
+      once via the watcher (below).
+- 4.4 DONE. Parent cancel does NOT touch children — the react loop's
+      CancelledError handler persists history and re-raises; subagents
+      keep running, their completions still land in the mailbox, and
+      the model cancels them itself via task(CancelTurn) if it wants.
+- 4.5 DONE (the out-of-loop half). AcpAgent._delivery_watcher: one
+      asyncio task per session (started at provisioning, cancelled at
+      cleanup), polls every DELIVERY_POLL_S=2s. Session lock held
+      (active turn) → skip, the in-loop consults own that window.
+      Idle + pending → atomic claim, then _run_internal_round with the
+      joined delivery contents (Phase 3.1's wake). The claim is a
+      single UPDATE...RETURNING (claim_deliveries in memory/writes.py):
+      watcher vs in-loop consult can race for the same rows and each
+      delivery is still injected EXACTLY ONCE.
 
 Verified when: integration tests cover all three arrival states
 (active-low, active-high, idle) with a controllable child; the old
 park/wake tests are deleted, not adapted.
+Evidence: tests/integration/test_react_loop_tool_round.py
+(test_prompt_start_drains_idle_mailbox,
+test_low_delivery_held_to_end_of_turn — real sqlite mailbox, scripted
+LLM, real react_loop), tests/unit/test_delivery_watcher.py (wake,
+skip-while-active, idempotent ensure, no double claim),
+tests/memory/test_task_state.py (claim_deliveries: arrival order,
+priority filter, cross-engine no-double-claim). 418 passed in the fast
+tiers at this commit.
 
-## Phase 5 — kill delegate.py
+## Phase 5 — kill delegate.py — DONE 2026-08-23
 
 (The `task` tool shipped in Phase 3.2b and its session-context channel
 shipped with be2317db: owner attribution rides the tools/call _meta,
@@ -177,28 +206,54 @@ injected by execute_acp_task in the react loop — the LLM never sees it
 and cannot forge it. What remains is deleting the machinery `task`
 replaces.)
 
-- 5.1 DELETE src/crow_cli/agent/delegate.py, DELEGATE_TOOL imports, the
-      TaskRegistry in tasks.py (replaced by sqlite state). Nothing may
-      reference them afterward (rg comes back empty). This also removes
-      the child's ability to delegate instead of using its passed-
-      through tools (observed in Phase 3.3).
-- 5.2 System prompt delegation recipe rewritten for `task` (launch =
-      PromptItem no session_id; checking on children = query_session;
-      cancel/re-prompt = CancelTurn / PromptItem with session_id).
+- 5.1 DONE. DELETED src/crow_cli/agent/delegate.py and
+      src/crow_cli/agent/tasks.py; DELEGATE_TOOL imports, the
+      TaskRegistry, the _session_mcp_servers in-process map (sqlite's
+      session_mcp_servers row stays the cross-process authority), and
+      the registry/session_mcp_servers kwargs from react_loop +
+      execute_tool_calls + both react_loop call sites in agent/main.py.
+      Tests deleted: unit/test_delegate.py, unit/test_tasks.py,
+      e2e/test_delegate_live.py, e2e/test_delegate_true_e2e.py.
+- 5.2 DONE (no rewrite needed). The model-facing recipe was
+      DELEGATE_TOOL.description itself — it died with the file. The
+      `task` tool's own description in mcp/task/main.py is the recipe
+      now (launch = PromptItem no session_id; re-prompt = PromptItem
+      with session_id; cancel = CancelTurn, optional follow-up). No
+      system prompt carried a delegation section (checked
+      config/default/defaults.py's SYSTEM_PROMPT and the user's live
+      ~/.agents/crow/prompts/system_prompt.jinja2). CLI help text
+      updated: agents launch subagents via `task`; `run -s` is the
+      human attach recipe.
 
 Verified when: rg "delegate" finds no live code path; an agent with
 crow-mcp launches a subagent through `task` with zero delegate code.
+Evidence: rg delegate over src/ matches only docstrings/comments
+(models.py task-table history note, mcp/memory tool descriptions,
+mcp/task module docstring, mcp/editor "delegated to the OS"); zero
+imports of the deleted modules anywhere.
 
 ## Phase 6 — regression + live E2E + full suite
 
-- 6.1 tests/e2e/test_delegate_race_experiment.py rewritten as the
-      regression: fast child completes mid-parent-turn → registered in
-      state → delivered (low: end-turn injection; high: cancel→prompt) →
-      end_turn fires. The hang is structurally impossible: nothing waits
-      on unregistered work.
-- 6.2 Live E2E (qwen3.8-max-preview): launch two subagents via `task`,
-      one high one low priority; both completions arrive correctly;
-      cancel one mid-flight via CancelTurn.
+- 6.1 DONE. tests/e2e/test_delegate_race_experiment.py (the sentinel that
+      asserted the hang) rewritten + renamed
+      tests/e2e/test_task_race_regression.py: fast child completes
+      mid-parent-turn → registered in state → delivered (low: end-turn
+      injection) → end_turn fires. The hang is structurally impossible:
+      nothing waits on unregistered work. GREEN live (90s) against
+      qwen3.8-max-preview. Two e2e isolation lessons baked into it:
+      (a) the ACP SDK SILENTLY DROPS mcpServers items that fail schema
+      validation — stdio needs name/command/args AND env (a list of
+      {name,value}); (b) the mcp stdio spawn gives the child ONLY
+      {**get_default_environment(), **server.env} — NOTHING is inherited
+      from the agent process, so db/config isolation must ride the wire
+      env (CROW_DB_URI / CROW_CONFIG_FILE), which the task tool then
+      forwards to the child it launches.
+- 6.2 Live E2E (qwen3.8-max-preview): the task tool's own loop is green
+      (test_task_mcp_launch.py: launch/completion, mcpServers passthrough,
+      cancel, cancel→follow-up, child-crash→failed) and the delivery
+      routing is green (6.1 + the watcher/consult units). Remaining: a
+      single live run launching TWO subagents, one high one low priority,
+      asserting both arrive and the high interrupts first.
 - 6.3 Full suite green from the worktree root; then the merge to main is
       the user's call.
 

@@ -123,6 +123,64 @@ def test_mark_delivered_drains_the_mailbox(tmp_path):
     assert pending_deliveries(engine, "s") == []
 
 
+def test_claim_deliveries_drains_in_arrival_order(tmp_path):
+    """claim = read + mark in ONE atomic statement: the caller gets the
+    rows and the mailbox is drained in the same move."""
+    from crow_cli.memory.writes import claim_deliveries
+
+    engine = get_engine(_uri(tmp_path))
+    launch_task(engine, task_id="task-1", owner_session="s")
+    launch_task(engine, task_id="task-2", owner_session="s")
+    finish_task(engine, "task-1", result="a", content="one")
+    finish_task(engine, "task-2", result="b", content="two")
+
+    claimed = claim_deliveries(engine, "s")
+    assert [d["content"] for d in claimed] == ["one", "two"]
+    assert [d["task_id"] for d in claimed] == ["task-1", "task-2"]
+    assert pending_deliveries(engine, "s") == []
+    # A second claim finds nothing — the rows are already delivered.
+    assert claim_deliveries(engine, "s") == []
+
+
+def test_claim_deliveries_priority_filter(tmp_path):
+    """The mid-turn breakpoint claims HIGHS ONLY; lows stay pending for
+    the end-of-turn consult."""
+    from crow_cli.memory.writes import claim_deliveries
+
+    engine = get_engine(_uri(tmp_path))
+    launch_task(engine, task_id="task-low", owner_session="s", priority="low")
+    launch_task(engine, task_id="task-high", owner_session="s", priority="high")
+    finish_task(engine, "task-low", result="a", content="low done")
+    finish_task(engine, "task-high", result="b", content="high done")
+
+    highs = claim_deliveries(engine, "s", priority="high")
+    assert [d["content"] for d in highs] == ["high done"]
+    # The low is still pending — held to end of turn.
+    assert [d.content for d in pending_deliveries(engine, "s")] == ["low done"]
+    # End-of-turn claim takes the rest.
+    rest = claim_deliveries(engine, "s")
+    assert [d["content"] for d in rest] == ["low done"]
+    assert pending_deliveries(engine, "s") == []
+
+
+def test_claim_deliveries_no_double_claim_across_engines(tmp_path):
+    """Two claimers (the in-loop consult vs the quiescent watcher, or two
+    processes) race for the same mailbox: every delivery is injected by
+    EXACTLY ONE of them."""
+    from crow_cli.memory.writes import claim_deliveries
+
+    uri = _uri(tmp_path)
+    consult = get_engine(uri)
+    watcher = get_engine(uri)
+    launch_task(consult, task_id="task-1", owner_session="s")
+    finish_task(consult, "task-1", result="a", content="only once")
+
+    first = claim_deliveries(consult, "s")
+    second = claim_deliveries(watcher, "s")
+    assert [d["content"] for d in first] == ["only once"]
+    assert second == []
+
+
 def test_priority_rides_both_rows(tmp_path):
     """Priority decides delivery (high = cancel->prompt, low = hold to
     end of prompt) — the drain must be able to sort on it."""

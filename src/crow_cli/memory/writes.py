@@ -166,6 +166,35 @@ def mark_delivered(engine, delivery_ids: list[int]) -> None:
         db.commit()
 
 
+def claim_deliveries(
+    engine, session_id: str, priority: str | None = None
+) -> list[dict]:
+    """Atomically drain the mailbox, claiming each row EXACTLY ONCE.
+
+    One UPDATE ... RETURNING: sqlite's write lock serializes concurrent
+    claimers (the in-loop consult vs the quiescent watcher, or two
+    processes sharing the db), and WHERE status='pending' guarantees a
+    delivery is injected by exactly one of them. With priority set, only
+    matching rows are claimed (the mid-turn breakpoint takes highs and
+    leaves lows pending for end of turn). Returns dicts in arrival order.
+    """
+    sql = (
+        "UPDATE task_deliveries "
+        "SET status = 'delivered', delivered_at = :stamp "
+        "WHERE session_id = :sid AND status = 'pending'"
+    )
+    params: dict = {"stamp": now_iso(), "sid": session_id}
+    if priority is not None:
+        sql += " AND priority = :priority"
+        params["priority"] = priority
+    sql += " RETURNING id, task_id, priority, content"
+    with engine.begin() as conn:
+        rows = conn.execute(text(sql), params).fetchall()
+    claimed = [dict(r._mapping) for r in rows]
+    claimed.sort(key=lambda d: d["id"])
+    return claimed
+
+
 def lookup_or_create_prompt(engine, template: str, name: str = "crow-default") -> str:
     from coolname import generate_slug
 

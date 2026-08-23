@@ -24,7 +24,7 @@ Module map:
     messages  — image extract/hydrate, searchable text
     writes    — add_message, create_agent, set_session_mcp_servers,
                 launch_task, finish_task, mark_delivered,
-                lookup_or_create_prompt
+                claim_deliveries, lookup_or_create_prompt
     reads     — queries, list_sessions, get_session_mcp_servers,
                 get_task, running_tasks, pending_deliveries,
                 search_messages
@@ -63,6 +63,7 @@ from .reads import (
 )
 from .writes import (
     add_message,
+    claim_deliveries,
     create_agent,
     finish_task,
     launch_task,
@@ -82,6 +83,7 @@ __all__ = [
     "TaskDelivery",
     "add_message",
     "build_agent_id",
+    "claim_deliveries",
     "create_agent",
     "create_database",
     "extract_images",

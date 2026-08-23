@@ -51,11 +51,14 @@ file SUPERSEDES it — scope was cut to bg-only after sign-off).
       930307ef); the real tool shipped in src/crow_cli/mcp/task/ with
       dispatch-guard units (a6211824) + 5 live e2e (6d9316aa + crash
       path).
-- [ ] Kill the in-process delegate: launch_delegate/_run_subagent/
+- [x] Kill the in-process delegate: launch_delegate/_run_subagent/
       _DelegateConn, park_until_completion, wake queues, drain_dead,
       cancel_all propagation, DELEGATE_TOOL. The in-process react loop
       nesting is VERBOTEN — subagents are real ACP agents driven by an
-      ACP client.
+      ACP client. DONE 2026-08-23 (Phase 4+5): delegate.py + tasks.py
+      DELETED; react.py consults sqlite at breakpoints instead
+      (consult_deliveries + atomic claim_deliveries); rg delegate over
+      src/ matches only docstrings/comments.
 - [x] Subagent transport: spawn `python -m crow_cli.agent.main`
       subprocess (frozen builds: `crow` acp subcommand — the proven
       CrowClient.spawn_agent pattern, now SHARED via
@@ -77,14 +80,22 @@ file SUPERSEDES it — scope was cut to bg-only after sign-off).
       Verified 2026-08-23: 51437954, 8 state tests green incl.
       two-engine cross-process; + set_task_sub_session/reopen_task/
       task_by_sub_session/count_tasks (a6211824).
-- [ ] Delivery (bg-only, priority decides): completion arrives while
+- [x] Delivery (bg-only, priority decides): completion arrives while
       owner ACTIVE + priority low → HELD, injected before end_turn (loop
       continues; end_turn fires only when model done AND nothing
       registered in the meantime). Owner ACTIVE + priority high →
-      cancel→prompt: cancel the in-flight turn, start a new internal
-      round with the completion. Owner IDLE → synthesized internal
-      prompt round: emit session/update (user_message_chunk + the agent
-      turn) so the client renders it as if IT had prompted.
+      injected at the next tool-batch boundary (the earliest breakpoint;
+      cancelling a mid-STREAM response would need in-loop polling, which
+      is rejected). Owner IDLE → the per-session delivery watcher claims
+      the row and wakes a synthesized internal round: emit session/update
+      (user_message_chunk + the agent turn) so the client renders it as
+      if IT had prompted. DONE 2026-08-23 (Phase 4): consult_deliveries
+      at prompt-start / after-batch(high) / end-turn, plus
+      AcpAgent._delivery_watcher for the idle case; the atomic
+      claim_deliveries guarantees each delivery injects exactly once
+      even when the consults and the watcher race. Verified: 2 react-loop
+      integration tests (active-low held, prompt-start drain) + 4 watcher
+      units + 3 claim units.
 - [x] The wake experiment (answers "how did the current version make the
       frontend think it sent the message?"): current version never emits
       outside an open prompt — the park happens INSIDE the client's
@@ -93,10 +104,13 @@ file SUPERSEDES it — scope was cut to bg-only after sign-off).
       request. Verified 2026-08-23 (de4e6596): _run_internal_round
       proved live — synthetic user chunk first, model reacts, history
       persisted, NO client request in flight.
-- [ ] Cancel semantics v1-style: NO propagation — cancelling the parent
+- [x] Cancel semantics v1-style: NO propagation — cancelling the parent
       does not touch children (bg keeps running). The MODEL cancels
       subagents explicitly via task(CancelTurn) → session/cancel over the
-      child's connection, mid-turn.
+      child's connection, mid-turn. DONE 2026-08-23 (Phase 4): react.py's
+      CancelledError handlers persist history and re-raise WITHOUT
+      touching the registry (there is none); the old
+      cancel_outstanding_delegates tree-kill is deleted.
 - [x] Session context for the task tool: the MCP server process must
       know WHICH session's mcpServers/task state to use. DECIDED +
       SHIPPED (be2317db): owner attribution rides the tools/call _meta —
@@ -106,21 +120,32 @@ file SUPERSEDES it — scope was cut to bg-only after sign-off).
       out of the LLM schema, so the model can neither see nor forge it.
       Env injection replaced as a hack. Config context for children
       still rides CROW_CONFIG_FILE/CROW_CONFIG_DIR process env.
-- [ ] System prompt: delegation recipe rewritten for `task` (launch =
+- [x] System prompt: delegation recipe rewritten for `task` (launch =
       PromptItem no session_id; check on children = query_session;
       cancel/re-prompt = CancelTurnItem/PromptItem with session_id).
-- [ ] Race experiment → regression test
-      (tests/e2e/test_delegate_race_experiment.py, committed on main):
-      fast child completes mid-parent-turn → completion REGISTERS in
-      state → injected (low) or cancel→prompt (high) → end_turn fires.
-      Hang impossible: nothing waits on unregistered work.
+      DONE 2026-08-23 (Phase 5): the recipe was DELEGATE_TOOL.description
+      itself — it died with the file. The `task` tool's own description
+      (mcp/task/main.py) is the model-facing recipe now. No system prompt
+      carried a delegation section (checked the SYSTEM_PROMPT default and
+      the live user prompt file). CLI `run` help updated to match.
+- [x] Race experiment → regression test: fast child completes
+      mid-parent-turn → completion REGISTERS in state → injected (low) →
+      end_turn fires. Hang impossible: nothing waits on unregistered work.
+      DONE 2026-08-23 (Phase 6.1): the sentinel
+      tests/e2e/test_delegate_race_experiment.py (asserted the hang) is
+      rewritten + renamed tests/e2e/test_task_race_regression.py — now
+      asserts end_turn inside the window, task-1 terminal in state, and
+      the delivery injected into the parent's history (in-loop consult or
+      the quiescent watcher).
 - [ ] E2E live LLM (qwen3.8-max-preview; llamacpp host coast-after-3 is
       DOWN): task launch over the ACP spawn, completion delivered both
-      ways; full suite green (all tiers mandatory). PARTIAL 2026-08-23:
+      ways; full suite green (all tiers mandatory). PROGRESS 2026-08-23:
       the task tool's own e2e is green (launch/completion/passthrough/
-      cancel/follow-up/crash — 6d9316aa); the delivery-routing half
-      (active-low held, active-high cancel→prompt, idle wake) lands with
-      Phases 4 + 6.
+      cancel/follow-up/crash — 6d9316aa); the delivery-routing half is
+      now green too — race regression (fast child mid-parent-turn →
+      registered → delivered → end_turn) live in 90s, plus the watcher +
+      consult units. Remaining: the two-subagent high/low live run (PLAN
+      6.2) and the final all-tiers sweep.
 
 ## Deferred (explicitly NOT Phase 1 — user cut them)
 

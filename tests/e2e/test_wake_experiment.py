@@ -1,13 +1,12 @@
 """EXPERIMENT (taskmaster PLAN 3.1): a synthetic prompt round OUTSIDE any
 client session/prompt.
 
-The current delegate machinery only ever injects inside the client's
-still-open prompt call (park blocks the turn; the completion is emitted
-as user_message_chunk within it — that's why the frontend thinks IT sent
-the message: the turn never ended). The bg-only task system needs the
-same emission with NO outstanding request: the agent wakes itself on a
-registered completion, emits user_message_chunk + its own reaction, and
-the round persists in sqlite.
+The bg-only task system needs an emission with NO outstanding client
+request: when a completion lands in the mailbox of a QUIESCENT session,
+the delivery watcher wakes the agent via `_run_internal_round` — it
+emits user_message_chunk + its own reaction exactly like a client-
+prompted turn, and the round persists in sqlite. (The in-loop consults
+cover the ACTIVE case; this covers the idle case.)
 
 This experiment drives a real AcpAgent in process with a recording conn
 (the production shape — _conn is exactly what session/update goes

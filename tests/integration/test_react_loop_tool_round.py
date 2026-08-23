@@ -421,3 +421,163 @@ async def test_per_model_compact_threshold_overrides_global(tmp_path):
     )
 
     await session.close()
+
+
+# ---------------------------------------------------------------------------
+# Task deliveries — the loop CONSULTS STATE at its breakpoints
+# ---------------------------------------------------------------------------
+
+
+async def test_prompt_start_drains_idle_mailbox(tmp_path):
+    """A delivery that landed while the session was QUIESCENT is injected
+    BEFORE the first model call — the prompt starts already knowing its
+    task finished (the watcher's in-loop twin)."""
+    from crow_cli.memory import get_engine, pending_deliveries
+    from crow_cli.memory.writes import finish_task, launch_task
+
+    config, session = await make_test_session(tmp_path)
+    await session.add_message(
+        {"role": "user", "content": "check on the background task"}
+    )
+
+    engine = get_engine(config.db_uri)
+    launch_task(engine, task_id="task-1", owner_session=SESSION_ID)
+    finish_task(
+        engine,
+        "task-1",
+        result="42",
+        content="[task-1: subagent shy-fox finished]\n42",
+    )
+
+    llm = MultiTurnLLM(
+        [[content_chunk("My background task returned 42."), usage_chunk(10)]]
+    )
+    conn = FakeConn()
+    gen = react_loop(
+        conn=conn,
+        config=config,
+        client_capabilities=None,
+        turn_id="turn-1",
+        mcp_clients={},
+        llm=llm,
+        tools=[],
+        sessions={AGENT_ID: session},
+        agent_id=AGENT_ID,
+        state_accumulators={},
+        logger=logger,
+        hooks=[],
+    )
+    events, stop = await drive_react_loop(gen)
+    assert stop == "done", events
+
+    # The model's FIRST request already carried the delivery as a user
+    # message — injected before any model call.
+    first_user_texts = [
+        str(m.get("content"))
+        for m in llm.create_kwargs[0]["messages"]
+        if m["role"] == "user"
+    ]
+    assert any("task-1" in t for t in first_user_texts), first_user_texts
+
+    # The client saw the injection as a user_message_chunk.
+    assert any(
+        getattr(u, "session_update", None) == "user_message_chunk"
+        for u in conn.updates
+    )
+
+    # Mailbox drained; the delivery persists in history.
+    assert pending_deliveries(engine, SESSION_ID) == []
+    assert any(
+        m["role"] == "user" and "task-1" in str(m.get("content"))
+        for m in session.messages
+    )
+    await session.close()
+
+
+class DeliveryLandingMCP:
+    """Executing the tool lands a LOW-priority delivery — a fast child
+    finishing while the parent's batch is still running."""
+
+    def __init__(self, db_uri: str):
+        self.db_uri = db_uri
+
+    async def call_tool(self, name, args):
+        from mcp.types import TextContent
+
+        from crow_cli.memory import get_engine
+        from crow_cli.memory.writes import finish_task, launch_task
+
+        engine = get_engine(self.db_uri)
+        launch_task(engine, task_id="task-1", owner_session=SESSION_ID)
+        finish_task(
+            engine,
+            "task-1",
+            result="done",
+            content="[task-1: subagent shy-fox finished]\ndone",
+        )
+        return SimpleNamespace(
+            content=[TextContent(type="text", text="work done")], isError=False
+        )
+
+
+async def test_low_delivery_held_to_end_of_turn(tmp_path):
+    """A low-priority completion lands mid-turn: the between-batch
+    consult takes HIGHS ONLY so it is held, the model's next no-tool
+    answer reaches the end-turn consult, which injects it and keeps the
+    turn going for one reaction round."""
+    from crow_cli.memory import get_engine, pending_deliveries
+
+    config, session = await make_test_session(tmp_path)
+    await session.add_message(
+        {"role": "user", "content": "work while the child runs"}
+    )
+
+    turn1 = [
+        tool_call_chunk(0, id="call_work", name="work", args="{}"),
+        usage_chunk(30),
+    ]
+    turn2 = [content_chunk("Still working."), usage_chunk(10)]
+    turn3 = [content_chunk("Child finished; wrapping up."), usage_chunk(10)]
+    llm = MultiTurnLLM([turn1, turn2, turn3])
+    mcp = DeliveryLandingMCP(config.db_uri)
+    conn = FakeConn()
+
+    gen = react_loop(
+        conn=conn,
+        config=config,
+        client_capabilities=None,
+        turn_id="turn-1",
+        mcp_clients={SESSION_ID: mcp},
+        llm=llm,
+        tools=[],
+        sessions={AGENT_ID: session},
+        agent_id=AGENT_ID,
+        state_accumulators={},
+        logger=logger,
+        hooks=[],
+    )
+    events, stop = await drive_react_loop(gen)
+    assert stop == "done", events
+
+    # Three model rounds: tool batch -> held delivery -> reaction.
+    assert len(llm.create_kwargs) == 3
+
+    # The held delivery was NOT visible to turn 2 (lows wait for
+    # end-turn), but IS in turn 3's request as a user message.
+    second_user_texts = [
+        str(m.get("content"))
+        for m in llm.create_kwargs[1]["messages"]
+        if m["role"] == "user"
+    ]
+    assert not any("task-1" in t for t in second_user_texts)
+    third_user_texts = [
+        str(m.get("content"))
+        for m in llm.create_kwargs[2]["messages"]
+        if m["role"] == "user"
+    ]
+    assert any("task-1" in t for t in third_user_texts), third_user_texts
+
+    # Drained exactly once.
+    engine = get_engine(config.db_uri)
+    assert pending_deliveries(engine, SESSION_ID) == []
+    await session.close()

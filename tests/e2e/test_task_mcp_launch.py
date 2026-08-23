@@ -144,6 +144,47 @@ async def test_launch_runs_to_completion(task_e2e):
     assert "1161" in deliveries[0].content
 
 
+async def test_two_subagents_high_and_low_both_deliver(task_e2e):
+    """PLAN 6.2: one `task` call launches TWO subagents, one high one low
+    priority. Both run to completion and BOTH deliveries land in the
+    owner's mailbox, each carrying its own priority — the mailbox is the
+    durable proof; the loop's priority routing is covered by the
+    integration/consult tests."""
+    mcp, engine = task_e2e
+    ack = await _call(
+        mcp,
+        [
+            {
+                "action": "prompt",
+                "prompt": "What is 2 + 2? Reply with ONLY the number.",
+                "priority": "high",
+                "model": MODEL,
+            },
+            {
+                "action": "prompt",
+                "prompt": "What is 3 + 3? Reply with ONLY the number.",
+                "priority": "low",
+                "model": MODEL,
+            },
+        ],
+    )
+    assert "launched task-1" in ack
+    assert "launched task-2" in ack
+
+    t1 = await _wait_terminal(engine, "task-1")
+    t2 = await _wait_terminal(engine, "task-2")
+    assert t1.status == "completed" and "4" in t1.result
+    assert t2.status == "completed" and "6" in t2.result
+
+    deliveries = pending_deliveries(engine, OWNER)
+    assert len(deliveries) == 2
+    by_task = {d.task_id: d for d in deliveries}
+    assert by_task["task-1"].priority == "high"
+    assert by_task["task-2"].priority == "low"
+    assert "4" in by_task["task-1"].content
+    assert "6" in by_task["task-2"].content
+
+
 async def test_owner_mcp_servers_pass_through(task_e2e):
     """The child inherits the owner's mcpServers and USES them: the
     directive needs the terminal tool, which only exists if the crow-mcp
@@ -168,7 +209,7 @@ async def test_owner_mcp_servers_pass_through(task_e2e):
                 "action": "prompt",
                 "prompt": (
                     "Do NOT delegate this to a subagent and do not use the "
-                    "delegate tool. Use the terminal tool you have been given "
+                    "task tool. Use the terminal tool you have been given "
                     "to run this exact command: date. Then reply with ONLY the "
                     "raw output, nothing else."
                 ),
