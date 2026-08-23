@@ -2,6 +2,7 @@
 db_uri as the only integration point."""
 
 import base64
+import os
 
 import pytest
 
@@ -257,3 +258,9 @@ def test_normalize_db_uri(tmp_path):
     assert db.normalize_db_uri(str(tmp_path / "crow.db")) == expected
     assert db.normalize_db_uri("~/crow.db").endswith("/crow.db")
     assert db.normalize_db_uri("~/crow.db").startswith("sqlite:///")
+    # tilde inside the URI form expands too
+    home = os.path.expanduser("~")
+    assert (
+        db.normalize_db_uri("sqlite:///~/.agents/crow.db")
+        == f"sqlite:///{home}/.agents/crow.db"
+    )

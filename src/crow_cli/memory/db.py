@@ -19,6 +19,12 @@ def normalize_db_uri(value: str) -> str:
     value = value.strip()
     if "://" in value:
         scheme, _, rest = value.partition("://")
+        if scheme == "sqlite" and rest.lstrip("/").startswith("~"):
+            # sqlite:///~/.agents/x.db — expanduser only expands a LEADING
+            # tilde, so strip the path slashes first. expanduser("~/...")
+            # returns an absolute path; "sqlite:///" + "/home/..." keeps
+            # sqlite's 4-slash absolute form.
+            return f"{scheme}:///{os.path.expanduser(rest.lstrip('/'))}"
         return f"{scheme}://{os.path.expanduser(rest)}"
     return f"sqlite:///{Path(os.path.expanduser(value)).resolve()}"
 
