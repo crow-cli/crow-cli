@@ -68,7 +68,7 @@ async def test_reprompt_of_an_unknown_session(task_env):
 
 
 async def test_reprompt_refuses_a_running_task(task_env):
-    """A task row still marked running (its watcher lives elsewhere or
+    """A task row still marked running (its _watch driver lives elsewhere or
     died uncleanly) must not be double-driven from this process."""
     mcp, engine = task_env
     launch_task(

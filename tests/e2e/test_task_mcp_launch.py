@@ -318,7 +318,7 @@ async def test_cancel_then_reprompt_same_session(task_e2e):
 
 async def test_child_crash_registers_failed(task_e2e):
     """A child that dies mid-turn must register failed + deliver — never
-    hang. Kill -9 the subprocess; the watcher's prompt future breaks on
+    hang. Kill -9 the subprocess; _watch's prompt future breaks on
     the dead transport and finish_task lands the failure."""
     mcp, engine = task_e2e
 

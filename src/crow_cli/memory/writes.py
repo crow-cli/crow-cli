@@ -187,11 +187,11 @@ def claim_deliveries(
     """Atomically drain the mailbox, claiming each row EXACTLY ONCE.
 
     One UPDATE ... RETURNING: sqlite's write lock serializes concurrent
-    claimers (the in-loop consult vs the quiescent watcher, or two
-    processes sharing the db), and WHERE status='pending' guarantees a
-    delivery is injected by exactly one of them. With priority set, only
-    matching rows are claimed (the mid-turn breakpoint takes highs and
-    leaves lows pending for end of turn). Returns dicts in arrival order.
+    claimers (the loop's several consult breakpoints, or two processes
+    sharing the db), and WHERE status='pending' guarantees a delivery is
+    injected by exactly one of them. With priority set, only matching rows
+    are claimed (the mid-turn breakpoint takes highs and leaves lows
+    pending for end of turn). Returns dicts in arrival order.
     """
     sql = (
         "UPDATE task_deliveries "

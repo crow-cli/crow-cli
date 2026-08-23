@@ -183,19 +183,19 @@ def test_claim_deliveries_priority_filter(tmp_path):
 
 
 def test_claim_deliveries_no_double_claim_across_engines(tmp_path):
-    """Two claimers (the in-loop consult vs the quiescent watcher, or two
+    """Two claimers (the prompt-start drain vs an in-turn consult, or two
     processes) race for the same mailbox: every delivery is injected by
     EXACTLY ONE of them."""
     from crow_cli.memory.writes import claim_deliveries
 
     uri = _uri(tmp_path)
     consult = get_engine(uri)
-    watcher = get_engine(uri)
+    other = get_engine(uri)
     launch_task(consult, task_id="task-1", owner_session="s")
     finish_task(consult, "task-1", result="a", content="only once")
 
     first = claim_deliveries(consult, "s")
-    second = claim_deliveries(watcher, "s")
+    second = claim_deliveries(other, "s")
     assert [d["content"] for d in first] == ["only once"]
     assert second == []
 

@@ -301,8 +301,10 @@ async def task(updates: list[TaskUpdate], ctx: Context) -> str:
         (same subagent, full history preserved — for ended OR cancelled sessions)
       - {"action": "cancel", "session_id": "s"}                   cancel s mid-turn
 
-    Launches are NON-BLOCKING: each item returns an ack immediately, and
-    the subagent's result arrives later as a message in this session.
+    Launches are NON-BLOCKING: each item returns an ack immediately. Your
+    turn then stays open while the subagent runs — do NOT poll; its result
+    arrives as a message in this session within the current turn, or at
+    the start of your next turn if this one was cancelled in the meantime.
     Cancel is BLOCKING: when it returns, the turn is dead. To redirect a
     running subagent, send TWO updates: cancel, then a prompt with the
     same session_id. Cancels produce NO completion message — you already

@@ -19,8 +19,10 @@ Asserts:
 - end_turn fires inside the window (the hang is dead);
 - the task row reached a terminal state (completion REGISTERED);
 - the delivery was injected into the parent's history (DELIVERED) —
-  either by the in-loop consult or, for a straggler that lands after
-  end_turn, by the quiescent delivery watcher.
+  by the in-loop consults; since the delegation-hold change the turn
+  cannot end while a task is running or the mailbox is non-empty, so
+  delivery always happens BEFORE end_turn. There is no out-of-loop
+  watcher anymore.
 
 Isolation mirrors test_task_mcp_launch.py: parent agent, task tool
 subprocess, and child agent subprocess all couple through ONE tmp
@@ -253,8 +255,8 @@ async def test_fast_child_completion_ends_parent_turn(tmp_path):
             assert task.status == "completed", task.status
 
             # 3. The delivery was DELIVERED into the parent's history —
-            # in-loop consult or the quiescent watcher; poll briefly for
-            # a straggler that landed after end_turn.
+            # in-loop consults only (no watcher anymore); poll briefly as
+            # a safety net against slow persistence.
             for _ in range(30):
                 if "task-1" in _parent_history_text(engine, session_id):
                     break
@@ -270,8 +272,9 @@ async def test_fast_child_completion_ends_parent_turn(tmp_path):
     finally:
         server.cancel()
 
-    # Mailbox drained is only guaranteed once the watcher had a chance to
-    # run; the history assertion above is the delivery proof.
+    # The history assertion above is the delivery proof; this just reports
+    # how many times the delivery surfaced on the wire (must be exactly
+    # once — the atomic claim).
     injected = [
         u
         for _, u in client.updates

@@ -34,7 +34,7 @@ from crow_cli.agent.model_routing import (
 )
 from crow_cli.agent.prompt import normalize_blocks
 from crow_cli.agent.session import AgentSession
-from crow_cli.memory import get_engine, parse_agent_id, wire_session_id
+from crow_cli.memory import get_engine, parse_agent_id, running_tasks, wire_session_id
 from crow_cli.memory.writes import claim_deliveries
 from crow_cli.agent.tools import (
     execute_acp_edit,
@@ -72,11 +72,19 @@ def cancelled_tool_results(tool_call_inputs: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Delivery consultation: completions register in STATE (the task tool's
 # finish_task lands them in task_deliveries the moment they arrive); the
-# loop CONSULTS state at natural breakpoints — prompt start, after each
-# tool batch, end of turn. No parking, no hostage, no in-process queues:
-# nothing waits on unregistered work, so the old hang is structurally
-# impossible. Idle sessions wake via the quiescent poller in AcpAgent.
+# loop CONSULTS state at natural breakpoints — prompt start, top of each
+# iteration (highs), after each tool batch (highs), end of turn (all).
+# No parking, no hostage, no in-process queues: nothing waits on
+# unregistered work, so the old hang is structurally impossible.
 # ---------------------------------------------------------------------------
+
+# Delegation hold: while a subagent is running, the turn does NOT end —
+# the loop stays alive (and cancellable) and re-consults the mailbox on
+# this cadence until the reply lands. This is the only "wait" in the
+# system; there is no out-of-loop watcher, so nothing can self-wake a
+# session. After a cancel the reply simply stays queued until the user's
+# next prompt (the prompt-start drain injects it).
+DELIVERY_POLL_S = 2.0
 
 
 async def consult_deliveries(
@@ -90,10 +98,11 @@ async def consult_deliveries(
     """Land pending deliveries as synthetic user messages.
 
     Returns True when anything was injected (the loop must react). The
-    claim is ATOMIC (one UPDATE...RETURNING): the quiescent watcher and
-    the in-loop consults can race for the same rows and each delivery is
-    still injected exactly once. With high_only=True only highs are
-    claimed — the mid-turn breakpoint; lows stay pending for end of turn.
+    claim is ATOMIC (one UPDATE...RETURNING): the loop's own consult
+    points (prompt start, top-of-loop, between-batch, end-of-turn, hold)
+    race for the same rows and each delivery is still injected exactly
+    once. With high_only=True only highs are claimed — the mid-turn
+    breakpoint; lows stay pending for end of turn.
     """
     deliveries = claim_deliveries(
         engine, session_id, "high" if high_only else None
@@ -781,12 +790,20 @@ async def react_loop(
     engine = get_engine(config.db_uri)
 
     # Prompt-start drain: completions that landed while this session was
-    # idle (or a previous turn's stranded results) are waiting in the
-    # mailbox — inject them before the first model call so this prompt
-    # starts knowing its tasks finished.
+    # idle — including everything queued while a cancelled turn was dead —
+    # are waiting in the mailbox. Inject them ALL (priority order) before
+    # the first model call so this prompt starts knowing its tasks
+    # finished. This is the only path by which a queued reply resumes a
+    # session: a user prompt. Nothing self-wakes.
     await consult_deliveries(engine, session, conn, session_id, logger)
 
     for turn in range(max_turns):
+        # Top-of-loop checkpoint: highs that landed since the last
+        # breakpoint surface immediately; lows keep holding to end of
+        # turn by design.
+        await consult_deliveries(
+            engine, session, conn, session_id, logger, high_only=True
+        )
         # Under --debug, log both the request payload and the response chunks
         # for this turn into the same chunk_log_dir (sibling filenames).
         chunk_log_path = None
@@ -919,11 +936,15 @@ async def react_loop(
             continue
 
         # This ends the react loop — NO TOOLS!! But with bg-task semantics,
-        # "model done" ends the turn ONLY when the mailbox is empty. Consult
-        # STATE (no polling): if deliveries landed while we were working,
-        # inject them all and keep the turn going. Otherwise end_turn;
-        # anything that lands while we're QUIESCENT wakes us via the
-        # delivery watcher (_run_internal_round), not this loop.
+        # "model done" ends the turn ONLY when the mailbox is empty AND no
+        # delegation is in flight. Consult STATE (no polling): if
+        # deliveries landed while we were working, inject them all and
+        # keep the turn going. If a subagent is still RUNNING, withhold
+        # end_turn and hold the loop open — alive and cancellable — until
+        # its reply lands. Cancel during the hold kills THIS TURN ONLY:
+        # subagents keep running, their replies stay queued in the mailbox
+        # until the user's next prompt (prompt-start drain). Nothing
+        # self-wakes.
         if not tool_call_inputs and len(content) > 0:
             await session.add_assistant_response(
                 thinking,
@@ -935,6 +956,23 @@ async def react_loop(
             if await consult_deliveries(
                 engine, session, conn, session_id, logger
             ):
+                continue
+            injected = False
+            try:
+                while running_tasks(engine, session_id):
+                    await asyncio.sleep(DELIVERY_POLL_S)
+                    if await consult_deliveries(
+                        engine, session, conn, session_id, logger
+                    ):
+                        injected = True
+                        break
+            except asyncio.CancelledError:
+                logger.info(
+                    "Cancelled while holding for a delegated task — "
+                    "subagents keep running, replies stay queued"
+                )
+                raise
+            if injected:
                 continue
             logger.info(f"Final React Turn Usage: {usage}")
             yield {"type": "final_history", "messages": session.messages}

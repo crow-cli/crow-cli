@@ -39,11 +39,6 @@ crow-cli init
 Then restart your agent.
 """
 
-# Quiescent delivery watcher: how often an IDLE session polls its mailbox.
-# Active turns consult state at their own breakpoints (no polling in-loop);
-# this only covers the between-turns case.
-DELIVERY_POLL_S = 2.0
-
 import argparse
 import asyncio
 import base64
@@ -101,7 +96,6 @@ from acp.schema import (
     SetSessionModeResponse,
     SseMcpServer,
     TextContentBlock,
-    UserMessageChunk,
 )
 from fastmcp import Client as MCPClient
 
@@ -118,7 +112,6 @@ from crow_cli.agent.mcp_client import create_mcp_client_from_acp, get_tools
 from crow_cli.agent.prompt import normalize_prompt
 from crow_cli.memory import (
     build_agent_id,
-    claim_deliveries,
     get_engine,
     parse_agent_id,
     wire_session_id,
@@ -228,7 +221,6 @@ class AcpAgent(Agent):
         self._session_locks: dict[str, asyncio.Lock] = {}  # session_id -> prompt serialization
         self._session_loggers: dict[str, Logger] = {}  # session_id -> per-session logger
         self._notification_queue: list[dict] = []  # queued extension notifications
-        self._delivery_watchers: dict[str, asyncio.Task] = {}  # session_id -> quiescent poller
 
     def _default_model_value(self) -> str:
         model = self._model_override or next(iter(self._config.llm.models.values()), None)
@@ -307,7 +299,6 @@ class AcpAgent(Agent):
         )
         self._mcp_clients[session_id] = mcp_client
         self._tools[session_id] = tools
-        self._ensure_delivery_watcher(session_id)
         self._cancel_events[session_id] = asyncio.Event()
         self._session_loggers[session_id] = setup_logger(
             self._config.config_dir / "logs" / f"crow-cli-{session_id}.log",
@@ -495,7 +486,6 @@ class AcpAgent(Agent):
         self._sessions[session.agent_id] = session
         self._mcp_clients[session.session_id] = mcp_client
         self._tools[session.session_id] = tools
-        self._ensure_delivery_watcher(session.session_id)
         # Task system round trip: the separate-process task tool reads the
         # parent's client-defined mcpServers from sqlite to pass them
         # through to the subagent's session/new.
@@ -596,7 +586,6 @@ class AcpAgent(Agent):
             self._sessions[session.agent_id] = session
             self._mcp_clients[session_id] = mcp_client
             self._tools[session_id] = tools
-            self._ensure_delivery_watcher(session_id)
             await session.client.set_agent_mcp_servers(
                 session.agent_id, _mcp_servers_to_wire(mcp_servers)
             )
@@ -711,7 +700,6 @@ class AcpAgent(Agent):
         self._sessions[session.agent_id] = session
         self._mcp_clients[wire_id] = mcp_client
         self._tools[wire_id] = tools
-        self._ensure_delivery_watcher(wire_id)
         await session.client.set_agent_mcp_servers(
             session.agent_id, _mcp_servers_to_wire(mcp_servers)
         )
@@ -1015,172 +1003,6 @@ class AcpAgent(Agent):
             # 4. Cleanup the task reference when done
             self._prompt_tasks.pop(session_id, None)
 
-    # ─── Quiescent delivery watcher ──────────────────────────────────────
-    # The task system's wake mechanism has two halves. While a turn is
-    # ACTIVE, the react loop consults state at its own breakpoints (prompt
-    # start, after each tool batch, end of turn) — no polling in-loop. But
-    # once the session goes QUIESCENT (end_turn, no client request in
-    # flight) nothing runs at all, so a completion that lands then would
-    # sit in the mailbox forever. This per-session poller covers exactly
-    # that gap: idle session + pending delivery -> wake via
-    # _run_internal_round. One watcher per session, started on first
-    # provisioning, cancelled at cleanup.
-
-    def _ensure_delivery_watcher(self, session_id: str) -> None:
-        if session_id in self._delivery_watchers:
-            return
-        self._delivery_watchers[session_id] = asyncio.create_task(
-            self._delivery_watcher(session_id)
-        )
-
-    async def _delivery_watcher(self, session_id: str) -> None:
-        session_logger = self._logger_for(session_id)
-        engine = get_engine(self._memory_db_uri)
-        while True:
-            await asyncio.sleep(DELIVERY_POLL_S)
-            # A turn (client prompt or internal round) holds the session
-            # lock for its whole run; the loop's own consults pick up
-            # anything that lands mid-turn, so skip while it's active.
-            lock = self._session_locks.get(session_id)
-            if lock is not None and lock.locked():
-                continue
-            # Atomic claim: the in-loop consults race for the same rows,
-            # and each delivery must be injected exactly once.
-            deliveries = claim_deliveries(engine, session_id)
-            if not deliveries:
-                continue
-            content = "\n\n".join(d["content"] for d in deliveries)
-            session_logger.info(
-                "WATCHER: waking quiescent session %s with %d delivery(ies) %s",
-                session_id,
-                len(deliveries),
-                [d["task_id"] for d in deliveries],
-            )
-            try:
-                await self._run_internal_round(session_id, content)
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                session_logger.error(
-                    "WATCHER: internal round for %s failed: %s", session_id, e
-                )
-
-    async def _run_internal_round(self, session_id: str, text: str) -> None:
-        """A synthesized prompt round with NO client request behind it.
-
-        The task system's wake mechanism: on a registered completion the
-        agent wakes itself, emits session/update exactly like a
-        client-prompted turn (user_message_chunk first — a client that
-        renders it shows the synthetic message as if IT had sent it), and
-        the round persists in sqlite. There is no PromptResponse: nothing
-        was requested.
-
-        Serialized with client prompts on the same per-session lock and
-        registered in _prompt_tasks, so a client cancel sees it exactly
-        like a normal turn.
-        """
-        session_logger = self._logger_for(session_id)
-
-        async def _execute() -> None:
-            session = await self._resolve_session(session_id)
-            if session is None:
-                raise ValueError(f"no session '{session_id}' for internal round")
-            await self._provision_session(session)
-
-            # The synthetic message leads, exactly as a client-sent one would.
-            await self._conn.session_update(
-                session_id=session.session_id,
-                update=UserMessageChunk(
-                    session_update="user_message_chunk",
-                    content=text_block(text),
-                ),
-            )
-            await session.add_message(
-                {"role": "user", "content": [{"type": "text", "text": text}]}
-            )
-
-            cancel_event = self._cancel_events.get(session_id)
-            if cancel_event:
-                cancel_event.clear()
-            self._state_accumulators[session_id] = {
-                "thinking": [],
-                "content": [],
-                "tool_calls": {},
-            }
-
-            tools = self._tools[session_id]
-            current_config = self._config_values.get(session_id, {})
-            current_model_value = (
-                current_config.get("model") or self._default_model_value()
-            )
-            provider_name = (
-                current_model_value.split(":", 1)[0]
-                if ":" in current_model_value
-                else ""
-            )
-            provider = self._config.llm.providers.get(provider_name)
-            if not provider and self._config.llm.providers:
-                provider = next(iter(self._config.llm.providers.values()))
-            if not provider:
-                raise RuntimeError(
-                    "No LLM providers configured for internal round."
-                )
-            llm = configure_llm(
-                provider=provider, debug=self._config.chunk_log, logger=session_logger
-            )
-
-            def on_compact(old_agent_id: str, compacted_session: AgentSession):
-                self._sessions[compacted_session.agent_id] = compacted_session
-
-            turn_id = str(uuid.uuid4())
-            async for chunk in react_loop(
-                conn=self._conn,
-                config=self._config,
-                client_capabilities=self._client_capabilities,
-                turn_id=turn_id,
-                mcp_clients=self._mcp_clients,
-                llm=llm,
-                tools=tools,
-                sessions=self._sessions,
-                agent_id=session.agent_id,
-                state_accumulators=self._state_accumulators,
-                on_compact=on_compact,
-                logger=session_logger,
-                hooks=self._hooks,
-            ):
-                chunk_type = chunk.get("type")
-                if chunk_type == "content":
-                    await self._conn.session_update(
-                        session_id=session.session_id,
-                        update=update_agent_message(text_block(chunk["token"])),
-                    )
-                elif chunk_type == "thinking":
-                    await self._conn.session_update(
-                        session_id=session.session_id,
-                        update=update_agent_thought(text_block(chunk["token"])),
-                    )
-                elif chunk_type == "compaction":
-                    await self._conn.session_update(
-                        session_id=session.session_id,
-                        update=update_agent_message(text_block(chunk["token"])),
-                    )
-                elif chunk_type == "final_history":
-                    break
-
-        lock = self._session_locks.setdefault(session_id, asyncio.Lock())
-
-        async def _locked() -> None:
-            async with lock:
-                await _execute()
-
-        session_logger.info("INTERNAL ROUND: waking session %s", session_id)
-        task = asyncio.create_task(_locked())
-        self._prompt_tasks[session_id] = task
-        try:
-            await task
-        finally:
-            self._prompt_tasks.pop(session_id, None)
-
     async def cancel(self, session_id: str, **kwargs: Any) -> None:
         """Handle cancellation by immediately cancelling the underlying Task."""
         self._logger_for(session_id).info("Cancel request for session: %s", session_id)
@@ -1213,9 +1035,6 @@ class AcpAgent(Agent):
         of their creation, even if exceptions occur during cleanup.
         """
         self._logger.info("Cleaning up Agent resources")
-        for watcher in self._delivery_watchers.values():
-            watcher.cancel()
-        self._delivery_watchers.clear()
         await self._exit_stack.aclose()
         self._logger.info("Cleanup complete")
 

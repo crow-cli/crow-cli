@@ -1,22 +1,21 @@
 """E2E (diagnostic): a HIGH-priority completion must PREEMPT the active turn.
 
-The race-regression test only proves the delivery eventually reaches the
-parent's history — in-loop consult OR quiescent watcher. That conflates the
-two paths, so a broken between-batch checkpoint hides behind the watcher
-fallback. This test splits them.
-
 Preemption contract under test: when a HIGH-priority delivery lands while the
 parent is still mid-turn (batch after batch of tool calls), the react loop's
 between-batch consult (``consult_deliveries(high_only=True)``) claims it and
 injects it at the NEXT batch boundary — i.e. the delivery's
 ``user_message_chunk`` reaches the client BEFORE ``conn.prompt()`` returns.
-If it only arrives AFTER the turn ends, that is the watcher, not preemption,
-and this test fails.
 
-Observable split (RecordingClient timestamps every wire event):
+Since the delegation-hold change there is no out-of-loop watcher at all: a
+turn cannot end while a task is running or the mailbox is non-empty, so a
+delivery arriving AFTER prompt() returns is structurally impossible (absent a
+cancel). This test therefore asserts the delivery lands DURING the active
+turn; if it doesn't, the in-loop consult chain is broken.
+
+Observable (RecordingClient timestamps every wire event):
   n_at_turn_end = len(client.updates) captured the instant prompt() returns.
   - delivery user_message_chunk in updates[:n_at_turn_end]  -> PREEMPTED
-  - only appears after                                          -> WATCHER
+  - only appears after                                      -> IMPOSSIBLE, fail
 
 Same isolation as test_task_race_regression.py: parent agent, crow-mcp
 subprocess and child agent subprocess all couple through ONE tmp sqlite file;
@@ -235,12 +234,14 @@ async def test_high_priority_delivery_preempts_active_turn(tmp_path):
 
             # THE preemption assertion: the delivery's user_message_chunk must
             # be among the events that arrived BEFORE prompt() returned —
-            # injected at a batch boundary mid-turn, not by the post-turn
-            # watcher.
+            # injected at a batch boundary mid-turn. Post-turn delivery is
+            # structurally impossible now (no watcher; the turn holds open
+            # while a task runs), so anything after this is a hard failure.
             in_turn = [_is_delivery_chunk(u) for _, u in client.updates[:n_at_turn_end]]
             delivery_during_turn = any(in_turn)
 
-            # Give the watcher a moment, then report where the delivery landed.
+            # Give any straggler wire events a moment, then report where the
+            # delivery landed.
             await asyncio.sleep(4)
             delivery_anywhere = any(_is_delivery_chunk(u) for _, u in client.updates)
 
@@ -253,8 +254,8 @@ async def test_high_priority_delivery_preempts_active_turn(tmp_path):
                 "the HIGH-priority delivery was NOT injected during the active "
                 f"turn (events[:{n_at_turn_end}] carry no task-1 "
                 f"user_message_chunk; delivered_at_all={delivery_anywhere}). "
-                "It only arrived via the quiescent watcher AFTER end_turn — the "
-                "between-batch high_only checkpoint is not preempting."
+                "The in-loop consult chain (between-batch / end-of-turn) is "
+                "not preempting."
             )
         finally:
             await conn.close()

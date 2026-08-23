@@ -431,7 +431,8 @@ async def test_per_model_compact_threshold_overrides_global(tmp_path):
 async def test_prompt_start_drains_idle_mailbox(tmp_path):
     """A delivery that landed while the session was QUIESCENT is injected
     BEFORE the first model call — the prompt starts already knowing its
-    task finished (the watcher's in-loop twin)."""
+    task finished (the resume path — queued replies enter only via a user
+    prompt; nothing self-wakes)."""
     from crow_cli.memory import get_engine, pending_deliveries
     from crow_cli.memory.writes import finish_task, launch_task
 
