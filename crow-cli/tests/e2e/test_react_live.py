@@ -3,8 +3,8 @@ Live react-loop smoke test (end-to-end, real provider, real sqlite).
 
 Drives the FULL react_loop — session creation, send_request against the real
 provider, stream processing, persistence, final_history — with zero fakes.
-Nondeterministic by nature, so asserts are deliberately loose. Opt-in e2e
-tier: live calls cost money and take time.
+Nondeterministic by nature, so asserts are deliberately loose. Runs on every
+pytest invocation (live calls cost money and take time).
 """
 
 import logging

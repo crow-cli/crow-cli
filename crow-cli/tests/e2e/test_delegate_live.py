@@ -5,8 +5,9 @@ session_update emitted on the wire. Asserts the Bug-1 contract: every delegate
 tool_call_id gets a tool_call CREATION event before any tool_call_update, so a
 client can never render "tool call not found" for an id it never saw born.
 
-Opt-in e2e tier: live calls cost money and take time. Uses the alibaba
-provider's qwen3.8-max-preview (the default llamacpp host may be down).
+Runs on every pytest invocation (live calls cost money and take time). Uses
+the alibaba provider's qwen3.8-max-preview (the default llamacpp host may be
+down).
 """
 
 import asyncio

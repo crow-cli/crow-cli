@@ -6,7 +6,7 @@ to the ACP client via session_update calls — targeting the historical bug
 where the first content tokens after reasoning ends were sporadically lost.
 
 These make live LLM calls against the configured provider (cost / slow /
-non-deterministic), so they live in the opt-in e2e tier. The hermetic
+non-deterministic) and run on every pytest invocation. The hermetic
 mocked-chunk tests live in ``tests/unit/test_stream_processing.py``.
 """
 
@@ -21,13 +21,22 @@ from crow_cli.agent.react import process_chunk, process_response
 logger = logging.getLogger(__name__)
 
 
+# The e2e tier is mandatory, so it must hit a provider that is UP regardless
+# of which model the local config lists first (the first model is often a
+# local llamacpp box that may be down). Prefer the always-on cloud model —
+# same pin as test_delegate_true_e2e.py — and fall back to the agent's
+# default (first configured model) when it is not present.
+PREFERRED_MODEL = "qwen3.8-max-preview"
+
+
 def get_llm_client():
-    """Resolve the configured provider/model exactly like the agent and build
-    the streaming client.
+    """Resolve a provider/model for live e2e calls and build the streaming
+    client.
 
     Returns ``(client, model_id)`` or ``(None, None)`` if the environment is
-    not configured. Mirrors ``main.py``: take the default model, use its
-    provider, and fall back to the first configured provider.
+    not configured. Prefers PREFERRED_MODEL; otherwise mirrors ``main.py``:
+    take the default (first) model and its provider, falling back to the
+    first configured provider.
     """
     try:
         from crow_cli.config import Config
@@ -37,7 +46,9 @@ def get_llm_client():
         if not config.is_configured:
             return None, None
 
-        model = next(iter(config.llm.models.values()), None)
+        model = config.llm.models.get(PREFERRED_MODEL) or next(
+            iter(config.llm.models.values()), None
+        )
         provider = config.llm.providers.get(model.provider_name) if model else None
         if not provider and config.llm.providers:
             provider = next(iter(config.llm.providers.values()))

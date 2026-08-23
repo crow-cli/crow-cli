@@ -24,7 +24,8 @@ from crow_cli.agent.session import AgentSession, make_agent_session
 logger = logging.getLogger(__name__)
 
 SESSION_ID = "cancel-integrity-session"
-AGENT_ID = f"{SESSION_ID}-1"
+# schema v5 three-part id; matches make_agent_session defaults (idx=1, fork=1)
+AGENT_ID = f"{SESSION_ID}-1-1"
 DB_NAME = "crow.db"
 
 

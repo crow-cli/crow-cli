@@ -273,7 +273,7 @@ async def test_compaction_crossing_threshold_creates_new_agent(tmp_path):
     assert any(e["type"] == "compaction" for e in events)
 
     # New agent (idx 2) holds the summary prompt and the final answer
-    new_id = f"{SESSION_ID}-2"
+    new_id = f"{SESSION_ID}-2-1"  # v5: next agent_idx, same fork_idx
     loaded_new = await AgentSession.load(new_id, memory_path=config.db_uri)
     new_text = " ".join(str(m.get("content")) for m in loaded_new.messages)
     assert "SUMMARY of the big job" in new_text
@@ -344,7 +344,7 @@ async def test_per_model_compact_threshold_overrides_global(tmp_path):
     assert updates[0].size == 50
 
     # The new agent holds the summary, as in the global-threshold case
-    new_id = f"{SESSION_ID}-2"
+    new_id = f"{SESSION_ID}-2-1"  # v5: next agent_idx, same fork_idx
     loaded_new = await AgentSession.load(new_id, memory_path=config.db_uri)
     new_text = " ".join(str(m.get("content")) for m in loaded_new.messages)
     assert "SUMMARY of the big job" in new_text

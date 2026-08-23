@@ -1,11 +1,11 @@
 """End-to-end smoke test: boot the real crow-mcp server over stdio and drive
 it through the MCP protocol, exactly as a client (crow-cli) would.
 
-This is the integration tier — opt-in via `--run-integration` (or
-CROW_RUN_INTEGRATION=1). It spawns a subprocess server, so it is slower and
-non-hermetic compared to the unit suite. Its job is to prove the whole server
-wires up over the transport: registration, a real tool round-trip that hits
-disk, and the terminal stub behaving sanely on the wire.
+This is the integration tier — it runs on every pytest invocation. It
+spawns a subprocess server, so it is slower and non-hermetic compared to the
+unit suite. Its job is to prove the whole server wires up over the transport:
+registration, a real tool round-trip that hits disk, and the terminal stub
+behaving sanely on the wire.
 """
 
 import os

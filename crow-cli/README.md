@@ -148,17 +148,18 @@ cd crow-cli
 uv sync --project crow-cli
 ```
 
-Run the unit tests — fast and hermetic, no services required (unit tests that touch sessions use an in-memory fake of the persistence client; the integration tier uses a real throwaway sqlite db):
+Run the test suite — every tier runs unconditionally (unit + integration + e2e live LLM):
 
 ```bash
-uv run --project crow-cli pytest crow-cli/tests/unit
+uv run --project crow-cli pytest crow-cli/tests
 ```
 
-The persistence layer itself lives in `crow_cli/memory` and is tested in `crow-cli/tests/memory/test_store.py`. Integration and end-to-end tiers are opt-in:
+The persistence layer itself lives in `crow_cli/memory` and is tested in `crow-cli/tests/memory/test_store.py`. To run a single tier, point pytest at its directory:
 
 ```bash
-uv run --project crow-cli pytest crow-cli/tests --run-integration   # spawn the agent
-uv run --project crow-cli pytest crow-cli/tests --run-e2e           # live LLM calls (costs $)
+uv run --project crow-cli pytest crow-cli/tests/unit          # fast, hermetic
+uv run --project crow-cli pytest crow-cli/tests/integration   # real sqlite, agent spawn
+uv run --project crow-cli pytest crow-cli/tests/e2e           # live LLM calls (costs $)
 ```
 
 ## Project layout

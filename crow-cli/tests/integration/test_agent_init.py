@@ -6,7 +6,7 @@ handshake the IDE and ``crow-cli run`` perform. It spawns the agent exactly the
 way ``CrowClient.spawn_agent`` does in dev mode (``python -m crow_cli.agent.main``),
 so there is no hardcoded machine path.
 
-Opt-in: lives under tests/integration/ — run with ``pytest --run-integration``.
+Lives under tests/integration/ — runs on every pytest invocation.
 """
 
 import json
