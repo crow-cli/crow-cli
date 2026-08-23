@@ -30,6 +30,7 @@ EXPECTED_TOOLS = {
     "query_session",
     "capture_webcam",
     "read_image_file",
+    "task",
 }
 
 

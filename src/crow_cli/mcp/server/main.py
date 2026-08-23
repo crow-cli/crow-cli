@@ -24,6 +24,7 @@ from crow_cli.mcp.server.app import mcp
 import crow_cli.mcp.editor.main  # noqa: F401
 import crow_cli.mcp.memory.main
 import crow_cli.mcp.read.main  # noqa: F401
+import crow_cli.mcp.task.main  # noqa: F401
 import crow_cli.mcp.terminal.main  # noqa: F401
 import crow_cli.mcp.vision.main
 import crow_cli.mcp.web_fetch.main  # noqa: F401

@@ -2,7 +2,6 @@ import asyncio
 import contextlib
 import json
 import logging
-from asyncio import Event
 from logging import Logger
 from pathlib import Path
 from typing import Any
@@ -20,12 +19,6 @@ from openai import APIConnectionError, APIError, AsyncOpenAI, RateLimitError
 from openai._exceptions import APITimeoutError
 
 from crow_cli.agent.compact import compact
-from crow_cli.agent.delegate import (
-    DELEGATE_TOOL_NAME,
-    launch_delegate,
-    synthetic_completion_message,
-)
-from crow_cli.agent.tasks import TaskInfo, TaskRegistry
 from crow_cli.config import (
     Config,
     build_sampling_params,
@@ -41,10 +34,12 @@ from crow_cli.agent.model_routing import (
 )
 from crow_cli.agent.prompt import normalize_blocks
 from crow_cli.agent.session import AgentSession
-from crow_cli.memory import parse_agent_id, wire_session_id
+from crow_cli.memory import get_engine, parse_agent_id, wire_session_id
+from crow_cli.memory.writes import claim_deliveries
 from crow_cli.agent.tools import (
     execute_acp_edit,
     execute_acp_read,
+    execute_acp_task,
     execute_acp_terminal,
     execute_acp_tool,
     execute_acp_write,
@@ -75,99 +70,53 @@ def cancelled_tool_results(tool_call_inputs: list[dict]) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Park/wake (Milestone B): "model done" only ends the turn when nothing we
-# launched is still running. Otherwise the loop PARKS on the session's wake
-# queue — zero tokens — until a completion lands, then injects it as a
-# synthetic plain message and lets the model react.
+# Delivery consultation: completions register in STATE (the task tool's
+# finish_task lands them in task_deliveries the moment they arrive); the
+# loop CONSULTS state at natural breakpoints — prompt start, after each
+# tool batch, end of turn. No parking, no hostage, no in-process queues:
+# nothing waits on unregistered work, so the old hang is structurally
+# impossible. Idle sessions wake via the quiescent poller in AcpAgent.
 # ---------------------------------------------------------------------------
 
-PARK_HEARTBEAT_S = 15.0
 
-
-def _drain_queue(queue: asyncio.Queue) -> list[TaskInfo]:
-    items: list[TaskInfo] = []
-    while not queue.empty():
-        items.append(queue.get_nowait())
-    return items
-
-
-async def park_until_completion(
-    registry: TaskRegistry,
-    session_id: str,
-    turn_id: str,
+async def consult_deliveries(
+    engine,
+    session,
     conn: Client,
+    session_id: str,
     logger: Logger,
-    heartbeat_s: float | None = None,
-) -> list[TaskInfo]:
-    """Park with zero tokens until at least one outstanding task completes.
+    high_only: bool = False,
+) -> bool:
+    """Land pending deliveries as synthetic user messages.
 
-    Returns the completed TaskInfos drained from the wake queue. Returns []
-    only when nothing is pending AND nothing is queued — the true "model
-    done AND registry empty" exit condition. While parked, re-emits each
-    pending task's tool_call_update surface periodically so a long park
-    stays visible on the client.
+    Returns True when anything was injected (the loop must react). The
+    claim is ATOMIC (one UPDATE...RETURNING): the quiescent watcher and
+    the in-loop consults can race for the same rows and each delivery is
+    still injected exactly once. With high_only=True only highs are
+    claimed — the mid-turn breakpoint; lows stay pending for end of turn.
     """
-    interval = PARK_HEARTBEAT_S if heartbeat_s is None else heartbeat_s
-    queue = registry.wake_queue(session_id)
-    # Atomic (no awaits between the two reads): finish() is synchronous and
-    # single-threaded asyncio never preempts it, so a task either still shows
-    # as pending or its TaskInfo is already on the queue — never half-done.
-    pending = registry.pending(session_id)
-    drained = _drain_queue(queue)
-    if drained:
-        return drained
-    if not pending:
-        return []
-    logger.info("PARK: %s parked on %d task(s)", session_id, len(pending))
-    while True:
-        try:
-            info = await asyncio.wait_for(queue.get(), timeout=interval)
-        except asyncio.TimeoutError:
-            pending = registry.pending(session_id)
-            drained = _drain_queue(queue)
-            if drained:
-                return drained
-            if not pending:
-                return []
-            # Heartbeat: keep the client-side tool call(s) alive.
-            for task in pending:
-                with contextlib.suppress(Exception):
-                    await conn.session_update(
-                        session_id=session_id,
-                        update=ToolCallProgress(
-                            session_update="tool_call_update",
-                            tool_call_id=(
-                                f"{turn_id}/{task.task_id}"
-                                if turn_id
-                                else task.task_id
-                            ),
-                            status="in_progress",
-                            title=f"delegate: {task.sub_session}",
-                        ),
-                    )
-            continue
-        drained = [info, *_drain_queue(queue)]
+    deliveries = claim_deliveries(
+        engine, session_id, "high" if high_only else None
+    )
+    if not deliveries:
+        return False
+    for d in deliveries:
+        await session.add_message({"role": "user", "content": d["content"]})
+        with contextlib.suppress(Exception):
+            await conn.session_update(
+                session_id=session_id,
+                update=UserMessageChunk(
+                    session_update="user_message_chunk",
+                    content=text_block(d["content"]),
+                ),
+            )
         logger.info(
-            "WAKE: %s woke with %d completion(s)", session_id, len(drained)
+            "DELIVERY: injected %s (%s) into %s",
+            d["task_id"],
+            d["priority"],
+            session_id,
         )
-        return drained
-
-
-async def cancel_outstanding_delegates(
-    registry: TaskRegistry | None, session_id: str, logger: Logger
-) -> None:
-    """Cancel tree: cancel every delegate this session launched and await
-    each handle, so the subagents' cancelled state is persisted before the
-    cancelled turn returns. Subagents cancel their own delegates in their
-    own react loop handlers — the whole stack falls together."""
-    if registry is None:
-        return
-    handles = registry.cancel_all(session_id)
-    for handle in handles:
-        try:
-            await handle
-        except BaseException:
-            logger.debug("delegate handle cleanup", exc_info=True)
+    return True
 
 
 # Provider-side transient faults that surface as HTTP 400 and so are never
@@ -593,8 +542,6 @@ async def execute_tool_calls(
     hooks: list[CommandHook],
     snapshot_hooks: list[FileSnapshotHook] | None = None,
     tool_results: list[dict] | None = None,
-    registry: TaskRegistry | None = None,
-    session_mcp_servers: list | None = None,
 ) -> list[dict]:
     """
     Execute tool calls via MCP or ACP client terminal.
@@ -602,13 +549,9 @@ async def execute_tool_calls(
     Args:
         turn_id: Turn ID for ACP tool call IDs
         agent_id: Agent ID (internal key)
-        tool_call_inputs: List of tool calls to execute
+        tool_call_id: LLM tool call ID
         tool_results: Optional accumulator filled in-place, so callers can
             still see completed results when the call is cancelled mid-flight.
-        registry: Task registry for delegation interiority (None = the
-            delegate tool answers with an error instead of launching).
-        session_mcp_servers: The session's own mcpServers list, inherited by
-            subagents launched through the delegate tool.
 
     Returns:
         List of tool results
@@ -640,8 +583,6 @@ async def execute_tool_calls(
             use_acp_terminal=use_acp_terminal,
             use_acp_write=use_acp_write,
             use_acp_read=use_acp_read,
-            registry=registry,
-            session_mcp_servers=session_mcp_servers,
         )
     except asyncio.CancelledError:
         # Cancelled mid-execution: every tool call still needs a response so
@@ -677,21 +618,9 @@ async def _execute_tool_calls_inner(
     use_acp_terminal: bool,
     use_acp_write: bool,
     use_acp_read: bool,
-    registry: TaskRegistry | None = None,
-    session_mcp_servers: list | None = None,
 ) -> list[dict]:
-    # Delegates are pulled out of the sequential path: they are long-running
-    # and run CONCURRENTLY (asyncio.gather), everything else stays
-    # sequential. Results are matched by tool_call_id, so order is free.
-    delegate_calls = [
-        tc
-        for tc in tool_call_inputs
-        if tc["function"]["name"] == DELEGATE_TOOL_NAME
-    ]
     for tool_call in tool_call_inputs:
         tool_name = tool_call["function"]["name"]
-        if tool_name == DELEGATE_TOOL_NAME:
-            continue
         tool_args = tool_call["function"]["arguments"]
         llm_tool_call_id = tool_call["id"]
         acp_tool_call_id = (
@@ -766,6 +695,16 @@ async def _execute_tool_calls_inner(
                     logger=logger,
                     snapshot_hooks=snapshot_hooks,
                 )
+            elif tool_name == "task":
+                result_content = await execute_acp_task(
+                    conn=conn,
+                    turn_id=turn_id,
+                    mcp_clients=mcp_clients,
+                    agent_id=agent_id,
+                    tool_call_id=llm_tool_call_id,
+                    args=arg_dict,
+                    logger=logger,
+                )
             else:
                 result_content = await execute_acp_tool(
                     conn=conn,
@@ -802,78 +741,6 @@ async def _execute_tool_calls_inner(
                 }
             )
 
-    if delegate_calls:
-        parent_session = sessions.get(agent_id)
-
-        async def _run_delegate(tool_call: dict) -> None:
-            llm_tool_call_id = tool_call["id"]
-            acp_tool_call_id = (
-                f"{turn_id}/{llm_tool_call_id}" if turn_id else llm_tool_call_id
-            )
-            try:
-                arg_dict = maximal_deserialize(tool_call["function"]["arguments"])
-                if not isinstance(arg_dict, dict):
-                    raw_args = tool_call["function"]["arguments"]
-                    tool_call["function"]["arguments"] = "{}"
-                    tool_results.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": llm_tool_call_id,
-                            "content": (
-                                f"Error: Your tool call for 'delegate' had malformed "
-                                f"arguments that could not be parsed as JSON. Raw "
-                                f"arguments: {raw_args!r}\nPlease retry with valid "
-                                f"JSON arguments matching the tool schema."
-                            ),
-                        }
-                    )
-                    return
-                if registry is None or parent_session is None:
-                    tool_results.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": llm_tool_call_id,
-                            "content": "Error: delegation is not available in this context.",
-                        }
-                    )
-                    return
-                # Non-blocking (Milestone B): provisions the subagent,
-                # launches its background lifetime, returns the ack at once.
-                # The completion wakes the parked loop via the registry.
-                result_content = await launch_delegate(
-                    conn=conn,
-                    parent_session=parent_session,
-                    turn_id=turn_id,
-                    tool_call_id=llm_tool_call_id,
-                    acp_tool_call_id=acp_tool_call_id,
-                    args=arg_dict,
-                    config=config,
-                    mcp_servers=session_mcp_servers,
-                    registry=registry,
-                    logger=logger,
-                )
-                tool_results.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": llm_tool_call_id,
-                        "content": result_content,
-                    }
-                )
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                logger.error(f"Error executing delegate: {e}", exc_info=True)
-                tool_results.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": llm_tool_call_id,
-                        "content": f"Error: {str(e)}",
-                    }
-                )
-
-        # Cancellation of the awaiting task cancels the gather's children —
-        # that IS the cancel tree for milestone A.
-        await asyncio.gather(*[_run_delegate(tc) for tc in delegate_calls])
 
     return tool_results
 
@@ -895,8 +762,6 @@ async def react_loop(
     hooks: list[CommandHook] | None = None,
     snapshot_hooks: list[FileSnapshotHook] | None = None,
     chunk_log_dir: str | None = None,
-    registry: TaskRegistry | None = None,
-    session_mcp_servers: list | None = None,
 ):
     """
     Main ReAct loop with cancellation support.
@@ -913,30 +778,13 @@ async def react_loop(
     cwd = session.cwd
     session_id = session_from_agent_id(agent_id)
     chunk_index = 0
+    engine = get_engine(config.db_uri)
 
-    # Delegation wake-up: a cancelled turn strands dead tasks (cancelled /
-    # failed / done) that never reached the model — cancel_all marks them
-    # cancelled before finish() runs, so nothing hits the wake queue. The
-    # owner SESSION survives the cancel, so surface them here, before the
-    # first LLM call, and this prompt starts knowing the delegate died.
-    if registry is not None:
-        for info in registry.drain_dead(session_id):
-            message = synthetic_completion_message(info)
-            await session.add_message({"role": "user", "content": message})
-            with contextlib.suppress(Exception):
-                await conn.session_update(
-                    session_id=session_id,
-                    update=UserMessageChunk(
-                        session_update="user_message_chunk",
-                        content=text_block(message),
-                    ),
-                )
-            logger.info(
-                "WAKE: injected stranded %s (%s) into %s at prompt start",
-                info.task_id,
-                info.status,
-                session_id,
-            )
+    # Prompt-start drain: completions that landed while this session was
+    # idle (or a previous turn's stranded results) are waiting in the
+    # mailbox — inject them before the first model call so this prompt
+    # starts knowing its tasks finished.
+    await consult_deliveries(engine, session, conn, session_id, logger)
 
     for turn in range(max_turns):
         # Under --debug, log both the request payload and the response chunks
@@ -999,9 +847,10 @@ async def react_loop(
                 await session.add_tool_response(
                     cancelled_tool_results(tool_call_inputs), logger
                 )
-            # Cancel tree: delegates launched on earlier turns of this prompt
-            # are still running in the background — kill them before we go.
-            await cancel_outstanding_delegates(registry, session_id, logger)
+            # bg semantics: cancelling the parent does NOT touch its
+            # subagents — they keep running, their completions still land
+            # in the mailbox, and the model cancels them itself via
+            # task(CancelTurn) if it wants to.
             raise
 
         ################################################
@@ -1061,11 +910,12 @@ async def react_loop(
             # Start fresh turn with compacted session [system, user]
             continue
 
-        # This ends the react loop — NO TOOLS!! But with delegation
-        # interiority, "model done" ends the turn ONLY when nothing we
-        # launched is still running. Otherwise park (zero tokens) until a
-        # completion lands, inject it as a synthetic message, and let the
-        # model react to it. No end_turn before completion lands.
+        # This ends the react loop — NO TOOLS!! But with bg-task semantics,
+        # "model done" ends the turn ONLY when the mailbox is empty. Consult
+        # STATE (no polling): if deliveries landed while we were working,
+        # inject them all and keep the turn going. Otherwise end_turn;
+        # anything that lands while we're QUIESCENT wakes us via the
+        # delivery watcher (_run_internal_round), not this loop.
         if not tool_call_inputs and len(content) > 0:
             await session.add_assistant_response(
                 thinking,
@@ -1074,42 +924,9 @@ async def react_loop(
                 logger,
                 usage,
             )
-            completions: list[TaskInfo] = []
-            if registry is not None:
-                try:
-                    completions = await park_until_completion(
-                        registry, session_id, turn_id, conn, logger
-                    )
-                except asyncio.CancelledError:
-                    # Cancelled mid-park: kill the whole delegate stack,
-                    # then let the cancellation propagate.
-                    await cancel_outstanding_delegates(
-                        registry, session_id, logger
-                    )
-                    raise
-            if completions:
-                for info in completions:
-                    message = synthetic_completion_message(info)
-                    await session.add_message(
-                        {"role": "user", "content": message}
-                    )
-                    info.delivered = True
-                    # Best-effort visibility of the injection itself; clients
-                    # that don't render user_message_chunk ignore it safely.
-                    with contextlib.suppress(Exception):
-                        await conn.session_update(
-                            session_id=session_id,
-                            update=UserMessageChunk(
-                                session_update="user_message_chunk",
-                                content=text_block(message),
-                            ),
-                        )
-                    logger.info(
-                        "WAKE: injected %s (%s) into %s",
-                        info.task_id,
-                        info.status,
-                        session_id,
-                    )
+            if await consult_deliveries(
+                engine, session, conn, session_id, logger
+            ):
                 continue
             logger.info(f"Final React Turn Usage: {usage}")
             yield {"type": "final_history", "messages": session.messages}
@@ -1136,8 +953,6 @@ async def react_loop(
                     hooks=hooks or [],
                     snapshot_hooks=snapshot_hooks,
                     tool_results=tool_results,
-                    registry=registry,
-                    session_mcp_servers=session_mcp_servers,
                 )
             except asyncio.CancelledError:
                 # Cancelled mid-tool-execution. execute_tool_calls already
@@ -1156,9 +971,10 @@ async def react_loop(
                     usage,
                 )
                 await session.add_tool_response(tool_results, logger)
-                # Cancel tree: any delegates already launched (this batch or
-                # earlier turns) die with the prompt task.
-                await cancel_outstanding_delegates(registry, session_id, logger)
+                # bg semantics: cancelling the parent does NOT touch its
+                # subagents — they keep running and their completions still
+                # land in the mailbox; the model cancels them itself via
+                # task(CancelTurn) if it wants to.
                 raise
 
             await session.add_assistant_response(
@@ -1169,3 +985,9 @@ async def react_loop(
                 usage,
             )
             await session.add_tool_response(tool_results, logger)
+            # Between-batch: inject HIGH-priority deliveries immediately so
+            # the model sees cancels/urgencies on the next turn; low
+            # priority holds until end of prompt (consulted at end-turn).
+            await consult_deliveries(
+                engine, session, conn, session_id, logger, high_only=True
+            )

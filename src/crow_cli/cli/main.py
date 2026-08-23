@@ -28,9 +28,10 @@ app = typer.Typer(
     help=(
         "Transparent CLI for the Crow agent — full observability into agent state.\n\n"
         "Talk to an agent with `crow-cli run \"prompt\"` and continue a session with "
-        "`-s <session-id>`. This is also how agents delegate to subagents: launch a "
-        "worker with `run`, then read its thoughts via the query_session MCP tool. "
-        "See `crow-cli run --help` for the full delegation recipe."
+        "`-s <session-id>`. Agents launch subagents with the `task` MCP tool; every "
+        "session persists in the shared store, so you can attach to a subagent's "
+        "session yourself with `run -s <session-id>` and read its thoughts via the "
+        "query_session MCP tool. See `crow-cli run --help` for the full recipe."
     ),
 )
 
@@ -568,7 +569,7 @@ def run(
         None,
         "--prompt-file",
         "-f",
-        help="Read the prompt from a file (useful for long subagent delegation prompts)",
+        help="Read the prompt from a file (useful for long subagent prompts)",
     ),
     interactive: bool = typer.Option(
         False, "--interactive", "-i", help="Run in interactive mode"
@@ -635,10 +636,12 @@ def run(
     PROMPT SOURCES: the prompt can be a positional argument, a file
     (--prompt-file/-f), or stdin (pass '-' as the prompt).
 
-    DELEGATION — this command is also how agents launch subagents. Every
-    session persists in the shared LanceDB store, so you can launch a worker,
-    keep talking to it by session id, and read its thoughts from any other
-    agent. The loop:
+        SUBAGENTS — agents launch subagents with the `task` MCP tool (bg-only:
+    launch, re-prompt, cancel; completions land in the owner's mailbox).
+    Every session persists in the shared sqlite store, so YOU can also
+    launch a worker, keep talking to it by session id, attach to a
+    subagent the task system spawned, and read any session's thoughts
+    from any other agent. The loop:
 
     1. Launch a worker (it gets a coolname session id):
 
@@ -649,18 +652,18 @@ def run(
 
         crow-cli run -s <session-id> "now add tests"
 
-    3. Send a long, pre-written delegation prompt from a file or stdin:
+    3. Send a long, pre-written prompt from a file or stdin:
 
-        crow-cli run -f delegation.md -s <session-id>
-        cat delegation.md | crow-cli run -
+        crow-cli run -f brief.md -s <session-id>
+        cat brief.md | crow-cli run -
 
     4. From another agent, read what the worker did with the query_session MCP
     tool: query_session(session_id="<session-id>") — a bare call returns the
     worker's latest message.
 
-    That's the whole mechanism: delegate with `run -s`, read thoughts with
-    query_session, verify artifacts on disk. No bespoke agent-to-agent protocol
-    — just a shared database and a read query.
+    That's the whole mechanism: launch or attach with `run`, read thoughts
+    with query_session, verify artifacts on disk. No bespoke agent-to-agent
+    protocol — just a shared database and a read query.
 
     FORKS — branch a session's history without copying it:
 

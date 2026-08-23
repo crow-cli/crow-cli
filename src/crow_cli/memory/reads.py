@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from .ids import build_agent_id, parse_agent_id
 from .messages import hydrate_message
-from .models import Agent, Message, Prompt
+from .models import Agent, Message, Prompt, Task, TaskDelivery
 
 
 def get_agent(engine, agent_id: str) -> Agent | None:
@@ -26,6 +26,77 @@ def list_agents(engine, session_id: str | None = None) -> list[Agent]:
 def get_prompt(engine, prompt_id: str) -> Prompt | None:
     with Session(engine) as db:
         return db.query(Prompt).filter_by(id=prompt_id).first()
+
+
+def get_session_mcp_servers(engine, wire_id: str) -> list:
+    """The session's client-defined mcpServers (wire JSON dicts); [] when
+    nothing was ever supplied. Cross-process read: this is how a separate
+    MCP server process sees what the client gave the agent.
+
+    Storage rides the agents table (no table of its own): the servers live
+    on the row provisioned with them. wire_id is the trunk's bare
+    session_id or a fork's full agent_id; the read scans that wire
+    session's agent chain (newest first) and returns the most recent
+    provisioning. Compaction rows carry NULL and are skipped.
+    """
+    try:
+        session_id, _, fork_idx = parse_agent_id(wire_id)
+    except ValueError:
+        session_id, fork_idx = wire_id, 1
+    with Session(engine) as db:
+        rows = (
+            db.query(Agent)
+            .filter_by(session_id=session_id, fork_idx=fork_idx)
+            .order_by(Agent.agent_idx.desc())
+            .all()
+        )
+        for row in rows:
+            if row.mcp_servers is not None:
+                return list(row.mcp_servers)
+        return []
+
+
+def get_task(engine, task_id: str) -> Task | None:
+    with Session(engine) as db:
+        return db.query(Task).filter_by(task_id=task_id).first()
+
+
+def task_by_sub_session(engine, sub_session: str) -> Task | None:
+    """The task that owns a child session (latest, if several re-opened)."""
+    with Session(engine) as db:
+        return (
+            db.query(Task)
+            .filter_by(sub_session=sub_session)
+            .order_by(Task.created_at.desc())
+            .first()
+        )
+
+
+def count_tasks(engine, owner_session: str) -> int:
+    """Total tasks ever launched by a session — the task-N numbering."""
+    with Session(engine) as db:
+        return db.query(Task).filter_by(owner_session=owner_session).count()
+
+
+def running_tasks(engine, owner_session: str) -> list[Task]:
+    with Session(engine) as db:
+        return (
+            db.query(Task)
+            .filter_by(owner_session=owner_session, status="running")
+            .order_by(Task.created_at)
+            .all()
+        )
+
+
+def pending_deliveries(engine, session_id: str) -> list[TaskDelivery]:
+    """The session's undelivered completions, in ARRIVAL order."""
+    with Session(engine) as db:
+        return (
+            db.query(TaskDelivery)
+            .filter_by(session_id=session_id, status="pending")
+            .order_by(TaskDelivery.id)
+            .all()
+        )
 
 
 def get_max_agent_idx(engine, session_id: str, fork_idx: int | None = 1) -> int:

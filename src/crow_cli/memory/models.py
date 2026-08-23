@@ -47,10 +47,56 @@ class Agent(Base):
     prompt_args = Column(JSON, nullable=True)
     system_prompt = Column(Text, nullable=False, default="")
     tool_definitions = Column(JSON, nullable=False, default=list)
+    # Client-defined mcpServers (wire JSON dicts) for the session this agent
+    # belongs to, stored on the row that was provisioned with them.
+    # Cross-process coupling: a separate MCP server process (e.g. the task
+    # tool) reads them to pass through to a subagent's session/new.
+    # NULL = never supplied; [] = EXPLICITLY toolless.
+    mcp_servers = Column(JSON, nullable=True)
     request_params = Column(JSON, nullable=False, default=dict)
     model_identifier = Column(Text, nullable=False, default="")
     status = Column(Text, nullable=False, default="active")
     created_at = Column(Text, nullable=False, default=now_iso)
+
+
+class Task(Base):
+    """One async task (Phase 1: subagents only). Status lives in sqlite,
+    not in a process — a completion is REGISTERED the moment it arrives,
+    which is what makes the old delegate hang structurally impossible."""
+
+    __tablename__ = "tasks"
+
+    task_id = Column(Text, primary_key=True)
+    kind = Column(Text, nullable=False, default="subagent")
+    owner_session = Column(Text, nullable=False, index=True)  # wire id
+    tool_call_id = Column(Text, nullable=True)
+    sub_session = Column(Text, nullable=True, index=True)  # child wire id
+    prompt = Column(Text, nullable=False, default="")
+    model = Column(Text, nullable=True)
+    priority = Column(Text, nullable=False, default="low")  # high | low
+    status = Column(Text, nullable=False, default="running")
+    result = Column(Text, nullable=True)
+    created_at = Column(Text, nullable=False, default=now_iso)
+    finished_at = Column(Text, nullable=True)
+
+
+class TaskDelivery(Base):
+    """Durable mailbox: completions land here THE MOMENT they arrive
+    (inserted in the SAME commit as the task's status flip). The agent
+    process drains it — at end-turn (held lows), on prompt start (idle
+    arrivals), or as cancel->prompt (high priority). Survives process
+    death."""
+
+    __tablename__ = "task_deliveries"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(Text, nullable=False, index=True)  # owner mailbox
+    task_id = Column(Text, nullable=False, index=True)
+    priority = Column(Text, nullable=False, default="low")
+    content = Column(Text, nullable=False)  # the synthetic message text
+    status = Column(Text, nullable=False, default="pending")  # pending|delivered
+    created_at = Column(Text, nullable=False, default=now_iso)
+    delivered_at = Column(Text, nullable=True)
 
 
 class Message(Base):

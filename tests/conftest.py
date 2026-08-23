@@ -7,7 +7,13 @@ import pytest
 import yaml
 
 from crow_cli.config import Config
-from crow_cli.agent.memory import AgentRecord, MemoryServiceError, PromptRecord
+from crow_cli.agent.memory import (
+    AgentRecord,
+    MemoryServiceError,
+    MessageRecord,
+    PromptRecord,
+)
+from crow_cli.memory.ids import parse_agent_id
 
 
 class FakeMemoryClient:
@@ -76,6 +82,7 @@ class FakeMemoryClient:
             "system_prompt": system_prompt, "tool_definitions": tool_definitions or [],
             "request_params": request_params or {}, "model_identifier": model_identifier,
             "status": "active", "created_at": "2026-01-01T00:00:00+00:00",
+            "mcp_servers": None,
         }
         self._messages.setdefault(agent_id, [])
         return AgentRecord.from_dict(self._agents[agent_id])
@@ -104,13 +111,96 @@ class FakeMemoryClient:
         ]
         return max(idxs) if idxs else -1
 
+    async def get_max_fork_idx(self, session_id: str, agent_idx: int) -> int:
+        idxs = [
+            a.get("fork_idx", 1)
+            for a in self._agents.values()
+            if a["session_id"] == session_id and a["agent_idx"] == agent_idx
+        ]
+        return max(idxs) if idxs else 1
+
     async def list_sessions(self, limit: int = 50, offset: int = 0) -> list[dict]:
+        return []
+
+    # ---- mcp servers (ride the agents table, like the real store) ----
+    async def set_agent_mcp_servers(self, agent_id: str, servers: list) -> None:
+        if agent_id not in self._agents:
+            raise MemoryServiceError(404, f"agent '{agent_id}' not found")
+        self._agents[agent_id]["mcp_servers"] = list(servers)
+
+    async def get_session_mcp_servers(self, wire_id: str) -> list:
+        try:
+            session_id, _, fork_idx = parse_agent_id(wire_id)
+        except ValueError:
+            session_id, fork_idx = wire_id, 1
+        chain = sorted(
+            (
+                a
+                for a in self._agents.values()
+                if a["session_id"] == session_id and a.get("fork_idx", 1) == fork_idx
+            ),
+            key=lambda a: a["agent_idx"],
+            reverse=True,
+        )
+        for a in chain:
+            if a.get("mcp_servers") is not None:
+                return list(a["mcp_servers"])
         return []
 
     # ---- messages ----
     async def add_message(self, agent_id: str, message: dict, usage: dict | None = None) -> int:
         self._messages.setdefault(agent_id, []).append(message)
         return len(self._messages[agent_id])
+
+    async def query_messages(
+        self,
+        *,
+        session_id: str | None = None,
+        agent_id: str | None = None,
+        agent_idx: int | None = None,
+        roles: list[str] | None = None,
+        after: str | None = None,
+        before: str | None = None,
+        order: str = "asc",
+        limit: int = -1,
+        offset: int = 0,
+    ) -> list:
+        if agent_id is not None:
+            agent_ids = [agent_id]
+        elif session_id is not None:
+            agent_ids = [
+                a["agent_id"]
+                for a in self._agents.values()
+                if a["session_id"] == session_id
+            ]
+        else:
+            raise MemoryServiceError(400, "query_messages needs session_id or agent_id")
+        recs = []
+        for aid in agent_ids:
+            agent = self._agents.get(aid, {})
+            if agent_idx is not None and agent.get("agent_idx") != agent_idx:
+                continue
+            for i, msg in enumerate(self._messages.get(aid, []), start=1):
+                if roles and msg.get("role") not in roles:
+                    continue
+                recs.append(
+                    MessageRecord(
+                        id=i,
+                        agent_id=aid,
+                        session_id=agent.get("session_id", ""),
+                        agent_idx=agent.get("agent_idx", 1),
+                        role=msg.get("role", ""),
+                        created_at="2026-01-01T00:00:00+00:00",
+                        data=msg,
+                        fork_idx=agent.get("fork_idx", 1),
+                    )
+                )
+        recs.sort(key=lambda r: r.id, reverse=(order == "desc"))
+        if offset:
+            recs = recs[offset:]
+        if limit is not None and limit >= 0:
+            recs = recs[:limit]
+        return recs
 
     async def save_messages(self, agent_id: str, messages: list[dict]) -> list[int]:
         existing = self._messages.setdefault(agent_id, [])

@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # The e2e tier is mandatory, so it must hit a provider that is UP regardless
 # of which model the local config lists first (the first model is often a
 # local llamacpp box that may be down). Prefer the always-on cloud model —
-# same pin as test_delegate_true_e2e.py — and fall back to the agent's
+# same pin as test_task_mcp_launch.py — and fall back to the agent's
 # default (first configured model) when it is not present.
 PREFERRED_MODEL = "qwen3.8-max-preview"
 
