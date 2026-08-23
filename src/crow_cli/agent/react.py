@@ -792,8 +792,16 @@ async def react_loop(
         chunk_log_path = None
         request_log_path = None
         if chunk_log_dir:
-            chunk_log_path = str(Path(chunk_log_dir) / f"turn-{turn_id}.jsonl")
-            request_log_path = str(Path(chunk_log_dir) / f"turn-{turn_id}-request.json")
+            # Include the loop index: turn_id is constant for the whole
+            # prompt, so without it every turn overwrites the same request
+            # file and only the LAST payload survives — exactly the turns
+            # where a delivery was injected would be lost.
+            chunk_log_path = str(
+                Path(chunk_log_dir) / f"turn-{turn:03d}-{turn_id}.jsonl"
+            )
+            request_log_path = str(
+                Path(chunk_log_dir) / f"turn-{turn:03d}-{turn_id}-request.json"
+            )
 
         response = await send_request(
             llm,
