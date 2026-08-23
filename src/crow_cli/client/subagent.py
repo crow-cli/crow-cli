@@ -19,7 +19,37 @@ from typing import Any
 
 from acp import PROTOCOL_VERSION, RequestError, connect_to_agent, text_block
 from acp.interfaces import Client
-from acp.schema import ClientCapabilities, Implementation, PromptResponse
+from acp.schema import (
+    ClientCapabilities,
+    HttpMcpServer,
+    Implementation,
+    McpServerStdio,
+    PromptResponse,
+    SseMcpServer,
+)
+
+
+def _parse_mcp_servers(servers: list) -> list:
+    """Parse wire JSON dicts into ACP server models BEFORE sending.
+
+    The SDK silently drops request list items that fail validation (e.g. a
+    stdio server missing the required args/env lists) — the child would
+    come up toolless with no error anywhere. Parsing item-by-item makes
+    bad shapes loud, and fills the two required-but-emptyable stdio fields.
+    """
+    out = []
+    for s in servers:
+        if not isinstance(s, dict):
+            out.append(s)  # already a model
+            continue
+        kind = s.get("type")
+        if kind == "http":
+            out.append(HttpMcpServer.model_validate(s))
+        elif kind == "sse":
+            out.append(SseMcpServer.model_validate(s))
+        else:
+            out.append(McpServerStdio.model_validate({"args": [], "env": [], **s}))
+    return out
 
 
 async def spawn_agent_process(
@@ -92,8 +122,11 @@ class SubagentDriver:
         cwd: str,
         model: str | None = None,
         config_dir: Path | None = None,
+        config_file: Path | None = None,
     ) -> None:
-        self.proc = await spawn_agent_process(cwd, config_dir=config_dir, model=model)
+        self.proc = await spawn_agent_process(
+            cwd, config_dir=config_dir, model=model, config_file=config_file
+        )
         self.conn = connect_to_agent(
             self.client,
             self.proc.stdin,
@@ -113,7 +146,9 @@ class SubagentDriver:
         )
 
     async def new_session(self, cwd: str, mcp_servers: list | None = None) -> str:
-        ns = await self.conn.new_session(cwd=cwd, mcp_servers=mcp_servers or [])
+        ns = await self.conn.new_session(
+            cwd=cwd, mcp_servers=_parse_mcp_servers(mcp_servers or [])
+        )
         return ns.session_id
 
     async def load_session(
@@ -123,7 +158,9 @@ class SubagentDriver:
         ended). The agent restores state from sqlite; no history is
         emitted back to us."""
         await self.conn.load_session(
-            cwd=cwd, session_id=session_id, mcp_servers=mcp_servers or []
+            cwd=cwd,
+            session_id=session_id,
+            mcp_servers=_parse_mcp_servers(mcp_servers or []),
         )
 
     async def prompt(self, session_id: str, text: str) -> PromptResponse:

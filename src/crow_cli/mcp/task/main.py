@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field
@@ -79,6 +80,19 @@ def _engine():
     """WRITE engine on the shared db (the read-only facade is for query
     tools; the task tool registers state)."""
     return cm.get_engine(store.db_uri())
+
+
+def _child_config() -> dict:
+    """Config context for spawned subagents, forwarded from THIS process's
+    env. Phase 5.1 injects these where the agent spawns per-session MCP
+    servers, so the child resolves the SAME config (and db) the task tool
+    writes state to."""
+    kwargs: dict = {}
+    if f := os.environ.get("CROW_CONFIG_FILE"):
+        kwargs["config_file"] = Path(f)
+    if d := os.environ.get("CROW_CONFIG_DIR"):
+        kwargs["config_dir"] = Path(d)
+    return kwargs
 
 
 def _last_assistant_text(messages: list[dict]) -> str:
@@ -166,7 +180,7 @@ async def _launch(engine, owner: str, item: PromptItem) -> str:
     )
     driver = SubagentDriver()
     try:
-        await driver.start(cwd, model=item.model)
+        await driver.start(cwd, model=item.model, **_child_config())
         sub = await driver.new_session(cwd, mcp_servers=servers)
     except Exception as e:
         finish_task(
@@ -199,7 +213,7 @@ async def _reprompt(engine, owner: str, item: PromptItem) -> str:
     servers = get_session_mcp_servers(engine, owner)
     driver = SubagentDriver()
     try:
-        await driver.start(cwd, model=item.model or row.model)
+        await driver.start(cwd, model=item.model or row.model, **_child_config())
         await driver.load_session(sid, cwd, mcp_servers=servers)
     except Exception as e:
         finish_task(
