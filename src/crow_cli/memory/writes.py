@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from .ids import parse_agent_id
 from .messages import extract_images, message_text
-from .models import Agent, Message, Prompt
+from .models import Agent, Message, Prompt, SessionMcpServers, now_iso
 
 
 def add_message(
@@ -52,6 +52,22 @@ def add_message(
 def create_agent(engine, **fields) -> None:
     with Session(engine) as db:
         db.add(Agent(**fields))
+        db.commit()
+
+
+def set_session_mcp_servers(engine, session_id: str, servers: list) -> None:
+    """Upsert a session's client-defined mcpServers (wire JSON dicts).
+
+    An explicit [] means EXPLICITLY toolless — it overwrites, it is not
+    'unknown'.
+    """
+    with Session(engine) as db:
+        row = db.query(SessionMcpServers).filter_by(session_id=session_id).first()
+        if row is None:
+            row = SessionMcpServers(session_id=session_id)
+            db.add(row)
+        row.servers = list(servers)
+        row.updated_at = now_iso()
         db.commit()
 
 

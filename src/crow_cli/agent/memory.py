@@ -283,6 +283,17 @@ class MemoryClient:
     async def get_max_fork_idx(self, session_id: str, agent_idx: int) -> int:
         return db.get_max_fork_idx(self._engine, session_id, agent_idx)
 
+    # ---- session mcp servers (task system round trip) ----
+
+    async def set_session_mcp_servers(self, session_id: str, servers: list) -> None:
+        """Persist the client-defined mcpServers for a session (wire JSON
+        dicts). Keyed by WIRE id, exactly like AcpAgent._session_mcp_servers.
+        """
+        db.set_session_mcp_servers(self._engine, session_id, servers)
+
+    async def get_session_mcp_servers(self, session_id: str) -> list:
+        return db.get_session_mcp_servers(self._engine, session_id)
+
     async def list_sessions(
         self, limit: int = 50, offset: int = 0, include_forks: bool = False
     ) -> list[SessionInfo]:

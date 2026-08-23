@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from .ids import build_agent_id, parse_agent_id
 from .messages import hydrate_message
-from .models import Agent, Message, Prompt
+from .models import Agent, Message, Prompt, SessionMcpServers
 
 
 def get_agent(engine, agent_id: str) -> Agent | None:
@@ -26,6 +26,15 @@ def list_agents(engine, session_id: str | None = None) -> list[Agent]:
 def get_prompt(engine, prompt_id: str) -> Prompt | None:
     with Session(engine) as db:
         return db.query(Prompt).filter_by(id=prompt_id).first()
+
+
+def get_session_mcp_servers(engine, session_id: str) -> list:
+    """The session's client-defined mcpServers (wire JSON dicts); [] when
+    the session is unknown. Cross-process read: this is how a separate MCP
+    server process sees what the client gave the agent."""
+    with Session(engine) as db:
+        row = db.query(SessionMcpServers).filter_by(session_id=session_id).first()
+        return list(row.servers) if row is not None else []
 
 
 def get_max_agent_idx(engine, session_id: str, fork_idx: int | None = 1) -> int:

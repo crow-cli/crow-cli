@@ -53,6 +53,23 @@ class Agent(Base):
     created_at = Column(Text, nullable=False, default=now_iso)
 
 
+class SessionMcpServers(Base):
+    """Client-defined mcpServers per session, persisted for cross-process reads.
+
+    MCP tools (e.g. the task tool that launches delegated agents) run in a
+    SEPARATE process from the ACP agent; the coupling between them is this
+    table, not in-process state. The agent writes whatever mcpServers the
+    client sent on session/new, session/load or fork (wire JSON dicts); the
+    tool process reads them to pass through to the child's session/new.
+    """
+
+    __tablename__ = "session_mcp_servers"
+
+    session_id = Column(Text, primary_key=True)
+    servers = Column(JSON, nullable=False, default=list)
+    updated_at = Column(Text, nullable=False, default=now_iso)
+
+
 class Message(Base):
     """One row = One message; the message dict serialized into `data`."""
 

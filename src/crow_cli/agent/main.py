@@ -128,6 +128,16 @@ from crow_cli.agent.slash import (
 )
 
 
+def _mcp_servers_to_wire(mcp_servers: list | None) -> list[dict]:
+    """Serialize ACP mcp server objects to wire JSON dicts for sqlite.
+
+    The stored dicts are exactly what a delegated agent's session/new
+    receives: the task tool (a separate MCP server process) reads them from
+    the session_mcp_servers table and passes them through unchanged.
+    """
+    return [s.model_dump(mode="json", exclude_none=True) for s in (mcp_servers or [])]
+
+
 class AcpAgent(Agent):
     """
     ACP-native agent - single agent class.
@@ -284,6 +294,9 @@ class AcpAgent(Agent):
             mcp_client = await self._exit_stack.enter_async_context(mcp_client)
         tools = await get_tools(mcp_client)
         tools = [*tools, DELEGATE_TOOL]  # delegate is native, not MCP
+        # In-memory only: a hydration without client supply must NOT
+        # overwrite the session_mcp_servers row — the sqlite row written by
+        # the original new/load/fork stays the cross-process authority.
         self._session_mcp_servers.setdefault(session_id, [])
         self._logger.info(
             "Provisioning hydrated session %s (agent %s) — no client mcp_servers, %d tools",
@@ -482,6 +495,12 @@ class AcpAgent(Agent):
         self._mcp_clients[session.session_id] = mcp_client
         self._tools[session.session_id] = tools
         self._session_mcp_servers[session.session_id] = list(mcp_servers or [])
+        # Task system round trip: the separate-process task tool reads the
+        # parent's client-defined mcpServers from sqlite to pass them
+        # through to the delegated agent's session/new.
+        await session.client.set_session_mcp_servers(
+            session.session_id, _mcp_servers_to_wire(mcp_servers)
+        )
         self._cancel_events[session.session_id] = asyncio.Event()
         self._session_loggers[session.session_id] = setup_logger(
             self._config.config_dir / "logs" / f"crow-cli-{session.session_id}.log",
@@ -576,6 +595,9 @@ class AcpAgent(Agent):
             self._mcp_clients[session_id] = mcp_client
             self._tools[session_id] = tools
             self._session_mcp_servers[session_id] = list(mcp_servers or [])
+            await session.client.set_session_mcp_servers(
+                session_id, _mcp_servers_to_wire(mcp_servers)
+            )
             self._cancel_events[session_id] = asyncio.Event()
             self._session_loggers[session_id] = setup_logger(
                 self._config.config_dir / "logs" / f"crow-cli-{session.session_id}.log",
@@ -688,6 +710,9 @@ class AcpAgent(Agent):
         self._mcp_clients[wire_id] = mcp_client
         self._tools[wire_id] = tools
         self._session_mcp_servers[wire_id] = list(mcp_servers or [])
+        await session.client.set_session_mcp_servers(
+            wire_id, _mcp_servers_to_wire(mcp_servers)
+        )
         self._cancel_events[wire_id] = asyncio.Event()
         self._session_loggers[wire_id] = setup_logger(
             self._config.config_dir / "logs" / f"crow-cli-{session.session_id}.log",
