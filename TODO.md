@@ -97,13 +97,15 @@ file SUPERSEDES it — scope was cut to bg-only after sign-off).
       does not touch children (bg keeps running). The MODEL cancels
       subagents explicitly via task(CancelTurn) → session/cancel over the
       child's connection, mid-turn.
-- [ ] Session context for the task tool: the MCP server process must
-      know WHICH session's mcpServers/task state to use. DECIDED: env
-      injection when the agent spawns its stdio MCP servers per session
-      (the agent controls that spawn) — CROW_SESSION_ID (owner) +
-      CROW_CONFIG_FILE/CROW_CONFIG_DIR (config context forwarded to
-      children). The tool side ALREADY consumes them (a6211824); the
-      injection itself is Phase 5.1.
+- [x] Session context for the task tool: the MCP server process must
+      know WHICH session's mcpServers/task state to use. DECIDED +
+      SHIPPED (be2317db): owner attribution rides the tools/call _meta —
+      the react loop intercepts tool_name == "task" (execute_acp_task,
+      same family as the old execute_orchestration_* fns) and passes the
+      calling session's wire id; the tool's Context param is filtered
+      out of the LLM schema, so the model can neither see nor forge it.
+      Env injection replaced as a hack. Config context for children
+      still rides CROW_CONFIG_FILE/CROW_CONFIG_DIR process env.
 - [ ] System prompt: delegation recipe rewritten for `task` (launch =
       PromptItem no session_id; check on children = query_session;
       cancel/re-prompt = CancelTurnItem/PromptItem with session_id).

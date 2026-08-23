@@ -124,9 +124,13 @@ new. The two couple through sqlite, never in-process.
       pending prompt resolves cancelled; optional follow-up reopens the
       row and the watcher loop continues. New state fns:
       set_task_sub_session, reopen_task, task_by_sub_session,
-      count_tasks (task-N numbering). Owner = CROW_SESSION_ID env
-      (injection is Phase 5.1); config context forwarded via
-      CROW_CONFIG_FILE/CROW_CONFIG_DIR. Registered in server/main.py.
+      count_tasks (task-N numbering). Owner attribution: the agent
+      intercepts tool_name == "task" and passes the calling session's
+      wire id through the tools/call _meta — execute_acp_task +
+      task(updates, ctx: Context), Context filtered out of the LLM
+      schema (be2317db; replaced env injection, which was a hack).
+      Config context for children still rides CROW_CONFIG_FILE/
+      CROW_CONFIG_DIR process env. Registered in server/main.py.
 - 3.3 LIVE E2E — DONE (6d9316aa): tests/e2e/test_task_mcp_launch.py —
       launch→completion (answer lands in the delivery), mcpServers
       passthrough (child USES the passed-through terminal tool: date
@@ -165,24 +169,20 @@ Verified when: integration tests cover all three arrival states
 (active-low, active-high, idle) with a controllable child; the old
 park/wake tests are deleted, not adapted.
 
-## Phase 5 — session-context injection + kill delegate.py
+## Phase 5 — kill delegate.py
 
-(The `task` tool itself shipped in Phase 3.2b — it reads CROW_SESSION_ID
-/ CROW_CONFIG_FILE from its env; this phase builds the production
-channel that supplies them and deletes the machinery it replaces.)
+(The `task` tool shipped in Phase 3.2b and its session-context channel
+shipped with be2317db: owner attribution rides the tools/call _meta,
+injected by execute_acp_task in the react loop — the LLM never sees it
+and cannot forge it. What remains is deleting the machinery `task`
+replaces.)
 
-- 5.1 Session context: the agent spawns per-session stdio MCP servers
-      (agent/mcp_client.py create_mcp_client_from_acp) — inject
-      CROW_SESSION_ID (the owning wire session) + CROW_CONFIG_FILE/
-      CROW_CONFIG_DIR into their env at spawn, so the task tool inside
-      crow-mcp attributes tasks and forwards the right config to
-      children. Test the channel end to end.
-- 5.2 DELETE src/crow_cli/agent/delegate.py, DELEGATE_TOOL imports, the
+- 5.1 DELETE src/crow_cli/agent/delegate.py, DELEGATE_TOOL imports, the
       TaskRegistry in tasks.py (replaced by sqlite state). Nothing may
       reference them afterward (rg comes back empty). This also removes
       the child's ability to delegate instead of using its passed-
       through tools (observed in Phase 3.3).
-- 5.3 System prompt delegation recipe rewritten for `task` (launch =
+- 5.2 System prompt delegation recipe rewritten for `task` (launch =
       PromptItem no session_id; checking on children = query_session;
       cancel/re-prompt = CancelTurn / PromptItem with session_id).
 

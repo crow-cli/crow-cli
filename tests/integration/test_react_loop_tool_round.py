@@ -114,6 +114,22 @@ class NeverHangMCP:
         )
 
 
+class MetaCapturingMCP:
+    """Captures call_tool kwargs — the task channel rides the call meta."""
+
+    def __init__(self):
+        self.calls: list[tuple[str, dict, dict | None]] = []
+
+    async def call_tool(self, name, args, meta=None):
+        from mcp.types import TextContent
+
+        self.calls.append((name, args, meta))
+        return SimpleNamespace(
+            content=[TextContent(type="text", text="launched task-1")],
+            isError=False,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Tool round trip
 # ---------------------------------------------------------------------------
@@ -184,6 +200,53 @@ async def test_tool_round_trip_persists_full_history(tmp_path):
     finals = [e for e in events if e["type"] == "final_history"]
     assert len(finals) == 1
     assert len(finals[0]["messages"]) == 5
+
+
+async def test_task_tool_call_injects_session_meta(tmp_path):
+    """The react loop intercepts tool_name == 'task' (execute_acp_task):
+    the LLM's args pass through unchanged, and the calling session's wire
+    id rides the call meta — attribution injected by the harness, never
+    the model, never the environment."""
+    config, session = await make_test_session(tmp_path)
+    await session.add_message({"role": "user", "content": "launch a subagent"})
+
+    turn1 = [
+        tool_call_chunk(
+            0,
+            id="call_task",
+            name="task",
+            args='{"updates": [{"action": "prompt", "prompt": "do it"}]}',
+        ),
+        usage_chunk(30),
+    ]
+    turn2 = [content_chunk("Launched."), usage_chunk(10)]
+    llm = MultiTurnLLM([turn1, turn2])
+    mcp = MetaCapturingMCP()
+    conn = FakeConn()
+
+    gen = react_loop(
+        conn=conn,
+        config=config,
+        client_capabilities=None,
+        turn_id="turn-1",
+        mcp_clients={SESSION_ID: mcp},
+        llm=llm,
+        tools=[],
+        sessions={AGENT_ID: session},
+        agent_id=AGENT_ID,
+        state_accumulators={},
+        logger=logger,
+        hooks=[],
+    )
+    events, stop = await drive_react_loop(gen)
+    assert stop == "done", events
+
+    # The task tool got the LLM's args untouched + the owner in the meta
+    assert len(mcp.calls) == 1
+    name, args, meta = mcp.calls[0]
+    assert name == "task"
+    assert args == {"updates": [{"action": "prompt", "prompt": "do it"}]}
+    assert meta == {"session_id": SESSION_ID}
 
 
 # ---------------------------------------------------------------------------
