@@ -232,7 +232,7 @@ Evidence: rg delegate over src/ matches only docstrings/comments
 mcp/task module docstring, mcp/editor "delegated to the OS"); zero
 imports of the deleted modules anywhere.
 
-## Phase 6 — regression + live E2E + full suite
+## Phase 6 — regression + live E2E + full suite — DONE 2026-08-23
 
 - 6.1 DONE. tests/e2e/test_delegate_race_experiment.py (the sentinel that
       asserted the hang) rewritten + renamed
@@ -248,14 +248,16 @@ imports of the deleted modules anywhere.
       from the agent process, so db/config isolation must ride the wire
       env (CROW_DB_URI / CROW_CONFIG_FILE), which the task tool then
       forwards to the child it launches.
-- 6.2 Live E2E (qwen3.8-max-preview): the task tool's own loop is green
-      (test_task_mcp_launch.py: launch/completion, mcpServers passthrough,
-      cancel, cancel→follow-up, child-crash→failed) and the delivery
-      routing is green (6.1 + the watcher/consult units). Remaining: a
-      single live run launching TWO subagents, one high one low priority,
-      asserting both arrive and the high interrupts first.
-- 6.3 Full suite green from the worktree root; then the merge to main is
-      the user's call.
+- 6.2 DONE. test_task_mcp_launch.py::
+      test_two_subagents_high_and_low_both_deliver — one `task` call
+      launches two subagents (high + low), both complete, both
+      deliveries land with their priorities (live, 12s). The loop-side
+      priority routing (high at batch boundary, low held to end-turn)
+      is covered by the integration consult tests; cancel mid-flight by
+      test_cancel_mid_turn / test_cancel_with_follow_up.
+- 6.3 DONE. `uv --project . run pytest tests -q` from the worktree
+      root: 432 passed, 0 failed, 0 skipped (167s, 2026-08-23). The
+      merge to main is the user's call.
 
 Verified when: `uv --project . run pytest tests -q` is all-green, zero
 skipped, from a clean checkout of the branch.

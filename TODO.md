@@ -137,15 +137,15 @@ file SUPERSEDES it — scope was cut to bg-only after sign-off).
       asserts end_turn inside the window, task-1 terminal in state, and
       the delivery injected into the parent's history (in-loop consult or
       the quiescent watcher).
-- [ ] E2E live LLM (qwen3.8-max-preview; llamacpp host coast-after-3 is
+- [x] E2E live LLM (qwen3.8-max-preview; llamacpp host coast-after-3 is
       DOWN): task launch over the ACP spawn, completion delivered both
-      ways; full suite green (all tiers mandatory). PROGRESS 2026-08-23:
-      the task tool's own e2e is green (launch/completion/passthrough/
-      cancel/follow-up/crash — 6d9316aa); the delivery-routing half is
-      now green too — race regression (fast child mid-parent-turn →
-      registered → delivered → end_turn) live in 90s, plus the watcher +
-      consult units. Remaining: the two-subagent high/low live run (PLAN
-      6.2) and the final all-tiers sweep.
+      ways; full suite green (all tiers mandatory). DONE 2026-08-23:
+      the task tool's e2e (launch/completion/passthrough/cancel/
+      follow-up/crash + high/low dual launch — 6.2) and the
+      delivery-routing half (race regression 6.1 + watcher/consult
+      units) are all green live. Final sweep from the worktree root:
+      432 passed, 0 failed, 0 skipped (6.3). Merge to main is the
+      user's call.
 
 ## Deferred (explicitly NOT Phase 1 — user cut them)
 
