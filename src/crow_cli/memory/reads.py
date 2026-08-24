@@ -23,6 +23,15 @@ def list_agents(engine, session_id: str | None = None) -> list[Agent]:
         return q.order_by(Agent.agent_idx).all()
 
 
+def agent_index(engine) -> dict[str, tuple[str, int]]:
+    """agent_id -> (session_id, agent_idx) for EVERY agent, reading only
+    the id columns — full Agent rows carry each agent's system prompt and
+    tool definitions, which is hundreds of MB across the table."""
+    with Session(engine) as db:
+        rows = db.query(Agent.agent_id, Agent.session_id, Agent.agent_idx).all()
+    return {a.agent_id: (a.session_id, a.agent_idx) for a in rows}
+
+
 def get_prompt(engine, prompt_id: str) -> Prompt | None:
     with Session(engine) as db:
         return db.query(Prompt).filter_by(id=prompt_id).first()
@@ -215,7 +224,7 @@ def list_sessions(engine, limit: int = 50, offset: int = 0, include_forks: bool 
             .all()
         )
         models = {}
-        agent_q = db.query(Agent)
+        agent_q = db.query(Agent.session_id, Agent.model_identifier)
         if not include_forks:
             agent_q = agent_q.filter(Agent.fork_idx == 1)
         for a in agent_q.all():
@@ -245,7 +254,11 @@ def search_messages(
     ``score`` is the raw bm25 rank (lower = better)."""
     idx = {}
     with Session(engine) as db:
-        for a in db.query(Agent).all():
+        # Mapping columns only — full agent rows carry each agent's system
+        # prompt and tool definitions (hundreds of MB across the table).
+        for a in db.query(
+            Agent.agent_id, Agent.session_id, Agent.agent_idx, Agent.fork_idx
+        ).all():
             idx[a.agent_id] = (a.session_id, a.agent_idx, a.fork_idx)
     # Quote each token so arbitrary user input stays a valid FTS5 query
     # (implicit AND of phrases).

@@ -5,6 +5,9 @@ counts, session_records transcripts and query_memory hits all reflect the
 trunk only unless include_forks=True.
 """
 
+import gc
+import tracemalloc
+
 import pytest
 
 import crow_cli.memory as cm
@@ -101,3 +104,57 @@ async def test_tool_query_memory_hides_fork_hits(mcp_store):
     assert "fork only" not in out
     out = await main.query_memory(query="needlepoint", include_forks=True)
     assert "fork only" in out
+
+
+# ---- RAM regression: agent payloads must not be materialized ----
+#
+# Agent rows carry each agent's full system prompt and tool definitions.
+# list_sessions / search used to load EVERY agent row in full just to map
+# ids — a ~577 MB transient peak on a real db, ratcheting the long-lived
+# MCP server's RSS up ~12 MB per call (glibc never returns the arenas).
+# They only need the id/model/cwd columns.
+
+
+@pytest.fixture()
+def heavy_store(tmp_path, monkeypatch):
+    """20 agents whose system prompt + tool definitions are 1 MiB each."""
+    uri = f"sqlite:///{tmp_path / 'crow.db'}"
+    cm.create_database(uri)
+    engine = cm.get_engine(uri)
+    payload = "x" * (1024 * 1024)
+    for i in range(20):
+        cm.create_agent(
+            engine, agent_id=f"s{i}-1-1", session_id=f"s{i}", agent_idx=1,
+            cwd="/tmp", system_prompt=payload,
+            tool_definitions=[{"big": payload}], request_params={},
+            model_identifier="m",
+        )
+        cm.add_message(engine, f"s{i}-1-1", {"role": "user", "content": f"needle {i}"})
+    engine.dispose()
+
+    monkeypatch.setenv("CROW_DB_URI", uri)
+    store._cached_engine.cache_clear()
+    yield
+    store._cached_engine.cache_clear()
+
+
+def _peak_mb(fn) -> float:
+    """Traced allocation peak (MB) of fn, after a warmup call."""
+    fn()  # engine creation + query compilation
+    gc.collect()
+    tracemalloc.start()
+    try:
+        fn()
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    return peak / 1024 / 1024
+
+
+def test_list_sessions_does_not_materialize_agent_payloads(heavy_store):
+    # Full-row load of the 20 agents would peak >40 MB; columns-only is ~kB.
+    assert _peak_mb(lambda: store.list_sessions()) < 5
+
+
+def test_search_does_not_materialize_agent_payloads(heavy_store):
+    assert _peak_mb(lambda: store.search("needle")) < 5

@@ -44,6 +44,7 @@ from .models import (
     now_iso,
 )
 from .reads import (
+    agent_index,
     get_agent,
     get_max_agent_idx,
     get_max_fork_idx,
@@ -79,6 +80,7 @@ __all__ = [
     "Task",
     "TaskDelivery",
     "add_message",
+    "agent_index",
     "build_agent_id",
     "claim_deliveries",
     "create_agent",

@@ -246,7 +246,7 @@ class MemoryClient:
             agent_ids = [a.agent_id for a in db.list_agents(self._engine, session_id)]
         else:
             raise MemoryServiceError(400, "query_messages needs session_id or agent_id")
-        idx = {a.agent_id: (a.session_id, a.agent_idx) for a in db.list_agents(self._engine)}
+        idx = db.agent_index(self._engine)
         recs = []
         for row in db.query_messages(
             self._engine,

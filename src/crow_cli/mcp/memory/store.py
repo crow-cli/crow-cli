@@ -115,7 +115,17 @@ def list_sessions(limit: int = 50, offset: int = 0, include_forks: bool = False)
             .limit(limit)
             .all()
         )
-        agents_q = s.query(cm.Agent)
+        # Mapping columns only — agent rows also carry each agent's full
+        # system prompt and tool definitions, and materializing those for
+        # every agent in the db costs hundreds of MB per call.
+        agents_q = s.query(
+            cm.Agent.agent_id,
+            cm.Agent.session_id,
+            cm.Agent.agent_idx,
+            cm.Agent.fork_idx,
+            cm.Agent.model_identifier,
+            cm.Agent.cwd,
+        )
         if not include_forks:
             agents_q = agents_q.filter(cm.Agent.fork_idx == 1)
         agents = agents_q.all()
@@ -162,7 +172,12 @@ def session_records(
     if engine is None:
         return []
     with cm.Session(engine) as s:
-        agents_q = s.query(cm.Agent).filter_by(session_id=session_id)
+        agents_q = s.query(
+            cm.Agent.agent_id,
+            cm.Agent.session_id,
+            cm.Agent.agent_idx,
+            cm.Agent.fork_idx,
+        ).filter_by(session_id=session_id)
         if not include_forks:
             agents_q = agents_q.filter(cm.Agent.fork_idx == 1)
         agents = agents_q.all()
