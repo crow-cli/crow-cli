@@ -121,7 +121,7 @@ The bundled [MCP](https://modelcontextprotocol.io/) server (`crow-cli mcp`) prov
 
 ### SearXNG — web search
 
-crow-cli ships a maintained SearXNG configuration (stored as JSON so the agent can drive it over MCP) so web search works out of the box, without hand-editing SearXNG settings.
+crow-cli ships a maintained SearXNG configuration (stored as python so the agent works with PyInstaller — sorry) so web search works out of the box, without hand-editing SearXNG settings.
 
 ### Skills
 
