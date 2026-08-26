@@ -33,9 +33,10 @@ or config_dir/"images" for non-file backends).
       setup_searxng), .env keys RUSTFS_ACCESS_KEY/RUSTFS_SECRET_KEY.
       Credentials via env vars, NOT hardcoded (house pattern: DASHSCOPE_API_KEY).
       (2026-08-25: done — tests/unit/test_init_rustfs.py, 439 green.)
-- [ ] Extract `ImageStore` seam (put/get/exists) in memory/; FsImageStore =
+- [x] Extract `ImageStore` seam (put/get/exists) in memory/; FsImageStore =
       current behavior, zero change. Thread store through extract_images /
       hydrate_message / MemoryClient in place of images_dir.
+      (2026-08-25: done — memory/image_store.py, 439 green.)
 - [ ] S3ImageStore (boto3, custom endpoint_url) + config.yaml `image_store.s3`
       block (endpoint/bucket/access_key/secret_key).
 - [ ] Probe-and-fallback: config has s3 → head_bucket probe (~2s) → S3 if up,

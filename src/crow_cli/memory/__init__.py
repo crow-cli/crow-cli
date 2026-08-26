@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 
 from .db import create_database, get_engine, normalize_db_uri
 from .ids import build_agent_id, parse_agent_id, wire_session_id
+from .image_store import FsImageStore, ImageStore
 from .messages import extract_images, hydrate_message, message_text
 from .models import (
     Agent,
@@ -87,6 +88,7 @@ __all__ = [
     "create_database",
     "extract_images",
     "finish_task",
+    "FsImageStore",
     "get_agent",
     "get_engine",
     "get_max_agent_idx",
@@ -95,6 +97,7 @@ __all__ = [
     "get_session_mcp_servers",
     "get_task",
     "hydrate_message",
+    "ImageStore",
     "launch_task",
     "list_agents",
     "list_sessions",

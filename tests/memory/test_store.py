@@ -1,5 +1,5 @@
-"""crow_cli.memory: schema v5 — images on disk, FTS5 bm25, WAL concurrency,
-db_uri as the only integration point."""
+"""crow_cli.memory: schema v5 — images in the ImageStore, FTS5 bm25, WAL
+concurrency, db_uri as the only integration point."""
 
 import base64
 import os
@@ -7,6 +7,7 @@ import os
 import pytest
 
 import crow_cli.memory as db
+from crow_cli.memory.image_store import FsImageStore
 
 PNG = base64.b64encode(bytes([0x89, 0x50, 0x4E, 0x47, 1, 2, 3])).decode()
 
@@ -27,7 +28,7 @@ def store(tmp_path):
         request_params={},
         model_identifier="m",
     )
-    return engine, tmp_path / "images"
+    return engine, FsImageStore(tmp_path / "images")
 
 
 def _image_msg():
@@ -43,30 +44,30 @@ def _image_msg():
 
 def test_image_extract_and_hydrate_roundtrip(store):
     engine, images = store
-    db.add_message(engine, "s1-1-1", _image_msg(), images_dir=images)
+    db.add_message(engine, "s1-1-1", _image_msg(), store=images)
 
     stored = db.load_messages(engine, "s1-1-1")
     ref = stored[0]["content"][1]
     assert ref["type"] == "image_ref"
-    assert (images / ref["path"]).exists()
+    assert images.exists(ref["path"])
 
-    hydrated = db.load_messages(engine, "s1-1-1", hydrate=True, images_dir=images)
+    hydrated = db.load_messages(engine, "s1-1-1", hydrate=True, store=images)
     url = hydrated[0]["content"][1]["image_url"]["url"]
     assert url == f"data:image/png;base64,{PNG}"
 
 
 def test_image_dedupe(store):
     engine, images = store
-    db.add_message(engine, "s1-1-1", _image_msg(), images_dir=images)
-    db.add_message(engine, "s1-1-1", _image_msg(), images_dir=images)
-    assert len(list(images.iterdir())) == 1
+    db.add_message(engine, "s1-1-1", _image_msg(), store=images)
+    db.add_message(engine, "s1-1-1", _image_msg(), store=images)
+    assert len(list(images.images_dir.iterdir())) == 1
 
 
 def test_bm25_search(store):
     engine, images = store
-    db.add_message(engine, "s1-1-1", _image_msg(), images_dir=images)
+    db.add_message(engine, "s1-1-1", _image_msg(), store=images)
     db.add_message(
-        engine, "s1-1-1", {"role": "assistant", "content": "unrelated reply"}, images_dir=images
+        engine, "s1-1-1", {"role": "assistant", "content": "unrelated reply"}, store=images
     )
     hits = db.search_messages(engine, "landing screenshot")
     assert len(hits) == 1
@@ -82,16 +83,16 @@ def test_search_agent_ids_filter(store):
         engine, agent_id="s2-1-1", session_id="s2", agent_idx=1,
         tool_definitions=[], request_params={},
     )
-    db.add_message(engine, "s1-1-1", {"role": "user", "content": "needle talk"}, images_dir=images)
-    db.add_message(engine, "s2-1-1", {"role": "user", "content": "needle talk"}, images_dir=images)
+    db.add_message(engine, "s1-1-1", {"role": "user", "content": "needle talk"}, store=images)
+    db.add_message(engine, "s2-1-1", {"role": "user", "content": "needle talk"}, store=images)
     hits = db.search_messages(engine, "needle", agent_ids={"s2-1-1"})
     assert [h["agent_id"] for h in hits] == ["s2-1-1"]
 
 
 def test_list_sessions_counts(store):
     engine, images = store
-    db.add_message(engine, "s1-1-1", {"role": "user", "content": "hi"}, images_dir=images)
-    db.add_message(engine, "s1-1-1", {"role": "assistant", "content": "yo"}, images_dir=images)
+    db.add_message(engine, "s1-1-1", {"role": "user", "content": "hi"}, store=images)
+    db.add_message(engine, "s1-1-1", {"role": "assistant", "content": "yo"}, store=images)
     [s] = db.list_sessions(engine)
     assert s["session_id"] == "s1"
     assert s["message_count"] == 2
@@ -101,9 +102,9 @@ def test_list_sessions_counts(store):
 
 def test_concurrent_engines(store):
     engine, images = store
-    db.add_message(engine, "s1-1-1", {"role": "user", "content": "one"}, images_dir=images)
-    engine2 = db.get_engine(f"sqlite:///{images.parent / 'crow.db'}")
-    db.add_message(engine2, "s1-1-1", {"role": "user", "content": "two"}, images_dir=images)
+    db.add_message(engine, "s1-1-1", {"role": "user", "content": "one"}, store=images)
+    engine2 = db.get_engine(f"sqlite:///{images.images_dir.parent / 'crow.db'}")
+    db.add_message(engine2, "s1-1-1", {"role": "user", "content": "two"}, store=images)
     assert len(db.load_messages(engine, "s1-1-1")) == 2
 
 
@@ -118,10 +119,10 @@ def test_prompt_lookup_idempotent(store):
 def test_readonly_engine_reads_but_cannot_write(store):
     """The crow-mcp pattern: mode=ro engine sees the data, writes fail."""
     engine, images = store
-    db.add_message(engine, "s1-1-1", {"role": "user", "content": "visible"}, images_dir=images)
+    db.add_message(engine, "s1-1-1", {"role": "user", "content": "visible"}, store=images)
     engine.dispose()
 
-    path = images.parent / "crow.db"
+    path = images.images_dir.parent / "crow.db"
     ro = db.get_engine(f"sqlite:///file:{path}?mode=ro&uri=true")
     assert [m["content"] for m in db.load_messages(ro, "s1-1-1")] == ["visible"]
     assert db.search_messages(ro, "visible")
@@ -150,7 +151,7 @@ def test_fork_schema_v5(store):
         forked_at="1", tool_definitions=[], request_params={},
     )
     db.add_message(
-        engine, "s1-1-2", {"role": "user", "content": "forked question"}, images_dir=images
+        engine, "s1-1-2", {"role": "user", "content": "forked question"}, store=images
     )
     # HEAD resolution follows the trunk by default
     assert db.get_max_agent_idx(engine, "s1") == 1
@@ -185,14 +186,14 @@ def test_load_agent_messages_fork_view(store):
     prefix is shared, never copied, and the trunk stays unpolluted."""
     engine, images = store
     for i in range(4):
-        db.add_message(engine, "s1-1-1", {"role": "user", "content": f"trunk {i}"}, images_dir=images)
+        db.add_message(engine, "s1-1-1", {"role": "user", "content": f"trunk {i}"}, store=images)
     anchor = db.query_messages(engine, ["s1-1-1"])[1].id  # keep trunk msgs 0-1
 
     db.create_agent(
         engine, agent_id="s1-1-2", session_id="s1", agent_idx=1, fork_idx=2,
         forked_at=str(anchor), tool_definitions=[], request_params={},
     )
-    db.add_message(engine, "s1-1-2", {"role": "user", "content": "fork own"}, images_dir=images)
+    db.add_message(engine, "s1-1-2", {"role": "user", "content": "fork own"}, store=images)
 
     fork_view = db.load_agent_messages(engine, db.get_agent(engine, "s1-1-2"))
     assert [m["content"] for m in fork_view] == ["trunk 0", "trunk 1", "fork own"]
@@ -216,12 +217,12 @@ def test_list_sessions_include_forks(store):
     the fork agent rows drops their messages from the join)."""
     engine, images = store
     for i in range(3):
-        db.add_message(engine, "s1-1-1", {"role": "user", "content": f"t{i}"}, images_dir=images)
+        db.add_message(engine, "s1-1-1", {"role": "user", "content": f"t{i}"}, store=images)
     db.create_agent(
         engine, agent_id="s1-1-2", session_id="s1", agent_idx=1, fork_idx=2,
         forked_at=None, tool_definitions=[], request_params={},
     )
-    db.add_message(engine, "s1-1-2", {"role": "user", "content": "fork msg"}, images_dir=images)
+    db.add_message(engine, "s1-1-2", {"role": "user", "content": "fork msg"}, store=images)
 
     (s1,) = [s for s in db.list_sessions(engine) if s["session_id"] == "s1"]
     assert s1["agent_count"] == 1

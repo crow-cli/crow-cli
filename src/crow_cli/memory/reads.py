@@ -1,11 +1,10 @@
 """Read path: agents, prompts, messages, sessions, FTS5 keyword search."""
 
-from pathlib import Path
-
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from .ids import build_agent_id, parse_agent_id
+from .image_store import ImageStore
 from .messages import hydrate_message
 from .models import Agent, Message, Prompt, Task, TaskDelivery
 
@@ -136,7 +135,7 @@ def get_max_fork_idx(engine, session_id: str, agent_idx: int) -> int:
 
 
 def load_agent_messages(
-    engine, agent, hydrate: bool = False, images_dir: Path | None = None,
+    engine, agent, hydrate: bool = False, store: ImageStore | None = None,
 ) -> list[dict]:
     """Message VIEW for an agent row.
 
@@ -146,7 +145,7 @@ def load_agent_messages(
     """
     session_id, agent_idx, fork_idx = parse_agent_id(agent.agent_id)
     if fork_idx == 1:
-        return load_messages(engine, agent.agent_id, hydrate, images_dir)
+        return load_messages(engine, agent.agent_id, hydrate, store)
     trunk_id = build_agent_id(session_id, agent_idx, 1)
     anchor = int(agent.forked_at) if agent.forked_at is not None else None
     with Session(engine) as db:
@@ -161,19 +160,19 @@ def load_agent_messages(
             .order_by(Message.id)
             .all()
         ]
-    if hydrate and images_dir:
-        msgs = [hydrate_message(m, images_dir) for m in msgs]
+    if hydrate and store:
+        msgs = [hydrate_message(m, store) for m in msgs]
     return msgs
 
 
 def load_messages(
-    engine, agent_id: str, hydrate: bool = False, images_dir: Path | None = None,
+    engine, agent_id: str, hydrate: bool = False, store: ImageStore | None = None,
 ) -> list[dict]:
     with Session(engine) as db:
         rows = db.query(Message).filter_by(agent_id=agent_id).order_by(Message.id).all()
         msgs = [dict(r.data) for r in rows]
-    if hydrate and images_dir:
-        msgs = [hydrate_message(m, images_dir) for m in msgs]
+    if hydrate and store:
+        msgs = [hydrate_message(m, store) for m in msgs]
     return msgs
 
 

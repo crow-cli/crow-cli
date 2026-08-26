@@ -1,24 +1,23 @@
 """Write path: messages, agents, prompts."""
 
-from pathlib import Path
-
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .ids import parse_agent_id
+from .image_store import ImageStore
 from .messages import extract_images, message_text
 from .models import Agent, Message, Prompt, Task, TaskDelivery, now_iso
 
 
 def add_message(
-    engine, agent_id: str, message: dict, images_dir: Path | None = None,
+    engine, agent_id: str, message: dict, store: ImageStore | None = None,
     usage: dict | None = None,
 ) -> int:
-    """Persist one message. Inline images are extracted to disk first, so the
-    row carries image_ref blocks. fork_idx is derived from the agent_id
+    """Persist one message. Inline images are extracted to the store first, so
+    the row carries image_ref blocks. fork_idx is derived from the agent_id
     (schema v5 three-part format). Returns the new message id."""
     _, _, fork_idx = parse_agent_id(agent_id)
-    stored = extract_images(message, images_dir) if images_dir else message
+    stored = extract_images(message, store) if store else message
     usage = usage or {}
     with Session(engine) as db:
         row = Message(

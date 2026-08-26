@@ -151,6 +151,9 @@ class MemoryClient:
         else:
             # Non-file backends (e.g. postgres): images stay beside the config.
             self.images_dir = cfg.config_dir / "images"
+        # Phase 3 swaps this for resolve_image_store(cfg): S3 when configured
+        # and reachable, FsImageStore otherwise.
+        self.image_store = db.FsImageStore(self.images_dir)
         db.create_database(self.db_uri)
         self._engine = db.get_engine(self.db_uri)
 
@@ -210,7 +213,7 @@ class MemoryClient:
         if agent is None:
             raise MemoryServiceError(404, f"agent '{agent_id}' not found")
         messages = db.load_agent_messages(
-            self._engine, agent, hydrate=hydrate, images_dir=self.images_dir
+            self._engine, agent, hydrate=hydrate, store=self.image_store
         )
         return _agent_record(agent), messages
 
@@ -221,7 +224,7 @@ class MemoryClient:
 
     async def add_message(self, agent_id: str, message: dict, usage: dict | None = None) -> int:
         return db.add_message(
-            self._engine, agent_id, message, images_dir=self.images_dir, usage=usage
+            self._engine, agent_id, message, store=self.image_store, usage=usage
         )
 
     async def save_messages(self, agent_id: str, messages: list[dict]) -> list[int]:

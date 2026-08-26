@@ -40,7 +40,7 @@ to FS so legacy images never break.
   healthcheck shell needs `\\"` in the Python template (YAML escaped quotes
   inside the flow sequence) — plain `"` terminates the scalar.
 
-## Phase 2 — ImageStore seam, FS behavior unchanged
+## Phase 2 — ImageStore seam, FS behavior unchanged — DONE 2026-08-25
 
 - 2.1 New `src/crow_cli/memory/image_store.py`: `ImageStore` protocol
       (put(key, data) / get(key) -> bytes|None / exists(key));
@@ -51,7 +51,11 @@ to FS so legacy images never break.
 - 2.3 `agent/memory.py` MemoryClient resolves `self.image_store` where it
       resolves images_dir today.
 - Verify: FULL suite green — this phase is a pure refactor; any image test
-      failing means behavior changed. Round-trip test through FsImageStore.
+  failing means behavior changed. Round-trip test through FsImageStore.
+- Evidence: memory/image_store.py (ImageStore protocol + FsImageStore);
+  extract_images/hydrate_message take the store; writes/reads/agent-memory
+  thread `store=`; test_store.py round-trip + dedupe green through the seam.
+  439 passed. image_ref "path" field KEPT as the key (DB compat).
 
 ## Phase 3 — S3 store + probe/fallback + config
 
