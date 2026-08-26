@@ -42,11 +42,30 @@ def _set_pragmas(dbapi_conn, _record):
 
 def get_engine(db_uri: str):
     """Engine with WAL + busy_timeout so multiple processes (the agent
-    writing, an MCP consumer reading) coexist without lock errors. For a read-only
-    sqlite handle pass ``sqlite:///file:<path>?mode=ro&uri=true``."""
+    writing, an MCP consumer reading) coexist without lock errors. For a
+    read-only handle use get_ro_engine (dialect-aware)."""
     engine = create_engine(db_uri)
     if db_uri.startswith("sqlite"):
         event.listen(engine, "connect", _set_pragmas)
+    return engine
+
+
+def _set_pg_readonly(dbapi_conn, _record):
+    dbapi_conn.cursor().execute(
+        "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY"
+    )
+
+
+def get_ro_engine(db_uri: str):
+    """Read-only engine, dialect-aware. sqlite: the URI is rewritten to the
+    ``mode=ro`` file form so the OS refuses writes; postgres: every session
+    gets READ ONLY transaction characteristics so the server refuses them.
+    Used by the MCP query tools — they must never write."""
+    if db_uri.startswith("sqlite"):
+        path = db_uri.removeprefix("sqlite:///")
+        return get_engine(f"sqlite:///file:{path}?mode=ro&uri=true")
+    engine = create_engine(db_uri)
+    event.listen(engine, "connect", _set_pg_readonly)
     return engine
 
 

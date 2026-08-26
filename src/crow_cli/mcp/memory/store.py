@@ -34,17 +34,18 @@ def db_uri() -> str:
 
 @lru_cache(maxsize=1)
 def _cached_engine(uri: str):
-    return cm.get_engine(uri)
+    return cm.get_ro_engine(uri)
 
 
 def _ro_engine():
-    """Read-only engine, or None when a sqlite file doesn't exist yet."""
+    """Read-only engine, or None when a sqlite file doesn't exist yet.
+    Dialect-awareness (mode=ro URI vs session READ ONLY) lives in
+    cm.get_ro_engine."""
     uri = db_uri()
     if uri.startswith("sqlite:///"):
         path = Path(uri.removeprefix("sqlite:///"))
         if not path.exists():
             return None
-        uri = f"sqlite:///file:{path}?mode=ro&uri=true"
     return _cached_engine(uri)
 
 
