@@ -82,8 +82,8 @@ def launch_task(
     model: str | None = None,
     priority: str = "low",
 ) -> None:
-    """Register a launched task — the RUNNING state exists in sqlite from
-    launch time, so a fast completion can never outrun the record."""
+    """Register a launched task — the RUNNING state exists in the database
+    from launch time, so a fast completion can never outrun the record."""
     with Session(engine) as db:
         db.add(
             Task(
@@ -185,12 +185,13 @@ def claim_deliveries(
 ) -> list[dict]:
     """Atomically drain the mailbox, claiming each row EXACTLY ONCE.
 
-    One UPDATE ... RETURNING: sqlite's write lock serializes concurrent
-    claimers (the loop's several consult breakpoints, or two processes
-    sharing the db), and WHERE status='pending' guarantees a delivery is
-    injected by exactly one of them. With priority set, only matching rows
-    are claimed (the mid-turn breakpoint takes highs and leaves lows
-    pending for end of turn). Returns dicts in arrival order.
+    One UPDATE ... RETURNING: WHERE status='pending' plus the single atomic
+    UPDATE guarantees a delivery is claimed by EXACTLY ONE consumer — on
+    sqlite the whole-db write lock serializes claimers (the loop's several
+    consult breakpoints, or two processes sharing the db); on postgres the
+    same holds at row level, even across machines. With priority set, only
+    matching rows are claimed (the mid-turn breakpoint takes highs and
+    leaves lows pending for end of turn). Returns dicts in arrival order.
     """
     sql = (
         "UPDATE task_deliveries "

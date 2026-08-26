@@ -8,8 +8,7 @@ its origin message id in forked_at.
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Integer, Text
-from sqlalchemy.dialects.sqlite import JSON
+from sqlalchemy import JSON, Column, Integer, Text
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -60,9 +59,10 @@ class Agent(Base):
 
 
 class Task(Base):
-    """One async task (Phase 1: subagents only). Status lives in sqlite,
-    not in a process — a completion is REGISTERED the moment it arrives,
-    which is what makes the old delegate hang structurally impossible."""
+    """One async task (Phase 1: subagents only). Status lives in the
+    database, not in a process — a completion is REGISTERED the moment it
+    arrives, which is what makes the old delegate hang structurally
+    impossible."""
 
     __tablename__ = "tasks"
 

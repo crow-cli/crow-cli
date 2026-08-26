@@ -57,8 +57,9 @@ FTS_DDL = (
 
 def _require_v5(engine) -> None:
     """Fail fast on an unmigrated v4 database (no fork_idx column)."""
-    with engine.connect() as conn:
-        cols = {r[1] for r in conn.execute(text("PRAGMA table_info(agents)"))}
+    from sqlalchemy import inspect
+
+    cols = {c["name"] for c in inspect(engine).get_columns("agents")}
     if cols and "fork_idx" not in cols:
         raise RuntimeError(
             "schema v4 database detected (agents.fork_idx missing) — run the "
