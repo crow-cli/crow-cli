@@ -80,7 +80,7 @@ to FS so legacy images never break.
   apply_config_overrides expands ${RUSTFS_*} refs. boto3 dep added.
   446 passed.
 
-## Phase 4 — live e2e + docs
+## Phase 4 — live e2e + docs — DONE 2026-08-25
 
 - 4.1 Real rustfs container (docker run SNSD or compose up in tmp config
       dir); MemoryClient save message-with-image → object in bucket; load +
@@ -89,3 +89,10 @@ to FS so legacy images never break.
 - 4.2 config.yaml template comment for image_store; README note;
       CONFIG_YAML in defaults.py updated.
 - Verify: script passes against live container; full suite green; commit.
+- Evidence: scripts/e2e_image_store_live.py → E2E-IMAGE-STORE-OK against a
+  REAL rustfs/rustfs container: HybridReadStore chosen, content-addressed
+  object in bucket (verified via independent boto3 client), sqlite row
+  carries image_ref only, hydrate round-trip byte-identical, legacy FS image
+  hydrates via read-fallback, killed endpoint → FsImageStore fallback.
+  CONFIG_YAML documents image_store (commented = opt-in); README updated.
+  446 passed.

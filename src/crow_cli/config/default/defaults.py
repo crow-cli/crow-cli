@@ -311,9 +311,21 @@ mcpServers:
 
 # Memory is a SQL database reached via a SQLAlchemy db_uri — sqlite by
 # default, any SQLAlchemy URI (e.g. postgresql://) works. Owned by 
-# crow_cli.memory. Images are stored as files next to it (images/) and
-# hydrated to base64 only when sent to the LLM.
+# crow_cli.memory. Images never live in the DB: they are content-addressed
+# (<sha256hex><ext>) in an image store and hydrated to base64 only when sent
+# to the LLM. Default store is the filesystem (images/ next to the db).
 db_uri: sqlite:///~/.agents/crow/crow.db
+
+# Optional S3 object store for images (e.g. RustFS — see compose.yaml). When
+# `image_store.s3.endpoint` is set AND reachable at startup, images go to S3;
+# reads still fall back to the filesystem so older images keep hydrating.
+# If the endpoint is down or this block is absent, the filesystem is used.
+# image_store:
+#   s3:
+#     endpoint: http://localhost:9000
+#     bucket: crow-images
+#     access_key: ${RUSTFS_ACCESS_KEY}
+#     secret_key: ${RUSTFS_SECRET_KEY}
 
 # Where agent skills live (one directory per skill, each with a SKILL.md).
 # Scanned at session creation and injected into the system prompt.

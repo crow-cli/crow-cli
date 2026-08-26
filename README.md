@@ -95,7 +95,7 @@ An ACP-native agent: a streaming ReAct loop with tool calling, cancellation, con
 
 ### Persistence — sqlite memory
 
-Sessions persist to a single sqlite database (`~/.agents/crow/crow.db`, schema v5, WAL mode) with an FTS5 index for BM25 keyword search. Images in messages are written to `~/.agents/crow/images/` and referenced by path; they are hydrated to base64 data URLs only when the conversation is sent to the LLM. The same database backs the memory API, exposed to agents as three tools:
+Sessions persist to a single sqlite database (`~/.agents/crow/crow.db`, schema v5, WAL mode) with an FTS5 index for BM25 keyword search. Images never live in the database: they are content-addressed (`<sha256hex><ext>`, so duplicates dedupe for free) in an image store and referenced by key; they are hydrated to base64 data URLs only when the conversation is sent to the LLM. The default store is the filesystem (`~/.agents/crow/images/`). Optionally, point `image_store.s3` in `config.yaml` at an S3 endpoint (a RustFS service ships in `compose.yaml`) and images go there instead — crow probes the endpoint once at startup and falls back to the filesystem when it is down, and reads always fall back to the filesystem too, so images stored before the switch keep working. The same database backs the memory API, exposed to agents as three tools:
 
 - `list_sessions()` — sessions ordered by recent activity (who's working on what)
 - `query_memory(query)` — find which session discussed something, across all sessions

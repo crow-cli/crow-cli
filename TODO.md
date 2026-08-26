@@ -53,8 +53,10 @@ or config_dir/"images" for non-file backends).
 - [x] Tests: store seam round-trip (FS real, S3 via moto ThreadedMotoServer —
       mock justified: network service), probe/fallback with dead endpoint,
       init_cmd compose rendering. (2026-08-25: done, 446 green.)
-- [ ] Live e2e vs real rustfs container (integration tier) — Phase 4.
-- [ ] Docs: config.yaml template comment for image_store; README note.
+- [x] Live e2e vs real rustfs container (integration tier) — Phase 4.
+      (2026-08-25: scripts/e2e_image_store_live.py → E2E-IMAGE-STORE-OK.)
+- [x] Docs: config.yaml template comment for image_store; README note.
+      (2026-08-25: CONFIG_YAML + README updated.)
 
 ## Decisions (locked)
 
