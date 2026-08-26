@@ -93,15 +93,15 @@ The agent detects client capabilities (terminals, file read/write) and uses the 
 
 An ACP-native agent: a streaming ReAct loop with tool calling, cancellation, conversation compaction, and multimodal input. Provider and model configuration lives in `~/.agents/crow/config.yaml`.
 
-### Persistence — sqlite memory
+### Persistence — SQL memory (sqlite or PostgreSQL)
 
-Sessions persist to a single sqlite database (`~/.agents/crow/crow.db`, schema v5, WAL mode) with an FTS5 index for BM25 keyword search. Images never live in the database: they are content-addressed (`<sha256hex><ext>`, so duplicates dedupe for free) in an image store and referenced by key; they are hydrated to base64 data URLs only when the conversation is sent to the LLM. The default store is the filesystem (`~/.agents/crow/images/`). Optionally, point `image_store.s3` in `config.yaml` at an S3 endpoint (a RustFS service ships in `compose.yaml`) and images go there instead — crow probes the endpoint once at startup and falls back to the filesystem when it is down, and reads always fall back to the filesystem too, so images stored before the switch keep working. The same database backs the memory API, exposed to agents as three tools:
+Sessions persist to a SQL database reached via the `db_uri` in `config.yaml`. The default is a single sqlite file (`~/.agents/crow/crow.db`, schema v5, WAL mode) with an FTS5 index for BM25 keyword search — zero setup, one file. Point `db_uri` at PostgreSQL instead (`postgresql+psycopg://…`; a `postgres` service ships in `compose.yaml`) and the same schema runs there for memory shared across machines — agents on any box see the same sessions, messages and task mailboxes. The dialect seams are isolated: keyword search is FTS5/BM25 on sqlite and tsvector/GIN on postgres behind the same `search_messages` contract, and the MCP read-only path is enforced per dialect (sqlite `mode=ro` file URI, postgres session `READ ONLY`). Images never live in the database: they are content-addressed (`<sha256hex><ext>`, so duplicates dedupe for free) in an image store and referenced by key; they are hydrated to base64 data URLs only when the conversation is sent to the LLM. The default store is the filesystem (`~/.agents/crow/images/`). Optionally, point `image_store.s3` in `config.yaml` at an S3 endpoint (a RustFS service ships in `compose.yaml`) and images go there instead — crow probes the endpoint once at startup and falls back to the filesystem when it is down, and reads always fall back to the filesystem too, so images stored before the switch keep working. The same database backs the memory API, exposed to agents as three tools:
 
 - `list_sessions()` — sessions ordered by recent activity (who's working on what)
 - `query_memory(query)` — find which session discussed something, across all sessions
 - `query_session(session_id)` — read or search within one session (spans all of that session's agents)
 
-This is what makes multi-agent delegation work: launch a worker, then read its thoughts from any other agent. No service to run — the sqlite file is the integration point.
+This is what makes multi-agent delegation work: launch a worker, then read its thoughts from any other agent. On sqlite there is no service to run — the file is the integration point. On PostgreSQL the server is the integration point, and every agent on the network shares one authoritative memory.
 
 ### Built-in MCP tool server
 
@@ -170,7 +170,7 @@ uv run pytest tests/e2e           # live LLM calls (costs $)
 src/crow_cli/           the agent — ACP server, ReAct loop, CLI
 src/crow_cli/config/    config loading, defaults, overrides (shared by every layer)
 src/crow_cli/mcp/       built-in MCP tool server (`crow-cli mcp`)
-src/crow_cli/memory/    shared SQL persistence (sqlite default, postgres-ready)
+src/crow_cli/memory/    shared SQL persistence (sqlite default, PostgreSQL supported)
 ```
 
 ## License

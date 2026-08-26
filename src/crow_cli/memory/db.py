@@ -51,9 +51,12 @@ def get_engine(db_uri: str):
 
 
 def _set_pg_readonly(dbapi_conn, _record):
-    dbapi_conn.cursor().execute(
-        "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY"
-    )
+    # Commit so the setting survives the pool's rollback-on-return: set
+    # inside an implicit transaction it would be reverted by that rollback
+    # (and it must outlive every checkout, not just the first).
+    cursor = dbapi_conn.cursor()
+    cursor.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
+    dbapi_conn.commit()
 
 
 def get_ro_engine(db_uri: str):
