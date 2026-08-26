@@ -204,6 +204,28 @@ COMPOSE_YAML = """services:
       - ./litellm/config.yaml:/app/config.yaml
     command: ["--config", "/app/config.yaml"]
 
+  # PostgreSQL — shared memory database (db_uri). sqlite is the default and
+  # needs nothing; point db_uri at this service for memory shared across
+  # machines (one authoritative crow.db for the whole fleet).
+  postgres:
+    image: postgres:17-alpine
+    container_name: crow-postgres
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   # RustFS — S3-compatible object storage for the image store (Apache 2.0).
   # Single node, 4 volumes, erasure coding within the node. crow probes the
   # S3 endpoint at init and falls back to filesystem images when it is down.
@@ -287,6 +309,7 @@ networks:
 volumes:
   database_data:
     driver: local
+  postgres_data:
   rustfs_data_0:
   rustfs_data_1:
   rustfs_data_2:
@@ -309,12 +332,16 @@ mcpServers:
     args:
       - mcp
 
-# Memory is a SQL database reached via a SQLAlchemy db_uri — sqlite by
-# default, any SQLAlchemy URI (e.g. postgresql://) works. Owned by 
-# crow_cli.memory. Images never live in the DB: they are content-addressed
-# (<sha256hex><ext>) in an image store and hydrated to base64 only when sent
-# to the LLM. Default store is the filesystem (images/ next to the db).
+# Memory is a SQL database reached via a SQLAlchemy db_uri. sqlite by
+# default (single machine, zero setup); point it at PostgreSQL (see
+# compose.yaml) for memory shared across machines — agents on any box see
+# the same sessions, messages and task mailboxes. Owned by crow_cli.memory.
+# ${VAR} refs resolve from .env. Images never live in the DB: they are
+# content-addressed (<sha256hex><ext>) in an image store and hydrated to
+# base64 only when sent to the LLM. Default store is the filesystem
+# (images/ next to the db).
 db_uri: sqlite:///~/.agents/crow/crow.db
+# db_uri: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:${POSTGRES_PORT}/${POSTGRES_DB}
 
 # Optional S3 object store for images (e.g. RustFS — see compose.yaml). When
 # `image_store.s3.endpoint` is set AND reachable at startup, images go to S3;

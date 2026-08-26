@@ -315,11 +315,56 @@ def run_init(config_dir: Path, yes: bool = False):
             )
 
     # =========================================================================
+    # STEP 2c: PostgreSQL (shared memory database)
+    # =========================================================================
+    console.print(
+        "\n[bold cyan]═══ Step 2c: PostgreSQL (shared memory DB) ═══[/bold cyan]\n"
+    )
+
+    setup_postgres = None
+    if yes:
+        setup_postgres = True
+        console.print("[dim]→ --yes mode: defaulting to PostgreSQL install[/dim]")
+    elif os.environ.get("YES_INSTALL_POSTGRES", "").lower() in ("1", "true", "yes"):
+        setup_postgres = True
+        console.print("[dim]→ YES_INSTALL_POSTGRES=1 detected, skipping prompt[/dim]")
+    else:
+        setup_postgres = Confirm.ask(
+            "Set up PostgreSQL for shared memory? (Requires Docker; "
+            "sqlite is used when skipped)",
+            default=True,
+        )
+
+    if setup_postgres:
+        env_vars["POSTGRES_PORT"] = os.environ.get("POSTGRES_PORT", "5432")
+        env_vars["POSTGRES_USER"] = os.environ.get("POSTGRES_USER", "crow")
+        env_vars["POSTGRES_DB"] = os.environ.get("POSTGRES_DB", "crow")
+        env_vars["POSTGRES_PASSWORD"] = os.environ.get(
+            "POSTGRES_PASSWORD", secrets.token_hex(16)
+        )
+        if not yes:
+            env_vars["POSTGRES_USER"] = Prompt.ask(
+                "PostgreSQL user", default=env_vars["POSTGRES_USER"]
+            )
+            env_vars["POSTGRES_DB"] = Prompt.ask(
+                "PostgreSQL database", default=env_vars["POSTGRES_DB"]
+            )
+            env_vars["POSTGRES_PASSWORD"] = Prompt.ask(
+                "PostgreSQL password", default=env_vars["POSTGRES_PASSWORD"]
+            )
+
+    # =========================================================================
     # STEP 3: Review
     # =========================================================================
     console.print("\n[bold cyan]═══ Step 3: Review ═══[/bold cyan]\n")
 
-    db_uri = f"sqlite:///{config_dir / 'crow.db'}"
+    if setup_postgres:
+        db_uri = (
+            "postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}"
+            "@localhost:${POSTGRES_PORT}/${POSTGRES_DB}"
+        )
+    else:
+        db_uri = f"sqlite:///{config_dir / 'crow.db'}"
     console.print(f"[dim]Memory store: {db_uri}[/dim]")
 
     if providers:
@@ -344,7 +389,11 @@ def run_init(config_dir: Path, yes: bool = False):
     s_table.add_column("Status", style="green")
     s_table.add_row("SearXNG", "✓ Docker" if setup_searxng else "✗ Skip")
     s_table.add_row("RustFS", "✓ Docker" if setup_rustfs else "✗ Skip")
-    s_table.add_row("Memory", "sqlite (crow.db, in-process)")
+    s_table.add_row("PostgreSQL", "✓ Docker" if setup_postgres else "✗ Skip")
+    s_table.add_row(
+        "Memory",
+        "PostgreSQL (shared, docker)" if setup_postgres else "sqlite (crow.db, in-process)",
+    )
     s_table.add_row("MCP", "crow-cli mcp over stdio")
     console.print(s_table)
 
@@ -439,6 +488,8 @@ def run_init(config_dir: Path, yes: bool = False):
         for svc in ("rustfs", "volume-permission-helper"):
             if svc in available_services:
                 active_services[svc] = available_services[svc]
+    if setup_postgres and "postgres" in available_services:
+        active_services["postgres"] = available_services["postgres"]
 
     compose_file = config_dir / "compose.yaml"
     if active_services:
@@ -463,10 +514,16 @@ def run_init(config_dir: Path, yes: bool = False):
     system_prompt_dir = config_dir / "prompts"
 
     console.print()
+    memory_line = (
+        f"Memory:   [cyan]postgresql → localhost:{env_vars['POSTGRES_PORT']}"
+        f"/{env_vars['POSTGRES_DB']} (docker)[/cyan]"
+        if setup_postgres
+        else f"Memory:   [cyan]sqlite → {config_dir / 'crow.db'}[/cyan]"
+    )
     done_lines = [
         "[bold green]✓ Configuration complete![/bold green]\n",
         f"Config:   [cyan]{config_file}[/cyan]",
-        f"Memory:   [cyan]sqlite → {config_dir / 'crow.db'}[/cyan]",
+        memory_line,
         f"Logs:     [cyan]{config_logs}[/cyan]",
         f"Prompt:   [cyan]{system_prompt_dir}/system_prompt.jinja2[/cyan]",
         f"Secrets:  [cyan]{env_file}[/cyan]",

@@ -443,7 +443,9 @@ def apply_config_overrides(config: "Config", config_file: Path | None) -> "Confi
     if "skills_dir" in overrides:
         config.skills_dir = os.path.expanduser(overrides["skills_dir"])
     if "db_uri" in overrides or "memory_path" in overrides:
-        config.db_uri = normalize_db_uri(overrides.get("db_uri") or overrides["memory_path"])
+        config.db_uri = normalize_db_uri(
+            resolve_env_vars(overrides.get("db_uri") or overrides["memory_path"])
+        )
     if "max_retries_per_step" in overrides:
         config.max_retries_per_step = int(overrides["max_retries_per_step"])
     if "MAX_COMPACT_TOKENS" in overrides:
