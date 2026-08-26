@@ -3,6 +3,7 @@
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from . import fts
 from .ids import parse_agent_id
 from .image_store import ImageStore
 from .messages import extract_images, message_text
@@ -31,19 +32,7 @@ def add_message(
         )
         db.add(row)
         db.flush()
-        db.execute(
-            text(
-                "INSERT INTO messages_fts(rowid, agent_id, role, fork_idx, text) "
-                "VALUES (:r, :a, :role, :f, :t)"
-            ),
-            {
-                "r": row.id,
-                "a": agent_id,
-                "role": row.role,
-                "f": fork_idx,
-                "t": message_text(stored),
-            },
-        )
+        fts.insert_fts(db, engine, row.id, agent_id, row.role, fork_idx, message_text(stored))
         db.commit()
         return row.id
 

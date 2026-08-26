@@ -4,8 +4,9 @@ only integration point — this package reads NO config."""
 import os
 from pathlib import Path
 
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, event
 
+from . import fts
 from .models import Base
 
 
@@ -49,12 +50,6 @@ def get_engine(db_uri: str):
     return engine
 
 
-FTS_DDL = (
-    "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5("
-    "agent_id UNINDEXED, role UNINDEXED, fork_idx UNINDEXED, text)"
-)
-
-
 def _require_v5(engine) -> None:
     """Fail fast on an unmigrated v4 database (no fork_idx column)."""
     from sqlalchemy import inspect
@@ -68,11 +63,12 @@ def _require_v5(engine) -> None:
 
 
 def create_database(db_uri: str) -> None:
-    """Create tables + the FTS5 keyword index (schema v5)."""
+    """Create tables + the keyword index (schema v5). Dialect-aware: FTS5
+    on sqlite, tsvector+GIN on postgres (see memory/fts.py)."""
     engine = get_engine(db_uri)
     Base.metadata.create_all(engine)
     _require_v5(engine)
     with engine.connect() as conn:
-        conn.execute(text(FTS_DDL))
+        fts.create_fts(conn, engine)
         conn.commit()
     engine.dispose()

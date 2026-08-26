@@ -1,8 +1,9 @@
-"""Read path: agents, prompts, messages, sessions, FTS5 keyword search."""
+"""Read path: agents, prompts, messages, sessions, keyword search."""
 
-from sqlalchemy import func, text
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from . import fts
 from .ids import build_agent_id, parse_agent_id
 from .image_store import ImageStore
 from .messages import hydrate_message
@@ -248,9 +249,10 @@ def search_messages(
     agent_idx: int | None = None,
     agent_ids: set[str] | None = None,
 ) -> list[dict]:
-    """BM25 keyword search over message text (SQLite FTS5). Returns
+    """Keyword search over message text (FTS5/bm25 on sqlite,
+    tsvector/ts_rank on postgres — see memory/fts.py). Returns
     {message fields + session_id/agent_idx + score} dicts, best match first.
-    ``score`` is the raw bm25 rank (lower = better)."""
+    ``score`` is lower = better on both backends."""
     idx = {}
     with Session(engine) as db:
         # Mapping columns only — full agent rows carry each agent's system
@@ -259,19 +261,8 @@ def search_messages(
             Agent.agent_id, Agent.session_id, Agent.agent_idx, Agent.fork_idx
         ).all():
             idx[a.agent_id] = (a.session_id, a.agent_idx, a.fork_idx)
-    # Quote each token so arbitrary user input stays a valid FTS5 query
-    # (implicit AND of phrases).
-    match = " ".join(f'"{t}"' for t in query.split() if t)
-    if not match:
-        return []
     with engine.connect() as conn:
-        hits = conn.execute(
-            text(
-                "SELECT rowid, bm25(messages_fts) AS rank FROM messages_fts "
-                "WHERE messages_fts MATCH :q ORDER BY rank LIMIT :lim"
-            ),
-            {"q": match, "lim": limit * 4},
-        ).fetchall()
+        hits = fts.search_fts(conn, engine, query, limit * 4)
     with Session(engine) as db:
         rows = db.query(Message).filter(Message.id.in_([h[0] for h in hits])).all()
     by_id = {r.id: r for r in rows}
