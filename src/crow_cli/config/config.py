@@ -275,6 +275,9 @@ class Config:
     db_uri: str = ""
     skills_dir: str = str(SKILLS_DIR)
     mcp_servers: dict[str, Any] = field(default_factory=dict)
+    # image_store.s3 block (endpoint/bucket/access_key/secret_key) — when
+    # present and reachable, images go to S3; else filesystem. Empty = FS.
+    image_store: dict[str, Any] = field(default_factory=dict)
     max_retries_per_step: int = 3
     MAX_COMPACT_TOKENS: int = 190000
     MAX_TOKENS: int = 38192
@@ -411,6 +414,7 @@ class Config:
 
         mcp_servers = parsed.get("mcpServers", {})
         _logger.info("FINAL mcp_servers stored in Config: %s", mcp_servers)
+        image_store = parsed.get("image_store") or {}
         system_prompt_path = None
         if "system_prompt_path" in parsed:
             system_prompt_path = Path(os.path.expanduser(parsed["system_prompt_path"]))
@@ -421,6 +425,7 @@ class Config:
             db_uri=db_uri,
             skills_dir=skills_dir,
             mcp_servers=mcp_servers,
+            image_store=image_store,
             system_prompt_path=system_prompt_path,
             **overrides,
         )
@@ -449,4 +454,6 @@ def apply_config_overrides(config: "Config", config_file: Path | None) -> "Confi
         config.chunk_log = bool(overrides["chunk_log"])
     if "mcpServers" in overrides:
         config.mcp_servers = overrides["mcpServers"]
+    if "image_store" in overrides:
+        config.image_store = resolve_env_vars(overrides["image_store"]) or {}
     return config

@@ -37,18 +37,23 @@ or config_dir/"images" for non-file backends).
       current behavior, zero change. Thread store through extract_images /
       hydrate_message / MemoryClient in place of images_dir.
       (2026-08-25: done — memory/image_store.py, 439 green.)
-- [ ] S3ImageStore (boto3, custom endpoint_url) + config.yaml `image_store.s3`
+- [x] S3ImageStore (boto3, custom endpoint_url) + config.yaml `image_store.s3`
       block (endpoint/bucket/access_key/secret_key).
-- [ ] Probe-and-fallback: config has s3 → head_bucket probe (~2s) → S3 if up,
-      FS if down/absent. Log the decision.
-- [ ] Hybrid READ: get() tries S3 then FS, so legacy FS images survive the
+      (2026-08-25: done — image_store.py, Config.image_store, 446 green.)
+- [x] Probe-and-fallback: config has s3 → head_bucket probe (~2s) → S3 if up,
+      FS if down/absent. Log the decision. (2026-08-25: done.)
+- [x] Hybrid READ: get() tries S3 then FS, so legacy FS images survive the
       switch with zero migration. Write path = chosen backend only.
-- [ ] Bucket bootstrap: create `crow-images` if missing.
-- [ ] boto3 is sync in an async codebase — wrap in asyncio.to_thread at the
-      async call sites (save_message/load paths are async).
-- [ ] Tests: store seam round-trip (FS real, S3 via moto — mock justified:
-      network service), probe/fallback with dead endpoint, init_cmd compose
-      rendering, live e2e vs real rustfs container (integration tier).
+      (2026-08-25: done — HybridReadStore.)
+- [x] Bucket bootstrap: create `crow-images` if missing. (2026-08-25: done —
+      S3ImageStore ctor creates on 404.)
+- [x] boto3 is sync in an async codebase — wrap in asyncio.to_thread at the
+      async call sites (save_message/load paths are async). (2026-08-25: done
+      in agent/memory.py add_message/load.)
+- [x] Tests: store seam round-trip (FS real, S3 via moto ThreadedMotoServer —
+      mock justified: network service), probe/fallback with dead endpoint,
+      init_cmd compose rendering. (2026-08-25: done, 446 green.)
+- [ ] Live e2e vs real rustfs container (integration tier) — Phase 4.
 - [ ] Docs: config.yaml template comment for image_store; README note.
 
 ## Decisions (locked)

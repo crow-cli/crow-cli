@@ -14,6 +14,7 @@ sqlite I/O is local and millisecond-fast, so the async methods simply call the
 sync db helpers.
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -151,9 +152,11 @@ class MemoryClient:
         else:
             # Non-file backends (e.g. postgres): images stay beside the config.
             self.images_dir = cfg.config_dir / "images"
-        # Phase 3 swaps this for resolve_image_store(cfg): S3 when configured
-        # and reachable, FsImageStore otherwise.
-        self.image_store = db.FsImageStore(self.images_dir)
+        # S3 (RustFS) when configured and reachable, filesystem otherwise —
+        # probed ONCE here; the decision is logged by resolve_image_store.
+        self.image_store = db.resolve_image_store(
+            cfg.image_store.get("s3"), self.images_dir
+        )
         db.create_database(self.db_uri)
         self._engine = db.get_engine(self.db_uri)
 
@@ -212,8 +215,9 @@ class MemoryClient:
         agent = db.get_agent(self._engine, agent_id)
         if agent is None:
             raise MemoryServiceError(404, f"agent '{agent_id}' not found")
-        messages = db.load_agent_messages(
-            self._engine, agent, hydrate=hydrate, store=self.image_store
+        messages = await asyncio.to_thread(
+            db.load_agent_messages,
+            self._engine, agent, hydrate, self.image_store,
         )
         return _agent_record(agent), messages
 
@@ -223,8 +227,10 @@ class MemoryClient:
     # ---- messages ----
 
     async def add_message(self, agent_id: str, message: dict, usage: dict | None = None) -> int:
-        return db.add_message(
-            self._engine, agent_id, message, store=self.image_store, usage=usage
+        # to_thread: the store may be S3 (network I/O) — never block the loop.
+        return await asyncio.to_thread(
+            db.add_message,
+            self._engine, agent_id, message, self.image_store, usage,
         )
 
     async def save_messages(self, agent_id: str, messages: list[dict]) -> list[int]:

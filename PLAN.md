@@ -57,7 +57,7 @@ to FS so legacy images never break.
   thread `store=`; test_store.py round-trip + dedupe green through the seam.
   439 passed. image_ref "path" field KEPT as the key (DB compat).
 
-## Phase 3 — S3 store + probe/fallback + config
+## Phase 3 — S3 store + probe/fallback + config — DONE 2026-08-25
 
 - 3.1 boto3 dependency; `S3ImageStore(endpoint, bucket, access_key,
       secret_key)` — head_bucket probe (~2s timeout), create bucket if 404,
@@ -70,8 +70,15 @@ to FS so legacy images never break.
       read-fallback wrapper); probe fails → FsImageStore + logged warning.
       Decision logged ONCE at init.
 - Verify: unit green incl. moto-backed S3 round-trip (mock justified:
-      network service); fallback test — configured but dead endpoint →
-      FsImageStore chosen; hybrid read — object only in FS still hydrates.
+  network service); fallback test — configured but dead endpoint →
+  FsImageStore chosen; hybrid read — object only in FS still hydrates.
+- Evidence: tests/memory/test_image_store.py — 7 green against a REAL local
+  S3 (moto ThreadedMotoServer; mock_aws does NOT intercept custom
+  endpoint_url — verified). S3ImageStore probes via head_bucket, creates
+  bucket on 404; resolve_image_store logs the decision once; MemoryClient
+  add_message/load wrapped in asyncio.to_thread (S3 = network I/O);
+  apply_config_overrides expands ${RUSTFS_*} refs. boto3 dep added.
+  446 passed.
 
 ## Phase 4 — live e2e + docs
 
