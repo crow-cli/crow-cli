@@ -204,9 +204,94 @@ COMPOSE_YAML = """services:
       - ./litellm/config.yaml:/app/config.yaml
     command: ["--config", "/app/config.yaml"]
 
+  # RustFS — S3-compatible object storage for the image store (Apache 2.0).
+  # Single node, 4 volumes, erasure coding within the node. crow probes the
+  # S3 endpoint at init and falls back to filesystem images when it is down.
+  rustfs:
+    image: rustfs/rustfs:latest
+    container_name: rustfs-server
+    depends_on:
+      - volume-permission-helper
+    security_opt:
+      - "no-new-privileges:true"
+    ports:
+      - "${RUSTFS_PORT}:9000" # S3 API port
+      - "${RUSTFS_CONSOLE_PORT}:9001" # Console port
+    environment:
+      - RUSTFS_VOLUMES=/data/rustfs{0...3}
+      - RUSTFS_ADDRESS=0.0.0.0:9000
+      - RUSTFS_CONSOLE_ADDRESS=0.0.0.0:9001
+      - RUSTFS_CONSOLE_ENABLE=true
+      - RUSTFS_CONSOLE_CORS_ALLOWED_ORIGINS=*
+      - RUSTFS_ACCESS_KEY=${RUSTFS_ACCESS_KEY}
+      - RUSTFS_SECRET_KEY=${RUSTFS_SECRET_KEY}
+      - RUSTFS_OBS_LOGGER_LEVEL=info
+      - RUSTFS_OBS_LOG_DIRECTORY=/app/logs
+      # Keep strict disk topology checks enabled by default.
+      # For local testing only, set RUSTFS_UNSAFE_BYPASS_DISK_CHECK=true.
+      - RUSTFS_UNSAFE_BYPASS_DISK_CHECK=${RUSTFS_UNSAFE_BYPASS_DISK_CHECK:-false}
+    volumes:
+      - rustfs_data_0:/data/rustfs0
+      - rustfs_data_1:/data/rustfs1
+      - rustfs_data_2:/data/rustfs2
+      - rustfs_data_3:/data/rustfs3
+      - logs:/app/logs
+    networks:
+      - rustfs-network
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "sh", "-ec",
+          "host=\\"$${RUSTFS_HEALTHCHECK_HOST:-127.0.0.1}\\"; scheme=\\"http\\"; set -- -fsS; \
+          if [ -n \\"$${RUSTFS_TLS_PATH:-}\\" ]; then \
+            scheme=\\"https\\"; \
+            ca_path=\\"$${RUSTFS_HEALTHCHECK_CA:-}\\"; \
+            if [ -z \\"$${ca_path}\\" ] && [ -f /opt/tls/ca.crt ]; then ca_path=/opt/tls/ca.crt; fi; \
+            case \\"$${host}\\" in 127.0.0.1|localhost) strict_host=false ;; *) strict_host=true ;; esac; \
+            if [ \\"$${strict_host}\\" = true ] && [ -n \\"$${ca_path}\\" ]; then \
+              set -- \\"$${@}\\" --cacert \\"$${ca_path}\\" --resolve \\"$${host}:9000:127.0.0.1\\" --resolve \\"$${host}:9001:127.0.0.1\\"; \
+            else \
+              set -- \\"$${@}\\" -k; \
+            fi; \
+          fi; \
+          curl \\"$${@}\\" \\"$${scheme}://$${host}:9000/health\\" && \
+          curl \\"$${@}\\" \\"$${scheme}://$${host}:9001/rustfs/console/health\\""
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # RustFS volume permissions fixer service (runtime user is 10001:10001)
+  volume-permission-helper:
+    image: alpine
+    volumes:
+      - rustfs_data_0:/data0
+      - rustfs_data_1:/data1
+      - rustfs_data_2:/data2
+      - rustfs_data_3:/data3
+      - logs:/logs
+    command: >
+      sh -c "
+        chown -R 10001:10001 /data0 /data1 /data2 /data3 /logs &&
+        echo 'Volume Permissions fixed' &&
+        exit 0
+      "
+    restart: "no"
+
+networks:
+  rustfs-network:
+
 volumes:
   database_data:
     driver: local
+  rustfs_data_0:
+  rustfs_data_1:
+  rustfs_data_2:
+  rustfs_data_3:
+  logs:
 """
 
 CONFIG_YAML = """# config.yaml — crow-cli configuration

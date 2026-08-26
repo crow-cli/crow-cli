@@ -281,6 +281,40 @@ def run_init(config_dir: Path, yes: bool = False):
             searxng_port = None
 
     # =========================================================================
+    # STEP 2b: RustFS (S3 object store for images)
+    # =========================================================================
+    console.print(
+        "\n[bold cyan]═══ Step 2b: RustFS (S3 image store) ═══[/bold cyan]\n"
+    )
+
+    setup_rustfs = None
+    if yes:
+        setup_rustfs = True
+        console.print("[dim]→ --yes mode: defaulting to RustFS install[/dim]")
+    elif os.environ.get("YES_INSTALL_RUSTFS", "").lower() in ("1", "true", "yes"):
+        setup_rustfs = True
+        console.print("[dim]→ YES_INSTALL_RUSTFS=1 detected, skipping prompt[/dim]")
+    else:
+        setup_rustfs = Confirm.ask(
+            "Set up RustFS S3 object store for images? (Requires Docker; "
+            "falls back to filesystem when down)",
+            default=True,
+        )
+
+    if setup_rustfs:
+        env_vars["RUSTFS_PORT"] = os.environ.get("RUSTFS_PORT", "9000")
+        env_vars["RUSTFS_CONSOLE_PORT"] = os.environ.get("RUSTFS_CONSOLE_PORT", "9001")
+        env_vars["RUSTFS_ACCESS_KEY"] = os.environ.get("RUSTFS_ACCESS_KEY", "rustfsadmin")
+        env_vars["RUSTFS_SECRET_KEY"] = os.environ.get("RUSTFS_SECRET_KEY", "rustfsadmin")
+        if not yes:
+            env_vars["RUSTFS_ACCESS_KEY"] = Prompt.ask(
+                "RustFS access key", default=env_vars["RUSTFS_ACCESS_KEY"]
+            )
+            env_vars["RUSTFS_SECRET_KEY"] = Prompt.ask(
+                "RustFS secret key", default=env_vars["RUSTFS_SECRET_KEY"]
+            )
+
+    # =========================================================================
     # STEP 3: Review
     # =========================================================================
     console.print("\n[bold cyan]═══ Step 3: Review ═══[/bold cyan]\n")
@@ -309,6 +343,7 @@ def run_init(config_dir: Path, yes: bool = False):
     s_table.add_column("Service", style="cyan")
     s_table.add_column("Status", style="green")
     s_table.add_row("SearXNG", "✓ Docker" if setup_searxng else "✗ Skip")
+    s_table.add_row("RustFS", "✓ Docker" if setup_rustfs else "✗ Skip")
     s_table.add_row("Memory", "sqlite (crow.db, in-process)")
     s_table.add_row("MCP", "crow-cli mcp over stdio")
     console.print(s_table)
@@ -353,6 +388,18 @@ def run_init(config_dir: Path, yes: bool = False):
         "max_retries_per_step": 3,
     }
 
+    if setup_rustfs:
+        # S3 image store — the agent probes this endpoint at init and falls
+        # back to filesystem images when unreachable. Secrets via .env refs.
+        config_data["image_store"] = {
+            "s3": {
+                "endpoint": f"http://localhost:{env_vars['RUSTFS_PORT']}",
+                "bucket": "crow-images",
+                "access_key": "${RUSTFS_ACCESS_KEY}",
+                "secret_key": "${RUSTFS_SECRET_KEY}",
+            }
+        }
+
     with open(config_file, "w") as f:
         yaml.dump(
             config_data,
@@ -388,6 +435,10 @@ def run_init(config_dir: Path, yes: bool = False):
 
     if setup_searxng and "searxng" in available_services:
         active_services["searxng"] = available_services["searxng"]
+    if setup_rustfs:
+        for svc in ("rustfs", "volume-permission-helper"):
+            if svc in available_services:
+                active_services[svc] = available_services[svc]
 
     compose_file = config_dir / "compose.yaml"
     if active_services:
@@ -395,6 +446,9 @@ def run_init(config_dir: Path, yes: bool = False):
             "services": active_services,
             "volumes": compose_template.get("volumes", {}),
         }
+        # rustfs declares its own network; carry it only when rustfs is in
+        if setup_rustfs and compose_template.get("networks"):
+            compose_data["networks"] = compose_template["networks"]
         with open(compose_file, "w") as f:
             yaml.dump(compose_data, f, default_flow_style=False, sort_keys=False)
         console.print(f"[green]✓[/green] Written {compose_file}")
