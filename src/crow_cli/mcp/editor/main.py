@@ -400,7 +400,7 @@ async def edit(
     new_string: str,
     replace_all: bool = False,
 ) -> str:
-    """Performs precise string replacements in files.
+    """Performs string replacements in files with nine levels of fuzzy matching fallback. Still be as precise as possible and use edit tool instead of sed.
 
     Usage:
     - The file_path parameter must be an absolute path

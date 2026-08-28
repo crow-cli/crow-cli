@@ -26,6 +26,7 @@ from openai import (
 )
 from openai._exceptions import APITimeoutError
 
+from crow_cli.agent.context import TurnCtx
 from crow_cli.agent.react import (
     TOOL_CALL_CANCELLED_MESSAGE,
     _is_transient_provider_400,
@@ -341,20 +342,23 @@ def _tool_call(id: str, name: str, arguments: str) -> dict:
     return {"id": id, "type": "function", "function": {"name": name, "arguments": arguments}}
 
 
+def _ctx(conn, agent_id: str = "s-1-1") -> TurnCtx:
+    """One prompt turn for exercising execute_tool_calls in isolation.
+
+    ``agent_id`` is a trunk id, so its wire sessionId is the bare "s" — which
+    is also how these tests key mcp_clients.
+    """
+    session = SimpleNamespace(agent_id=agent_id, cwd="/tmp")
+    return TurnCtx(conn=conn, config=None, session=session, turn_id="t", logger=logger)
+
+
 @pytest.mark.asyncio
 async def test_malformed_tool_args_produce_error_result_and_repair_in_place():
     calls = [_tool_call("c1", "search", "[1, 2]")]  # valid JSON, not an object
     results = await execute_tool_calls(
-        conn=RecordingConn(),
-        client_capabilities=None,
-        turn_id="t",
-        config=None,
+        ctx=_ctx(RecordingConn()),
         mcp_clients={},
-        sessions={},
-        agent_id="s-1-1",
         tool_call_inputs=calls,
-        logger=logger,
-        hooks=[],
     )
     assert len(results) == 1
     assert results[0]["tool_call_id"] == "c1"
@@ -372,16 +376,9 @@ class ExplodingMCP:
 async def test_tool_exception_yields_error_result_and_failed_progress():
     conn = RecordingConn()
     results = await execute_tool_calls(
-        conn=conn,
-        client_capabilities=None,
-        turn_id="t",
-        config=None,
+        ctx=_ctx(conn),
         mcp_clients={"s": ExplodingMCP()},
-        sessions={},
-        agent_id="s-1-1",
         tool_call_inputs=[_tool_call("c1", "search", '{"q": "x"}')],
-        logger=logger,
-        hooks=[],
     )
     assert len(results) == 1
     assert "Error" in results[0]["content"]
@@ -408,19 +405,12 @@ async def test_cancel_keeps_finished_results_and_fills_placeholders():
     results: list[dict] = []
     task = asyncio.create_task(
         execute_tool_calls(
-            conn=RecordingConn(),
-            client_capabilities=None,
-            turn_id="t",
-            config=None,
+            ctx=_ctx(RecordingConn()),
             mcp_clients={"s": OneThenHangMCP()},
-            sessions={},
-            agent_id="s-1-1",
             tool_call_inputs=[
                 _tool_call("c1", "search", '{"q": "a"}'),
                 _tool_call("c2", "search", '{"q": "b"}'),
             ],
-            logger=logger,
-            hooks=[],
             tool_results=results,
         )
     )

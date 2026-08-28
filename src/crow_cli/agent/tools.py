@@ -7,7 +7,6 @@ Intercepts terminal commands to enforce --project usage for 'uv' in ephemeral en
 import asyncio
 import json
 from contextlib import suppress
-from logging import Logger
 from typing import Any
 
 from acp import (
@@ -23,7 +22,6 @@ from acp.helpers import (
     tool_diff_content,
     update_tool_call,
 )
-from acp.interfaces import Client
 from acp.schema import (
     TerminalToolCallContent,
     ToolCallProgress,
@@ -36,16 +34,7 @@ from mcp.types import (
     TextContent,
 )
 
-from crow_cli.config import Config
-from crow_cli.agent.hooks import CommandHook, FileSnapshotHook
-from crow_cli.agent.session import AgentSession
-from crow_cli.memory import parse_agent_id, wire_session_id
-
-
-def route_to_session_id(agent_id: str) -> str:
-    """Wire sessionId for ACP upstream calls: bare session for the trunk,
-    full agent_id for a fork."""
-    return wire_session_id(agent_id)
+from crow_cli.agent.context import TurnCtx
 
 
 def tool_match(tool_name: str, terms: tuple[str]) -> bool:
@@ -158,14 +147,7 @@ def mcp_content_to_openai_format(
 
 
 async def execute_acp_terminal(
-    conn: Client,
-    sessions: dict[str, AgentSession],
-    turn_id: str,
-    agent_id: str,
-    tool_call_id: str,
-    args: dict[str, Any],
-    logger: Logger,
-    hooks: list[CommandHook],
+    ctx: TurnCtx, tool_call_id: str, args: dict[str, Any]
 ) -> str:
     """
     Execute terminal command via ACP client terminal.
@@ -177,25 +159,19 @@ async def execute_acp_terminal(
     - reset: Not needed (ACP terminal is fresh each call)
 
     Args:
-        turn_id: Turn ID for ACP tool call IDs
-        session_id: ACP session ID
+        ctx: Turn context — conn, wire session id, cwd, logger, command hooks
         tool_call_id: LLM tool call ID
         args: Tool arguments from LLM
 
     Returns:
         Result string with output and status
     """
+    conn, logger = ctx.conn, ctx.logger
     command = args.get("command", "")
     timeout_seconds = float(args.get("timeout") or 30.0)
-
-    # Build ACP tool call ID from turn_id + llm tool call id
-    acp_tool_call_id = f"{turn_id}/{tool_call_id}"
-
-    session_id = route_to_session_id(agent_id)
-
-    # Get session state for cwd
-    session = sessions.get(agent_id)
-    cwd = session.cwd if session and hasattr(session, "cwd") else "/tmp"
+    acp_tool_call_id = ctx.tcid(tool_call_id)
+    session_id = ctx.session_id
+    cwd = ctx.cwd
 
     terminal_id: str | None = None
     timed_out = False
@@ -215,7 +191,7 @@ async def execute_acp_terminal(
 
         # --- Command hooks: pre-execution guards ---
         # Ephemeral terminals do not persist cwd or env — hooks enforce policies.
-        for hook in hooks:
+        for hook in ctx.hooks:
             rejection = hook(command)
             if rejection is not None:
                 return rejection
@@ -317,29 +293,20 @@ async def execute_acp_terminal(
 
 
 async def execute_acp_write(
-    conn: Client,
-    turn_id: str,
-    sessions: dict[str, AgentSession],
-    agent_id: str,
-    tool_call_id: str,
-    args: dict[str, Any],
-    logger: Logger,
-    snapshot_hooks: list[FileSnapshotHook] | None = None,
+    ctx: TurnCtx, tool_call_id: str, args: dict[str, Any]
 ) -> str:
     """
     Write file via ACP client filesystem.
 
     Args:
-        turn_id: Turn ID for ACP tool call IDs
-        sessions: Dict of agent_id -> AgentSession
-        agent_id: Agent ID (internal key)
+        ctx: Turn context — conn, wire session id, logger, snapshot hooks
         tool_call_id: LLM tool call ID
         args: Tool arguments from LLM (file_path, content)
-        snapshot_hooks: Hooks to capture pre-mutation file state
 
     Returns:
         Success message
     """
+    conn, logger = ctx.conn, ctx.logger
     path = args.get("file_path", "")
     content = args.get("content", "")
 
@@ -347,17 +314,13 @@ async def execute_acp_write(
     # If content is not a string, serialize it back so write_text_file works.
     if not isinstance(content, str):
         content = json.dumps(content, ensure_ascii=False, indent=2)
-    session_id = route_to_session_id(agent_id)
-
-    # Build ACP tool call ID from turn_id + llm tool call id
-    acp_tool_call_id = f"{turn_id}/{tool_call_id}"
+    session_id = ctx.session_id
+    acp_tool_call_id = ctx.tcid(tool_call_id)
 
     # Pre-hook: capture before state for Monaco diffs
-    if path and snapshot_hooks:
-        session = sessions.get(agent_id)
-        if session:
-            for hook in snapshot_hooks:
-                hook(session, acp_tool_call_id, "write", path, logger)
+    if path and ctx.snapshot_hooks:
+        for hook in ctx.snapshot_hooks:
+            hook(ctx.session, acp_tool_call_id, "write", path, logger)
 
     try:
         # 1. Send tool call start
@@ -409,32 +372,25 @@ async def execute_acp_write(
 
 
 async def execute_acp_read(
-    conn: Client,
-    turn_id: str,
-    agent_id: str,
-    tool_call_id: str,
-    args: dict[str, Any],
-    logger: Logger,
+    ctx: TurnCtx, tool_call_id: str, args: dict[str, Any]
 ) -> str:
     """
     Read file via ACP client filesystem.
 
     Args:
-        turn_id: Turn ID for ACP tool call IDs
-        agent_id: Agent ID (internal key)
+        ctx: Turn context — conn, wire session id, logger
         tool_call_id: LLM tool call ID
         args: Tool arguments from LLM (file_path, offset, limit)
 
     Returns:
         File contents with line numbers
     """
+    conn, logger = ctx.conn, ctx.logger
     path = args.get("file_path", "")
     offset = args.get("offset", 1)
     limit = args.get("limit", 4000)
-    session_id = route_to_session_id(agent_id)
-
-    # Build ACP tool call ID from turn_id + llm tool call id
-    acp_tool_call_id = f"{turn_id}/{tool_call_id}"
+    session_id = ctx.session_id
+    acp_tool_call_id = ctx.tcid(tool_call_id)
 
     try:
         # 1. Send tool call start
@@ -487,15 +443,7 @@ async def execute_acp_read(
 
 
 async def execute_acp_edit(
-    conn: Client,
-    turn_id: str,
-    mcp_clients: dict[str, MCPClient],
-    sessions: dict[str, AgentSession],
-    agent_id: str,
-    tool_call_id: str,
-    args: dict[str, Any],
-    logger: Logger,
-    snapshot_hooks: list[FileSnapshotHook] | None = None,
+    ctx: TurnCtx, mcp_clients: dict[str, MCPClient], tool_call_id: str, args: dict[str, Any]
 ) -> str:
     """
     Edit file with fuzzy matching, sending diff content to ACP client.
@@ -504,30 +452,25 @@ async def execute_acp_edit(
     sends proper diff content for the client to display.
 
     Args:
-        turn_id: Turn ID for ACP tool call IDs
-        sessions: Dict of agent_id -> AgentSession
-        agent_id: Agent ID (internal key)
+        ctx: Turn context — conn, wire session id, logger, snapshot hooks
+        mcp_clients: Per-wire-session MCP clients (the edit tool runs there)
         tool_call_id: LLM tool call ID
         args: Tool arguments from LLM (file_path, old_string, new_string, replace_all)
-        snapshot_hooks: Hooks to capture pre-mutation file state
 
     Returns:
         Result string from the edit operation
     """
+    conn, logger = ctx.conn, ctx.logger
     path = args.get("file_path", "")
     old_text = args.get("old_string", "")
     new_text = args.get("new_string", "")
-    session_id = route_to_session_id(agent_id)
-
-    # Build ACP tool call ID from turn_id + llm tool call id
-    acp_tool_call_id = f"{turn_id}/{tool_call_id}"
+    session_id = ctx.session_id
+    acp_tool_call_id = ctx.tcid(tool_call_id)
 
     # Pre-hook: capture before state for Monaco diffs
-    if path and snapshot_hooks:
-        session = sessions.get(agent_id)
-        if session:
-            for hook in snapshot_hooks:
-                hook(session, acp_tool_call_id, "edit", path, logger)
+    if path and ctx.snapshot_hooks:
+        for hook in ctx.snapshot_hooks:
+            hook(ctx.session, acp_tool_call_id, "edit", path, logger)
 
     try:
         # 1. Send tool call start
@@ -582,13 +525,7 @@ async def execute_acp_edit(
 
 
 async def execute_acp_task(
-    conn: Client,
-    turn_id: str,
-    mcp_clients: dict[str, MCPClient],
-    agent_id: str,
-    tool_call_id: str,
-    args: dict[str, Any],
-    logger: Logger,
+    ctx: TurnCtx, mcp_clients: dict[str, MCPClient], tool_call_id: str, args: dict[str, Any]
 ) -> str:
     """
     Execute the `task` tool with the calling session's wire id attached.
@@ -599,19 +536,17 @@ async def execute_acp_task(
     the environment, and the model can neither see nor forge it.
 
     Args:
-        conn: ACP client connection
-        turn_id: Turn ID for ACP tool call IDs
+        ctx: Turn context — conn, wire session id, logger
         mcp_clients: Per-session MCP clients
-        agent_id: Agent ID (internal key)
         tool_call_id: LLM tool call ID
         args: Tool arguments from LLM (updates)
-        logger: Logger instance
 
     Returns:
         Result string from the tool
     """
-    session_id = route_to_session_id(agent_id)
-    acp_tool_call_id = f"{turn_id}/{tool_call_id}"
+    conn, logger = ctx.conn, ctx.logger
+    session_id = ctx.session_id
+    acp_tool_call_id = ctx.tcid(tool_call_id)
     try:
         await conn.session_update(
             session_id=session_id,
@@ -661,14 +596,11 @@ async def execute_acp_task(
 
 
 async def execute_acp_tool(
-    conn: Client,
-    turn_id: str,
+    ctx: TurnCtx,
     mcp_clients: dict[str, MCPClient],
-    agent_id: str,
     tool_call_id: str,
     tool_name: str,
     args: dict[str, Any],
-    logger: Logger,
 ) -> str:
     """
     Execute a generic tool via MCP and report with content.
@@ -677,19 +609,18 @@ async def execute_acp_tool(
     to display to the user.
 
     Args:
-        turn_id: Turn ID for ACP tool call IDs
-        agent_id: Agent ID (internal key)
+        ctx: Turn context — conn, wire session id, logger
+        mcp_clients: Per-session MCP clients
         tool_call_id: LLM tool call ID
         tool_name: Name of the MCP tool to call
         args: Tool arguments from LLM
-        kind: Tool kind for display (search, fetch, other)
 
     Returns:
         Result string from the tool
     """
-    session_id = route_to_session_id(agent_id)
-    # Build ACP tool call ID from turn_id + llm tool call id
-    acp_tool_call_id = f"{turn_id}/{tool_call_id}"
+    conn, logger = ctx.conn, ctx.logger
+    session_id = ctx.session_id
+    acp_tool_call_id = ctx.tcid(tool_call_id)
     kind: ToolKind = get_tool_kind(tool_name)
     try:
         # 1. Send tool call start

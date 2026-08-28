@@ -1,109 +1,116 @@
-import json
-import os
-import re
+"""Execution context objects — the bundles threaded through a turn.
+
+Two lifetimes, deliberately separate:
+
+* :class:`TurnCtx` — one ACP prompt turn. Frozen. Carries what the react loop
+  and the tool executors need so call sites stop threading a dozen scalars
+  down the stack, and computes the two derived ids (wire session id, ACP tool
+  call id) once instead of re-deriving them in every executor.
+* :class:`SessionRecord` — one client-facing ACP session. Groups the
+  per-session resources that used to live in parallel dicts on the agent.
+
+The key spaces differ on purpose: an ACP ``sessionId`` is stable for a whole
+conversation while compaction mints new agent rows inside it, so live sessions
+are keyed by ``agent_id`` and per-session resources by wire id — see
+:func:`crow_cli.memory.wire_session_id`.
+"""
+
+from dataclasses import dataclass, field, replace
 from logging import Logger
-from typing import Any
-from urllib.parse import urlparse
-from urllib.request import url2pathname
+from typing import TYPE_CHECKING
 
-from directory_tree import DisplayTree
+from acp.interfaces import Client
+from acp.schema import ClientCapabilities
+
+from crow_cli.agent.hooks import CommandHook, FileSnapshotHook
+from crow_cli.config import Config
+from crow_cli.memory import wire_session_id
+
+if TYPE_CHECKING:
+    from fastmcp import Client as MCPClient
+
+    from crow_cli.agent.session import AgentSession
 
 
-def maximal_deserialize(data):
+@dataclass(frozen=True)
+class TurnCtx:
+    """Everything one prompt turn needs, fixed for the duration of the turn.
+
+    Frozen: a turn's identity (which agent, which turn, which client) never
+    changes mid-turn. Compaction is the one event that swaps the agent row,
+    and it does so with :meth:`with_session` rather than by mutation.
     """
-    Recursively drills into dictionaries and lists,
-    deserializing any JSON strings it finds until
-    no more strings can be converted to objects.
+
+    conn: Client
+    config: Config
+    session: "AgentSession"
+    turn_id: str
+    logger: Logger
+    caps: ClientCapabilities | None = None
+    hooks: tuple[CommandHook, ...] = ()
+    snapshot_hooks: tuple[FileSnapshotHook, ...] = ()
+
+    @property
+    def agent_id(self) -> str:
+        return self.session.agent_id
+
+    @property
+    def session_id(self) -> str:
+        """The ACP wire sessionId this turn reports against."""
+        return wire_session_id(self.session.agent_id)
+
+    @property
+    def cwd(self) -> str:
+        return self.session.cwd
+
+    def tcid(self, llm_tool_call_id: str) -> str:
+        """ACP toolCallId for an LLM tool call: ``<turn_id>/<llm id>``.
+
+        Falls back to the bare LLM id when there is no turn id (headless
+        callers that never mint one).
+        """
+        return f"{self.turn_id}/{llm_tool_call_id}" if self.turn_id else llm_tool_call_id
+
+    # Capability gates — computed from the client's advertised capabilities so
+    # executors can branch on `ctx.writes_via_client` instead of digging
+    # through ClientCapabilities.fs themselves.
+
+    @property
+    def terminal_via_client(self) -> bool:
+        return bool(self.caps and getattr(self.caps, "terminal", False))
+
+    @property
+    def writes_via_client(self) -> bool:
+        fs = getattr(self.caps, "fs", None) if self.caps else None
+        return bool(fs and getattr(fs, "write_text_file", False))
+
+    @property
+    def reads_via_client(self) -> bool:
+        fs = getattr(self.caps, "fs", None) if self.caps else None
+        return bool(fs and getattr(fs, "read_text_file", False))
+
+    def with_session(self, session: "AgentSession") -> "TurnCtx":
+        """A copy of this turn bound to a different agent row.
+
+        Used after compaction: the wire sessionId is unchanged (compaction
+        forks ``agent_idx`` inside a stable session), but every subsequent
+        write in this turn must land on the new agent.
+        """
+        return replace(self, session=session)
+
+
+@dataclass
+class SessionRecord:
+    """Per-session resources for one client-facing ACP session.
+
+    Replaces six parallel dicts (mcp clients, tools, cancel events, loggers,
+    config values, state accumulators). Keyed by wire id upstream — the trunk's
+    bare ``session_id``, a fork's full ``agent_id`` — because these resources
+    outlive compaction: summarizing a conversation must not drop the MCP
+    connection or the pending cancel.
     """
-    # 1. If it's a string, try to decode it
-    if isinstance(data, str):
-        try:
-            # We strip it to avoid trying to load plain numbers/bools
-            # as JSON if they are just "1" or "true"
-            if data.startswith(("{", "[")):
-                decoded = json.loads(data)
-                # If it successfully decoded, recurse on the result
-                # (to handle nested-serialized strings)
-                return maximal_deserialize(decoded)
-        except json.JSONDecodeError, TypeError, ValueError:
-            # Not valid JSON, return the original string
-            pass
-        return data
 
-    # 2. If it's a dictionary, recurse on its values
-    elif isinstance(data, dict):
-        return {k: maximal_deserialize(v) for k, v in data.items()}
-
-    # 3. If it's a list, recurse on its elements
-    elif isinstance(data, list):
-        return [maximal_deserialize(item) for item in data]
-
-    # 4. Return anything else as-is (int, float, bool, None)
-    return data
-
-
-def number_lines(content: str) -> list[str]:
-    return [f"{k:6}\t{line}" for k, line in enumerate(content.split("\n"))]
-
-
-def context_fetcher(uri: str, logger: Logging) -> str:
-
-    res = find_line_numbers(uri)
-    if res["status"] == "success":
-        # pull out everything before the #L
-        file_uri = uri.split("#L")[0]
-        file_path = uri_to_path(file_uri)
-        with open(file_path, "r") as f:
-            content = f.read()
-        split_content = number_lines(content)
-        start = res["start"]
-        end = res["end"]
-        if start is not None and end is not None:
-            content = split_content[start - 1 : end]
-        elif start is not None:
-            content = split_content[start - 1 :]
-        elif end is not None:
-            content = split_content[:end]
-        else:
-            content = split_content
-    else:  # no line numbers, read whole file
-        file_path = uri_to_path(uri)
-        with open(file_path, "r") as f:
-            content = f.read()
-        content = number_lines(content)
-
-    return "\n".join([file_path] + content)
-
-
-def uri_to_path(uri: str) -> str:
-    parsed = urlparse(uri)
-    return url2pathname(parsed.path)
-
-
-def find_line_numbers(uri: str) -> dict[str, Any]:
-    pattern = r"#L(\d+)?(?::(\d+))?$"
-    match = re.search(pattern, uri)
-    response = {}
-    if match:
-        start, end = match.groups()
-        response["status"] = "success"
-        response["start"] = int(start) if start else None
-        response["end"] = int(end) if end else None
-    else:
-        response["status"] = "failure"
-        response["start"] = None
-        response["end"] = None
-    return response
-
-
-def get_directory_tree(cwd: str) -> str:
-    """Returns a string representation of the directory tree rooted at cwd.
-
-    Always returns a string. If the tree cannot be generated (e.g. a
-    permission-denied or missing directory), DisplayTree returns None; we
-    coerce that to an empty string so the ``-> str`` contract holds and callers
-    never have to handle None.
-    """
-    ignores = ["node_modules", "*.egg_info", "__pycache__", ".venv", "refs"]
-    tree = DisplayTree(stringRep=True, dirPath=cwd, ignoreList=ignores, maxDepth=3.0)
-    return tree or ""
+    mcp_client: "MCPClient | None" = None
+    tools: list[dict] = field(default_factory=list)
+    config_values: dict[str, str] = field(default_factory=dict)
+    state_accumulator: dict = field(default_factory=dict)

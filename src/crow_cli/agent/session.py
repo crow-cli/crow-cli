@@ -19,8 +19,10 @@ from coolname import generate_slug
 
 from crow_cli.agent.memory import DEFAULT_MEMORY_PATH, MemoryClient, MemoryServiceError
 from crow_cli.memory import build_agent_id
-from crow_cli.agent.prompt import render_template
-from crow_cli.agent.context import get_directory_tree
+from crow_cli.agent.prompt import (
+    render_template,
+    get_directory_tree,
+)
 
 from crow_cli.config import (
     AGENTS_DIR,

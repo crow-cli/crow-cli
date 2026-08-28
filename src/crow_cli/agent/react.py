@@ -19,20 +19,23 @@ from openai import APIConnectionError, APIError, AsyncOpenAI, RateLimitError
 from openai._exceptions import APITimeoutError
 
 from crow_cli.agent.compact import compact
+from crow_cli.agent.context import TurnCtx
 from crow_cli.config import (
     Config,
     build_sampling_params,
     max_compact_tokens_for,
     sampling_params_for,
 )
-from crow_cli.agent.context import maximal_deserialize
 from crow_cli.agent.hooks import CommandHook, FileSnapshotHook
 from crow_cli.agent.model_routing import (
     modalities_in_messages,
     route_model,
     strip_unsupported_blocks,
 )
-from crow_cli.agent.prompt import normalize_blocks
+from crow_cli.agent.prompt import (
+    normalize_blocks,
+    maximal_deserialize,
+)
 from crow_cli.agent.session import AgentSession
 from crow_cli.memory import get_engine, parse_agent_id, running_tasks, wire_session_id
 from crow_cli.memory.writes import claim_deliveries
@@ -539,59 +542,32 @@ async def process_response(
 
 
 async def execute_tool_calls(
-    conn: Client,
-    client_capabilities: ClientCapabilities,
-    turn_id: str,
-    config: Config,
+    ctx: TurnCtx,
     mcp_clients: dict[str, MCPClient],
-    sessions: dict[str, AgentSession],
-    agent_id: str,
     tool_call_inputs: list[dict],
-    logger: Logger,
-    hooks: list[CommandHook],
-    snapshot_hooks: list[FileSnapshotHook] | None = None,
     tool_results: list[dict] | None = None,
 ) -> list[dict]:
     """
     Execute tool calls via MCP or ACP client terminal.
 
     Args:
-        turn_id: Turn ID for ACP tool call IDs
-        agent_id: Agent ID (internal key)
-        tool_call_id: LLM tool call ID
+        ctx: Turn context — conn, live session, wire session id, logger, hooks
+        mcp_clients: Per-wire-session MCP clients
+        tool_call_inputs: Tool calls emitted by the LLM (OpenAI format)
         tool_results: Optional accumulator filled in-place, so callers can
             still see completed results when the call is cancelled mid-flight.
 
     Returns:
         List of tool results
     """
-    session_id = session_from_agent_id(agent_id)
     if tool_results is None:
         tool_results = []
-    use_acp_terminal = client_capabilities and getattr(
-        client_capabilities, "terminal", False
-    )
-    fs_caps = getattr(client_capabilities, "fs", None) if client_capabilities else None
-    use_acp_write = fs_caps and getattr(fs_caps, "write_text_file", False)
-    use_acp_read = fs_caps and getattr(fs_caps, "read_text_file", False)
     try:
         return await _execute_tool_calls_inner(
-            conn=conn,
-            session_id=session_id,
-            client_capabilities=client_capabilities,
-            turn_id=turn_id,
-            config=config,
+            ctx=ctx,
             mcp_clients=mcp_clients,
-            sessions=sessions,
-            agent_id=agent_id,
             tool_call_inputs=tool_call_inputs,
             tool_results=tool_results,
-            logger=logger,
-            hooks=hooks,
-            snapshot_hooks=snapshot_hooks,
-            use_acp_terminal=use_acp_terminal,
-            use_acp_write=use_acp_write,
-            use_acp_read=use_acp_read,
         )
     except asyncio.CancelledError:
         # Cancelled mid-execution: every tool call still needs a response so
@@ -611,30 +587,17 @@ async def execute_tool_calls(
 
 
 async def _execute_tool_calls_inner(
-    conn: Client,
-    session_id: str,
-    client_capabilities: ClientCapabilities,
-    turn_id: str,
-    config: Config,
+    ctx: TurnCtx,
     mcp_clients: dict[str, MCPClient],
-    sessions: dict[str, AgentSession],
-    agent_id: str,
     tool_call_inputs: list[dict],
     tool_results: list[dict],
-    logger: Logger,
-    hooks: list[CommandHook],
-    snapshot_hooks: list[FileSnapshotHook] | None,
-    use_acp_terminal: bool,
-    use_acp_write: bool,
-    use_acp_read: bool,
 ) -> list[dict]:
+    logger = ctx.logger
     for tool_call in tool_call_inputs:
         tool_name = tool_call["function"]["name"]
         tool_args = tool_call["function"]["arguments"]
         llm_tool_call_id = tool_call["id"]
-        acp_tool_call_id = (
-            f"{turn_id}/{llm_tool_call_id}" if turn_id else llm_tool_call_id
-        )
+        acp_tool_call_id = ctx.tcid(llm_tool_call_id)
 
         try:
             logger.info(
@@ -661,69 +624,29 @@ async def _execute_tool_calls_inner(
                     }
                 )
                 continue
-            if tool_name == "terminal" and use_acp_terminal:
+            if tool_name == "terminal" and ctx.terminal_via_client:
                 result_content = await execute_acp_terminal(
-                    conn=conn,
-                    sessions=sessions,
-                    turn_id=turn_id,
-                    agent_id=agent_id,
-                    tool_call_id=llm_tool_call_id,
-                    args=arg_dict,
-                    logger=logger,
-                    hooks=hooks,
+                    ctx, llm_tool_call_id, arg_dict
                 )
-            elif tool_name == "write" and use_acp_write:
+            elif tool_name == "write" and ctx.writes_via_client:
                 result_content = await execute_acp_write(
-                    conn=conn,
-                    turn_id=turn_id,
-                    sessions=sessions,
-                    agent_id=agent_id,
-                    tool_call_id=llm_tool_call_id,
-                    args=arg_dict,
-                    logger=logger,
-                    snapshot_hooks=snapshot_hooks,
+                    ctx, llm_tool_call_id, arg_dict
                 )
-            elif tool_name == "read" and use_acp_read:
+            elif tool_name == "read" and ctx.reads_via_client:
                 result_content = await execute_acp_read(
-                    conn=conn,
-                    turn_id=turn_id,
-                    agent_id=agent_id,
-                    tool_call_id=llm_tool_call_id,
-                    args=arg_dict,
-                    logger=logger,
+                    ctx, llm_tool_call_id, arg_dict
                 )
             elif tool_name == "edit":
                 result_content = await execute_acp_edit(
-                    conn=conn,
-                    turn_id=turn_id,
-                    mcp_clients=mcp_clients,
-                    sessions=sessions,
-                    agent_id=agent_id,
-                    tool_call_id=llm_tool_call_id,
-                    args=arg_dict,
-                    logger=logger,
-                    snapshot_hooks=snapshot_hooks,
+                    ctx, mcp_clients, llm_tool_call_id, arg_dict
                 )
             elif tool_name == "task":
                 result_content = await execute_acp_task(
-                    conn=conn,
-                    turn_id=turn_id,
-                    mcp_clients=mcp_clients,
-                    agent_id=agent_id,
-                    tool_call_id=llm_tool_call_id,
-                    args=arg_dict,
-                    logger=logger,
+                    ctx, mcp_clients, llm_tool_call_id, arg_dict
                 )
             else:
                 result_content = await execute_acp_tool(
-                    conn=conn,
-                    turn_id=turn_id,
-                    mcp_clients=mcp_clients,
-                    agent_id=agent_id,
-                    tool_call_id=llm_tool_call_id,
-                    tool_name=tool_name,
-                    args=arg_dict,
-                    logger=logger,
+                    ctx, mcp_clients, llm_tool_call_id, tool_name, arg_dict
                 )
             tool_results.append(
                 {
@@ -734,8 +657,8 @@ async def _execute_tool_calls_inner(
             )
         except Exception as e:
             logger.error(f"Error executing tool {tool_name}: {e}", exc_info=True)
-            await conn.session_update(
-                session_id=session_id,
+            await ctx.conn.session_update(
+                session_id=ctx.session_id,
                 update=ToolCallProgress(
                     session_update="tool_call_update",
                     tool_call_id=acp_tool_call_id,
@@ -784,10 +707,18 @@ async def react_loop(
         Dictionary with 'type' and 'token' or 'messages' keys
     """
     session = sessions.get(agent_id)
-    cwd = session.cwd
     session_id = session_from_agent_id(agent_id)
-    chunk_index = 0
     engine = get_engine(config.db_uri)
+    ctx = TurnCtx(
+        conn=conn,
+        config=config,
+        session=session,
+        turn_id=turn_id,
+        logger=logger,
+        caps=client_capabilities,
+        hooks=tuple(hooks or ()),
+        snapshot_hooks=tuple(snapshot_hooks or ()),
+    )
 
     # Prompt-start drain: completions that landed while this session was
     # idle — including everything queued while a cancelled turn was dead —
@@ -920,7 +851,6 @@ async def react_loop(
                 "token": f"\n\nCompaction threshold of {compact_threshold} reached — compacting conversation history...\n\n",
             }
 
-            old_agent_id = agent_id
             logger.info(f"Pre-compacted session length: {len(session.messages)}")
             session = await compact(
                 session=session,
@@ -929,7 +859,9 @@ async def react_loop(
                 on_compact=on_compact,
                 logger=logger,
             )
-            agent_id = session.agent_id  # update agent_id for next turn
+            # Compaction mints a new agent row inside the SAME wire sessionId.
+            # Rebind the turn so every later write in this prompt lands on it.
+            ctx = ctx.with_session(session)
             logger.info(f"Post-compacted session length: {len(session.messages)}")
             logger.info("Compaction complete - session updated in-place.")
             # Start fresh turn with compacted session [system, user]
@@ -987,17 +919,9 @@ async def react_loop(
             tool_results: list[dict] = []
             try:
                 await execute_tool_calls(
-                    conn=conn,
-                    client_capabilities=client_capabilities,
-                    turn_id=turn_id,
-                    config=config,
+                    ctx=ctx,
                     mcp_clients=mcp_clients,
-                    sessions=sessions,
-                    agent_id=agent_id,
                     tool_call_inputs=tool_call_inputs,
-                    logger=logger,
-                    hooks=hooks or [],
-                    snapshot_hooks=snapshot_hooks,
                     tool_results=tool_results,
                 )
             except asyncio.CancelledError:

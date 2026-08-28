@@ -101,7 +101,6 @@ from fastmcp import Client as MCPClient
 
 from crow_cli.agent.compact import compact
 from crow_cli.config import Config, apply_config_overrides, get_default_config_dir
-from crow_cli.agent.context import get_directory_tree
 from crow_cli.agent.hooks import (
     CommandHook,
     uv_project_hook,
@@ -109,7 +108,7 @@ from crow_cli.agent.hooks import (
 from crow_cli.agent.llm import configure_llm
 from crow_cli.agent.logger import setup_logger
 from crow_cli.agent.mcp_client import create_mcp_client_from_acp, get_tools
-from crow_cli.agent.prompt import normalize_prompt
+from crow_cli.agent.prompt import normalize_prompt, get_directory_tree
 from crow_cli.memory import (
     build_agent_id,
     get_engine,
