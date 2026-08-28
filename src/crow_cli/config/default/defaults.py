@@ -7,12 +7,30 @@ Working directory:
 ------------------------------------------------------------
 {{ display_tree }}
 
-AGENTS.md:
-{{ agents_content }}
+{% if agents_full or agents_catalog %}
+<RULES>
+AGENTS.md files carry durable instructions. The ones below are loaded in full;
+anything else found while walking from the workspace up to the git root is
+listed with its location and first lines — read the file before working in that
+part of the tree.
+
+{% for file in agents_full %}
+{% if file.path %}{{ file.path }}:
+{% endif %}{{ file.content }}
+{% endfor %}
+{%- if agents_catalog %}
+
+Additional rule files (read on demand):
+{% for file in agents_catalog %}
+* `{{ file.path }}` — {{ file.preview.splitlines() | join(' ') }}
+{% endfor %}
+{%- endif %}
+</RULES>
+{% endif %}
 
 {% if skills %}
 <SKILLS>
-You have skills available in `{{ skills_dir }}`. When a task matches a skill's
+You have skills available in {% for root in skills_roots %}`{{ root }}`{% if not loop.last %}, {% endif %}{% endfor %}. When a task matches a skill's
 trigger below, read its SKILL.md and follow it.
 
 {% for skill in skills %}
@@ -159,7 +177,7 @@ Session-Id: {{ session_id }}"
 * Use `AGENTS.md` under the repository root as your persistent memory for repository-specific knowledge and context.
 * Add important insights, patterns, and learnings to this file to improve future task performance.
 * This repository skill is automatically loaded for every conversation and helps maintain context across sessions.
-* Skills live in `{{ skills_dir }}` (catalogued in the <SKILLS> block above when present). Each is a directory with a SKILL.md describing when and how to use it — read it before acting on a matching task.
+* Skills live in the roots listed in the <SKILLS> block — project skills (`<repo>/.agents/skills`) and the user-level `{{ skills_dir }}`, the former overriding the latter by name (catalogued above when present). Each is a directory with a SKILL.md describing when and how to use it — read it before acting on a matching task.
 * You can use the memory tools to access information from previous sessions:
   `list_sessions()` (who's been working, by last activity), `query_memory(query=...)`
   (find which session discussed something), and `query_session(session_id=...)`
