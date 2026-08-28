@@ -9,6 +9,8 @@ module to build the full server.
 
 from fastmcp import FastMCP
 
+from crow_cli.mcp.server.memtrim import MemoryTrimMiddleware
+
 mcp = FastMCP(
     name="crow-mcp",
     instructions="""
@@ -32,3 +34,8 @@ mcp = FastMCP(
             Search the web via SearXNG.
     """,
 )
+
+# Long-lived HTTP server: RSS is an allocator high-water mark, not a live
+# count. Trim freed heap back to the OS on a cadence so the footprint tracks
+# the live set instead of ratcheting to every transient peak.
+mcp.add_middleware(MemoryTrimMiddleware(every=10))
