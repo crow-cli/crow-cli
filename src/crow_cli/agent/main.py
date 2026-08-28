@@ -837,7 +837,7 @@ class AcpAgent(Agent):
                             await session.add_message(
                                 {"role": "user", "content": user_content}
                             )
-                            result = await cmd["func"](agent_id, cmd_args, self)
+                            result = await cmd["func"](session, cmd_args, self)
                             # Send response
                             await self._conn.session_update(
                                 session_id=session.session_id,
