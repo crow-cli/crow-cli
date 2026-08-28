@@ -1,21 +1,29 @@
-"""Execution context objects — the bundles threaded through a turn.
+"""Execution context for one ACP prompt turn.
 
-Two lifetimes, deliberately separate:
+:class:`TurnCtx` is the frozen bundle threaded from the react loop into the tool
+executors, so call sites stop shuttling a dozen scalars down the stack and the
+two derived ids (wire sessionId, ACP toolCallId) are computed once instead of
+re-derived in every executor.
 
-* :class:`TurnCtx` — one ACP prompt turn. Frozen. Carries what the react loop
-  and the tool executors need so call sites stop threading a dozen scalars
-  down the stack, and computes the two derived ids (wire session id, ACP tool
-  call id) once instead of re-deriving them in every executor.
-* :class:`SessionRecord` — one client-facing ACP session. Groups the
-  per-session resources that used to live in parallel dicts on the agent.
+What belongs here: values fixed for the duration of a turn and local to the
+tenant running it — the connection the prompt arrived on, the agent row it
+belongs to, the turn id, the logger, the client's advertised capabilities.
 
-The key spaces differ on purpose: an ACP ``sessionId`` is stable for a whole
+What deliberately does NOT: shared per-session resources. MCP clients, tools,
+cancel events, loggers, config values and stream accumulators stay in the
+agent's registries — keyed by wire session id and resolved at call time,
+because they are shared across sessions, replaced when a session is re-loaded
+or a second connection attaches, and torn down by the agent's exit stack.
+Caching one into a turn would freeze a single tenant's resolution and outlive
+the object it came from.
+
+Key spaces differ on purpose: an ACP ``sessionId`` is stable for a whole
 conversation while compaction mints new agent rows inside it, so live sessions
 are keyed by ``agent_id`` and per-session resources by wire id — see
 :func:`crow_cli.memory.wire_session_id`.
 """
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from logging import Logger
 from typing import TYPE_CHECKING
 
@@ -27,8 +35,6 @@ from crow_cli.config import Config
 from crow_cli.memory import wire_session_id
 
 if TYPE_CHECKING:
-    from fastmcp import Client as MCPClient
-
     from crow_cli.agent.session import AgentSession
 
 
@@ -36,9 +42,11 @@ if TYPE_CHECKING:
 class TurnCtx:
     """Everything one prompt turn needs, fixed for the duration of the turn.
 
-    Frozen: a turn's identity (which agent, which turn, which client) never
-    changes mid-turn. Compaction is the one event that swaps the agent row,
-    and it does so with :meth:`with_session` rather than by mutation.
+    Frozen: a turn's identity — which agent row, which turn, which connection —
+    never changes mid-turn. Compaction is the one event that swaps the agent
+    row, and it does so with :meth:`with_session` rather than by mutation.
+    Shared per-session resources are not fields on this class; see the module
+    docstring for why.
     """
 
     conn: Client
@@ -97,20 +105,3 @@ class TurnCtx:
         write in this turn must land on the new agent.
         """
         return replace(self, session=session)
-
-
-@dataclass
-class SessionRecord:
-    """Per-session resources for one client-facing ACP session.
-
-    Replaces six parallel dicts (mcp clients, tools, cancel events, loggers,
-    config values, state accumulators). Keyed by wire id upstream — the trunk's
-    bare ``session_id``, a fork's full ``agent_id`` — because these resources
-    outlive compaction: summarizing a conversation must not drop the MCP
-    connection or the pending cancel.
-    """
-
-    mcp_client: "MCPClient | None" = None
-    tools: list[dict] = field(default_factory=list)
-    config_values: dict[str, str] = field(default_factory=dict)
-    state_accumulator: dict = field(default_factory=dict)
