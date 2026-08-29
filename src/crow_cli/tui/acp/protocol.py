@@ -40,10 +40,35 @@ class PromptCapabilities(SchemaDict, total=False, extra_items=Any):
     image: bool
 
 
+# https://agentclientprotocol.com/protocol/v1/session-list
+class SessionListCapabilities(SchemaDict, total=False, extra_items=Any):
+    additionalDirectories: bool
+    delete: bool
+
+
+class SessionCapabilities(SchemaDict, total=False, extra_items=Any):
+    list: SessionListCapabilities
+
+
+class SessionInfo(SchemaDict, total=False, extra_items=Any):
+    sessionId: Required[str]
+    cwd: Required[str]
+    additionalDirectories: list[str]
+    title: str
+    updatedAt: str
+    _meta: dict
+
+
+class ListSessionsResponse(SchemaDict, total=False, extra_items=Any):
+    sessions: Required[list[SessionInfo]]
+    nextCursor: str
+
+
 # https://agentclientprotocol.com/protocol/schema#agentcapabilities
 class AgentCapabilities(SchemaDict, total=False, extra_items=Any):
     loadSession: bool
     promptCapabilities: PromptCapabilities
+    sessionCapabilities: SessionCapabilities
 
 
 class AuthMethod(SchemaDict, total=False, extra_items=Any):

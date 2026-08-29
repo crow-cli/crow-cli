@@ -488,7 +488,7 @@ class API:
                 call_parameters = {}
                 for arg, parameter_name in zip(args, parameters):
                     call_parameters[parameter_name] = arg
-                for parameter_name, arg in kwargs:
+                for parameter_name, arg in kwargs.items():
                     call_parameters[parameter_name] = arg
                 if notification:
                     method_call = MethodCall(name, None, call_parameters)

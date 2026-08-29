@@ -181,6 +181,12 @@ class Agent(AgentBase):
         """Does the agent support loading sessions?"""
         return self.agent_capabilities.get("loadSession", False)
 
+    @property
+    def supports_list_sessions(self) -> bool:
+        """Does the agent support listing sessions (session/list)?"""
+        session_capabilities = self.agent_capabilities.get("sessionCapabilities", {})
+        return "list" in session_capabilities
+
     def __rich_repr__(self) -> rich.repr.Result:
         yield self.project_root_path
         yield self.command
@@ -809,6 +815,29 @@ class Agent(AgentBase):
                 for mode in available_modes
             }
             self.post_message(messages.SetModes(current_mode, modes_update))
+
+    async def acp_list_sessions(
+        self, cwd: str | None = None, cursor: str | None = None
+    ) -> protocol.ListSessionsResponse:
+        """List sessions known to the agent.
+
+        Args:
+            cwd: Optional working directory to filter by (absolute path).
+            cursor: Opaque pagination token from a previous response.
+
+        Returns:
+            The `session/list` response.
+        """
+        params: dict[str, Any] = {}
+        if cwd is not None:
+            params["cwd"] = cwd
+        if cursor is not None:
+            params["cursor"] = cursor
+        with self.request():
+            session_list_response = api.session_list(**params)
+        response = await session_list_response.wait()
+        assert response is not None
+        return response
 
     async def acp_session_prompt(
         self, prompt: list[protocol.ContentBlock]

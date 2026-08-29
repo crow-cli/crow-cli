@@ -53,3 +53,11 @@ def session_prompt(
 def session_set_mode(sessionId: str, modeId: str) -> protocol.SetSessionModeResponse:
     """https://agentclientprotocol.com/protocol/session-modes#from-the-client"""
     ...
+
+
+@API.method(name="session/list")
+def session_list(
+    cwd: str | None = None, cursor: str | None = None
+) -> protocol.ListSessionsResponse:
+    """https://agentclientprotocol.com/protocol/v1/session-list"""
+    ...
