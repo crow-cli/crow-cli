@@ -83,6 +83,7 @@ def launch_tui(
         agent_data=build_crow_agent(model, config_dir, config_file),
         project_dir=str(path),
         mode=None,
+        session_id=session,
     )
     app.run()
     app.run_on_exit()

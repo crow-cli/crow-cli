@@ -282,6 +282,7 @@ class ToadApp(App, inherit_bindings=False):
         agent_data: AgentData | None = None,
         project_dir: str | None = None,
         mode: str | None = None,
+        session_id: str | None = None,
     ) -> None:
         """Toad app.
 
@@ -289,12 +290,14 @@ class ToadApp(App, inherit_bindings=False):
             agent_data: Agent data to run.
             project_dir: Project directory.
             mode: Initial mode.
+            session_id: Session to load at startup (session/load).
             agent: Agent identity or shor name.
         """
         self.settings_changed_signal: Signal[tuple[int, object]] = Signal(
             self, "settings_changed"
         )
         self.agent_data = agent_data
+        self.preselected_session_id = session_id
 
         self._initial_mode = mode
         self.version_meta: VersionMeta | None = None
@@ -666,15 +669,12 @@ class ToadApp(App, inherit_bindings=False):
         return session_details
 
     async def on_mount(self) -> None:
-        self.capture_event("toad-run")
-        self.anon_id  # Created on frst reference
         if mode := self._initial_mode:
             self.switch_mode(mode)
         else:
             await self.new_session_screen(self.get_main_screen)
 
         self.update_terminal_title()
-        self.set_timer(1, self.run_version_check)
         self.set_process_title()
         self.update_show_sessions()
 
@@ -738,7 +738,12 @@ class ToadApp(App, inherit_bindings=False):
         from crow_cli.tui.screens.main import MainScreen
 
         project_path = Path(self.project_dir or "./").resolve().absolute()
-        return MainScreen(project_path, self.agent_data).data_bind(
+        return MainScreen(
+            project_path,
+            self.agent_data,
+            agent_session_id=self.preselected_session_id,
+            agent_session_title=self.preselected_session_id,
+        ).data_bind(
             column=ToadApp.column,
             column_width=ToadApp.column_width,
             scrollbar=ToadApp.scrollbar,
