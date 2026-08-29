@@ -68,8 +68,8 @@ def launch_tui(
         from crow_cli.tui.app import CrowApp
     except ImportError:
         typer.echo(
-            "The TUI needs extra dependencies: install with `crow-cli[tui]`\n"
-            "  uv tool install 'crow-cli[tui]'   (or pip install 'crow-cli[tui]')",
+            "TUI dependencies are missing — your crow-cli install looks broken.\n"
+            "Reinstall it (e.g. `uv tool install --from ./crow-cli crow-cli --python 3.14`).",
             err=True,
         )
         raise typer.Exit(1)
