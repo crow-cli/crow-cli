@@ -1,0 +1,36 @@
+# Schema defined in agent_schema.py
+# https://cursor.com/docs/cli/acp
+
+identity = "grok.x.ai"
+name = "Grok Build"
+short_name = "grok"
+url = "https://x.ai/news/grok-build-cli"
+protocol = "acp"
+author_name = "X"
+author_url = "https://x.ai"
+publisher_name = "Will McGugan"
+publisher_url = "https://willmcgugan.github.io/"
+type = "coding"
+description = "Grok Build is a new coding agent that runs right from your terminal."
+tags = []
+run_command."*" = "grok agent stdio"
+recommended = false
+
+help = '''
+# Grok Build
+
+Grok Build is a powerful new coding agent and CLI for professional software engineering and complex coding work.
+
+---
+
+⚠️ Available now to all SuperGrok and X Premium Plus subscribers.
+
+'''
+
+[actions."*".install]
+command = "curl -fsSL https://x.ai/cli/install.sh | bash"
+description = "Install Grok Build"
+
+[actions."*".login]
+command = "grok login"
+description = "Login to Grok Build (run once)"

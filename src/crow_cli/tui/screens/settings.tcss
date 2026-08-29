@@ -1,0 +1,101 @@
+
+SettingsScreen {    
+    overflow: hidden;
+    background: $background 60%;
+    align-horizontal: right;
+
+    &.-narrow #contents {
+        width: 1fr;
+    }
+
+    #contents {
+        width: 50%;
+        padding: 0 1;    
+        background: black 10%;                    
+        & > VerticalScroll {
+            overflow: hidden scroll;
+        }
+    }
+
+    #settings-container {
+        layout: stream;     
+    }
+
+    .hidden {
+        display: none;
+    }
+
+    .setting:last-child .input {        
+        margin: 1 0 0 0;        
+    }
+
+    Input,Select SelectCurrent, Checkbox,TextArea {
+        border: tall black 20%;
+        &:focus {
+            border: tall $primary;
+        }
+    }
+    Select:focus > SelectCurrent {        
+        border: tall $primary;        
+    }
+
+    .input {
+        margin: 1 0 1 0;        
+    }
+
+    Input.-invalid {
+        border: tall $error 60%;
+    }
+
+    TextArea {
+        height: 10;
+    }
+
+    .search-container {
+        dock: top;
+        padding: 1 0;
+    }
+    
+    .setting-group {
+        padding: 0;    
+        & > .setting-object:last-child {            
+            margin-bottom: 0;            
+        }
+    }
+
+    .setting-object {        
+        border: tall $secondary-muted;
+        &:light {
+            border: tall $foreground 20%;
+        }   
+        padding: 0 1;
+        
+        &:focus-within {
+            border: tall $secondary;         
+        }
+        .heading {
+            margin-bottom: 1;
+        }
+        margin-bottom: 1;
+                
+        &:last-child {
+            margin: 0 0 0 0;             
+        }
+        .heading .title {
+            color: $primary;
+            text-style: none;
+        }             
+    }
+
+    .title {
+        margin: 0;        
+        padding: 0 0 0 1;
+        text-style: bold;
+    }
+    .help {
+        color: $text-muted;        
+        padding: 0 0 0 1;
+    }
+
+}
+

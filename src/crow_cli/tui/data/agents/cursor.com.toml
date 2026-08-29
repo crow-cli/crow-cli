@@ -1,0 +1,38 @@
+# Schema defined in agent_schema.py
+# https://cursor.com/docs/cli/acp
+
+identity = "cursor.com"
+name = "Cursor"
+short_name = "cursor"
+url = "https://cursor.com/docs/cli/acp"
+protocol = "acp"
+author_name = "Cursor"
+author_url = "https://cursor.com"
+publisher_name = "Will McGugan"
+publisher_url = "https://willmcgugan.github.io/"
+type = "coding"
+description = "AI-powered coding assistant from Cursor, now in your terminal with native ACP support."
+tags = []
+run_command."*" = "agent acp"
+
+help = '''
+# Cursor
+
+**AI-powered coding in your terminal**
+
+Cursor CLI brings the power of Cursor's AI coding assistant to your command line with native Agent Client Protocol support.
+
+---
+
+⚠️ Run Login action after installing, to login via your browser.
+
+**Documentation**: https://cursor.com/docs/cli/acp
+'''
+
+[actions."*".install]
+command = "curl https://cursor.com/install -fsS | bash"
+description = "Install Cursor CLI"
+
+[actions."*".login]
+command = "agent login"
+description = "Login (must be done once)"

@@ -1,0 +1,4 @@
+The TUI layer in this directory is derived from Toad
+(https://github.com/batrachianai/toad) by Will McGugan,
+licensed under the GNU Affero General Public License v3.0.
+See the toad repository for the original source and license.

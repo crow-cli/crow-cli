@@ -904,10 +904,46 @@ async def _run_async(
 # ============================================================================
 
 
-@app.callback()
-def global_callback():
-    """Crow ACP Client - Transparent, observable agent client."""
-    pass
+@app.callback(invoke_without_command=True)
+def global_callback(
+    ctx: typer.Context,
+    directory: str = typer.Option(
+        ".",
+        "-d",
+        "--dir",
+        help="Project directory (bare `crow-cli` TUI only; place before any subcommand).",
+    ),
+    session: str | None = typer.Option(
+        None,
+        "-s",
+        "--session",
+        help="Session id to load into the TUI (bare `crow-cli` only).",
+    ),
+    model: str | None = typer.Option(
+        None,
+        "-m",
+        "--model",
+        help="Model for the TUI's agent (bare `crow-cli` only).",
+    ),
+    config_dir: Path | None = typer.Option(
+        None,
+        "--config-dir",
+        help="Config directory (bare `crow-cli` TUI only).",
+    ),
+    config_file: Path | None = typer.Option(
+        None,
+        "--config-file",
+        help="Config file (bare `crow-cli` TUI only).",
+    ),
+):
+    """Crow ACP Client - Transparent, observable agent client.
+
+    With no subcommand, launches the interactive TUI.
+    """
+    if ctx.invoked_subcommand is None:
+        from crow_cli.cli.tui_cmd import launch_tui
+
+        launch_tui(directory, session, model, config_dir, config_file)
 
 
 def main():
