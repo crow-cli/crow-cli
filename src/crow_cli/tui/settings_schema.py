@@ -100,7 +100,7 @@ SCHEMA: list[SchemaDict] = [
                 "title": "Width of the column",
                 "help": "Width of the column if enabled. Minimum 40 characters.",
                 "type": "integer",
-                "default": 100,
+                "default": 120,
                 "validate": [{"type": "minimum", "value": 40}],
             },
             {
@@ -119,7 +119,7 @@ SCHEMA: list[SchemaDict] = [
                 "title": "Thinking animation",
                 "help": "Animation to show while waiting for the agent to respond",
                 "type": "choices",
-                "default": "quotes",
+                "default": "pulse",
                 "choices": [
                     ("Pulse", "pulse"),
                     ("Quotes", "quotes"),
@@ -130,7 +130,7 @@ SCHEMA: list[SchemaDict] = [
                 "title": "Flash duration",
                 "help": "Default duration of flash messages (in seconds)",
                 "type": "number",
-                "default": 3.0,
+                "default": 15.0,
                 "validate": [{"type": "minimum", "value": 0.5}],
             },
             {
@@ -211,7 +211,7 @@ SCHEMA: list[SchemaDict] = [
                 "key": "hide",
                 "title": "Hide the sidebar when not in use?",
                 "type": "boolean",
-                "default": False,
+                "default": True,
             }
         ],
     },
@@ -336,7 +336,7 @@ SCHEMA: list[SchemaDict] = [
                 "title": "Wrap code?",
                 "help": "If wrapping is disabled you can horizontal scroll with the trackpad or the mouse wheel plus shift.",
                 "type": "choices",
-                "default": "no-wrap",
+                "default": "wrap",
                 "choices": [
                     ("Don't wrap", "no-wrap"),
                     ("Wrap long lines", "wrap"),

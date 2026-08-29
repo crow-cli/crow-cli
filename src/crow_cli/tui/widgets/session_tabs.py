@@ -24,8 +24,18 @@ from crow_cli.tui import messages
 class SessionLabel(widgets.Label):
     ALLOW_SELECT = False
 
+    app: getters.app[CrowApp] = getters.app(CrowApp)
+
     def on_click(self) -> None:
-        if self.id is not None:
+        if self.id is None:
+            return
+        if self.has_class("-current"):
+            # Already on this tab: copy its session id.
+            details = self.app.session_tracker.get_session(self.id)
+            if details is not None:
+                self.app.copy_to_clipboard(details.title)
+                self.app.notify(details.title, title="Copied session id")
+        else:
             self.post_message(messages.SessionSwitch(self.id))
 
 
