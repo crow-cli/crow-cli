@@ -3,6 +3,8 @@ from textual import containers
 
 from textual.widgets import Label, Markdown
 
+from crow_cli.tui import get_version
+
 
 ASCII_CROW = r"""
    .-.
@@ -13,8 +15,8 @@ ASCII_CROW = r"""
 """
 
 
-WELCOME_MD = """\
-## crow-cli v0.1.39
+WELCOME_MD = f"""\
+## crow-cli v{get_version()}
 
 Welcome, **Thomas**!
 
