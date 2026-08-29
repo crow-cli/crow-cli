@@ -59,7 +59,7 @@ if __name__ == "__main__":
         def compose(self) -> ComposeResult:
             for n in range(20):
                 yield Static("HELLO")
-            yield StrikeText(Content("Where there is a Will, there is a way"))
+            yield StrikeText(Content("Where there is a Crow, there is a way"))
             for n in range(200):
                 yield Static("World")
 

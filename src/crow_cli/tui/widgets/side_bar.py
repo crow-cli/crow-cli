@@ -82,7 +82,7 @@ if __name__ == "__main__":
                 ),
                 SideBar.Panel(
                     "Hello",
-                    widgets.Static("Where there is a Will! " * 10),
+                    widgets.Static("Where there is a Crow! " * 10),
                 ),
             )
 

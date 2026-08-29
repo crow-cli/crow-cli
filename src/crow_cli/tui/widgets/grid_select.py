@@ -227,7 +227,7 @@ if __name__ == "__main__":
             with GridSelect():
                 for n in range(50):
                     yield widgets.Label(
-                        f"#{n} Where there is a Will, there is a Way!",
+                        f"#{n} Where there is a Crow, there is a Way!",
                         classes="grid-item",
                     )
 

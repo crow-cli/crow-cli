@@ -3,7 +3,7 @@
 row-cli.tui ships no tools of its own; agents like crow-cli come up toolless
 unless the client supplies MCP servers. This reads the mcpServers dict
 straight out of crow-cli's config (~/.agents/crow/config.yaml) and
-converts it to ACP wire format — pure passthrough, toad never connects
+converts it to ACP wire format — pure passthrough, the TUI never connects
 to these servers itself.
 
 Config shape::

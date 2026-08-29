@@ -1,73 +1,37 @@
-# TODO — PostgreSQL memory backend (same treatment as RustFS)
+# TODO — toad absorption polish: sweep + YAML agent config + sqlite consolidation
 
 ## **DO NOT ASK USER FOR FEEDBACK — THIS IS THE USER FEEDBACK.**
 ## **DO NOT ASK USER FOR NEXT STEPS — THESE ARE THE NEXT STEPS.**
 
-Goal: `db_uri` decides the backend. A postgres `db_uri` in config → postgres
-(compose service offered by init, FTS via tsvector/GIN, MCP read-only path
-enforced per-dialect). Absent that → sqlite + local FS, exactly as today.
-Motivation: central agent state shared across machines (coast-after-3 + this
-box) — sqlite has no cross-host story; the task/delivery mailbox design is
-already row-level-safe under postgres.
+Goal: finish absorbing the toad TUI. (1) one more attribution/telemetry sweep
+so nothing toad-flavored leaks into UX or env; (2) a crow-cli-way YAML config
+system for ACP agent servers (replace toad's bundled-TOML agent store);
+(3) consolidate the TUI's private sqlite (tui/db.py sessions table) into
+crow-memory's db — one store for the package's state.
 
-Prior sprint (image object store / RustFS) is COMPLETE — see git history
-86c1c474..f114d966. This file replaces it.
+Prior sprint (PostgreSQL memory backend) is COMPLETE — see git history.
+This file replaces it.
 
 ## Items (unordered)
 
-- [x] models.py: swap `sqlalchemy.dialects.sqlite.JSON` → generic
-      `sqlalchemy.JSON` (no JSON-operator queries anywhere, so generic is
-      correct; keep schema dialect-free).
-- [x] db.py `_require_v5`: PRAGMA table_info is sqlite-only → use SQLAlchemy
-      inspector (portable).
-- [x] pyproject: add `psycopg[binary]` dependency (sync driver; engine is
-      sync SQLAlchemy throughout). URI form `postgresql+psycopg://`.
-- [x] FTS seam: new `memory/fts.py` owning ALL dialect-specific full-text
-      code — create_fts / insert_fts / search_fts. sqlite = FTS5+bm25
-      (unchanged behavior); postgres = messages_fts(rowid BIGINT PK, tsv
-      tsvector) + GIN index, to_tsvector('simple'), plainto_tsquery,
-      ts_rank NEGATED so the contract stays "lower = better, best first"
-      (mcp/memory/main.py:359 negates again for display — keep it working).
-      Wire into db.create_database, writes.add_message, reads.search_messages.
-- [x] MCP dialect awareness: `get_ro_engine` in memory/db.py — sqlite keeps
-      `?mode=ro&uri=true`; postgres gets a connect listener
-      `SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`. store.py
-      `_ro_engine` delegates; sqlite file-existence check stays.
-- [x] defaults.py COMPOSE_YAML: postgres service (postgres:17-alpine,
-      POSTGRES_USER/PASSWORD/DB env refs, pg_isready healthcheck,
-      postgres_data volume) — same env-ref-credentials pattern as rustfs.
-- [x] init_cmd.py: Step 2c PostgreSQL (mirror Step 2b rustfs: --yes default,
-      YES_INSTALL_POSTGRES, Confirm.ask; POSTGRES_PORT/USER/DB/PASSWORD into
-      env_vars, password random-default via secrets; db_uri becomes
-      postgresql+psycopg://${...}@localhost:${POSTGRES_PORT}/${POSTGRES_DB};
-      compose writer includes postgres; review/done panels reflect it).
-- [x] config.py apply_config_overrides: resolve_env_vars on db_uri (load()
-      already resolves whole file at line 335).
-- [x] CONFIG_YAML template: db_uri comment shows the postgres option.
-- [x] Tests: tests/unit/test_init_postgres.py (mirror test_init_rustfs.py);
-      RO-engine dialect branch tests; fts seam tests (sqlite path = existing
-      suite; postgres path = live e2e tier).
-- [x] Live e2e: scripts/e2e_postgres_live.py — ephemeral postgres:17-alpine
-      container; create_database; add_message→search_messages round trip;
-      JSON data round trip; claim_deliveries exactly-once with 2 concurrent
-      claimers; RO engine refuses writes; print E2E-POSTGRES-OK.
-- [x] Docs: README persistence section (postgres option), memory/__init__.py
-      docstring ("except FTS5" is now false — both backends supported).
-- [x] Full suite green at every phase boundary; commit per phase with
-      Session-Id trailer.
-
-## Decisions (locked)
-
-- Generic `sqlalchemy.JSON`, not JSONB variant: no JSON-operator queries
-  exist; keep the schema dialect-free.
-- Postgres FTS mirrors the sqlite architecture (side table maintained from
-  Python in the same transaction) — NO trigger on messages.data, because
-  message_text() extraction logic lives in Python.
-- 'simple' ts config for keyword parity with FTS5 (no stemming surprises).
-- Score contract preserved: search_messages returns lower=better on both
-  backends (ts_rank negated).
-- No sqlite→postgres history migration tool this sprint (fresh postgres DB;
-  migration is a future task if wanted).
-- postgres compose service has NO custom network (default compose network is
-  fine; rustfs-network stays rustfs-only).
-## Status: COMPLETE 2026-08-26 — all items done; evidence in PLAN.md + commits 58061203..HEAD.
+- [x] Sweep: rename env vars TOAD→CROW, TOAD_LOG→CROW_LOG, TOAD_CWD→CROW_CWD,
+      TOAD_ACP_INITIALIZE→CROW_ACP_INITIALIZE (command_pane.py, shell.py,
+      acp/agent.py, constants.py). No in-repo consumers beyond setters — verified.
+- [x] Sweep: conversation.py — "run `toad` again" → crow; /toad:* slash command
+      IDs → /crow:* (defs + dispatch, only file referencing them); SVG export
+      filename "Toad" → "Crow".
+- [x] Sweep: cosmetics — store.py `toad_version` var, mcp.py "toad never
+      connects" comment, jsonrpc.py debug-sample greet("Will").
+- [ ] Audited, KEEP: NOTICE + pyproject comment + README:182 + tui_cmd.py
+      docstring (license-required attribution); app.py "Danger, Will Robinson!"
+      (SF-movie quote list — pop culture, not attribution); sandbox/ + docs/
+      ancestors (history); crow-native "telemetry" naming = the MCP query
+      facade (list-sessions/query-memory/query-session), NOT toad telemetry.
+      toad telemetry itself is gone: zero posthog/toad.run/batrachian.ai in src.
+- [ ] YAML ACP agent server config: user-editable YAML (crow-cli way, lives
+      with config.yaml in ~/.agents/crow/) describing ACP agent servers
+      (identity/name/command/args/env/protocol), merged over bundled defaults;
+      TUI store lists them; spawn path unchanged.
+- [ ] Sqlite consolidation: TUI sessions (title/last_used) move into
+      crow-memory's sessions table; tui/db.py deleted; TUI session list/new/
+      load driven by memory db (same store the telemetry surfaces already read).

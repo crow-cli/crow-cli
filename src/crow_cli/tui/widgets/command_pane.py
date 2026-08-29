@@ -109,7 +109,7 @@ class CommandPane(Terminal):
         env["TTY_COMPATIBLE"] = "1"
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
-        env["TOAD"] = "1"
+        env["CROW"] = "1"
         env["CLICOLOR"] = "1"
 
         try:

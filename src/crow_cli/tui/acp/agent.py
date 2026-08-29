@@ -161,7 +161,7 @@ class Agent(AgentBase):
         self._terminal_count: int = 0
 
         log_filename: str = generate_datetime_filename(f"{agent['name']}", ".txt")
-        if log_path := os.environ.get("TOAD_LOG"):
+        if log_path := os.environ.get("CROW_LOG"):
             self._log_file_path = Path(log_path).resolve().absolute()
             with suppress(OSError):
                 self._log_file_path.unlink(missing_ok=True)
@@ -553,7 +553,7 @@ class Agent(AgentBase):
 
         PIPE = asyncio.subprocess.PIPE
         env = os.environ.copy()
-        env["TOAD_CWD"] = str(Path("./").absolute())
+        env["CROW_CWD"] = str(Path("./").absolute())
 
         if (command := self.command) is None:
             self.post_message(

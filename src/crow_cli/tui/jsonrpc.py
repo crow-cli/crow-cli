@@ -536,7 +536,7 @@ if __name__ == "__main__":
     #             {
     #                 "jsonrpc": "2.0",
     #                 "method": "hello",
-    #                 "params": {"name": "Will"},
+    #                 "params": {"name": "Crow"},
     #                 "id": "1",
     #             },
     #             {
@@ -564,7 +564,7 @@ if __name__ == "__main__":
 
         with api.request() as request:
             add(2, 4)
-            greeting = greet("Will")
+            greeting = greet("Crow")
             alert("test")
             # add(1, "not a number")
 

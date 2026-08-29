@@ -95,7 +95,7 @@ The agent or ACP adapter does not support resuming sessions.
 
 Try updating to see if support has been added.
 
-- Exit the app, and run `toad` again
+- Exit the app, and run `crow` again
 - Select the agent and hit ENTER
 - Click the dropdown, select "Update" or "Install" again
 - Repeat the process to update the ACP adapter (if required)
@@ -1288,21 +1288,21 @@ class Conversation(containers.Vertical):
     def _build_slash_commands(self) -> list[SlashCommand]:
         slash_commands = [
             SlashCommand(
-                "/toad:clear",
+                "/crow:clear",
                 "Clear conversation window",
                 "<optional number of lines to preserve>",
             ),
             SlashCommand(
-                "/toad:rename",
+                "/crow:rename",
                 "Give the current session a friendly name",
                 "<session name>",
             ),
             SlashCommand(
-                "/toad:session-close",
+                "/crow:session-close",
                 "Close the current session",
             ),
             SlashCommand(
-                "/toad:session-new",
+                "/crow:session-new",
                 "Open a new session in the current working directory",
                 "<initial prompt or command>",
             ),
@@ -1793,7 +1793,7 @@ class Conversation(containers.Vertical):
         )
         console.print(render)
         path = platformdirs.user_pictures_dir()
-        svg_filename = generate_datetime_filename("Toad", ".svg", None)
+        svg_filename = generate_datetime_filename("Crow", ".svg", None)
         svg_path = os.path.expanduser(os.path.join(path, svg_filename))
         console.save_svg(svg_path)
         import webbrowser
@@ -1830,25 +1830,25 @@ class Conversation(containers.Vertical):
                 be forwarded to the agent.
         """
         command, _, parameters = text[1:].partition(" ")
-        if command == "toad:clear":
+        if command == "crow:clear":
             try:
                 line_count = max(0, int(parameters) if parameters.strip() else 0)
             except ValueError:
                 self.notify(
                     "Unable to clear—a number was expected",
-                    title="/toad:clear",
+                    title="/crow:clear",
                     severity="error",
                 )
                 return True
             await self.prune_window(line_count, line_count)
             return True
-        elif command == "toad:rename":
+        elif command == "crow:rename":
             name = parameters.strip()
             if not name:
                 self.notify(
                     "Expected a name for the session.\n"
                     'For example: "add comments to blog"',
-                    title="/toad:rename",
+                    title="/crow:rename",
                     severity="error",
                 )
                 return True
@@ -1857,13 +1857,13 @@ class Conversation(containers.Vertical):
                 self.post_message(messages.SessionUpdate(name=name))
                 self.flash(f"Renamed session to [b]'{name}'", style="success")
             return True
-        elif command == "toad:session-close":
+        elif command == "crow:session-close":
             if self.turn == "agent" and self.agent is not None:
                 await self.agent.cancel()
             if self.screen.id is not None:
                 self.post_message(messages.SessionClose(self.screen.id))
                 return True
-        elif command == "toad:session-new":
+        elif command == "crow:session-new":
             if self._agent_data is not None:
                 self.post_message(
                     messages.SessionNew(

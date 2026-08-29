@@ -389,10 +389,10 @@ class StoreScreen(Screen):
         yield widgets.Footer()
 
     def get_info(self) -> Content:
-        toad_version = tui.get_version()
+        crow_version = tui.get_version()
         content = Content.assemble(
             Content.from_markup("🐦‍⬛ Crow"),
-            pill(f"v{toad_version}", "$primary-muted", "$text-primary"),
+            pill(f"v{crow_version}", "$primary-muted", "$text-primary"),
             ("\nThe universal interface for AI in your terminal", "$text-success"),
             "\n",
             (
