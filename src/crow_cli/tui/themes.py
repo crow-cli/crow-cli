@@ -13,8 +13,13 @@ from textual.theme import Theme
 PURPLE_BG = "#2D2B55"  # editor background
 PURPLE_SIDEBAR = "#222244"  # sidebar / activity bar border
 PURPLE_PANEL = "#1E1E3F"  # dropdown / section headers
-SOP_YELLOW = "#FAD000"  # badges, buttons, cursor
+SOP_YELLOW = "#FAD000"  # badges, buttons, cursor (canonical, no longer primary)
 SOP_PURPLE = "#B362FF"  # selection
+# Dracula's highlight violet — replaces SOP_YELLOW as primary. Saturated yellow on
+# deep violet is a complementary clash that vibrates and fatigues; a same-family
+# violet keeps highlights readable while the whole palette stays analogous.
+# Fallback if purple-on-purple feels low-contrast: Dracula cyan #8BE9FD.
+DRACULA_PURPLE = "#BD93F9"
 SOP_PINK = "#FF2C70"  # magenta / invalid
 SOP_GREEN = "#3AD900"
 SOP_ORANGE = "#FF9D00"
@@ -22,7 +27,7 @@ SOP_RED = "#EC3A37"
 
 SHADES_OF_PURPLE = Theme(
     name="shades-of-purple",
-    primary=SOP_YELLOW,
+    primary=DRACULA_PURPLE,
     secondary=SOP_PURPLE,
     accent=SOP_PINK,
     foreground="#FFFFFF",
