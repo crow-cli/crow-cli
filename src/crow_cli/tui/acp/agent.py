@@ -23,6 +23,7 @@ from crow_cli.tui.acp import protocol
 from crow_cli.tui.acp import api
 from crow_cli.tui.acp.api import API
 from crow_cli.tui.acp import messages
+from crow_cli.tui.messages import SessionUpdate
 from crow_cli.tui.acp.prompt import build as build_prompt
 from crow_cli.tui.db import DB
 from crow_cli.tui import paths
@@ -759,6 +760,8 @@ class Agent(AgentBase):
         response = await session_new_response.wait()
         assert response is not None
         self.session_id = response["sessionId"]
+        # Show the session id in the tab bar as soon as it exists.
+        self.post_message(SessionUpdate(name=self.session_id))
 
         if self.supports_load_session:
             db = DB()
@@ -804,6 +807,7 @@ class Agent(AgentBase):
                 cwd, load_mcp_servers(), self.session_id
             )
         response = await session_load_response.wait()
+        self.post_message(SessionUpdate(name=self.session_id))
 
         if (modes := response.get("modes", None)) is not None:
             current_mode = modes["currentModeId"]

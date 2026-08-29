@@ -1347,7 +1347,9 @@ class Conversation(containers.Vertical):
                 )
                 await self.agent.start(self)
                 self.post_message(
-                    messages.SessionUpdate("New Session", self.agent_title)
+                    messages.SessionUpdate(
+                        self._agent_session_id or "New Session", self.agent_title
+                    )
                 )
 
             self.call_after_refresh(start_agent)

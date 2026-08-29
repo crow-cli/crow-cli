@@ -611,9 +611,9 @@ class CrowApp(App, inherit_bindings=False):
         self._apply_ansi_theme()
 
     async def new_session_screen(
-        self, get_screen: Callable[[], Screen]
+        self, get_screen: Callable[[], Screen], title: str | None = None
     ) -> SessionDetails:
-        session_details = self._session_tracker.new_session()
+        session_details = self._session_tracker.new_session(title=title)
         self.update_show_sessions()
         self.session_update_signal.publish((session_details.mode_name, session_details))
 
@@ -630,7 +630,9 @@ class CrowApp(App, inherit_bindings=False):
         if mode := self._initial_mode:
             self.switch_mode(mode)
         else:
-            await self.new_session_screen(self.get_main_screen)
+            await self.new_session_screen(
+                self.get_main_screen, title=self.preselected_session_id
+            )
 
         self.update_terminal_title()
         self.set_process_title()
@@ -817,4 +819,4 @@ class CrowApp(App, inherit_bindings=False):
 
             return screen
 
-        await self.new_session_screen(get_screen)
+        await self.new_session_screen(get_screen, title=agent_session_id)
