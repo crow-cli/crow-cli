@@ -6,7 +6,7 @@
   "repository": "https://github.com/crow-cli/crow-cli",
   "website": "https://crow-ai.dev",
   "authors": ["Thomas Wood"],
-  "license": "MIT",
+  "license": "AGPL-3.0-or-later",
   "distribution": {
     "binary": {
       "darwin-aarch64": {

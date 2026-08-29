@@ -7,7 +7,7 @@ from textual.timer import Timer
 from textual import getters
 
 
-from crow_cli.tui.app import ToadApp
+from crow_cli.tui.app import CrowApp
 
 
 class Flash(Static):
@@ -20,20 +20,20 @@ class Flash(Static):
         text-align: center;
         visibility: hidden;
         text-wrap: nowrap;
-        text-overflow: ellipsis;     
+        text-overflow: ellipsis;
         # overlay: screen;
-        # offset-y: -1;           
+        # offset-y: -1;
         &.-default {
             background: $primary 10%;
             color: $text-primary;
         }
-        
+
         &.-success {
             background: $success 10%;
             color: $text-success;
         }
-        
-        
+
+
         &.-warning {
             background: $warning 10%;
             color: $text-warning;
@@ -45,7 +45,7 @@ class Flash(Static):
         }
     }
     """
-    app = getters.app(ToadApp)
+    app = getters.app(CrowApp)
     flash_timer: var[Timer | None] = var(None)
 
     def flash(

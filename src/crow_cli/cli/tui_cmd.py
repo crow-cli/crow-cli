@@ -65,7 +65,7 @@ def launch_tui(
 ) -> None:
     """Launch the TUI against the given project directory."""
     try:
-        from crow_cli.tui.app import ToadApp
+        from crow_cli.tui.app import CrowApp
     except ImportError:
         typer.echo(
             "The TUI needs extra dependencies: install with `crow-cli[tui]`\n"
@@ -79,7 +79,7 @@ def launch_tui(
         typer.echo(f"Not a directory: {directory}", err=True)
         raise typer.Exit(1)
 
-    app = ToadApp(
+    app = CrowApp(
         agent_data=build_crow_agent(model, config_dir, config_file),
         project_dir=str(path),
         mode=None,

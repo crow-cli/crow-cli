@@ -13,7 +13,7 @@ from textual import getters
 
 
 from crow_cli.tui.settings import Setting
-from crow_cli.tui.app import ToadApp
+from crow_cli.tui.app import CrowApp
 
 
 class SettingsInput(Input):
@@ -27,7 +27,7 @@ class SettingsScreen(ModalScreen):
     ]
     CSS_PATH = "settings.tcss"
 
-    app = getters.app(ToadApp)
+    app = getters.app(CrowApp)
 
     search_input = getters.query_one("Input#search", Input)
 

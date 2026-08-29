@@ -15,7 +15,7 @@ from textual.widgets.option_list import Option
 from crow_cli.tui.answer import Answer
 from crow_cli.tui.widgets.question import Question
 
-from crow_cli.tui.app import ToadApp
+from crow_cli.tui.app import CrowApp
 
 SOURCE1 = '''\
 def loop_first(values: Iterable[T]) -> Iterable[tuple[bool, T]]:
@@ -49,7 +49,7 @@ def loop_first_last(values: Iterable[T]) -> Iterable[tuple[bool, T]]:
 SOURCE2 = '''\
 def loop_first(values: Iterable[T]) -> Iterable[tuple[bool, T]]:
     """Iterate and generate a tuple with a flag for first value.
-    
+
     Args:
         values: iterables of values.
 
@@ -197,7 +197,7 @@ class PermissionsScreen(Screen[Answer]):
     def get_diff_type(self) -> str:
         app = self.app
         diff_type = "auto"
-        if isinstance(app, ToadApp):
+        if isinstance(app, CrowApp):
             diff_type = app.settings.get("diff.view", str)
         return diff_type
 
@@ -252,7 +252,7 @@ class PermissionsScreen(Screen[Answer]):
 
     async def on_mount(self):
         app = self.app
-        if isinstance(app, ToadApp):
+        if isinstance(app, CrowApp):
             diff_view_setting = app.settings.get("diff.view", str)
             self.query_one("#diff-select", Select).value = diff_view_setting
         self.navigator.highlighted = 0
@@ -345,7 +345,7 @@ def loop_first_last(values: Iterable[T]) -> Iterable[tuple[bool, T]]:
     SOURCE2 = '''\
 def loop_first(values: Iterable[T]) -> Iterable[tuple[bool, T]]:
     """Iterate and generate a tuple with a flag for first value.
-    
+
     Args:
         values: iterables of values.
 

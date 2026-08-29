@@ -1,7 +1,7 @@
 from textual.app import ComposeResult
 from textual import getters
 
-from crow_cli.tui.app import ToadApp
+from crow_cli.tui.app import CrowApp
 from crow_cli.tui.widgets.grid_select import GridSelect
 from crow_cli.tui.widgets.session_summary import SessionSummary
 from crow_cli.tui.session_tracker import SessionTracker, SessionDetails
@@ -9,7 +9,7 @@ from crow_cli.tui.session_tracker import SessionTracker, SessionDetails
 
 class SessionGridSelect(GridSelect):
     FOCUS_ON_CLICK = True
-    app: getters.app[ToadApp] = getters.app(ToadApp)
+    app: getters.app[CrowApp] = getters.app(CrowApp)
 
     def __init__(
         self,

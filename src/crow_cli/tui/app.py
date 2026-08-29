@@ -229,7 +229,7 @@ def get_sessions_screen() -> SessionsScreen:
     return SessionsScreen()
 
 
-class ToadApp(App, inherit_bindings=False):
+class CrowApp(App, inherit_bindings=False):
     """The top level app."""
 
     CSS_PATH = "tui.tcss"
@@ -266,8 +266,8 @@ class ToadApp(App, inherit_bindings=False):
     scrollbar: reactive[str] = reactive("normal")
     last_ctrl_c_time = reactive(0.0)
     update_required: reactive[bool] = reactive(False)
-    terminal_title: var[str] = var("Toad")
-    terminal_title_icon: var[str] = var("🐸")
+    terminal_title: var[str] = var("Crow")
+    terminal_title_icon: var[str] = var("🐦‍⬛")
     terminal_title_flash = var(0)
     terminal_title_blink = var(False)
     project_dir = var(Path)
@@ -284,7 +284,7 @@ class ToadApp(App, inherit_bindings=False):
         mode: str | None = None,
         session_id: str | None = None,
     ) -> None:
-        """Toad app.
+        """Crow app.
 
         Args:
             agent_data: Agent data to run.
@@ -321,7 +321,10 @@ class ToadApp(App, inherit_bindings=False):
 
     @property
     def settings_path(self) -> Path:
-        return paths.get_config() / "tui.json"
+        # crow's home, next to config.yaml and crow.db
+        crow_home = Path("~/.agents/crow").expanduser()
+        crow_home.mkdir(parents=True, exist_ok=True)
+        return crow_home / "tui.json"
 
     @property
     def db_path(self) -> Path:
@@ -543,7 +546,7 @@ class ToadApp(App, inherit_bindings=False):
         notification = Notify()
         notification.message = message
         notification.title = title
-        notification.application_name = "🐸 Toad" if tui.os == "macos" else "Toad"
+        notification.application_name = "🐦‍⬛ Crow" if tui.os == "macos" else "Crow"
         if sound and self.settings.get("notifications.enable_sounds", bool):
             sound_path = str(files("crow_cli.tui.data").joinpath(f"sounds/{sound}.wav"))
             notification.audio = sound_path
@@ -744,9 +747,9 @@ class ToadApp(App, inherit_bindings=False):
             agent_session_id=self.preselected_session_id,
             agent_session_title=self.preselected_session_id,
         ).data_bind(
-            column=ToadApp.column,
-            column_width=ToadApp.column_width,
-            scrollbar=ToadApp.scrollbar,
+            column=CrowApp.column,
+            column_width=CrowApp.column_width,
+            scrollbar=CrowApp.scrollbar,
         )
 
     @work
@@ -871,8 +874,8 @@ class ToadApp(App, inherit_bindings=False):
                 session_pk=session_pk,
                 initial_prompt=initial_prompt,
             ).data_bind(
-                column=ToadApp.column,
-                column_width=ToadApp.column_width,
+                column=CrowApp.column,
+                column_width=CrowApp.column_width,
             )
 
             return screen

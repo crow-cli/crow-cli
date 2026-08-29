@@ -9,7 +9,7 @@ from textual import containers
 from textual import on
 
 
-from crow_cli.tui.app import ToadApp
+from crow_cli.tui.app import CrowApp
 from crow_cli.tui.widgets.grid_select import GridSelect
 from crow_cli.tui.widgets.session_grid_select import SessionGridSelect
 from crow_cli.tui.widgets.session_summary import SessionSummary
@@ -22,7 +22,7 @@ class SessionsScreen(ModalScreen[str]):
     CSS_PATH = "sessions.tcss"
     BINDINGS = [Binding("escape", "dismiss", "Dismiss")]
 
-    app: getters.app[ToadApp] = getters.app(ToadApp)
+    app: getters.app[CrowApp] = getters.app(CrowApp)
     session_grid_select = getters.query_one(SessionGridSelect)
 
     def compose(self) -> ComposeResult:

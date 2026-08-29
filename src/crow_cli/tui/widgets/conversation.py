@@ -39,7 +39,7 @@ from crow_cli.tui import jsonrpc, messages
 from crow_cli.tui import paths
 from crow_cli.tui.agent_schema import Agent as AgentData
 from crow_cli.tui.acp import messages as acp_messages
-from crow_cli.tui.app import ToadApp
+from crow_cli.tui.app import CrowApp
 from crow_cli.tui.acp import protocol as acp_protocol
 from crow_cli.tui.answer import Answer
 from crow_cli.tui.agent import AgentBase, AgentReady, AgentFail
@@ -145,8 +145,8 @@ Need help? Ask on {HELP_URL}
 
 STOP_REASON_REFUSAL = f"""\
 ## Agent refusal
- 
-$AGENT has refused to continue. 
+
+$AGENT has refused to continue.
 
 Need help? Ask on {HELP_URL}
 """
@@ -158,7 +158,7 @@ class Loading(Static):
     DEFAULT_CLASSES = "block"
     DEFAULT_CSS = """
     Loading {
-        height: auto;        
+        height: auto;
     }
     """
 
@@ -338,7 +338,7 @@ class Conversation(containers.Vertical):
     window = getters.query_one(Window)
     cursor = getters.query_one(Cursor)
     prompt = getters.query_one(Prompt)
-    app = getters.app(ToadApp)
+    app = getters.app(CrowApp)
 
     _shell: var[Shell | None] = var(None)
     shell_history_index: var[int] = var(0, init=False)

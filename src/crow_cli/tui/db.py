@@ -32,7 +32,7 @@ class Session(TypedDict):
 
 
 class DB:
-    """Toads database, for anything that isn't strictly configuration."""
+    """crow_cli.tui's database, for anything that isn't strictly configuration."""
 
     def __init__(self):
         self.path = paths.get_state() / "tui.db"
@@ -50,10 +50,10 @@ class DB:
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         agent TEXT NOT NULL,
                         agent_identity TEXT NOT NULL,
-                        agent_session_id TEXT NOT NULL,                                
-                        title TEXT NOT NULL,      
-                        protocol TEXT NOT NULL, 
-                        prompt_count INTEGER DEFAULT 0,                
+                        agent_session_id TEXT NOT NULL,
+                        title TEXT NOT NULL,
+                        protocol TEXT NOT NULL,
+                        prompt_count INTEGER DEFAULT 0,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         meta_json TEXT DEFAULT '{}'

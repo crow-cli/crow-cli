@@ -13,7 +13,7 @@ from textual.css.query import NoMatches
 from textual import containers
 from textual.widgets import Static, Markdown
 
-from crow_cli.tui.app import ToadApp
+from crow_cli.tui.app import CrowApp
 from crow_cli.tui.acp import protocol
 from crow_cli.tui.menus import MenuItem
 from crow_cli.tui.pill import pill
@@ -21,7 +21,7 @@ from crow_cli.tui.pill import pill
 
 class TextContent(Static):
     DEFAULT_CSS = """
-    TextContent 
+    TextContent
     {
         height: auto;
     }
@@ -50,7 +50,7 @@ class ToolCallHeader(Static):
     DEFAULT_CSS = """
     ToolCallHeader {
         width: auto;
-        max-width: 1fr;        
+        max-width: 1fr;
         &:hover {
             background: $panel;
         }
@@ -61,7 +61,7 @@ class ToolCallHeader(Static):
 class ToolCall(containers.VerticalGroup):
     DEFAULT_CLASSES = "block"
 
-    app = getters.app(ToadApp)
+    app = getters.app(CrowApp)
     has_content: var[bool] = var(False, toggle_class="-has-content")
     expanded: var[bool] = var(False, toggle_class="-expanded")
     tool_call: var[protocol.ToolCall | None] = var(None)
@@ -247,7 +247,7 @@ class ToolCall(containers.VerticalGroup):
 
                     yield (diff_view := make_diff(path, path, old_text, new_text))
 
-                    if isinstance(self.app, ToadApp):
+                    if isinstance(self.app, CrowApp):
                         diff_view_setting = self.app.settings.get("diff.view", str)
                         diff_view.split = diff_view_setting == "split"
                         diff_view.auto_split = diff_view_setting == "auto"

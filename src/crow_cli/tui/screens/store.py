@@ -20,7 +20,7 @@ from textual import containers
 from textual import widgets
 
 import crow_cli.tui as tui
-from crow_cli.tui.app import ToadApp
+from crow_cli.tui.app import CrowApp
 from crow_cli.tui.format_path import format_path
 from crow_cli.tui.pill import pill
 from crow_cli.tui import messages
@@ -165,7 +165,7 @@ Your favorite agents.
 """
     BINDING_GROUP_TITLE = "Launcher"
 
-    app = getters.app(ToadApp)
+    app = getters.app(CrowApp)
     BINDINGS = [
         Binding(
             "enter",
@@ -208,7 +208,7 @@ Your favorite agents.
 
 
 class Launcher(containers.VerticalGroup):
-    app = getters.app(ToadApp)
+    app = getters.app(CrowApp)
     grid_select = getters.query_one("#launcher-grid-select", LauncherGridSelect)
     DIGITS = "123456789ABCDEF"
 
@@ -361,7 +361,7 @@ class StoreScreen(Screen):
 
     project_dir: reactive[Path] = reactive(Path)
 
-    app = getters.app(ToadApp)
+    app = getters.app(CrowApp)
 
     @dataclass
     class OpenAgentDetails(Message):
@@ -392,7 +392,7 @@ class StoreScreen(Screen):
     def get_info(self) -> Content:
         toad_version = tui.get_version()
         content = Content.assemble(
-            Content.from_markup("🐸 Toad"),
+            Content.from_markup("🐦‍⬛ Crow"),
             pill(f"v{toad_version}", "$primary-muted", "$text-primary"),
             ("\nThe universal interface for AI in your terminal", "$text-success"),
             (
@@ -618,8 +618,8 @@ class StoreScreen(Screen):
 
 
 if __name__ == "__main__":
-    from crow_cli.tui.app import ToadApp
+    from crow_cli.tui.app import CrowApp
 
-    app = ToadApp(mode="store")
+    app = CrowApp(mode="store")
 
     app.run()

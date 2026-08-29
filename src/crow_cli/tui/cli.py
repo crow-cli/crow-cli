@@ -1,7 +1,7 @@
 import sys
 
 import click
-from crow_cli.tui.app import ToadApp
+from crow_cli.tui.app import CrowApp
 from crow_cli.tui.agent_schema import Agent
 
 
@@ -73,7 +73,7 @@ class DefaultCommandGroup(click.Group):
 @click.option("-v", "--version", is_flag=True, help="Show version and exit.")
 @click.pass_context
 def main(ctx, version):
-    """🐸 Toad — AI for your terminal."""
+    """🐦‍⬛ Crow — AI for your terminal."""
     if version:
         from crow_cli.tui import get_version
 
@@ -131,7 +131,7 @@ def run(
     else:
         agent_data = None
 
-    app = ToadApp(
+    app = CrowApp(
         mode=None if agent_data else "store",
         agent_data=agent_data,
         project_dir=project_dir,
@@ -243,20 +243,20 @@ def acp(
         server.serve()
 
     else:
-        app = ToadApp(agent_data=agent_data, project_dir=project_dir)
+        app = CrowApp(agent_data=agent_data, project_dir=project_dir)
         app.run()
         app.run_on_exit()
 
     print("")
-    print("[bold magenta]Thanks for trying out Toad!")
+    print("[bold magenta]Thanks for trying out crow-cli!")
     print("Please head to Discussions to share your experiences (good or bad).")
-    print("https://github.com/batrachianai/toad/discussions")
+    print("https://github.com/crow-cli/crow-cli/discussions")
 
 
 @main.command("settings")
 def settings() -> None:
     """Settings information."""
-    app = ToadApp()
+    app = CrowApp()
     print(f"{app.settings_path}")
 
 
@@ -269,9 +269,7 @@ def replay(path: str) -> None:
 
     Run it in place of a command line to run an ACP agent:
 
-    toad acp "toad replay toad.log"
 
-    This will replay the agents output, and Toad will update the conversation as it would a real agent.
     """
     import time
 
@@ -296,13 +294,13 @@ def replay(path: str) -> None:
     help="Public URL for textual_serve Server (e.g. https://example.com)",
 )
 def serve(port: int, host: str, public_url: str | None = None) -> None:
-    """Serve Toad as a web application."""
+    """Serve Crow as a web application."""
     from textual_serve.server import Server
 
     server = Server(
         sys.argv[0], host=host, port=port, title="Toad", public_url=public_url
     )
-    set_process_title("toad serve")
+    set_process_title("crow-cli serve")
     server.serve()
 
 
@@ -312,7 +310,7 @@ def about() -> None:
 
     from crow_cli.tui import about
 
-    app = ToadApp()
+    app = CrowApp()
 
     print(about.render(app))
 

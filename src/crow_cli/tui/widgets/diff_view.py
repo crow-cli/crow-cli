@@ -1,6 +1,6 @@
 from textual_diff_view import DiffView
 
-from crow_cli.tui.app import ToadApp
+from crow_cli.tui.app import CrowApp
 
 
 def make_diff(
@@ -36,7 +36,7 @@ def make_diff(
     except LookupError:
         pass
     else:
-        if isinstance(app, ToadApp):
+        if isinstance(app, CrowApp):
             diff_view_setting = app.settings.get("diff.view", str)
             split = diff_view_setting == "split"
             auto_split = diff_view_setting == "auto"

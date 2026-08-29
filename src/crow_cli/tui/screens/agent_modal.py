@@ -14,7 +14,7 @@ from textual.reactive import var
 import crow_cli.tui as tui
 from textual.binding import Binding
 from crow_cli.tui.agent_schema import Action, Agent, OS, Command
-from crow_cli.tui.app import ToadApp
+from crow_cli.tui.app import CrowApp
 
 
 class DescriptionContainer(containers.VerticalScroll):
@@ -33,7 +33,7 @@ class AgentModal(ModalScreen):
 
     action = var("")
 
-    app = getters.app(ToadApp)
+    app = getters.app(CrowApp)
     action_select = getters.query_one("#action-select", widgets.Select)
     launcher_checkbox = getters.query_one("#launcher-checkbox", widgets.Checkbox)
 
@@ -70,7 +70,7 @@ class AgentModal(ModalScreen):
                 if "install_acp" in commands:
                     yield widgets.Static(
                         Content(
-                            f"{agent['name']} requires an ACP adapter to work with Toad. Install from the actions list."
+                            f"{agent['name']} requires an ACP adapter to work with crow-cli.tui. Install from the actions list."
                         ),
                         classes="acp-warning",
                     )

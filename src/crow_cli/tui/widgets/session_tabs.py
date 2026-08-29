@@ -16,7 +16,7 @@ from textual import widgets
 from textual import getters
 from textual.message import Message
 
-from crow_cli.tui.app import ToadApp
+from crow_cli.tui.app import CrowApp
 from crow_cli.tui.session_tracker import SessionDetails
 from crow_cli.tui import messages
 
@@ -83,7 +83,7 @@ class Underline(Widget):
 class SessionsTabs(Widget):
 
     ALLOW_SELECT = False
-    app: getters.app[ToadApp] = getters.app(ToadApp)
+    app: getters.app[CrowApp] = getters.app(CrowApp)
 
     title_container = getters.query_one("#title-container", Widget)
 

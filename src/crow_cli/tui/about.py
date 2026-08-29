@@ -3,7 +3,7 @@ from importlib.metadata import version
 import platform
 from string import Template
 
-from crow_cli.tui.app import ToadApp
+from crow_cli.tui.app import CrowApp
 from crow_cli.tui import paths
 from crow_cli.tui import get_version
 
@@ -12,16 +12,16 @@ ABOUT_TEMPLATE = Template(
 # About Toad v${TOAD_VERSION}
 
 © Will McGugan.
-                          
+
 Toad is licensed under the terms of the [GNU AFFERO GENERAL PUBLIC LICENSE](https://www.gnu.org/licenses/agpl-3.0.txt).
 
 
 ## Config
 
 config read from `$SETTINGS_PATH`
-                                       
+
 ```json
-$CONFIG                       
+$CONFIG
 ```
 
 ## Paths
@@ -32,7 +32,7 @@ $CONFIG
 | App state | `$STATE_PATH` |
 | App logs | `$LOG_PATH` |
 
-                          
+
 ## System
 
 | System | Version |
@@ -44,14 +44,14 @@ $CONFIG
 ## Dependencies
 
 | Library | Version |
-| --- | --- | 
+| --- | --- |
 | Toad | $TOAD_VERSION |
 | Textual | $TEXTUAL_VERSION |
 | Rich | $RICH_VERSION |
-                          
+
 ## Environment
 
-| Environment variable | Value |                
+| Environment variable | Value |
 | --- | --- |
 | `SHELL` | $SHELL |
 | `TERM` | $TERM |
@@ -62,7 +62,7 @@ $CONFIG
 )
 
 
-def render(app: ToadApp) -> str:
+def render(app: CrowApp) -> str:
     """Render about markdown.
 
     Returns:

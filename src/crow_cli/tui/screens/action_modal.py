@@ -9,7 +9,7 @@ from textual.screen import ModalScreen
 from textual import widgets
 from textual.widget import Widget
 
-from crow_cli.tui.app import ToadApp
+from crow_cli.tui.app import CrowApp
 from crow_cli.tui.widgets.command_pane import CommandPane
 
 
@@ -22,7 +22,7 @@ class ActionModal(ModalScreen):
     command_pane = getters.query_one(CommandPane)
     ok_button = getters.query_one("#ok", widgets.Button)
 
-    app = getters.app(ToadApp)
+    app = getters.app(CrowApp)
 
     BINDINGS = [("escape", "dismiss_modal", "Dismiss")]
 

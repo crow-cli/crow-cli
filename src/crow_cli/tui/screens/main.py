@@ -16,7 +16,7 @@ from textual import containers
 from textual.widget import Widget
 
 
-from crow_cli.tui.app import ToadApp
+from crow_cli.tui.app import CrowApp
 from crow_cli.tui import messages
 from crow_cli.tui.agent_schema import Agent
 from crow_cli.tui.acp import messages as acp_messages
@@ -100,7 +100,7 @@ class MainScreen(Screen, can_focus=False):
     scrollbar = reactive("")
     project_path: var[Path] = var(Path("./").expanduser().absolute())
 
-    app = getters.app(ToadApp)
+    app = getters.app(CrowApp)
 
     def __init__(
         self,
