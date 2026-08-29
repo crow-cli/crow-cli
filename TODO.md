@@ -34,6 +34,11 @@ This file replaces it.
       ${VAR} expansion via shared resolve_env_vars; app.settings_path now
       uses get_default_config_dir() (was hardcoded dup); dead config_path
       removed. Verified 2026-08-29: 5 new unit tests, full gate 492 green.
-- [ ] Sqlite consolidation: TUI sessions (title/last_used) move into
-      crow-memory's sessions table; tui/db.py deleted; TUI session list/new/
-      load driven by memory db (same store the telemetry surfaces already read).
+- [x] Sqlite consolidation: new `session_tabs` table in crow_cli.memory
+      (named for what it is — the agents table already owns "sessions"
+      server-side); tui/db.py rewritten as async facade over it, db_uri from
+      Config.load() (common authority with agent + MCP surfaces); dead
+      app.db_path removed. Old ~/.local/state/crow/tui.db orphaned (resume
+      list starts fresh; titles were session ids anyway). Verified
+      2026-08-29: 3 new tests, gate 495 green, live crow.db has the table,
+      list-sessions unaffected.

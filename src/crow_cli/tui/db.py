@@ -1,9 +1,14 @@
-from datetime import datetime, timezone
-import json
-from typing import cast, TypedDict
-from crow_cli.tui import paths
+"""Async facade over the session_tabs table in the shared store.
 
-import aiosqlite
+The TUI no longer keeps a private sqlite: tab state lives in crow.db
+(crow_cli.memory's session_tabs) beside sessions/messages. The db_uri is
+resolved from crow_cli.config — the same authority the agent and the MCP
+surfaces draw from.
+"""
+
+import asyncio
+import json
+from typing import TypedDict, cast
 
 
 class Session(TypedDict):
@@ -32,35 +37,22 @@ class Session(TypedDict):
 
 
 class DB:
-    """crow_cli.tui's database, for anything that isn't strictly configuration."""
+    """Session-tab store facade; the shared crow.db is the authority."""
 
-    def __init__(self):
-        self.path = paths.get_state() / "tui.db"
+    def __init__(self, db_uri: str | None = None):
+        if db_uri is None:
+            from crow_cli.config import Config
 
-    def open(self) -> aiosqlite.Connection:
-        return aiosqlite.connect(self.path)
+            db_uri = Config.load().db_uri
+        self.db_uri = db_uri
 
     async def create(self) -> bool:
-        """Create the tables if requried."""
+        """Create the tables if required."""
+        from crow_cli.memory.db import create_database
+
         try:
-            async with self.open() as db:
-                await db.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS sessions (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        agent TEXT NOT NULL,
-                        agent_identity TEXT NOT NULL,
-                        agent_session_id TEXT NOT NULL,
-                        title TEXT NOT NULL,
-                        protocol TEXT NOT NULL,
-                        prompt_count INTEGER DEFAULT 0,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        last_used TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        meta_json TEXT DEFAULT '{}'
-                    )
-                    """
-                )
-        except aiosqlite.Error:
+            await asyncio.to_thread(create_database, self.db_uri)
+        except Exception:
             return False
         return True
 
@@ -73,109 +65,43 @@ class DB:
         protocol: str = "acp",
         meta: dict[str, object] | None = None,
     ) -> int | None:
-        meta_json = json.dumps(meta or {})
-        try:
-            async with self.open() as db:
-                cursor = await db.execute(
-                    """
-                    INSERT INTO sessions (title, agent, agent_identity, agent_session_id, protocol, meta_json) VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        title,
-                        agent,
-                        agent_identity,
-                        agent_session_id,
-                        protocol,
-                        meta_json,
-                    ),
-                )
-                await db.commit()
-                return cursor.lastrowid
-        except aiosqlite.Error:
-            return None
+        from crow_cli.memory import session_tabs
+
+        return await asyncio.to_thread(
+            session_tabs.tab_new,
+            self.db_uri,
+            title=title,
+            agent=agent,
+            agent_identity=agent_identity,
+            agent_session_id=agent_session_id,
+            protocol=protocol,
+            meta_json=json.dumps(meta or {}),
+        )
 
     async def session_update_last_used(self, id: int) -> bool:
-        """Update the last used timestamp.
+        """Update the last used timestamp."""
+        from crow_cli.memory import session_tabs
 
-        Args:
-            id: Session ID.
-
-        Returns:
-            Boolenan that indicates success.
-        """
-        now_utc = datetime.now(timezone.utc)
-        try:
-            async with self.open() as db:
-                await db.execute(
-                    "UPDATE sessions SET last_used = ? WHERE id = ?",
-                    (
-                        now_utc.isoformat(),
-                        id,
-                    ),
-                )
-                await db.commit()
-        except aiosqlite.Error:
-            return False
-        return True
+        return await asyncio.to_thread(session_tabs.tab_touch, self.db_uri, id)
 
     async def session_update_title(self, id: int, title: str) -> bool:
-        """Update the last used timestamp.
+        """Rename a session tab."""
+        from crow_cli.memory import session_tabs
 
-        Args:
-            id: Session ID.
-            title: New title.
-
-        Returns:
-            Boolenan that indicates success.
-        """
-        try:
-            async with self.open() as db:
-                await db.execute(
-                    "UPDATE sessions SET title = ? WHERE id = ?",
-                    (
-                        title,
-                        id,
-                    ),
-                )
-                await db.commit()
-        except aiosqlite.Error:
-            return False
-        return True
+        return await asyncio.to_thread(session_tabs.tab_rename, self.db_uri, id, title)
 
     async def session_get(self, id: int) -> Session | None:
-        """Get a sesison from its ID (PK).
+        """Get a session from its ID (PK, not the agent_session_id)."""
+        from crow_cli.memory import session_tabs
 
-        Args:
-            session_id: The ID field (PK, not the agent_session_id)
-
-        Returns:
-            A Session if one is found, or `None`.
-        """
-        try:
-            async with self.open() as db:
-                db.row_factory = aiosqlite.Row
-                cursor = await db.execute("SELECT * from sessions WHERE id = ?", (id,))
-                row = await cursor.fetchone()
-        except aiosqlite.Error:
-            return None
-        if row is None:
-            return None
-        session = cast(Session, dict(row))
-        return session
+        row = await asyncio.to_thread(session_tabs.tab_get, self.db_uri, id)
+        return cast(Session, row) if row is not None else None
 
     async def session_get_recent(self, max_results: int = 100) -> list[Session] | None:
         """Get the most recent sessions."""
-        try:
-            async with self.open() as db:
-                db.row_factory = aiosqlite.Row
-                cursor = await db.execute(
-                    """SELECT * from sessions
-                    ORDER BY last_used DESC
-                    LIMIT ?""",
-                    (max_results,),
-                )
-                rows = await cursor.fetchall()
-        except aiosqlite.Error:
-            return None
-        sessions = [cast(Session, dict(row)) for row in rows]
-        return sessions
+        from crow_cli.memory import session_tabs
+
+        rows = await asyncio.to_thread(
+            session_tabs.tab_recent, self.db_uri, max_results
+        )
+        return [cast(Session, row) for row in rows]

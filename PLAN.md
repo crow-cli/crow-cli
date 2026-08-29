@@ -48,21 +48,27 @@ crow_cli.config = shared base dir + shared env expansion.
 - Verified: pytest gate + `ls ~/.agents/crow/agents` after first TUI run
   shows seeded crowai.dev.toml (live check pending next TUI launch).
 
-## Phase 3 — sqlite consolidation (design; implement post-review)
+## Phase 3 — sqlite consolidation — DONE 2026-08-29 (495 green)
 
-Current state: TWO stores. `tui/db.py` = private aiosqlite `sessions` table
-(int id, title, last_used) for the TUI's session tabs; `memory/db.py` (v5) =
-sessions/agents/messages + FTS in crow.db, already the source for telemetry
-surfaces and `session/load`.
+User steer: the agents table IS the session table server-side, so the new
+table is named for the client concept: `session_tabs` (ORM `SessionTab`).
+Common authority = crow_cli.config: base dir (phase 2) + Config.db_uri
+(phase 3); memory stays a parameterized store layer; tui is a pure consumer.
 
-Design:
-1. Add `title TEXT` + `last_used` (or reuse existing timestamp cols) to
-   memory's sessions table (idempotent ALTER, no full migration — v5 stays v5).
-2. Rewire TUI: session list/new/rename/touch → memory db API; TUI int-id
-   indirection dies (session id string is the key; title pre-set to session
-   id per existing behavior).
-3. Delete `tui/db.py` + its db file path; one-time import of existing TUI
-   titles NOT needed (titles are session ids today).
-- Test criteria: unit tests for renamed session ops against memory db;
-  full gate green; live: TUI shows sessions identical to
-  `crow-cli list-sessions`, rename persists and is visible from CLI.
+1. models.py: `SessionTab` / `session_tabs` (id, agent, agent_identity,
+   agent_session_id, title, protocol, prompt_count, created_at, last_used,
+   meta_json). create_all is additive — existing dbs gain the table on next
+   create_database(), no schema bump.
+2. memory/session_tabs.py: sync CRUD (tab_new/get/recent/touch/rename).
+3. tui/db.py: async facade (same method names/signatures — zero caller
+   changes in acp/agent.py, app.py, session_resume_modal.py); db_uri
+   defaults to Config.load().db_uri. Dead app.db_path removed.
+4. Old ~/.local/state/crow/tui.db orphaned, no migration (titles were
+   session ids; resume list starts fresh).
+- Verified: 3 new tests (tests/memory/test_session_tabs.py incl. facade);
+  gate 495; live crow.db inspected (session_tabs present); list-sessions
+  unaffected.
+- Follow-up (not blocking): telemetry list_sessions could LEFT JOIN
+  session_tabs to show TUI titles.
+
+Sprint complete: phases 1-3 all done.

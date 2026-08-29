@@ -333,10 +333,6 @@ class CrowApp(App, inherit_bindings=False):
         return config_dir / "tui.json"
 
     @property
-    def db_path(self) -> Path:
-        return paths.get_state() / "tui.db"
-
-    @property
     def _background_screens(self) -> list[Screen]:
         background_screens = super()._background_screens
         if self.temporary_background_screen:

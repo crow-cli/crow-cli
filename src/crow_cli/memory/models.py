@@ -99,6 +99,27 @@ class TaskDelivery(Base):
     delivered_at = Column(Text, nullable=True)
 
 
+class SessionTab(Base):
+    """Client-side tab state for a TUI session (title, resume meta).
+
+    The server-side session record lives on Agent (agents.session_id);
+    this table is what the TUI's tab bar and resume modal need, kept in
+    the shared store so the package has one state database."""
+
+    __tablename__ = "session_tabs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    agent = Column(Text, nullable=False)
+    agent_identity = Column(Text, nullable=False)
+    agent_session_id = Column(Text, nullable=False)
+    title = Column(Text, nullable=False)
+    protocol = Column(Text, nullable=False, default="acp")
+    prompt_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(Text, nullable=False, default=now_iso)
+    last_used = Column(Text, nullable=False, default=now_iso)
+    meta_json = Column(Text, nullable=False, default="{}")
+
+
 class Message(Base):
     """One row = One message; the message dict serialized into `data`."""
 
