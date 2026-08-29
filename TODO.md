@@ -34,6 +34,12 @@ This file replaces it.
       ${VAR} expansion via shared resolve_env_vars; app.settings_path now
       uses get_default_config_dir() (was hardcoded dup); dead config_path
       removed. Verified 2026-08-29: 5 new unit tests, full gate 492 green.
+- [x] v5→v6 migration script (scripts/migrate_v6.py): fresh dst = v5 copy +
+      FTS rebuild + session_tabs (copied from src if present + imported from
+      legacy tui.db, deduped on agent_session_id, timestamps converted to
+      iso-UTC). Non-destructive; cutover = db_uri dry runs, then user backup
+      + rename. Verified 2026-08-29: 3 tests; live run produced
+      ~/.agents/crow/crow-v6.db (71558 msgs +FTS, 34 tabs).
 - [x] Sqlite consolidation: new `session_tabs` table in crow_cli.memory
       (named for what it is — the agents table already owns "sessions"
       server-side); tui/db.py rewritten as async facade over it, db_uri from

@@ -71,4 +71,23 @@ Common authority = crow_cli.config: base dir (phase 2) + Config.db_uri
 - Follow-up (not blocking): telemetry list_sessions could LEFT JOIN
   session_tabs to show TUI titles.
 
-Sprint complete: phases 1-3 all done.
+## Phase 4 — v5→v6 migration — DONE 2026-08-29 (498 green)
+
+User model: dry-run by swapping db_uri in config.yaml; crow.db never
+deleted; user does backup + rename for real. So the script is lean:
+src read by convention, dst fresh (--force), counts verified, no
+read-only-pinning / twin-scan ceremony.
+
+1. scripts/migrate_v6.py: copy prompts/agents/messages verbatim, rebuild
+   FTS with current message_text, session_tabs = src's rows (if the table
+   exists) + tui.db sessions deduped on agent_session_id with
+   CURRENT_TIMESTAMP → iso-UTC conversion.
+2. First artifact produced: ~/.agents/crow/crow-v6.db
+   (18 prompts, 2726 agents, 71558 messages +FTS, 34 session_tabs =
+   1 copied + 33 imported).
+- Verified: tests/memory/test_migrate_v6.py (v5+tui import, existing-tabs
+  copy+dedup, v4 rejection); gate 498.
+- Next (user-driven): point db_uri at crow-v6.db, run end to end, then
+  backup crow.db and rename crow-v6.db → crow.db.
+
+Sprint complete: phases 1-4 all done.
