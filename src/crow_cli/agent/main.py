@@ -42,6 +42,7 @@ Then restart your agent.
 import argparse
 import asyncio
 import base64
+import json
 import mimetypes
 import os
 import platform
@@ -1043,9 +1044,25 @@ class AcpAgent(Agent):
         self._logger.info("Listing sessions for working directory: %s", cwd)
         if cwd is None:
             return ListSessionsResponse(sessions=[], next_cursor=None)
-        sessions_info = await get_session_by_cwd(cwd, self._memory_db_uri)
-        sessions = [SessionInfo(**session) for session in sessions_info]
-        return ListSessionsResponse(sessions=sessions, next_cursor=None)
+
+        page_size = 50
+        offset = 0
+        if cursor is not None:
+            try:
+                offset = int(json.loads(base64.b64decode(cursor)).get("offset", 0))
+            except Exception:
+                raise ValueError(f"Invalid session/list cursor: {cursor!r}")
+
+        page, next_offset = await get_session_by_cwd(
+            cwd, self._memory_db_uri, limit=page_size, offset=offset
+        )
+        sessions = [SessionInfo(**session) for session in page]
+        next_cursor = (
+            base64.b64encode(json.dumps({"offset": next_offset}).encode()).decode()
+            if next_offset is not None
+            else None
+        )
+        return ListSessionsResponse(sessions=sessions, next_cursor=next_cursor)
 
 
 async def serve_http(

@@ -589,15 +589,12 @@ class StoreScreen(Screen):
 
     @work
     async def action_resume(self) -> None:
-        from crow_cli.tui.screens.session_resume_modal import SessionResumeModal
-
-        session = await self.app.push_screen_wait(SessionResumeModal())
-        if session is not None:
+        session_id = await self.app.push_screen_wait("history")
+        if session_id is not None and self.app.agent_data is not None:
             self.post_message(
                 messages.LaunchAgent(
-                    session["agent_identity"],
-                    session["agent_session_id"],
-                    pk=session["id"],
+                    self.app.agent_data["identity"],
+                    session_id,
                 )
             )
 

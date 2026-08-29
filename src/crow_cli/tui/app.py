@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from crow_cli.tui.screens.settings import SettingsScreen
     from crow_cli.tui.screens.store import StoreScreen
     from crow_cli.tui.screens.sessions import SessionsScreen
+    from crow_cli.tui.screens.history import HistoryScreen
     from crow_cli.tui.db import DB
 
 
@@ -226,6 +227,12 @@ def get_sessions_screen() -> SessionsScreen:
     return SessionsScreen()
 
 
+def get_history_screen() -> HistoryScreen:
+    from crow_cli.tui.screens.history import HistoryScreen
+
+    return HistoryScreen()
+
+
 class CrowApp(App, inherit_bindings=False):
     """The top level app."""
 
@@ -233,6 +240,7 @@ class CrowApp(App, inherit_bindings=False):
     SCREENS = {
         "settings": get_settings_screen,
         "sessions": get_sessions_screen,
+        "history": get_history_screen,
     }
     MODES = {"store": get_store_screen}
     BINDING_GROUP_TITLE = "System"
@@ -247,6 +255,12 @@ class CrowApp(App, inherit_bindings=False):
         ),
         Binding("ctrl+c", "help_quit", show=False, system=True),
         Binding("ctrl+s", "sessions", "Sessions"),
+        Binding(
+            "ctrl+r",
+            "history",
+            "History",
+            tooltip="Resume a previous session from the agent's history",
+        ),
         Binding("f1", "toggle_help_panel", "Help", priority=True),
         Binding(
             "f2,ctrl+comma",
@@ -734,6 +748,15 @@ class CrowApp(App, inherit_bindings=False):
             except KeyError:
                 pass
 
+    @work
+    async def action_history(self) -> None:
+        session_id = await self.push_screen_wait("history")
+        if session_id is not None and self.agent_data is not None:
+            # launch_agent is @work-decorated: calling it starts the worker.
+            self.launch_agent(
+                self.agent_data["identity"], agent_session_id=session_id
+            )
+
     @on(messages.LaunchAgent)
     def on_launch_agent(self, message: messages.LaunchAgent) -> None:
         self.launch_agent(
@@ -765,6 +788,10 @@ class CrowApp(App, inherit_bindings=False):
                 meta = json.loads(session["meta_json"])
                 if agent_data := meta.get("agent_data"):
                     agent = agent_data
+
+        if agent is None and self.agent_data is not None:
+            if self.agent_data["identity"] == agent_identity:
+                agent = self.agent_data
 
         if agent is None:
             agents = await read_agents()

@@ -45,14 +45,19 @@ async def list_sessions(
     agent_data: AgentData,
     cwd: str | Path,
     *,
+    cursor: str | None = None,
     timeout: float = 30.0,
-) -> list[protocol.SessionInfo]:
-    """Return the sessions for `cwd` reported by the agent over ACP.
+) -> tuple[list[protocol.SessionInfo], str | None]:
+    """Return one page of sessions for `cwd` reported by the agent over ACP.
 
     Args:
         agent_data: The agent to spawn (run_command matrix).
         cwd: Working directory to list sessions for (exact match agent-side).
+        cursor: Opaque pagination token from a previous call.
         timeout: Seconds before the whole exchange is abandoned.
+
+    Returns:
+        A tuple of (sessions, next cursor or None when out of pages).
 
     Raises:
         SessionListError: If the agent cannot be spawned, does not support
@@ -97,7 +102,7 @@ async def list_sessions(
 
     loop_task = asyncio.create_task(read_loop())
 
-    async def transact() -> list[protocol.SessionInfo]:
+    async def transact() -> tuple[list[protocol.SessionInfo], str | None]:
         with LIST_API.request(send):
             init_call = initialize(
                 PROTOCOL_VERSION,
@@ -124,12 +129,15 @@ async def list_sessions(
         if "list" not in session_capabilities:
             raise SessionListError("Agent does not support session/list")
 
+        params: dict = {"cwd": cwd_path}
+        if cursor is not None:
+            params["cursor"] = cursor
         with LIST_API.request(send):
-            list_call = session_list(cwd=cwd_path)
+            list_call = session_list(**params)
         list_response = await list_call.wait()
         if list_response is None:
             raise SessionListError("No session/list response from agent")
-        return list_response.get("sessions", [])
+        return list_response.get("sessions", []), list_response.get("nextCursor")
 
     try:
         async with asyncio.timeout(timeout):

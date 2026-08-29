@@ -1,0 +1,71 @@
+HistoryScreen {
+
+    background: $background;
+
+    #title-container {
+        padding: 1 1 0 1;
+        color: $text-success;
+    }
+
+    .instructions {
+        width: auto;
+        margin: 1 1;
+        color: $text-muted;
+        text-style: italic;
+    }
+
+    #loading {
+        margin: 0 1;
+        color: $text-muted;
+        text-style: italic;
+    }
+
+    HistoryGridSelect {
+        width: 1fr;
+        margin: 0 1 1 1;
+        padding: 1 0 !important;
+    }
+
+    HistoryCard {
+        border: blank transparent;
+        background: black 10%;
+        width: auto;
+        margin: 0;
+        pointer: pointer;
+        height: auto;
+        padding: 1 0 1 0;
+
+        &.-highlight {
+            border: round $primary;
+        }
+
+        .icon {
+            width: 3;
+            text-align: center;
+            color: $text-secondary;
+        }
+
+        .title {
+            width: auto;
+        }
+
+        .subtitle {
+            color: $text-secondary;
+            text-style: italic;
+        }
+    }
+
+    LoadMoreCard {
+        width: 1fr;
+        padding: 1 2;
+        color: $text-muted;
+        text-style: italic;
+        text-align: center;
+        border: blank transparent;
+
+        &.-highlight {
+            border: round $primary;
+            color: $text;
+        }
+    }
+}

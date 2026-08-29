@@ -30,25 +30,59 @@ from crow_cli.config import (
     Config,
 )
 
-async def get_session_by_cwd(cwd, memory_path=DEFAULT_MEMORY_PATH):
+async def get_session_by_cwd(
+    cwd, memory_path=DEFAULT_MEMORY_PATH, limit: int = 50, offset: int = 0
+):
     """
-    Lookup agents by working directory via the memory db.
+    Lookup sessions by working directory via the memory db, most recently
+    active first, one page at a time.
 
-    Returns list of session info dicts with session_id, title, updated_at.
+    One row per session: a session can hold several trunk agents (agent_idx
+    1..N via delegation) and forks, all carrying the same workspace, so we
+    group by session_id and keep the trunk with the largest agent_idx (the
+    most recent agent) as the representative. Recency comes from the
+    aggregate last-message timestamp; the expensive per-session title query
+    only runs for the requested page.
+
+    Returns a tuple of (page of session info dicts, next offset or None).
     """
     client = MemoryClient(memory_path)
     try:
-        result = []
+        representatives: dict[str, object] = {}
+        roots: dict[str, object] = {}
         for agent in await client.list_agents():
             prompt_args = agent.prompt_args or {}
-            if prompt_args.get("workspace") != cwd:
+            if prompt_args.get("workspace") != cwd or agent.fork_idx != 1:
                 continue
+            current = representatives.get(agent.session_id)
+            if current is None or agent.agent_idx > current.agent_idx:
+                representatives[agent.session_id] = agent
+            if agent.agent_idx == 1:
+                roots[agent.session_id] = agent
 
-            # Title from the second message (index 1, after the system message).
-            # Fetch the first three records so len > 2 tells us a title exists.
+        # True recency: last message activity per session (single aggregate).
+        activity = {
+            s.session_id: s.last_activity
+            for s in await client.list_sessions(limit=1_000_000)
+        }
+        ordered = sorted(
+            representatives.items(),
+            key=lambda item: activity.get(item[0]) or item[1].created_at,
+            reverse=True,
+        )
+
+        page = ordered[offset : offset + limit]
+        next_offset = offset + limit if offset + limit < len(ordered) else None
+
+        result = []
+        for session_id, agent in page:
+            # Title from the root agent's second message (index 1, after the
+            # system message). Fetch the first three records so len > 2 tells
+            # us a title exists.
             title = "Untitled Chat"
+            title_agent = roots.get(session_id, agent)
             recs = await client.query_messages(
-                agent_id=agent.agent_id, order="asc", limit=3
+                agent_id=title_agent.agent_id, order="asc", limit=3
             )
             if len(recs) > 2:
                 try:
@@ -69,13 +103,12 @@ async def get_session_by_cwd(cwd, memory_path=DEFAULT_MEMORY_PATH):
             result.append(
                 {
                     "cwd": cwd,
-                    "session_id": agent.session_id,
-                    "agent_id": agent.agent_id,
+                    "session_id": session_id,
                     "title": title,
-                    "updated_at": agent.created_at,
+                    "updated_at": activity.get(session_id) or agent.created_at,
                 }
             )
-        return result
+        return result, next_offset
     finally:
         await client.close()
 

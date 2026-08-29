@@ -86,4 +86,3 @@ def launch_tui(
         session_id=session,
     )
     app.run()
-    app.run_on_exit()
