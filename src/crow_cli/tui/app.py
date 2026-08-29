@@ -29,6 +29,7 @@ from crow_cli.tui.settings_schema import SCHEMA
 from crow_cli.tui import paths
 from crow_cli.tui import atomic
 from crow_cli.tui.session_tracker import SessionTracker, SessionDetails
+from crow_cli.config import get_default_config_dir
 from crow_cli.tui.themes import SHADES_OF_PURPLE, SHADES_OF_PURPLE_TERMINAL_THEME
 
 if TYPE_CHECKING:
@@ -325,15 +326,11 @@ class CrowApp(App, inherit_bindings=False):
         """Time app was started."""
 
     @property
-    def config_path(self) -> Path:
-        return paths.get_config()
-
-    @property
     def settings_path(self) -> Path:
         # crow's home, next to config.yaml and crow.db
-        crow_home = Path("~/.agents/crow").expanduser()
-        crow_home.mkdir(parents=True, exist_ok=True)
-        return crow_home / "tui.json"
+        config_dir = get_default_config_dir()
+        config_dir.mkdir(parents=True, exist_ok=True)
+        return config_dir / "tui.json"
 
     @property
     def db_path(self) -> Path:

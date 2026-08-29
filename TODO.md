@@ -28,10 +28,12 @@ This file replaces it.
       ancestors (history); crow-native "telemetry" naming = the MCP query
       facade (list-sessions/query-memory/query-session), NOT toad telemetry.
       toad telemetry itself is gone: zero posthog/toad.run/batrachian.ai in src.
-- [ ] YAML ACP agent server config: user-editable YAML (crow-cli way, lives
-      with config.yaml in ~/.agents/crow/) describing ACP agent servers
-      (identity/name/command/args/env/protocol), merged over bundled defaults;
-      TUI store lists them; spawn path unchanged.
+- [x] ACP agent server config (TOML kept, per user pivot — separate from
+      config.yaml is fine): user-editable TOMLs in ~/.agents/crow/agents/,
+      seeded once from bundled data/agents (user dir then authority);
+      ${VAR} expansion via shared resolve_env_vars; app.settings_path now
+      uses get_default_config_dir() (was hardcoded dup); dead config_path
+      removed. Verified 2026-08-29: 5 new unit tests, full gate 492 green.
 - [ ] Sqlite consolidation: TUI sessions (title/last_used) move into
       crow-memory's sessions table; tui/db.py deleted; TUI session list/new/
       load driven by memory db (same store the telemetry surfaces already read).

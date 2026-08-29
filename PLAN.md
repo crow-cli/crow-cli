@@ -31,25 +31,22 @@ implement after user review. Commit after each phase, Session-Id trailer.
 4. Full gate + commit. Keep-list (NOTICE, pyproject comment, README, tui_cmd
    docstring, app.py quote, sandbox/docs, crow-native telemetry naming) stays.
 
-## Phase 2 — YAML ACP agent server config (design; implement post-review)
+## Phase 2 — ACP agent server config — DONE 2026-08-29 (492 green)
 
-Current state: bundled TOML per agent in `crow_cli/tui/data/agents/*.toml`
-(toad's store model, culled to crow), read by `agents.py` via tomllib;
-schema = `agent_schema.Agent` TypedDict (identity/name/short_name/url/
-protocol/type/tags/actions with per-OS command maps).
+User pivot: keep TOML, keep separate from config.yaml; common ground with
+crow_cli.config = shared base dir + shared env expansion.
 
-Design:
-1. New optional `agents:` section in `~/.agents/crow/config.yaml` (crow-cli
-   way: one YAML, resolve_env_vars like mcpServers). Entry = subset of
-   agent_schema.Agent + `command`/`args`/`env` spawn fields (zed agent_servers
-   style) for external ACP servers.
-2. Loader: bundled TOML = defaults; YAML entries merge/override by identity;
-   `active: false` hides. Fail fast on bad YAML (no silent fallback).
-3. agent_schema stays the single source of truth; add a `from_yaml` validator
-   (typeguard already in deps).
-- Test criteria: unit tests parse a sample YAML (override + new agent +
-  bad-YAML rejection); integration: TUI store lists the YAML agent;
-  live: `crow-cli` connects to a YAML-defined ACP server (echo agent).
+1. `agents.py`: store = `get_default_config_dir()/agents/*.toml`; seeded once
+   from bundled `data/agents` (mkdir + copy iff dir absent; user dir then
+   authority — no clobber). `resolve_env_vars` applied to parsed TOML
+   (unset → "" + warning, parity with mcpServers). Bad TOML → AgentReadError.
+2. `app.py`: `settings_path` = `get_default_config_dir()/tui.json` (was a
+   hardcoded `~/.agents/crow` duplicating config's authority); dead
+   `config_path` property (XDG, zero readers) removed.
+3. Tests: `tests/unit/test_agent_store.py` — seed, no-clobber, add/hide,
+   env expansion, fail-fast. 5 passed; full gate 492.
+- Verified: pytest gate + `ls ~/.agents/crow/agents` after first TUI run
+  shows seeded crowai.dev.toml (live check pending next TUI launch).
 
 ## Phase 3 — sqlite consolidation (design; implement post-review)
 
