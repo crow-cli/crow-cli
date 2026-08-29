@@ -4,21 +4,19 @@ from textual import containers
 from textual.widgets import Label, Markdown
 
 
-ASCII_TOAD = r"""
-         _   _
-        (.)_(.)
-     _ (   _   ) _
-    / \/`-----'\/ \
-  __\ ( (     ) ) /__
-  )   /\ \._./ /\   (
-   )_/ /|\   /|\ \_(
+ASCII_CROW = r"""
+   .-.
+  /'v'\
+ (/   \)
+='="="===<
+   |_|
 """
 
 
 WELCOME_MD = """\
-## Toad v1.0
+## crow-cli v0.1.39
 
-Welcome, **Will**!
+Welcome, **Thomas**!
 
 
 """
@@ -27,5 +25,5 @@ Welcome, **Will**!
 class Welcome(containers.Vertical):
     def compose(self) -> ComposeResult:
         with containers.Center():
-            yield Label(ASCII_TOAD, id="logo")
+            yield Label(ASCII_CROW, id="logo")
         yield Markdown(WELCOME_MD, id="message", classes="note")

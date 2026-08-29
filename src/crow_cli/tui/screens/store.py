@@ -310,7 +310,6 @@ class AgentGridSelect(GridSelect):
             return
         child = self.children[self.highlighted]
         if not isinstance(child, AgentItem):
-            self.app.open_url("https://github.com/sponsors/willmcgugan")
             return
         self.post_message(messages.LaunchAgent(child.agent["identity"]))
 
@@ -395,10 +394,6 @@ class StoreScreen(Screen):
             Content.from_markup("🐦‍⬛ Crow"),
             pill(f"v{toad_version}", "$primary-muted", "$text-primary"),
             ("\nThe universal interface for AI in your terminal", "$text-success"),
-            (
-                "\nSoftware lovingly crafted by hand (with a dash of AI) in Edinburgh, Scotland",
-                "dim",
-            ),
             "\n",
             (
                 Content.from_markup(
@@ -408,9 +403,8 @@ class StoreScreen(Screen):
             "\n\n",
             (
                 Content.from_markup(
-                    "[dim]Code: [@click=screen.url('https://github.com/batrachianai/toad')]Repository[/] • "
-                    "Bugs: [@click=screen.url('https://github.com/batrachianai/toad/discussions')]Discussions[/] • "
-                    "Sponsor: [@click=screen.url('https://github.com/sponsors/willmcgugan')]@willmcgugan[/]"
+                    "[dim]Code: [@click=screen.url('https://github.com/crow-cli/crow-cli')]Repository[/] • "
+                    "Bugs: [@click=screen.url('https://github.com/crow-cli/crow-cli/issues')]Issues[/]"
                 )
             ),
         )
@@ -437,7 +431,7 @@ class StoreScreen(Screen):
         # Shuffle reccomended agents so none has priority
         shuffle(recommended_agents)
         if recommended_agents:
-            with containers.VerticalGroup(id="sponsored-agents", classes="recommended"):
+            with containers.VerticalGroup(id="recommended-agents", classes="recommended"):
                 yield widgets.Static(
                     "[$text-warning u]Recommended[/] [$text-secondary 100% i]Best of the bunch",
                     classes="heading",
@@ -445,10 +439,6 @@ class StoreScreen(Screen):
                 with AgentGridSelect(classes="agents-picker", min_column_width=40):
                     for agent in recommended_agents:
                         yield AgentItem(agent)
-                    yield widgets.Static(
-                        "[$text-warning]Your agent here[/] — support development of Toad by [@click=screen.url('https://github.com/sponsors/willmcgugan')]sponsoring[/] this project",
-                        classes="sponsor-me",
-                    )
 
         chat_bots = [
             agent for agent in ordered_agents if agent["type"] in {"chat", "assistant"}
@@ -500,7 +490,6 @@ class StoreScreen(Screen):
     @work
     async def on_grid_select_selected(self, event: GridSelect.Selected):
         if not isinstance(event.widget, AgentItem):
-            self.app.open_url("https://github.com/sponsors/willmcgugan")
             return
         assert isinstance(event.widget, AgentItem)
         from crow_cli.tui.screens.agent_modal import AgentModal

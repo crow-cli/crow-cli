@@ -79,12 +79,6 @@ class ActionModal(ModalScreen):
         await self.command_pane.write(f"$ {self._command}\n")
         action_task = self.command_pane.execute(self._command)
         await action_task
-        self.app.capture_event(
-            "agent-action",
-            action=self._action,
-            agent=self._agent,
-            fail=self.command_pane.return_code != 0,
-        )
 
     @on(widgets.Button.Pressed)
     def on_button_pressed(self) -> None:

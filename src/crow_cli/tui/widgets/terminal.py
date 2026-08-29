@@ -30,7 +30,7 @@ class Terminal(ScrollView, can_focus=True):
     HELP = """\
 ## Terminal
 
-An embedded terminal running within Toad.
+An embedded terminal running within crow-cli.
 When the terminal has focus, it will take over the handling of keys.
 
 Tap escape *twice* to exit.

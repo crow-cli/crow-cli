@@ -16,7 +16,7 @@ class Command(TypedDict):
     """Used to perform an action associate with an Agent."""
 
     description: str
-    """Describes what the script will do. For example: 'Install Claude Code'."""
+    """Describes what the script will do. For example: 'Install crow-cli'."""
     command: str
     """Command to run."""
     bootstrap_uv: NotRequired[bool]
@@ -33,15 +33,15 @@ class Agent(TypedDict):
     active: NotRequired[bool]
     """If `True` (default), the agent will be shown in the UI. If `False` the agent will be removed from the UI."""
     recommended: NotRequired[bool]
-    """Agent is in recommended set. Set to `True` in main branch only if previously agreed with Will McGugan."""
+    """Agent is in the recommended set shown at the top of the store."""
     identity: str
     """A unique identifier for this agent. Should be a domain the agent developer owns,
     although it doesn't have to resolve to anything. Must be useable in a filename on all platforms.
-    For example: 'claude.anthropic.ai'"""
+    For example: 'crowai.dev'"""
     name: str
-    """The name of the agent. For example: 'Claude Code'."""
+    """The name of the agent. For example: 'crow-cli'."""
     short_name: str
-    """A short name, usable on the command line. Try to make it unique. For example: 'claude'."""
+    """A short name, usable on the command line. Try to make it unique. For example: 'crow'."""
     url: str
     """A URL for the agent."""
     protocol: AgentProtocol

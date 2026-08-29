@@ -96,11 +96,11 @@ if __name__ == "__main__":
         0,
         "mode",
         title="Building BMI calculator",
-        subtitle="Claude Code",
+        subtitle="crow-cli",
     )
 
     class SessionApp(App):
-        CSS_PATH = "../toad.tcss"
+        CSS_PATH = "../tui.tcss"
         CSS = """
         Screen {
             layout: horizontal;

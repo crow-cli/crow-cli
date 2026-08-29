@@ -1,10 +1,8 @@
 import asyncio
 from importlib.resources import files
-from datetime import datetime, timezone
 from functools import cached_property
 import os
 from pathlib import Path
-import platform
 import json
 from time import monotonic
 from typing import Any, Callable, ClassVar, TYPE_CHECKING
@@ -28,7 +26,6 @@ from crow_cli.tui.settings import Schema, Settings
 from crow_cli.tui.agent_schema import Agent as AgentData
 from crow_cli.tui import messages
 from crow_cli.tui.settings_schema import SCHEMA
-from crow_cli.tui.version import VersionMeta
 from crow_cli.tui import paths
 from crow_cli.tui import atomic
 from crow_cli.tui.session_tracker import SessionTracker, SessionDetails
@@ -265,7 +262,6 @@ class CrowApp(App, inherit_bindings=False):
     column_width: reactive[int] = reactive(100)
     scrollbar: reactive[str] = reactive("normal")
     last_ctrl_c_time = reactive(0.0)
-    update_required: reactive[bool] = reactive(False)
     terminal_title: var[str] = var("Crow")
     terminal_title_icon: var[str] = var("🐦‍⬛")
     terminal_title_flash = var(0)
@@ -300,7 +296,6 @@ class CrowApp(App, inherit_bindings=False):
         self.preselected_session_id = session_id
 
         self._initial_mode = mode
-        self.version_meta: VersionMeta | None = None
         self._supports_pyperclip: bool | None = None
         self._terminal_title_flash_timer: Timer | None = None
 
@@ -359,19 +354,6 @@ class CrowApp(App, inherit_bindings=False):
         return Settings(
             self.settings_schema, self._settings, on_set_callback=self.setting_updated
         )
-
-    @cached_property
-    def anon_id(self) -> str:
-        """An anonymous ID for usage collection."""
-        if not (anon_id := self.settings.get("anon_id", str, expand=False)):
-            # Create a random UUID on demand
-            import uuid
-
-            anon_id = str(uuid.uuid4())
-            self.settings.set("anon_id", anon_id)
-            self._save_settings()
-            self.call_later(self.capture_event, "toad-install")
-        return anon_id
 
     @property
     def session_tracker(self) -> SessionTracker:
@@ -481,47 +463,6 @@ class CrowApp(App, inherit_bindings=False):
             return "Konsole"
 
         return "Unknown"
-
-    @work(exit_on_error=False)
-    async def capture_event(self, event_name: str, **properties: Any) -> None:
-        """Capture an event.
-
-        Args:
-            event_name: Name of the event.
-            **properties: Additional data associated with the event.
-        """
-
-        POSTHOG_API_KEY = "phc_mJWPV7GP3ar1i9vxBg2U8aiKsjNgVwum6F6ZggaD4ri"
-        POSTHOG_HOST = "https://us.i.posthog.com"
-        POSTHOG_EVENT_URL = f"{POSTHOG_HOST}/i/v0/e/"
-        timestamp = datetime.now(timezone.utc).isoformat()
-        width, height = self.size
-
-        event_properties = {
-            "toad_version": self.version,
-            "term_program": self.term_program,
-            "term_width": width,
-            "term_height": height,
-        } | properties
-        body_json = {
-            "api_key": POSTHOG_API_KEY,
-            "event": event_name,
-            "distinct_id": self.anon_id,
-            "properties": event_properties,
-            "timestamp": timestamp,
-            "os": platform.system(),
-        }
-        if not self.settings.get("statistics.allow_collect", bool):
-            # User has disabled stats
-            return
-
-        import httpx
-
-        try:
-            async with httpx.AsyncClient() as client:
-                await client.post(POSTHOG_EVENT_URL, json=body_json)
-        except Exception:
-            pass
 
     @work(thread=True, exit_on_error=False)
     def system_notify(
@@ -686,7 +627,7 @@ class CrowApp(App, inherit_bindings=False):
         try:
             import setproctitle
 
-            setproctitle.setproctitle("toad")
+            setproctitle.setproctitle("crow")
         except Exception:
             pass
 
@@ -699,37 +640,6 @@ class CrowApp(App, inherit_bindings=False):
                     "Copied selection to clipboard (see settings)",
                     title="Automatic copy",
                 )
-
-    def run_on_exit(self):
-        if self.update_required and self.version_meta is not None:
-            version_meta = self.version_meta
-            from rich.console import Console
-            from rich.panel import Panel
-
-            console = Console()
-            console.print(
-                Panel(
-                    version_meta.upgrade_message,
-                    style="magenta",
-                    border_style="dim green",
-                    title="🐸 [bold green not dim]Update available![/] 🐸",
-                    expand=False,
-                    padding=(1, 2),
-                )
-            )
-            console.print(f"Please visit {version_meta.visit_url}")
-
-    @work(exit_on_error=False)
-    async def run_version_check(self) -> None:
-        """Check remote version."""
-        from crow_cli.tui.version import check_version, VersionCheckFailed
-
-        try:
-            update_required, version_meta = await check_version()
-        except VersionCheckFailed:
-            return
-        self.version_meta = version_meta
-        self.update_required = update_required
 
     def get_main_screen(self) -> MainScreen:
         """Make the default screen.

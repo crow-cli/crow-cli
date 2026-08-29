@@ -15,12 +15,7 @@ StoreScreen {
         margin: 0 0 0 0;
         padding: 1 1 0 2;                
     }
-    .sponsor-me {        
-        padding: 0 1;
-        color: $text 70%;   
-        border: tall blank;     
-    }
-    Footer {    
+    Footer {
         .footer-key--key {            
         background: transparent;            
             padding: 0 1;        

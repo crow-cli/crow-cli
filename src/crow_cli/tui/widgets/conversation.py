@@ -76,9 +76,9 @@ AGENT_FAIL_HELP = {
 
 Check that the agent is installed and up-to-date.
 
-Note that some agents require an ACP adapter to be installed to work with Toad.
+Note that some agents require an ACP adapter to be installed to work with crow-cli.
 
-- Exit the app, and run `toad` again
+- Exit the app, and run `crow-cli` again
 - Select the agent and hit ENTER
 - Click the dropdown, select "Install"
 - Click the GO button
@@ -86,7 +86,7 @@ Note that some agents require an ACP adapter to be installed to work with Toad.
 
 Some agents may require you to restart your shell (open a new terminal) after installing.
 
-If that fails, ask for help in [Discussions](https://github.com/batrachianai/toad/discussions)!
+If that fails, ask for help in [Discussions](https://github.com/crow-cli/crow-cli/issues)!
 """,
     "no_resume": """\
 ## Agent does not support resume
@@ -100,11 +100,11 @@ Try updating to see if support has been added.
 - Click the dropdown, select "Update" or "Install" again
 - Repeat the process to update the ACP adapter (if required)
 
-If that fails, ask for help in [Discussions](https://github.com/batrachianai/toad/discussions)!
+If that fails, ask for help in [Discussions](https://github.com/crow-cli/crow-cli/issues)!
 """,
 }
 
-HELP_URL = "https://github.com/batrachianai/toad/discussions"
+HELP_URL = "https://github.com/crow-cli/crow-cli/issues"
 
 INTERNAL_EROR = f"""\
 ## Internal error
@@ -115,7 +115,7 @@ The agent reported an internal error:
 $ERROR
 ```
 
-This is likely an issue with the agent, and not Toad.
+This is likely an issue with the agent, and not crow-cli.
 
 - Try the prompt again
 - Report the issue to the Agent developer
@@ -378,7 +378,6 @@ class Conversation(containers.Vertical):
         self._agent_data = agent
         self._agent_session_id = agent_session_id
         self._session_pk = session_pk
-        self._agent_fail = False
         self._mouse_down_offset: Offset | None = None
 
         self._focusable_terminals: list[Terminal] = []
@@ -387,12 +386,8 @@ class Conversation(containers.Vertical):
         self.shell_history = History(self.project_data_path / "shell_history.jsonl")
         self.prompt_history = History(self.project_data_path / "prompt_history.jsonl")
 
-        self.session_start_time: float | None = None
         self._terminal_count = 0
         self._require_check_prune = False
-
-        self._turn_count = 0
-        self._shell_count = 0
 
         self._directory_changed = False
         self._directory_watcher: DirectoryWatcher | None = None
@@ -711,15 +706,9 @@ class Conversation(containers.Vertical):
 
     @on(AgentReady)
     async def on_agent_ready(self) -> None:
-        self.session_start_time = monotonic()
         if self.agent is not None:
             content = Content.assemble(self.agent.get_info(), " connected")
             self.flash(content, style="success")
-            if self._agent_data is not None:
-                self.app.capture_event(
-                    "agent-session-begin",
-                    agent=self._agent_data["identity"],
-                )
 
         self.agent_ready = True
 
@@ -729,30 +718,10 @@ class Conversation(containers.Vertical):
         if self.agent is not None:
             await self.agent.stop()
 
-        if self._agent_data is not None and self.session_start_time is not None:
-            session_time = monotonic() - self.session_start_time
-            await self.app.capture_event(
-                "agent-session-end",
-                agent=self._agent_data["identity"],
-                duration=session_time,
-                agent_session_fail=self._agent_fail,
-                shell_count=self._shell_count,
-                turn_count=self._turn_count,
-            ).wait()
-
     @on(AgentFail)
     async def on_agent_fail(self, message: AgentFail) -> None:
         self.agent_ready = True
-        self._agent_fail = True
         self.notify(message.message, title="Agent failure", severity="error", timeout=5)
-
-        if self._agent_data is not None:
-            self.app.capture_event(
-                "agent-session-error",
-                agent=self._agent_data["identity"],
-                message=message.message,
-                details=message.details,
-            )
 
         if message.message:
             error = Content.assemble(
@@ -810,7 +779,7 @@ class Conversation(containers.Vertical):
             await self.prompt_history.append(event.body)
             self.prompt_history_index = 0
             if text.startswith("/") and await self.slash_command(text):
-                # Toad has processed the slash command.
+                # crow-cli has processed the slash command.
                 return
             await self.post(UserInput(text))
             self.window.scroll_end(animate=False)
@@ -861,8 +830,6 @@ class Conversation(containers.Vertical):
             self._directory_changed = False
             self.post_message(messages.ProjectDirectoryUpdated())
             self.prompt.project_directory_updated()
-
-        self._turn_count += 1
 
         self.post_message(messages.SessionUpdate(state="idle"))
 
@@ -1320,7 +1287,6 @@ class Conversation(containers.Vertical):
 
     def _build_slash_commands(self) -> list[SlashCommand]:
         slash_commands = [
-            SlashCommand("/toad:about", "About Toad"),
             SlashCommand(
                 "/toad:clear",
                 "Clear conversation window",
@@ -1339,11 +1305,6 @@ class Conversation(containers.Vertical):
                 "/toad:session-new",
                 "Open a new session in the current working directory",
                 "<initial prompt or command>",
-            ),
-            SlashCommand(
-                "/toad:testimonial",
-                "Tweet a testimonial regarding Toad",
-                "<what you think of toad>",
             ),
         ]
 
@@ -1653,7 +1614,6 @@ class Conversation(containers.Vertical):
         from crow_cli.tui.widgets.shell_result import ShellResult
 
         if command.strip():
-            self._shell_count += 1
             await self.post(ShellResult(command))
             width, height = self.get_terminal_dimensions()
             await self.shell.send(command, width, height)
@@ -1858,30 +1818,17 @@ class Conversation(containers.Vertical):
         self.refresh_bindings()
 
     async def slash_command(self, text: str) -> bool:
-        """Give Toad the opertunity to process slash commands.
+        """Give crow-cli the opertunity to process slash commands.
 
         Args:
             text: The prompt, including the slash in the first position.
 
         Returns:
-            `True` if Toad has processed the slash command, `False` if it should
+            `True` if crow-cli has processed the slash command, `False` if it should
                 be forwarded to the agent.
         """
         command, _, parameters = text[1:].partition(" ")
-        if command == "toad:about":
-            from crow_cli.tui import about
-            from crow_cli.tui.widgets.markdown_note import MarkdownNote
-
-            app = self.app
-            about_md = about.render(app)
-            await self.post(MarkdownNote(about_md, classes="about"))
-            self.app.copy_to_clipboard(about_md)
-            self.notify(
-                "A copy of /about:toad has been placed in your clipboard",
-                title="/toad:about",
-            )
-            return True
-        elif command == "toad:clear":
+        if command == "toad:clear":
             try:
                 line_count = max(0, int(parameters) if parameters.strip() else 0)
             except ValueError:
@@ -1924,25 +1871,4 @@ class Conversation(containers.Vertical):
                     )
                 )
                 return True
-        elif command == "toad:testimonial":
-            if self.agent_title is not None:
-                default_testimonial = (
-                    f"I'm running {self.agent_title} in the terminal with Toad."
-                )
-            else:
-                default_testimonial = (
-                    "Try Toad, the universal interface for AI in your terminal"
-                )
-
-            testimonial = parameters or default_testimonial
-            from crow_cli.tui.twitter import open_tweet_intent
-
-            open_tweet_intent(
-                testimonial,
-                url="https://github.com/textualize/toad",
-                via="willmcgugan",
-                hashtags=["ai"],
-            )
-            return True
-
         return False
