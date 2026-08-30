@@ -88,6 +88,28 @@ bash in a PTY and owns the prompt via a JSON-in-PS1 protocol
 
 Any future shell decoration in `~/.bashrc` must keep the gate.
 
+### `CROW_TUI` — the human-facing TUI shell pane
+
+The TUI's `!command` loop (`tui/shell.py`) spawns the user's `$SHELL`
+interactively in a PTY and sets `CROW_TUI=1`. Unlike the machine-driven
+backend it is a *human* terminal: the real prompt and aliases are the
+point, so starship stays ON. ble.sh stays OFF under `CROW_TUI`:
+
+- ble.sh must handshake with its terminal before it can render the input
+  line — cursor-position reports (`\e[6n`), device-attribute queries
+  (`\e[c` / `\e[>c`), DECSTBM tests — and wait for the replies.
+- crow's embedded emulator renders output but answers no queries, so
+  ble.sh cannot synchronize and degrades: its sentinel PS1
+  `[ble: press RET to continue]` leaks and the input echo is swallowed
+  (ble.sh issues #304/#543/#709 are the same failure class in PyCharm /
+  Ghostty embedded terminals).
+- Injected `!command` lines are prefixed with a space so bash's
+  `HISTCONTROL=ignorespace` keeps the `;printf "\e]2025;..."` protocol
+  tail out of `~/.bash_history`.
+
+If crow's emulator ever grows query responses (CPR + DA1/DA2), the
+`CROW_TUI` gate can be lifted and ble.sh highlighting comes with it.
+
 ### bashrc load order (matters)
 
 1. interactive guard → 2. ble.sh `--attach=none` (first) → 3. history →

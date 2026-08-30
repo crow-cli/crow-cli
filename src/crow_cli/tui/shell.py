@@ -135,7 +135,9 @@ class Shell:
         except OSError:
             pass
 
-        get_pwd_command = f"{command};" + r'printf "\e]2025;$(pwd);\e\\"' + "\n"
+        # Leading space keeps injected lines out of the shell's history
+        # (HISTCONTROL=ignorespace); hide_echo still strips the echo.
+        get_pwd_command = f" {command};" + r'printf "\e]2025;$(pwd);\e\\"' + "\n"
         await self.write(get_pwd_command, hide_echo=True)
 
     async def send_input(self, text: str, paste: bool = False) -> None:
@@ -201,6 +203,12 @@ class Shell:
         env["COLORTERM"] = "truecolor"
         env["CROW"] = "1"
         env["CLICOLOR"] = "1"
+        # Human-facing TUI pane (the !command loop): prompt frameworks like
+        # starship are welcome, but ble.sh cannot handshake with this
+        # embedded terminal (no CPR/device-attribute replies) and degrades
+        # to "[ble: press RET to continue]" — ~/.bashrc gates it off here.
+        # See TERMINAL_STACK.md.
+        env["CROW_TUI"] = "1"
 
         shell = self.shell
 
