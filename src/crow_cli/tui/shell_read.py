@@ -35,8 +35,8 @@ async def shell_read(
                             data += chunk
                         else:
                             break
-                    except OSError as error:
-                        print(repr(error))
-
+                    except OSError:
+                        # The PTY master raises EIO once the child exits —
+                        # a normal end of stream, not an error.
                         break
     return data

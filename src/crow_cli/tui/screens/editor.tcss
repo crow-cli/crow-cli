@@ -1,0 +1,13 @@
+EditorScreen {
+    layout: vertical;
+}
+
+EditorScreen #editor-body {
+    height: 1fr;
+    width: 1fr;
+}
+
+EditorScreen EditorTerminal {
+    width: 100%;
+    height: 1fr;
+}

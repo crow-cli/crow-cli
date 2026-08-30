@@ -5,6 +5,7 @@ from typing import Iterable, Literal, Sequence
 from textual.signal import Signal
 
 type SessionState = Literal["notready", "busy", "asking", "idle"]
+type SessionKind = Literal["chat", "editor"]
 
 
 @dataclass
@@ -25,6 +26,8 @@ class SessionDetails:
     """The current state of the session."""
     summary: str = ""
     """Suplimentary information about the session."""
+    kind: SessionKind = "chat"
+    """What kind of tab this is: an ACP chat or an editor terminal."""
 
     updates: int = 0
     """Track updates to the session details."""
@@ -42,13 +45,16 @@ class SessionTracker:
     def session_count(self) -> int:
         return len(self.sessions)
 
-    def new_session(self, title: str | None = None) -> SessionDetails:
+    def new_session(
+        self, title: str | None = None, kind: SessionKind = "chat"
+    ) -> SessionDetails:
         self._session_index += 1
         mode_name = f"session-{self._session_index}"
         session_meta = SessionDetails(
             index=self._session_index,
             mode_name=mode_name,
             title=title or "New Session",
+            kind=kind,
         )
         self.sessions[mode_name] = session_meta
         return session_meta

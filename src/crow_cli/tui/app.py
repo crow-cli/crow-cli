@@ -28,7 +28,7 @@ from crow_cli.tui import messages
 from crow_cli.tui.settings_schema import SCHEMA
 from crow_cli.tui import paths
 from crow_cli.tui import atomic
-from crow_cli.tui.session_tracker import SessionTracker, SessionDetails
+from crow_cli.tui.session_tracker import SessionTracker, SessionDetails, SessionKind
 from crow_cli.config import get_default_config_dir
 from crow_cli.tui.themes import SHADES_OF_PURPLE, SHADES_OF_PURPLE_TERMINAL_THEME
 
@@ -604,9 +604,12 @@ class CrowApp(App, inherit_bindings=False):
         self._apply_ansi_theme()
 
     async def new_session_screen(
-        self, get_screen: Callable[[], Screen], title: str | None = None
+        self,
+        get_screen: Callable[[], Screen],
+        title: str | None = None,
+        kind: SessionKind = "chat",
     ) -> SessionDetails:
-        session_details = self._session_tracker.new_session(title=title)
+        session_details = self._session_tracker.new_session(title=title, kind=kind)
         self.update_show_sessions()
         self.session_update_signal.publish((session_details.mode_name, session_details))
 
@@ -618,6 +621,28 @@ class CrowApp(App, inherit_bindings=False):
         self.add_mode(session_details.mode_name, make_screen)
         await self.switch_mode(session_details.mode_name)
         return session_details
+
+    async def open_file_in_editor(self, path: Path) -> None:
+        """Open ``path`` in the configured terminal editor inside a new session tab.
+
+        The tab body is an :class:`EditorTerminal` running e.g. ``hx <path>``;
+        when the editor exits the tab closes itself.
+        """
+        from crow_cli.tui.screens.editor import EditorScreen
+        from crow_cli.tui.widgets.terminal_tool import Command
+
+        editor_cmd = self.settings.get("editor.command", str)
+        command = Command(
+            editor_cmd,
+            [str(path)],
+            dict(os.environ),
+            cwd=str(self.project_dir),
+        )
+        await self.new_session_screen(
+            lambda: EditorScreen(command),
+            title=f"{editor_cmd} {path.name}",
+            kind="editor",
+        )
 
     async def on_mount(self) -> None:
         if mode := self._initial_mode:
@@ -712,6 +737,25 @@ class CrowApp(App, inherit_bindings=False):
                 self.show_sessions = False
             case "multiple":
                 self.show_sessions = self.session_tracker.session_count > 1
+
+    async def close_session_mode(self, mode_name: str | None) -> None:
+        """Close the session tab registered under ``mode_name``.
+
+        Switches to the neighbouring session (or the store when the last
+        session is closed) and removes the mode. Shared by every session-tab
+        screen type (chat, editor, …).
+        """
+        if mode_name is None:
+            return
+        session_tracker = self.session_tracker
+        if session_tracker.session_count <= 1:
+            session_tracker.close_session(mode_name)
+            await self.switch_mode("store")
+        else:
+            if new_mode := session_tracker.session_cursor_move(mode_name, -1):
+                await self.switch_mode(new_mode)
+            session_tracker.close_session(mode_name)
+        self.call_later(self.remove_mode, mode_name)
 
     @on(messages.SessionNavigate)
     def on_session_navigate(self, event: messages.SessionNavigate) -> None:

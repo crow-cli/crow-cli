@@ -309,6 +309,21 @@ SCHEMA: list[SchemaDict] = [
         ],
     },
     {
+        "key": "editor",
+        "title": "Editor settings",
+        "help": "Customize the in-tab terminal editor used when opening files from the project explorer.",
+        "type": "object",
+        "fields": [
+            {
+                "key": "command",
+                "title": "Editor command",
+                "type": "string",
+                "help": "Terminal editor launched when you open a file from the project explorer (runs as [i]<command> <path>[/i] inside a session tab).",
+                "default": "hx",
+            },
+        ],
+    },
+    {
         "key": "diff",
         "title": "Diff view settings",
         "help": "Customize how diffs are displayed.",

@@ -66,7 +66,10 @@ class EditorTerminal(TerminalTool):
         await super().run()
         # Drop the tool-call framing classes; an editor tab is neutral.
         self.remove_class("-success", "-error")
-        self.post_message(self.Exited(self, self.return_code))
+        # This runs in a task spawned from the screen's on_mount, so the
+        # message constructor picks up the WRONG active message pump as
+        # sender — which makes Textual stop the bubble one hop early.
+        self.post_message(self.Exited(self, self.return_code).set_sender(self))
 
     def send(self, text: str) -> None:
         """Send raw text to the process stdin (e.g. ``:wq!\\n``)."""

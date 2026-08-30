@@ -4,6 +4,7 @@ import asyncio
 from asyncio.subprocess import Process
 import codecs
 import fcntl
+import logging
 import os
 import pty
 import shlex
@@ -19,6 +20,8 @@ from textual.reactive import var
 from crow_cli.tui.shell_read import shell_read
 from crow_cli.tui.widgets.terminal import Terminal
 from crow_cli.tui.menus import MenuItem
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -168,9 +171,7 @@ class TerminalTool(Terminal):
         try:
             await self._run()
         except Exception:
-            from traceback import print_exc
-
-            print_exc()
+            logger.exception("Terminal process failed: %s", self._command)
         finally:
             self._exit_event.set()
 
@@ -204,9 +205,8 @@ class TerminalTool(Terminal):
                 env=environment,
                 cwd=command.cwd,
             )
-        except Exception as error:
+        except Exception:
             self._ready_event.set()
-            print(error)
             raise
 
         self._ready_event.set()
@@ -229,13 +229,8 @@ class TerminalTool(Terminal):
         transport, _ = await loop.connect_read_pipe(
             lambda: protocol, os.fdopen(master, "rb", 0)
         )
-        # Create write transport
-        writer_protocol = asyncio.BaseProtocol()
-        write_transport, _ = await loop.connect_write_pipe(
-            lambda: writer_protocol,
-            os.fdopen(os.dup(master), "wb", 0),
-        )
-        self.writer = write_transport
+        # Writes go through `write_stdin` (threaded os.write); no write
+        # transport is needed — a dup'd master fd would only leak.
 
         unicode_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         try:

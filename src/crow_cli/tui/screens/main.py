@@ -182,9 +182,9 @@ class MainScreen(Screen, can_focus=False):
         await self.query_one(ProjectDirectoryTree).reload()
 
     @on(DirectoryTree.FileSelected, "ProjectDirectoryTree")
-    def on_project_directory_tree_selected(self, event: Tree.NodeSelected):
+    async def on_project_directory_tree_selected(self, event: Tree.NodeSelected):
         if (data := event.node.data) is not None:
-            self.conversation.insert_path_into_prompt(data.path)
+            await self.app.open_file_in_editor(data.path)
 
     @on(acp_messages.Plan)
     async def on_acp_plan(self, message: acp_messages.Plan):
@@ -215,27 +215,7 @@ class MainScreen(Screen, can_focus=False):
 
     @on(messages.SessionClose)
     async def on_session_close(self, event: messages.SessionClose) -> None:
-
-        if self.id is None:
-            return
-        current_mode = self.id
-        session_tracker = self.app.session_tracker
-
-        session_count = session_tracker.session_count
-
-        if session_count <= 1:
-
-            session_tracker.close_session(current_mode)
-            await self.app.switch_mode("store")
-
-        else:
-            if new_mode := self.app.session_tracker.session_cursor_move(
-                current_mode, -1
-            ):
-                await self.app.switch_mode(new_mode)
-            session_tracker.close_session(current_mode)
-
-        self.app.call_later(self.app.remove_mode, current_mode)
+        await self.app.close_session_mode(self.id)
 
     def on_mount(self) -> None:
         import gc
