@@ -1067,14 +1067,72 @@ class TerminalState:
             width: New width, or `None` for no change.
             height: New height, or `None` for no change.
         """
-        previous_width = self.width
+        old_width, old_height = self.width, self.height
         if width is not None:
             self.width = width
         if height is not None:
             self.height = height
 
-        if previous_width != width:
+        if old_width == self.width and old_height == self.height:
+            return
+
+        if self.alternate_screen:
+            self._resize_alternate_screen(old_width, old_height)
+        elif old_width != self.width:
             self._reflow()
+
+    def _resize_alternate_screen(self, old_width: int, old_height: int) -> None:
+        """Resize the alternate buffer the way a real terminal grid does.
+
+        Fullscreen programs (helix, less, ...) address rows absolutely
+        (CUP), so a buffer line must always be exactly one grid row: on
+        width shrink truncate lines at the right (never fold — a folded
+        stale line shifts every row address below it), on height shrink
+        drop rows from the top, on height grow pad blank rows at the
+        bottom. These are pyte's ``Screen.resize`` semantics; the program
+        repaints on SIGWINCH, and until then the truncated grid is exactly
+        what a real terminal would show.
+        """
+        buffer = self.alternate_buffer
+        buffer._updated_lines = None
+        width, height = self.width, self.height
+
+        if old_height != height:
+            excess = len(buffer.lines) - height
+            if excess > 0:
+                del buffer.lines[:excess]
+            else:
+                buffer.lines.extend(LineRecord(EMPTY_LINE) for _ in range(-excess))
+            # xterm/pyte reset the scroll margins on resize
+            buffer.scroll_margin = ScrollMargin(None, None)
+
+        if old_width != width:
+            for line_record in buffer.lines:
+                content = line_record.content.expand_tabs(8)
+                if content.cell_length > width:
+                    content = content[:width]
+                line_record.content = content
+            buffer.max_line_width = min(buffer.max_line_width, width)
+
+        # Rebuild the fold index (1:1 after truncation) and mark all rows
+        # updated so the render cache can't serve stale strips.
+        updates = self.advance_updates()
+        buffer.folded_lines.clear()
+        buffer.line_to_fold.clear()
+        for line_no, line_record in enumerate(buffer.lines):
+            fold = LineFold(line_no, 0, 0, line_record.content, updates)
+            line_record.folds[:] = [fold]
+            line_record.updates = updates
+            buffer.line_to_fold.append(line_no)
+            buffer.folded_lines.append(fold)
+
+        # Cursor keeps its numeric position, clamped to the new grid
+        # (pyte saves/restores the cursor across the resize).
+        buffer.cursor_line = clamp(
+            buffer.cursor_line, 0, max(0, len(buffer.folded_lines) - 1)
+        )
+        buffer.cursor_offset = min(buffer.cursor_offset, width)
+        buffer.updates = updates
 
     def key_event_to_stdin(self, event: events.Key) -> str | None:
         """Get the stdin string for a key event.
