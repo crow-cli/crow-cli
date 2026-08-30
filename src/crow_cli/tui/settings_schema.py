@@ -211,7 +211,7 @@ SCHEMA: list[SchemaDict] = [
                 "key": "hide",
                 "title": "Hide the sidebar when not in use?",
                 "type": "boolean",
-                "default": True,
+                "default": False,
             }
         ],
     },

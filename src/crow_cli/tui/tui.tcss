@@ -247,10 +247,65 @@ SessionsTabs {
         Label {
             text-style: dim;
             pointer: pointer;
-            padding: 0 1;            
+            padding: 0 1;
             &.-current {
-                text-style: not dim;                
+                text-style: not dim;
             }
+        }
+    }
+}
+
+# Shared sidebar chrome — any screen that composes a SideBar (chat, editor).
+SideBar {
+    border-right: tall black 10%;
+    background: transparent;
+    dock: left;
+
+    overflow: hidden scroll;
+    scrollbar-size: 0 0;
+    box-sizing: border-box;
+
+    padding: 0 0;
+    margin: 0;
+    width: 40;
+    max-width: 45%;
+    min-width: 40;
+    height: 1fr;
+
+    DirectoryTree {
+        height: 1fr;
+        background: transparent;
+        &:focus {
+            background-tint: transparent;
+        }
+    }
+
+    Plan {
+        border: none !important;
+        margin: 0 !important;
+        padding: 0 1 0 0;
+        background: transparent;
+    }
+
+    Collapsible {
+        width: 1fr;
+        height: 1fr;
+        min-height: 3;
+
+        &.-collapsed {
+            height: auto;
+        }
+
+        &.-fixed {
+            height: auto;
+            Contents {
+                height: auto;
+            }
+        }
+
+        Contents {
+            height: 1fr;
+            padding: 1 0 0 0;
         }
     }
 }

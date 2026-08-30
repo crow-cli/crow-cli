@@ -229,6 +229,13 @@ Tap escape *twice* to exit.
                 conversation.shell.update_size(self._width, self._height)
 
         self.state.update_size(self._width, height)
+        if self._alternate_screen and (old_width != self._width or old_height != self._height):
+            # Alternate-screen programs (helix, less, ...) repaint the whole
+            # grid on SIGWINCH. Our alternate buffer is append-shaped rather
+            # than a fixed grid, so stale rows from the old size would linger
+            # and the bottom-anchored view would show the wrong slice. Wipe
+            # it; the program's repaint rebuilds it at the new size.
+            self.state.clear_buffer("screen")
         self._terminal_render_cache.clear()
         self.refresh()
 

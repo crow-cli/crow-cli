@@ -1,5 +1,11 @@
 EditorScreen {
     layout: vertical;
+    background: $background;
+    layers: sidebar screen base;
+}
+
+EditorScreen Center {
+    height: 1fr;
 }
 
 EditorScreen #editor-body {

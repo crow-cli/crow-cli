@@ -185,6 +185,16 @@ class TerminalTool(Terminal):
         flags = fcntl.fcntl(master, fcntl.F_GETFL)
         fcntl.fcntl(master, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
+        # Size the PTY before the child is born so fullscreen programs
+        # (helix, ...) render at the right dimensions on their first paint —
+        # a post-spawn resize forces a SIGWINCH repaint our append-shaped
+        # alternate buffer mishandles.
+        self.resize_pty(
+            master,
+            self._width or 80,
+            self._height or 24,
+        )
+
         command = self._command
         environment = os.environ | command.env
 
@@ -196,6 +206,16 @@ class TerminalTool(Terminal):
         shell = os.environ.get("SHELL", "sh")
         run_command = shlex.join([shell, "-c", run_command])
 
+        def _new_pty_session() -> None:
+            # Make the child a session leader whose controlling terminal is
+            # the PTY slave — what every real terminal emulator does. Without
+            # this the child inherits *our* controlling terminal, so programs
+            # that ask /dev/tty for the size (helix via crossterm) get the
+            # outer terminal's dimensions instead of the widget's, and
+            # SIGWINCH from resize_pty never reaches them on resize.
+            os.setsid()
+            fcntl.ioctl(slave, getattr(termios, "TIOCSCTTY", 0x540E))
+
         try:
             process = self._process = await asyncio.create_subprocess_shell(
                 run_command,
@@ -204,6 +224,7 @@ class TerminalTool(Terminal):
                 stderr=slave,
                 env=environment,
                 cwd=command.cwd,
+                preexec_fn=_new_pty_session,
             )
         except Exception:
             self._ready_event.set()

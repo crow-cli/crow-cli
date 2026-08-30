@@ -638,6 +638,7 @@ class CrowApp(App, inherit_bindings=False):
             dict(os.environ),
             cwd=str(self.project_dir),
         )
+
         await self.new_session_screen(
             lambda: EditorScreen(command),
             title=f"{editor_cmd} {path.name}",
