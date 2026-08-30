@@ -268,15 +268,15 @@ SCHEMA: list[SchemaDict] = [
                 "key": "command",
                 "title": "Shell command",
                 "type": "string",
-                "help": "Command used to launch your shell. Leave blank to use $SHELL.\n[bold]Note:[/] Requires restart.",
-                "default": "",
+                "help": "Command used to launch your shell on macOS.\n[bold]Note:[/] Requires restart.",
+                "default": "/bin/sh",
             },
             {
                 "key": "command_start",
                 "title": "Startup commands",
                 "type": "text",
                 "help": "Command(s) to run on shell start.",
-                "default": "",
+                "default": 'PS1=""',
             },
             {
                 "key": "warn_dangerous",
