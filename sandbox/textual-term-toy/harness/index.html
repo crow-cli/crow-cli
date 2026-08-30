@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>toy via riotermjs</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; background: #0a0a0a; }
+    #term { width: 100vw; height: 100vh; overflow: hidden; }
+    #err { position: fixed; top: 0; left: 0; color: #f66; font: 12px monospace; white-space: pre-wrap; z-index: 9; }
+  </style>
+  <script type="importmap">
+    { "imports": { "rioterm": "/rioterm/dist/index.js" } }
+  </script>
+</head>
+<body>
+  <div id="err"></div>
+  <div id="term"></div>
+  <script type="module" src="main.js"></script>
+</body>
+</html>

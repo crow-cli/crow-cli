@@ -1,0 +1,14 @@
+[project]
+name = "textual-term-toy"
+version = "0.1.0"
+description = "Toy: a real terminal (helix) embedded in a column of a Textual TUI"
+requires-python = ">=3.12"
+dependencies = [
+    "textual>=1.0",
+    "pyte>=0.8.2",
+    "rich>=13,<15",
+    "websockets>=17.1",
+]
+
+[tool.uv]
+package = false
