@@ -92,6 +92,10 @@ class SubprocessTerminal:
         # Set up environment
         env = os.environ.copy()
         env["TERM"] = "xterm-256color"
+        # Machine-driven PTY: prompt-framework-aware shell configs (starship,
+        # ble.sh, ...) can check this and stay out of the way of the
+        # PS1 metadata protocol below.
+        env["CROW_TERMINAL"] = "1"
         # Note: PS1 env var doesn't work for interactive bash - we set it after startup
         if self.work_dir:
             env["PWD"] = self.work_dir
@@ -122,8 +126,18 @@ class SubprocessTerminal:
         # Set PS1 (env var doesn't work for interactive bash). The pty queues
         # the input until bash finishes its rc files, so no startup sleep:
         # wait for bash to actually RENDER the new prompt instead.
+        #
+        # First capture $? into $__crow_ec at the very start of
+        # PROMPT_COMMAND: user rc hooks (zoxide, fnm, ...) prepend
+        # themselves there, and PS1's $? would otherwise report the LAST
+        # hook's status instead of the user's command's. Existing hooks are
+        # preserved after the capture.
         logger.debug(f"Setting PS1 to: {self.PS1!r}")
-        ps1_command = f'PS1="{self.PS1}"\n'
+        ps1_command = (
+            "PROMPT_COMMAND='__crow_ec=$?'"
+            '"${PROMPT_COMMAND:+;${PROMPT_COMMAND}}"\n'
+            f'PS1="{self.PS1}"\n'
+        )
         os.write(self._pty_master_fd, ps1_command.encode("utf-8"))
 
         # The echoed command contains the markers too, but with escaped

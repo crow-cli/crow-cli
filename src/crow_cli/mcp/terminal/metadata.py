@@ -43,7 +43,10 @@ class CmdOutputMetadata(BaseModel):
         json_str = json.dumps(
             {
                 "pid": "$!",
-                "exit_code": "$?",
+                # $__crow_ec is captured by the backend at the very start of
+                # PROMPT_COMMAND (before any user hooks run), so it reflects
+                # the user's command, not the hook's exit status.
+                "exit_code": "$__crow_ec",
                 "username": r"\u",
                 "hostname": r"\h",
             },

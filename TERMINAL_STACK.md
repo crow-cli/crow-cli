@@ -74,6 +74,20 @@ nightly tarball (`ble.sh/releases/download/nightly/ble-nightly.tar.xz`
 → extract to `~/.local/share`, no gawk/make needed for the prebuilt
 tarball); the rest are GitHub-release binaries (x86_64).
 
+### `CROW_TERMINAL` — machine-driven PTY convention
+
+The MCP terminal tool (`mcp/terminal/backend.py`) spawns interactive
+bash in a PTY and owns the prompt via a JSON-in-PS1 protocol
+(`###PS1JSON###` markers, exit code in `$__crow_ec`). It sets
+`CROW_TERMINAL=1` in the child env. Prompt frameworks must respect it:
+
+- **starship / ble.sh**: stay OFF under `CROW_TERMINAL` (they re-render
+  PS1 / take over line editing and clobber the protocol).
+- **PROMPT_COMMAND hooks** (zoxide, fnm, ...): fine — the backend
+  captures `$?` into `$__crow_ec` before any hook runs.
+
+Any future shell decoration in `~/.bashrc` must keep the gate.
+
 ### bashrc load order (matters)
 
 1. interactive guard → 2. ble.sh `--attach=none` (first) → 3. history →
