@@ -9,18 +9,23 @@ sqlite consolidation, v5→v6 migration) is COMPLETE — see git history
 
 ## Items (unordered)
 
-- [ ] ACTIVE SPRINT — open files in helix inside a terminal tab (see
-      PLAN.md). Click file in explorer → new session tab whose body is a
-      pass-through terminal emulator running `hx <path>`; `:wq!` closes the
-      tab; generic tab model `AcpClientChat | Terminal | Editor`.
-      SLICE 1 DONE (a52e3d41, 296a568c, 3d8597e5): EditorTerminal widget,
+- [x] DONE — open files in helix inside a terminal tab (see PLAN.md, steps
+      1–7 all complete). Click file in explorer → new session tab whose body
+      is a pass-through terminal emulator running `hx <path>`; `:wq!` closes
+      the tab; generic tab model `AcpClientChat | Terminal | Editor`.
+      SLICE 1 (a52e3d41, 296a568c, 3d8597e5): EditorTerminal widget,
       EditorScreen + sidebar/column chrome, generic tab kind, file-click
       rewire, and the root-cause PTY fix (child now owns the PTY as its
       controlling terminal via setsid+TIOCSCTTY — without it helix read the
       OUTER terminal's size off /dev/tty and never got SIGWINCH, which was
-      the blank/garbled editor, not the ANSI state). Live smoke green, 274
-      unit tests pass. REMAINING: slice 2 = tab `x` close affordance (editor
-      tab → send `:wq!`, chat tab → close) + process-group kill fallback.
+      the blank/garbled editor, not the ANSI state).
+      SLICE 2 (this segment): tab `✕` close affordance — editor tab closes
+      gracefully (sends `:wq!\r`, NOT `\n`; helix needs `\r`), chat tab
+      closes directly; `kill()` now process-group-kills (os.killpg) and
+      `EditorTerminal.on_unmount` calls it so no `sh`/`hx` orphan survives a
+      closed tab. Live tmux smoke green (✕ renders, graceful close, no
+      orphan); unit `test_x_affordance_gracefully_closes_editor_tab` green;
+      full gate 518 passed.
 - [ ] Migrate the TUI's ACP client off the hand-rolled stack. `tui/jsonrpc.py`
       + `tui/acp/` are toad legacy: own Request/MethodCall futures, own
       dispatch loop, own subprocess plumbing — while `client/` (main.py,

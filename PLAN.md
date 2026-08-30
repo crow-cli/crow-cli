@@ -34,16 +34,24 @@ Commit when green, `Session-Id: terrific-heron-of-splendid-greatness` trailer.
 
 ## Steps
 
-> STATUS (30Aug2026): steps 1–6 DONE & committed (a52e3d41, 296a568c,
-> 3d8597e5). Live smoke green: file click → helix renders inside the tab in
-> the chat's column with the sidebar visible, keys pass through, `:wq!`
-> writes & closes the tab. 274 unit tests pass. Next: step 7 (slice 2).
+> STATUS (30Aug2026): steps 1–7 DONE. Steps 1–6 committed (a52e3d41,
+> 296a568c, 3d8597e5); step 7 (slice 2) committed this segment. Live smoke
+> green end-to-end: file click → helix renders inside the tab in the chat's
+> column with the sidebar visible, keys pass through, `:wq!` writes & closes
+> the tab; the tab `✕` affordance closes an editor tab gracefully (sends
+> `:wq!\r`, helix exits, no orphan process) and a chat tab directly. Full
+> gate green: 518 passed (unit + integration + e2e + memory).
 >
 > Root-cause fix landed in 3d8597e5: the child PTY was never made the
 > controlling terminal, so helix read /dev/tty size from the OUTER terminal
 > (187 cols) and never got SIGWINCH — that, not the ANSI state, caused the
 > blank/garbled editor. Fixed via preexec setsid()+TIOCSCTTY + pre-spawn
 > PTY sizing.
+>
+> Slice-2 notes: programmatic keys to helix must end in `\r` (TERMINAL_KEY_MAP
+> maps `enter`→`\r`, and helix ignores `\n`). `kill()` now kills the whole
+> process group (os.killpg) and `EditorTerminal.on_unmount` calls it, so a
+> closed tab never leaks `sh`/`hx`.
 
 1. ✅ **`tui/widgets/editor_terminal.py::EditorTerminal(TerminalTool)`**
    - Pure pass-through `on_key`: forward EVERY key incl. `escape` immediately
@@ -62,7 +70,7 @@ Commit when green, `Session-Id: terrific-heron-of-splendid-greatness` trailer.
    - Handle `EditorTerminal.Exited` → post `SessionClose(self.id)` (tab closes
      when helix quits). Reuse the close semantics of MainScreen.on_session_close.
    - Session-nav bindings (`ctrl+[` / `ctrl+]`) so you can leave the tab;
-     a `ctrl+q` binding → `quit_editor()` sends `:wq!\n` to stdin.
+     a `ctrl+q` binding → `quit_editor()` sends `:wq!\r` to stdin.
    - Verify: headless test opens EditorScreen with a quick-exit command →
      mounts, focuses terminal, closes on exit.
 
@@ -88,8 +96,17 @@ Commit when green, `Session-Id: terrific-heron-of-splendid-greatness` trailer.
    explorer, confirm helix renders inside the tab, keys pass through, `:wq!`
    closes the tab and returns to chat. Capture frames to verify rendering.
 
-7. **(slice 2, after 1–6 green) tab `x` close affordance** — clicking `x` on
-   an editor tab sends `:wq!` to helix (graceful), on a chat tab closes it.
+7. ✅ **(slice 2) tab `x` close affordance** — every tab label renders a
+   trailing `✕` (`session_tabs.CLOSE_GLYPH`); `SessionLabel.on_click`
+   hit-tests `offset.x >= content_region.width` and posts
+   `messages.SessionRequestClose(mode)`. `CrowApp.on_session_request_close`
+   is graceful for editor tabs (sends `:wq!\r` — `\r`, not `\n` — and lets
+   the resulting Exited→SessionClose cascade remove the tab) and direct for
+   chat tabs. `terminal_tool.kill()` kills the process group and
+   `EditorTerminal.on_unmount` calls it, so closing never orphans `sh`/`hx`.
+   - Verify: unit `test_x_affordance_gracefully_closes_editor_tab` (asserts
+     the editor received `:wq!` and the tab closes on exit) + live tmux
+     smoke (click `✕` → helix exits, no orphan). Both green.
 
 ## Deferred (still open, not this sprint)
 - TUI image attachments as ACP image content (previous PLAN, steps preserved

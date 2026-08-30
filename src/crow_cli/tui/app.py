@@ -780,6 +780,31 @@ class CrowApp(App, inherit_bindings=False):
     def on_session_close(self) -> None:
         self.update_show_sessions()
 
+    @on(messages.SessionRequestClose)
+    async def on_session_request_close(
+        self, event: messages.SessionRequestClose
+    ) -> None:
+        """Close a tab from its `x` affordance, graceful for editor tabs."""
+        mode_name = event.mode_name
+        details = self.session_tracker.get_session(mode_name)
+        if details is not None and details.kind == "editor":
+            terminal = self._editor_terminal_for(mode_name)
+            if terminal is not None and terminal.return_code is None:
+                # Graceful: let the editor write and quit; the tab closes on
+                # the resulting Exited -> SessionClose. Enter is \r, not \n.
+                terminal.send(":wq!\r")
+                return
+        await self.close_session_mode(mode_name)
+
+    def _editor_terminal_for(self, mode_name: str):
+        """Return the live EditorTerminal of an editor tab, if any."""
+        from crow_cli.tui.widgets.editor_terminal import EditorTerminal
+
+        stack = self.get_screen_stack(mode_name)
+        if not stack:
+            return None
+        return stack[0].query_one_optional(EditorTerminal)
+
     @work
     async def action_sessions(self) -> None:
         if (session_screen_name := await self.push_screen_wait("sessions")) is not None:

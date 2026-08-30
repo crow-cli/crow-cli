@@ -20,14 +20,22 @@ from crow_cli.tui.app import CrowApp
 from crow_cli.tui.session_tracker import SessionDetails
 from crow_cli.tui import messages
 
+CLOSE_GLYPH = " ✕"
+"""Trailing close affordance rendered on every tab label."""
+
 
 class SessionLabel(widgets.Label):
     ALLOW_SELECT = False
 
     app: getters.app[CrowApp] = getters.app(CrowApp)
 
-    def on_click(self) -> None:
+    def on_click(self, event: events.Click) -> None:
         if self.id is None:
+            return
+        # A click on the trailing close glyph closes the tab; anywhere else
+        # switches to it (or copies its id when already current).
+        if event.offset.x >= self.content_region.width:
+            self.post_message(messages.SessionRequestClose(self.id))
             return
         if self.has_class("-current"):
             # Already on this tab: copy its session id.
@@ -148,12 +156,14 @@ class SessionsTabs(Widget):
     def render_session_label(self, session: SessionDetails) -> Content:
         match session.state:
             case "asking":
-                return Content.assemble(
+                base = Content.assemble(
                     ("❯ ", "not dim $text-secondary"), session.title
                 )
             case "busy":
-                return Content(f"⌛ {session.title}")
-        return Content(session.title)
+                base = Content(f"⌛ {session.title}")
+            case _:
+                base = Content(session.title)
+        return Content.assemble(base, (CLOSE_GLYPH, "dim"))
 
     def compose(self) -> ComposeResult:
         with containers.HorizontalGroup(id="title-container"):

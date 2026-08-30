@@ -92,6 +92,17 @@ class SessionSwitch(Message):
 
 
 @dataclass
+class SessionRequestClose(Message):
+    """Request to close a session tab via its `x` affordance.
+
+    Editor tabs close gracefully (``:wq!`` to the terminal); chat tabs close
+    directly. Routed by the app, which knows each tab's kind.
+    """
+
+    mode_name: str
+
+
+@dataclass
 class SessionNew(Message):
     """Open a new session."""
 

@@ -122,7 +122,7 @@ class EditorScreen(Screen):
         """Send the editor's save-and-quit sequence; exit closes the tab."""
         terminal = self.terminal
         if terminal.return_code is None:
-            terminal.send(":wq!\n")
+            terminal.send(":wq!\r")
 
     @on(SideBar.Dismiss)
     def on_side_bar_dismiss(self, message: SideBar.Dismiss) -> None:

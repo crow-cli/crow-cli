@@ -76,5 +76,12 @@ class EditorTerminal(TerminalTool):
         if self._shell_fd is not None:
             self.call_later(self.write_stdin, text)
 
+    def on_unmount(self) -> None:
+        # Tab closed or app exiting: never leak the editor process. A graceful
+        # ``:wq!`` has usually already let it exit (then kill() is a no-op);
+        # this is the force-kill fallback. Unmount does NOT fire on tab switch
+        # (the screen stays mounted), so this never kills a backgrounded tab.
+        self.kill()
+
 
 __all__ = ["EditorTerminal", "Command"]

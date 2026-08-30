@@ -6,6 +6,7 @@ agent connection) is created — the editor tab flow is independent of ACP.
 
 import asyncio
 import os
+import stat
 from pathlib import Path
 
 from textual import on
@@ -14,6 +15,7 @@ import crow_cli.tui as tui
 from crow_cli.tui.app import CrowApp
 from crow_cli.tui.screens.editor import EditorScreen
 from crow_cli.tui.widgets.editor_terminal import Command, EditorTerminal
+from crow_cli.tui.widgets.session_tabs import SessionLabel
 
 
 async def wait_until(condition, timeout: float = 10.0, interval: float = 0.05) -> None:
@@ -89,3 +91,44 @@ async def test_editor_tab_closes_when_process_exits(tmp_path: Path) -> None:
         assert app.exited_events[0].return_code == 0
         await wait_until(lambda: app.session_tracker.session_count == 0)
         assert app.current_mode == "store"
+
+
+async def test_x_affordance_gracefully_closes_editor_tab(tmp_path: Path) -> None:
+    """Clicking the trailing ``x`` on an editor tab sends ``:wq!\\r`` and the
+    tab closes only once the editor process actually exits."""
+    # A stand-in editor: swallow exactly one ``:wq!``-sized line, record what
+    # it got, then quit cleanly — mimics helix writing and exiting on :wq!.
+    received = tmp_path / "received.txt"
+    fake_editor = tmp_path / "fake_editor.sh"
+    fake_editor.write_text(
+        "#!/bin/sh\n"
+        "read -r line\n"
+        f"printf '%s' \"$line\" > {received}\n"
+        "exit 0\n"
+    )
+    fake_editor.chmod(fake_editor.stat().st_mode | stat.S_IEXEC)
+
+    target = tmp_path / "hello.txt"
+    target.write_text("hi\n")
+    app = make_app(tmp_path)
+    async with app.run_test(size=(120, 30)) as pilot:
+        command = Command(str(fake_editor), [], dict(os.environ), str(tmp_path))
+        details = await app.new_session_screen(
+            lambda: EditorScreen(command), title="fake", kind="editor"
+        )
+        mode = details.mode_name
+        terminal = app.screen.terminal
+        await wait_until(lambda: terminal._shell_fd is not None)
+        assert terminal.return_code is None
+
+        # The tab label ends with the close glyph; a click on that last cell
+        # posts SessionRequestClose rather than switching tabs.
+        label = app.screen.query_one(f"#{mode}", SessionLabel)
+        await wait_until(lambda: label.content_region.width > 0)
+        await pilot.click(label, offset=(label.content_region.width, 0))
+
+        # Graceful: the app sent :wq! to the editor and waits for it to exit.
+        await wait_until(lambda: terminal.return_code == 0)
+        await wait_until(lambda: app.session_tracker.session_count == 0)
+        assert app.current_mode == "store"
+        assert received.read_text() == ":wq!"

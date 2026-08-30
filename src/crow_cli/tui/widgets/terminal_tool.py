@@ -8,6 +8,7 @@ import logging
 import os
 import pty
 import shlex
+import signal
 from collections import deque
 from dataclasses import dataclass
 import struct
@@ -145,10 +146,24 @@ class TerminalTool(Terminal):
             return False
         if self._process is None:
             return False
+        pid = self._process.pid
         try:
-            self._process.kill()
-        except Exception:
-            return False
+            pgid = os.getpgid(pid)
+        except OSError:
+            pgid = None
+        try:
+            if pgid is not None and pgid == pid:
+                # The child is a session/group leader (see _new_pty_session),
+                # so its group spans the whole tree (sh -> editor). Killing
+                # only the shell would orphan the editor.
+                os.killpg(pgid, signal.SIGKILL)
+            else:
+                self._process.kill()
+        except OSError:
+            try:
+                self._process.kill()
+            except Exception:
+                return False
         return True
 
     def release(self) -> None:
