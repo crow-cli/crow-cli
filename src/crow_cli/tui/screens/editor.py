@@ -63,7 +63,8 @@ class EditorScreen(Screen):
         self._command = command
 
     def compose(self):
-        yield SessionsTabs()
+        # Same page as the chat: sidebar left, and the tab bar INSIDE the
+        # column (as Conversation hosts SessionsTabs on MainScreen).
         with containers.Center():
             yield SideBar(
                 SideBar.Panel("Plan", Plan([])),
@@ -77,6 +78,7 @@ class EditorScreen(Screen):
                 ),
             )
             with containers.Vertical(id="editor-body"):
+                yield SessionsTabs()
                 yield EditorTerminal(self._command)
         yield Footer()
 
@@ -102,9 +104,11 @@ class EditorScreen(Screen):
         self.watch(self.app, "column_width", self._apply_column_width, init=True)
 
     def _apply_column_width(self) -> None:
-        self.query_one("#editor-body").styles.max_width = (
+        body = self.query_one("#editor-body")
+        body.styles.max_width = (
             max(10, self.app.column_width) if self.app.column else None
         )
+        body.set_class(self.app.column, "-column")
 
     def action_session_previous(self) -> None:
         if self.screen.id is not None:

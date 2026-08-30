@@ -11,6 +11,12 @@ EditorScreen Center {
 EditorScreen #editor-body {
     height: 1fr;
     width: 1fr;
+    padding-left: 1;
+
+    &.-column {
+        max-width: 100;
+        background: black 7%;
+    }
 }
 
 EditorScreen EditorTerminal {

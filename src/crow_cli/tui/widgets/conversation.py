@@ -370,7 +370,7 @@ class Conversation(containers.Vertical):
         self.set_reactive(Conversation.project_path, project_path)
         self.set_reactive(Conversation.working_directory, str(project_path))
         self.agent_slash_commands: list[SlashCommand] = []
-        self.terminals: dict[str, TerminalTool] = {}
+        self.terminals: dict[str, AgentTerminal] = {}
         self._loading: Loading | None = None
         self._agent_response: AgentResponse | None = None
         self._agent_thought: AgentThought | None = None
@@ -1003,7 +1003,7 @@ class Conversation(containers.Vertical):
         self.agent_slash_commands = slash_commands
         self.update_slash_commands()
 
-    def get_terminal(self, terminal_id: str) -> TerminalTool | None:
+    def get_terminal(self, terminal_id: str) -> AgentTerminal | None:
         """Get a terminal from its id.
 
         Args:
@@ -1012,13 +1012,8 @@ class Conversation(containers.Vertical):
         Returns:
             Terminal instance, or `None` if no terminal was found.
         """
-        from crow_cli.tui.widgets.terminal_tool import TerminalTool
-
-        try:
-            terminal = self.contents.query_one(f"#{terminal_id}", TerminalTool)
-        except NoMatches:
-            return None
-        if terminal.released:
+        terminal = self.terminals.get(terminal_id)
+        if terminal is None or terminal.released:
             return None
         return terminal
 
@@ -1038,6 +1033,7 @@ class Conversation(containers.Vertical):
     @work
     @on(acp_messages.CreateTerminal)
     async def on_acp_create_terminal(self, message: acp_messages.CreateTerminal):
+        from crow_cli.tui.agent_terminal import AgentTerminal
         from crow_cli.tui.widgets.terminal_tool import TerminalTool, Command
 
         command = Command(
@@ -1046,31 +1042,61 @@ class Conversation(containers.Vertical):
             message.env or {},
             message.cwd or str(self.project_path),
         )
-        width = self.window.size.width - 5 - self.window.styles.scrollbar_size_vertical
-        height = self.window.scrollable_content_region.height - 2
+        # The conversation window may be suspended (user on another screen),
+        # in which case its size is 0 — clamp to sane PTY dimensions. The
+        # headless terminal sizes once at spawn and never tracks the UI.
+        width = max(
+            20, self.window.size.width - 5 - self.window.styles.scrollbar_size_vertical
+        )
 
-        terminal = TerminalTool(
-            command,
-            output_byte_limit=message.output_byte_limit,
-            id=message.terminal_id,
-            minimum_terminal_width=width,
+        # The tool contract rides the headless terminal: PTY + raw byte
+        # capture, no widget, no ANSI state.
+        terminal = AgentTerminal(
+            command, output_byte_limit=message.output_byte_limit
         )
         self.terminals[message.terminal_id] = terminal
-        terminal.display = False
 
         try:
-            await terminal.start(width, height)
+            await terminal.start(width, 24)
         except Exception as error:
             log(str(error))
             message.result_future.set_result(False)
             return
 
+        # Human eyes get a display-only mirror in the conversation: it
+        # renders the captured bytes but owns no process, so an emulator
+        # hiccup can never break the tool output. Best effort throughout.
+        display = TerminalTool(
+            command,
+            id=message.terminal_id,
+            minimum_terminal_width=width,
+        )
+        display.display_only()
+        display.display = False
+
+        async def mirror_output(text: str) -> None:
+            if await display.write(text):
+                display.display = True
+
+        async def mirror_exit(return_code: int | None) -> None:
+            if return_code == 0:
+                display.add_class("-success")
+            else:
+                display.add_class("-error")
+                display.border_title = Content.assemble(
+                    f"{command} [{return_code}]",
+                )
+            display.finalize()
+
         try:
-            await self.post(terminal)
+            await self.post(display)
         except Exception:
-            message.result_future.set_result(False)
+            pass  # No mirror; the tool contract is unaffected
         else:
-            message.result_future.set_result(True)
+            terminal.add_output_listener(mirror_output)
+            terminal.add_exit_listener(mirror_exit)
+
+        message.result_future.set_result(True)
 
     @on(acp_messages.KillTerminal)
     async def on_acp_kill_terminal(self, message: acp_messages.KillTerminal):

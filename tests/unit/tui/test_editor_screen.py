@@ -9,13 +9,15 @@ import os
 import stat
 from pathlib import Path
 
+import pytest
+
 from textual import on
 
 import crow_cli.tui as tui
 from crow_cli.tui.app import CrowApp
 from crow_cli.tui.screens.editor import EditorScreen
 from crow_cli.tui.widgets.editor_terminal import Command, EditorTerminal
-from crow_cli.tui.widgets.session_tabs import SessionLabel
+from crow_cli.tui.widgets.session_tabs import SessionLabel, SessionsTabs
 
 
 async def wait_until(condition, timeout: float = 10.0, interval: float = 0.05) -> None:
@@ -69,6 +71,65 @@ async def test_open_file_in_editor_creates_editor_tab(tmp_path: Path) -> None:
         await pilot.press("ctrl+d")
         await wait_until(lambda: app.session_tracker.session_count == 0)
         assert app.current_mode == "store"
+
+
+def _stay_alive_editor(tmp_path: Path) -> Path:
+    """A fake editor that stays open (cat exits at once -> Exited ->
+    SessionClose pops the screen under the test's feet)."""
+    fake_editor = tmp_path / "fake_editor.sh"
+    fake_editor.write_text("#!/bin/sh\nread -r line || true\n")
+    fake_editor.chmod(fake_editor.stat().st_mode | stat.S_IEXEC)
+    return fake_editor
+
+
+async def test_editor_tab_is_the_same_page_as_chat(tmp_path: Path) -> None:
+    """The tab bar lives INSIDE the column (right of the sidebar), exactly
+    like SessionsTabs inside Conversation on the chat page."""
+    target = tmp_path / "hello.txt"
+    target.write_text("hi\n")
+    app = make_app(tmp_path)
+    async with app.run_test(size=(120, 30)) as pilot:
+        app.settings.set("editor.command", str(_stay_alive_editor(tmp_path)))
+        await app.open_file_in_editor(target)
+        screen = app.screen
+        assert isinstance(screen, EditorScreen)
+
+        await pilot.pause()
+        body = screen.query_one("#editor-body")
+        tabs = body.query_one(SessionsTabs)
+        assert tabs.parent is body
+        # The terminal shares the column with the tab bar
+        terminal = screen.terminal
+        assert terminal.parent is body
+
+        # Column chrome mirrors Conversation.-column
+        app.settings.set("ui.column", True)
+        await pilot.pause()
+        assert body.has_class("-column")
+        assert body.styles.max_width is not None
+
+        await pilot.press("ctrl+d")
+        await wait_until(lambda: app.session_tracker.session_count == 0)
+
+
+async def test_editor_column_toggle_off(tmp_path: Path) -> None:
+    target = tmp_path / "hello.txt"
+    target.write_text("hi\n")
+    app = make_app(tmp_path)
+    async with app.run_test(size=(120, 30)) as pilot:
+        app.settings.set("editor.command", str(_stay_alive_editor(tmp_path)))
+        await app.open_file_in_editor(target)
+        await pilot.pause()
+        body = app.screen.query_one("#editor-body")
+        app.settings.set("ui.column", True)
+        await pilot.pause()
+        assert body.has_class("-column")
+        app.settings.set("ui.column", False)
+        await pilot.pause()
+        assert not body.has_class("-column")
+        assert body.styles.max_width is None
+        await pilot.press("ctrl+d")
+        await wait_until(lambda: app.session_tracker.session_count == 0)
 
 
 async def test_editor_tab_closes_when_process_exits(tmp_path: Path) -> None:

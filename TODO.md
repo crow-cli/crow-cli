@@ -26,6 +26,28 @@ sqlite consolidation, v5→v6 migration) is COMPLETE — see git history
       closed tab. Live tmux smoke green (✕ renders, graceful close, no
       orphan); unit `test_x_affordance_gracefully_closes_editor_tab` green;
       full gate 518 passed.
+- [x] DONE — mature the ANSI emulator + split the agent terminal (see
+      PLAN.md "mature the ANSI emulator + editor tab = chat page").
+      (1) Helix garble root-caused via a pyte oracle: our resize FOLDED
+      stale wide lines (fold-index ≠ row-index breaks CUP addressing);
+      `TerminalState.update_size` now has pyte semantics for the alternate
+      screen (truncate columns on width shrink, top-trim/pad on height
+      change, clamp cursor, 1:1 fold index) while scrollback keeps folding;
+      lossy alt-buffer wipe removed. Live tmux: 100 downs + shrink-resize
+      repaint immaculate.
+      (2) The agent's `terminal` tool no longer rides the human-facing
+      emulator: new headless `tui/agent_terminal.py::AgentTerminal`
+      (PTY + raw byte capture, no Textual, no ANSI state) backs the ACP
+      terminal handlers; Conversation gets a best-effort display-only
+      TerminalTool mirror. Regression pinned: terminal/create with a
+      suspended 0-size conversation window captures output (old path sized
+      the PTY from the 0 window → negative width → struct.pack raised →
+      silent empty output).
+      (3) Editor tab = chat page: SessionsTabs inside `#editor-body`,
+      column chrome mirrors Conversation (`-column` class + max-width);
+      the earlier "column toggle never lands" mystery was a test artifact
+      (`cat` exits → Exited → SessionClose pops the screen mid-pause), not
+      a watcher bug. Gate 519 green (290 unit).
 - [ ] Migrate the TUI's ACP client off the hand-rolled stack. `tui/jsonrpc.py`
       + `tui/acp/` are toad legacy: own Request/MethodCall futures, own
       dispatch loop, own subprocess plumbing — while `client/` (main.py,

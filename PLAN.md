@@ -108,6 +108,77 @@ Commit when green, `Session-Id: terrific-heron-of-splendid-greatness` trailer.
      the editor received `:wq!` and the tab closes on exit) + live tmux
      smoke (click `✕` → helix exits, no orphan). Both green.
 
+---
+
+# PLAN — mature the ANSI emulator + editor tab = chat page
+
+## **DO NOT ASK USER FOR FEEDBACK — THIS IS THE USER FEEDBACK.**
+## **DO NOT ASK USER FOR NEXT STEPS — THESE ARE THE NEXT STEPS.**
+
+### The unlock (user, this segment)
+Two user reports with screenshots:
+1. **Editor tab must be the SAME page as the chat page** — "they're really
+   the same page… align completely". Chat: tab bar INSIDE the right column
+   (right of sidebar, top of the Conversation widget). Editor: tab bar
+   full-width ABOVE the sidebar. Fix = move `SessionsTabs()` inside
+   `#editor-body` and mirror Conversation's column CSS exactly.
+2. **Holding `down` in helix garbles the display** — jumbled line numbers,
+   statusline fragments scattered at the right edge, scroll dead.
+
+### Research done (verified, don't redo)
+- **pyte oracle**: our `TerminalState` matches pyte with 0 mismatches at
+  fixed size (120×40, 100 downs) AND under the app's real resize sequence
+  (headless 150×50 and user's 187×50). Core emulation is CORRECT.
+- **The divergence is resize semantics**: our `TerminalState.update_size` →
+  `_reflow()` FOLDS stale wide lines on width shrink; pyte `Screen.resize`
+  TRUNCATES columns at the right and deletes rows from the TOP on height
+  shrink. Folded stale alt-screen lines break CUP row addressing
+  (fold-index ≠ row-index) → exactly the garble the user saw.
+- **Copied notes from mitosch/textual-terminal** (the project doing exactly
+  this — pyte inside a Textual widget): `on_resize` sets ncol/nrow from the
+  widget size, tells the PTY via set_size, and calls `screen.resize(nrow,
+  ncol)` — real-terminal semantics, NO folding, NO buffer wipes. Renders by
+  iterating `screen.buffer[y][x]` Char cells; mouse toggled by sniffing
+  DECSET 1000h/l (we already do the equivalent). Also noted:
+  par-term-emu-tui-rust (Textual widget over Rust core) as the mature/perf
+  option; neovim :terminal uses libvterm and still has resize-drift bugs.
+- Widget mitigation (`update_size` wipes alt buffer on alt+size change)
+  exists but is a lossy band-aid; the state itself must be grid-faithful.
+
+## Steps
+
+1. ✅ **pyte-semantics resize in `tui/ansi/_ansi.py::TerminalState.update_size`**
+   - Alternate screen: width shrink → TRUNCATE every line at the new width
+     (never fold — grid rows must stay 1:1 with buffer lines); height
+     shrink → delete rows from the TOP; height grow → pad blank rows at the
+     bottom; clamp the cursor; rebuild fold index; mark all lines updated.
+   - Scrollback (normal) screen: keep the existing fold/reflow behavior
+     (presentation wrapping is a chat feature).
+   - Fix the `width is None` bug (compared `previous_width != width` with
+     `width=None` → spurious reflow).
+   - `widgets/terminal.py::update_size`: pass `self._height` (not the raw
+     arg) to `state.update_size`; drop the lossy alt-buffer wipe — with
+     grid-faithful resize the truncated content is exactly what a real
+     terminal shows until the program's SIGWINCH repaint lands.
+   - Verify: `tests/unit/tui/test_ansi_resize.py` — pyte-oracle regression
+     (helix-shaped paint → shrink → repaint, 0 mismatches), CUP addressing
+     after shrink lands on the right row, scrollback still folds.
+
+2. ✅ **Editor tab = chat page** — `screens/editor.py` compose: move
+   `SessionsTabs()` inside `#editor-body` (above EditorTerminal);
+   `editor.tcss`: `#editor-body` gets Conversation's chrome (`padding-left:
+   1`, `&.-column { max-width: 100; background: black 7%; }`) and
+   `_apply_column_width` toggles `-column` exactly like MainScreen's
+   `watch_column`. Verify: unit test asserts SessionsTabs is a descendant of
+   #editor-body; live smoke compares both tabs' tab bars.
+
+3. ✅ **Gate + live smoke** — `pytest tests/unit -q`, full gate, tmux
+   `crowtui-test`: open file in helix, hold down (100 downs via SGR keys or
+   repeated sends), resize the window, verify no garble; compare chat vs
+   editor tab bar placement via capture-pane.
+
+4. ✅ **Commit** (Session-Id trailer) + PLAN/TODO status updates.
+
 ## Deferred (still open, not this sprint)
 - TUI image attachments as ACP image content (previous PLAN, steps preserved
   in TODO.md item).

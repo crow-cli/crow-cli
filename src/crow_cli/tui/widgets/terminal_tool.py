@@ -92,6 +92,7 @@ class TerminalTool(Terminal):
         self._shell_fd: int | None = None
         self._return_code: int | None = None
         self._released: bool = False
+        self._display_only: bool = False
         self._ready_event = asyncio.Event()
         self._exit_event = asyncio.Event()
 
@@ -169,6 +170,19 @@ class TerminalTool(Terminal):
     def release(self) -> None:
         """Release the terminal (may no longer be used from ACP)."""
         self._released = True
+
+    def display_only(self) -> None:
+        """Display-only mode: no PTY process of its own.
+
+        Bytes are fed externally via :meth:`write` (a mirror of the
+        headless :class:`~crow_cli.tui.agent_terminal.AgentTerminal`);
+        keyboard input is ignored (the widget refuses focus).
+        """
+        self._display_only = True
+
+    def allow_focus(self) -> bool:
+        """Display-only terminals must not swallow keys."""
+        return super().allow_focus() and not self._display_only
 
     def watch__command(self, command: Command) -> None:
         self.border_title = Content(str(command))
