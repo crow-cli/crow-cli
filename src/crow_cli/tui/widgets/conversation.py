@@ -375,6 +375,9 @@ class Conversation(containers.Vertical):
         self._agent_response: AgentResponse | None = None
         self._agent_thought: AgentThought | None = None
         self._last_escape_time: float = monotonic()
+        # Monotonic turn counter: a cancelled turn's late prompt response
+        # must not clobber the UI state of a newer turn.
+        self._turn_generation: int = 0
         self._agent_data = agent
         self._agent_session_id = agent_session_id
         self._session_pk = session_pk
@@ -792,6 +795,8 @@ class Conversation(containers.Vertical):
         if self.agent is not None:
             stop_reason: str | None = None
             self.busy_count += 1
+            self._turn_generation += 1
+            generation = self._turn_generation
             try:
                 self.turn = "agent"
                 stop_reason = await self.agent.send_prompt(prompt)
@@ -810,14 +815,21 @@ class Conversation(containers.Vertical):
                 )
             finally:
                 self.busy_count -= 1
-            self.call_later(self.agent_turn_over, stop_reason)
+            self.call_later(self.agent_turn_over, stop_reason, generation)
 
-    async def agent_turn_over(self, stop_reason: str | None) -> None:
+    async def agent_turn_over(
+        self, stop_reason: str | None, generation: int | None = None
+    ) -> None:
         """Called when the agent's turn is over.
 
         Args:
             stop_reason: The stop reason returned from the Agent, or `None`.
+            generation: Turn that produced this result; if a newer turn has
+                started since (e.g. user cancelled and re-prompted), the
+                stale result is ignored.
         """
+        if generation is not None and generation != self._turn_generation:
+            return
         self.turn = "client"
         if self._agent_thought is not None and self._agent_thought.loading:
             await self._agent_thought.remove()
@@ -1683,6 +1695,19 @@ class Conversation(containers.Vertical):
         if monotonic() - self._last_escape_time < 3:
             if (agent := self.agent) is not None:
                 if await agent.cancel():
+                    # Unlock the UI NOW. The session/prompt response (and
+                    # the dead turn's backlog) can finish draining in the
+                    # background; agent_turn_over reconciles when it lands.
+                    self.turn = "client"
+                    if self._loading is not None:
+                        await self._loading.remove()
+                        self._loading = None
+                    if (
+                        self._agent_thought is not None
+                        and self._agent_thought.loading
+                    ):
+                        await self._agent_thought.remove()
+                    self._agent_thought = None
                     self.flash("Turn cancelled", style="success")
                 else:
                     self.flash("Agent declined to cancel. Please wait.", style="error")

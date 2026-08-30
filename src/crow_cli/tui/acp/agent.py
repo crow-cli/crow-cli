@@ -170,6 +170,11 @@ class Agent(AgentBase):
 
         self._token_usage: TokenUsage | None = None
         self._context_usage: ContextUsage | None = None
+        # Set the moment the user cancels; cleared when the session/prompt
+        # response lands. While set, inbound session/update traffic is
+        # dropped so the pipe drains at wire speed instead of render speed —
+        # cancel is prioritized over rendering the dead turn's backlog.
+        self._cancelling: bool = False
 
     @property
     def command(self) -> str | None:
@@ -255,6 +260,9 @@ class Agent(AgentBase):
         self.log(f"[client] {request.body}")
         if (stdin := self._process.stdin) is not None:
             stdin.write(b"%s\n" % request.body_json)
+            # Best-effort flush: under a congested loop (heavy streaming)
+            # this pushes e.g. session/cancel bytes out immediately.
+            asyncio.get_event_loop().create_task(stdin.drain())
 
     def request(self) -> jsonrpc.Request:
         """Create a request object."""
@@ -284,6 +292,12 @@ class Agent(AgentBase):
 
         https://agentclientprotocol.com/protocol/schema
         """
+
+        if self._cancelling:
+            # The turn is dead; do not spend a render on its corpse. The
+            # read loop drains these cheaply so the session/prompt response
+            # (the real turn-over signal) reaches us ASAP.
+            return
 
         match update:
             case {
@@ -881,6 +895,11 @@ class Agent(AgentBase):
                 )
             )
             return None
+        finally:
+            # Turn is over one way or another (end_turn, cancelled, error):
+            # render traffic flows again. The agent serializes turns per
+            # session, so everything before this response was the old turn.
+            self._cancelling = False
 
         assert result is not None
         # TODO: Where to display this?
@@ -912,6 +931,9 @@ class Agent(AgentBase):
         await db.session_update_title(self.session_pk, name)
 
     async def acp_session_cancel(self) -> bool:
+        # Raise the drop-flag BEFORE the notification goes out: nothing the
+        # agent emits from this moment on is worth rendering.
+        self._cancelling = True
         with self.request():
             response = api.session_cancel(self.session_id, {})
         try:
