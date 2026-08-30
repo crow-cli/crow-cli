@@ -1,6 +1,6 @@
 [project]
 name = "crow-cli"
-version = "0.1.40"
+version = "0.1.41"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -62,24 +62,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/crow_cli"]
-
-# The sdist ships the package and nothing else. Everything below this repo is
-# scratch space (sandbox/ checkouts, docs site, PyInstaller build dirs) and must
-# never reach PyPI — sandbox/ once carried an absolute symlink that killed
-# `uv build`.
-[tool.hatch.build.targets.sdist]
-packages = ["src/crow_cli"]
-exclude = [
-    "/sandbox",
-    "/examples",
-    "/docs",
-    "/scripts",
-    "/tests",
-    "/build",
-    "/dist",
-    "/.github",
-    "*.spec",
-]
 
 [dependency-groups]
 dev = [
