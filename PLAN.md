@@ -34,7 +34,18 @@ Commit when green, `Session-Id: terrific-heron-of-splendid-greatness` trailer.
 
 ## Steps
 
-1. **`tui/widgets/editor_terminal.py::EditorTerminal(TerminalTool)`**
+> STATUS (30Aug2026): steps 1–6 DONE & committed (a52e3d41, 296a568c,
+> 3d8597e5). Live smoke green: file click → helix renders inside the tab in
+> the chat's column with the sidebar visible, keys pass through, `:wq!`
+> writes & closes the tab. 274 unit tests pass. Next: step 7 (slice 2).
+>
+> Root-cause fix landed in 3d8597e5: the child PTY was never made the
+> controlling terminal, so helix read /dev/tty size from the OUTER terminal
+> (187 cols) and never got SIGWINCH — that, not the ANSI state, caused the
+> blank/garbled editor. Fixed via preexec setsid()+TIOCSCTTY + pre-spawn
+> PTY sizing.
+
+1. ✅ **`tui/widgets/editor_terminal.py::EditorTerminal(TerminalTool)`**
    - Pure pass-through `on_key`: forward EVERY key incl. `escape` immediately
      (no double-tap-to-blur — helix needs ESC). `event.prevent_default();
      event.stop()` then `state.key_event_to_stdin` → `write_process_stdin`.
@@ -45,7 +56,7 @@ Commit when green, `Session-Id: terrific-heron-of-splendid-greatness` trailer.
    - Verify: headless run_test with a trivial program (`cat`/`printf`) →
      output lands in the buffer; ESC/key bytes reach stdin; Exited fires.
 
-2. **`tui/screens/editor.py::EditorScreen(Screen)` + `editor.tcss`**
+2. ✅ **`tui/screens/editor.py::EditorScreen(Screen)` + `editor.tcss`**
    - compose: `SessionsTabs()`, `EditorTerminal`, `Footer()`.
    - on_mount: `terminal.start(w,h)` with the `hx <path>` command, focus it.
    - Handle `EditorTerminal.Exited` → post `SessionClose(self.id)` (tab closes
@@ -55,25 +66,25 @@ Commit when green, `Session-Id: terrific-heron-of-splendid-greatness` trailer.
    - Verify: headless test opens EditorScreen with a quick-exit command →
      mounts, focuses terminal, closes on exit.
 
-3. **Generic tab model** — `session_tracker.SessionDetails` gains
+3. ✅ **Generic tab model** — `session_tracker.SessionDetails` gains
    `kind: Literal["chat","editor"]="chat"`; thread through
    `SessionTracker.new_session(title, kind)` and
    `CrowApp.new_session_screen(get_screen, title, kind)`. SessionsTabs may
    render an editor glyph by kind (keep minimal).
    - Verify: existing unit tests green; kind defaults to chat.
 
-4. **`CrowApp.open_file_in_editor(path)`** — build `Command(editor.command,
+4. ✅ **`CrowApp.open_file_in_editor(path)`** — build `Command(editor.command,
    [str(path)], env, cwd=project)` and `new_session_screen(get_screen,
    title=f"hx {path.name}", kind="editor")`. Editor command from settings key
    `editor.command` (default `hx`) — add to `settings_schema.py` SCHEMA.
    - Verify: headless — call it, assert a new editor mode/screen exists.
 
-5. **Rewire the explorer click** — `MainScreen.on_project_directory_tree_selected`
+5. ✅ **Rewire the explorer click** — `MainScreen.on_project_directory_tree_selected`
    → `self.app.open_file_in_editor(data.path)` (instead of
    `insert_path_into_prompt`). `@file` path-insert via path_search is unchanged.
    - Verify: simulate `DirectoryTree.FileSelected` → open_file_in_editor called.
 
-6. **Live smoke (tmux `crowtui-test`)** — launch TUI, open a file from the
+6. ✅ **Live smoke (tmux `crowtui-test`)** — launch TUI, open a file from the
    explorer, confirm helix renders inside the tab, keys pass through, `:wq!`
    closes the tab and returns to chat. Capture frames to verify rendering.
 

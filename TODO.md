@@ -13,6 +13,14 @@ sqlite consolidation, v5→v6 migration) is COMPLETE — see git history
       PLAN.md). Click file in explorer → new session tab whose body is a
       pass-through terminal emulator running `hx <path>`; `:wq!` closes the
       tab; generic tab model `AcpClientChat | Terminal | Editor`.
+      SLICE 1 DONE (a52e3d41, 296a568c, 3d8597e5): EditorTerminal widget,
+      EditorScreen + sidebar/column chrome, generic tab kind, file-click
+      rewire, and the root-cause PTY fix (child now owns the PTY as its
+      controlling terminal via setsid+TIOCSCTTY — without it helix read the
+      OUTER terminal's size off /dev/tty and never got SIGWINCH, which was
+      the blank/garbled editor, not the ANSI state). Live smoke green, 274
+      unit tests pass. REMAINING: slice 2 = tab `x` close affordance (editor
+      tab → send `:wq!`, chat tab → close) + process-group kill fallback.
 - [ ] Migrate the TUI's ACP client off the hand-rolled stack. `tui/jsonrpc.py`
       + `tui/acp/` are toad legacy: own Request/MethodCall futures, own
       dispatch loop, own subprocess plumbing — while `client/` (main.py,
