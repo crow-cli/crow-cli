@@ -15,10 +15,12 @@ sqlite consolidation, v5→v6 migration) is COMPLETE — see git history
       subagent.py) already speaks ACP through the official `acp` SDK
       (ClientSideConnection, concurrent dispatch, protocol-correct
       notification semantics). Rolled-own is where bugs like the 2026-08-29
-      cancel-lag fester (fixed tactically in c739dec6; the durable fix is
-      the SDK). Scope: replace tui/acp/agent.py's transport layer with
+      cancel-lag fester. NOTE: the tactical fix c739dec6 did NOT resolve the
+      felt lag — user confirmed live 2026-08-29 ("that turn cancellation did
+      NOT work"); user's call: fix it in the full python-sdk ACP-ification,
+      i.e. this item. Scope: replace tui/acp/agent.py's transport layer with
       acp.spawn_agent_process/ClientSideConnection, keep the Textual widget
-      + message surface.
+      + message surface. Cancel must preempt everything (see PLAN.md).
 - [ ] TUI prompt attachments: image files must upload as ACP image content,
       not text. Bug (seen live 2026-08-29, session
       mindful-beneficial-groundhog-of-blizzard): `@photo.png` in a prompt
