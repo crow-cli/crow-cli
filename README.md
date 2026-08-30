@@ -2,8 +2,6 @@
     <img src="https://github.com/crow-cli/crow-cli/blob/main/docs/img/crow-logo-crop.png?raw=true" alt="crow logo" width=500/>
 </p>
 
-Okay so I am going to keep typing a lot of words and it won't take me long to make sure that soft wrap is enabled and sure enough it is! We are in business. This is slick. helix/hx looks outstanding.
-
 # 🐦‍⬛ Crow
 
 <p>
@@ -16,7 +14,7 @@ Okay so I am going to keep typing a lot of words and it won't take me long to ma
 
 `crow-cli` is an [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) coding agent that runs in your terminal and inside ACP-compatible editors. It reads and edits code, runs shell commands, searches the web, and remembers your work across sessions.
 
-Most agent toolkits treat persistence as an afterthought. crow-cli treats it as the point: every session lives in a local sqlite database (`~/.agents/crow/crow.db`) with FTS5 full-text search, so agents recall past conversations and can delegate work to one another. Images are stored as files next to the database and hydrated only when sent to the LLM. Sessions get memorable coolname ids (like `taupe-squirrel-of-splendid-potency`) you can resume or read from any other agent.
+Persistence is the point: every session lives in a local sqlite database (`~/.agents/crow/crow.db`) with FTS5 full-text search, so agents recall past conversations and can delegate work to one another. Images are stored as files next to the database and hydrated only when sent to the LLM. Sessions get memorable coolname ids (like `taupe-squirrel-of-splendid-potency`) you can resume or read from any other agent.
 
 ## Requirements
 
