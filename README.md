@@ -2,6 +2,8 @@
     <img src="https://github.com/crow-cli/crow-cli/blob/main/docs/img/crow-logo-crop.png?raw=true" alt="crow logo" width=500/>
 </p>
 
+Okay so I am going to keep typing a lot of words and it won't take me long to make sure that soft wrap is enabled and sure enough it is! We are in business. This is slick. helix/hx looks outstanding.
+
 # 🐦‍⬛ Crow
 
 <p>

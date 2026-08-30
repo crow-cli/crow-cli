@@ -9,6 +9,10 @@ sqlite consolidation, v5→v6 migration) is COMPLETE — see git history
 
 ## Items (unordered)
 
+- [ ] ACTIVE SPRINT — open files in helix inside a terminal tab (see
+      PLAN.md). Click file in explorer → new session tab whose body is a
+      pass-through terminal emulator running `hx <path>`; `:wq!` closes the
+      tab; generic tab model `AcpClientChat | Terminal | Editor`.
 - [ ] Migrate the TUI's ACP client off the hand-rolled stack. `tui/jsonrpc.py`
       + `tui/acp/` are toad legacy: own Request/MethodCall futures, own
       dispatch loop, own subprocess plumbing — while `client/` (main.py,
