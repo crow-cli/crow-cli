@@ -146,20 +146,80 @@ def mcp_content_to_openai_format(
     return blocks
 
 
+async def _terminal_via_mcp(
+    ctx: TurnCtx,
+    mcp_clients: dict[str, MCPClient],
+    acp_tool_call_id: str,
+    args: dict[str, Any],
+) -> str:
+    """The no-client-capability backend: the MCP `terminal` tool.
+
+    Same reporting contract as the ACP-terminal path — in_progress, then
+    completed/failed with the tool's content — but execution (and the shell's
+    working directory) belongs to the MCP server. The session cwd and id ride
+    the call's `_meta`: arguments the LLM never derived and cannot forge,
+    the same channel the task tool uses.
+    """
+    conn, logger = ctx.conn, ctx.logger
+    session_id = ctx.session_id
+
+    await conn.session_update(
+        session_id=session_id,
+        update=update_tool_call(acp_tool_call_id, status="in_progress"),
+    )
+
+    logger.info(
+        f"No client terminal capability — executing terminal via MCP "
+        f"in {ctx.cwd} (session {session_id})"
+    )
+    mcp_client = mcp_clients.get(session_id)
+    if not mcp_client:
+        raise RuntimeError(f"No MCP client for session {session_id}")
+    result = await mcp_client.call_tool(
+        "terminal", args, meta={"cwd": ctx.cwd, "session_id": session_id}
+    )
+
+    acp_content_blocks = mcp_content_to_acp_blocks(result.content)
+    result_content = mcp_content_to_openai_format(result.content)
+
+    status = "completed" if not getattr(result, "isError", False) else "failed"
+    await conn.session_update(
+        session_id=session_id,
+        update=update_tool_call(
+            acp_tool_call_id,
+            status=status,
+            content=acp_content_blocks,
+        ),
+    )
+
+    return result_content
+
+
 async def execute_acp_terminal(
-    ctx: TurnCtx, tool_call_id: str, args: dict[str, Any]
+    ctx: TurnCtx,
+    mcp_clients: dict[str, MCPClient],
+    tool_call_id: str,
+    args: dict[str, Any],
 ) -> str:
     """
-    Execute terminal command via ACP client terminal.
+    Execute terminal command — the ONE terminal handler.
 
-    Maps the MCP terminal tool args to ACP client terminal:
-    - command: The command to run
-    - timeout: Max seconds to wait (default 30)
-    - is_input: Not supported by ACP terminal (runs single commands)
-    - reset: Not needed (ACP terminal is fresh each call)
+    The ACP tool-call lifecycle (start → in_progress → completed with the
+    content ACP expects) is identical either way; only the execution backend
+    branches on the client's advertised capability:
+
+    - Client declared terminal support → the ACP client-side terminal
+      (`terminal/create` with the session cwd, live `Terminal` content,
+      `wait_for_terminal_exit`, release).
+    - No capability → the MCP `terminal` tool, with the session cwd and id
+      riding the call's `_meta` (the model never sees them) so shells run in
+      the session's working directory instead of the MCP server's process
+      cwd. Client-side terminal capabilities are on their way out (v2), so
+      this is the path that survives.
 
     Args:
         ctx: Turn context — conn, wire session id, cwd, logger, command hooks
+        mcp_clients: Per-session MCP clients (the no-capability backend)
         tool_call_id: LLM tool call ID
         args: Tool arguments from LLM
 
@@ -195,6 +255,9 @@ async def execute_acp_terminal(
             rejection = hook(command)
             if rejection is not None:
                 return rejection
+
+        if not ctx.terminal_via_client:
+            return await _terminal_via_mcp(ctx, mcp_clients, acp_tool_call_id, args)
 
         # 2. Create terminal via ACP client
         logger.info(f"Creating ACP terminal for command: {command}")

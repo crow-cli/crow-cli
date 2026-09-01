@@ -177,7 +177,10 @@ class AgentSession:
         self.fork_idx = fork_idx
         self.forked_at = forked_at
         self.memory_path = memory_path
-        self.cwd = cwd
+        # ACP paths are absolute by contract; a relative cwd (e.g. a client's
+        # bare ".") would resolve against whatever process consumes it next —
+        # the MCP server's — instead of this session's directory.
+        self.cwd = os.path.abspath(cwd)
         self.messages: list[dict] = []
         self._client = None
         self.model_identifier = None
@@ -263,6 +266,7 @@ class AgentSession:
         initial_messages: list[dict[str, Any]] | None = None,
     ) -> "AgentSession":
         """Factory method to create a new agent session."""
+        cwd = os.path.abspath(cwd)
         client = MemoryClient(memory_path)
 
         # Load and render prompt
@@ -464,6 +468,7 @@ async def make_agent_session(
     fork_idx: int = 1,
     forked_at: str | None = None,
 ):
+    cwd = os.path.abspath(cwd)
     if config.system_prompt_path:
         template = config.system_prompt_path.read_text()
     else:

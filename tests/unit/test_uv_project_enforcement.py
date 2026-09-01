@@ -3,6 +3,7 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from mcp.types import TextContent
 
 from crow_cli.agent.context import TurnCtx
 from crow_cli.agent.hooks import uv_project_hook
@@ -35,7 +36,8 @@ def ctx(mock_conn, mock_session, mock_logger):
     """One prompt turn: real TurnCtx, mocked conn/session.
 
     The uv_project_hook is installed exactly as the agent installs it, so the
-    test exercises the real hook path inside execute_acp_terminal.
+    test exercises the real hook path inside execute_acp_terminal. No client
+    capabilities: the terminal executes via MCP, the no-capability backend.
     """
     return TurnCtx(
         conn=mock_conn,
@@ -56,10 +58,23 @@ def _terminal_mocks(mock_conn):
     )
 
 
+def _caps(terminal: bool) -> MagicMock:
+    caps = MagicMock()
+    caps.terminal = terminal
+    return caps
+
+
+def _mcp_result(text: str = "success") -> MagicMock:
+    result = MagicMock()
+    result.content = [TextContent(type="text", text=text)]
+    result.isError = False
+    return result
+
+
 @pytest.mark.asyncio
 async def test_reject_uv_without_project(ctx, mock_conn):
     """Test that 'uv run' without --project is rejected."""
-    result = await execute_acp_terminal(ctx, "123", {"command": "uv run test.py"})
+    result = await execute_acp_terminal(ctx, {}, "123", {"command": "uv run test.py"})
     assert "REJECTED" in result
     assert "--project" in result
     mock_conn.create_terminal.assert_not_called()
@@ -69,18 +84,20 @@ async def test_reject_uv_without_project(ctx, mock_conn):
 async def test_reject_uv_chained_without_project(ctx, mock_conn):
     """Test that 'cd && uv run' without --project is rejected."""
     result = await execute_acp_terminal(
-        ctx, "123", {"command": "cd /tmp && uv run test.py"}
+        ctx, {}, "123", {"command": "cd /tmp && uv run test.py"}
     )
     assert "REJECTED" in result
+    assert "--project" in result
     mock_conn.create_terminal.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_allow_uv_sync_exempt_from_project_flag(ctx, mock_conn):
     """'uv sync' is exempt from the --project requirement (it targets the cwd project)."""
+    ctx = _with_caps(ctx, terminal=True)
     _terminal_mocks(mock_conn)
 
-    result = await execute_acp_terminal(ctx, "123", {"command": "uv sync"})
+    result = await execute_acp_terminal(ctx, {}, "123", {"command": "uv sync"})
     assert "REJECTED" not in result
     mock_conn.create_terminal.assert_called_once()
 
@@ -88,10 +105,11 @@ async def test_allow_uv_sync_exempt_from_project_flag(ctx, mock_conn):
 @pytest.mark.asyncio
 async def test_allow_uv_with_project(ctx, mock_conn):
     """Test that 'uv --project' is allowed and executes."""
+    ctx = _with_caps(ctx, terminal=True)
     _terminal_mocks(mock_conn)
 
     result = await execute_acp_terminal(
-        ctx, "123", {"command": "uv --project . run test.py"}
+        ctx, {}, "123", {"command": "uv --project . run test.py"}
     )
     assert "REJECTED" not in result
     mock_conn.create_terminal.assert_called_once()
@@ -100,10 +118,11 @@ async def test_allow_uv_with_project(ctx, mock_conn):
 @pytest.mark.asyncio
 async def test_allow_uv_chained_with_project(ctx, mock_conn):
     """Test that 'cd && uv --project' is allowed and executes."""
+    ctx = _with_caps(ctx, terminal=True)
     _terminal_mocks(mock_conn)
 
     result = await execute_acp_terminal(
-        ctx, "123", {"command": "cd /tmp && uv --project . run test.py"}
+        ctx, {}, "123", {"command": "cd /tmp && uv --project . run test.py"}
     )
     assert "REJECTED" not in result
     mock_conn.create_terminal.assert_called_once()
@@ -112,8 +131,44 @@ async def test_allow_uv_chained_with_project(ctx, mock_conn):
 @pytest.mark.asyncio
 async def test_allow_uvx_without_project(ctx, mock_conn):
     """Test that 'uvx' commands are allowed (they don't need --project)."""
+    ctx = _with_caps(ctx, terminal=True)
     _terminal_mocks(mock_conn)
 
-    result = await execute_acp_terminal(ctx, "123", {"command": "uvx some-package"})
+    result = await execute_acp_terminal(ctx, {}, "123", {"command": "uvx some-package"})
     assert "REJECTED" not in result
     mock_conn.create_terminal.assert_called_once()
+
+
+def _with_caps(ctx: TurnCtx, terminal: bool) -> TurnCtx:
+    """Same turn, but the client advertised terminal capability."""
+    from dataclasses import replace
+
+    return replace(ctx, caps=_caps(terminal))
+
+
+@pytest.mark.asyncio
+async def test_no_capability_executes_via_mcp_with_meta(ctx, mock_conn):
+    """No client terminal capability -> the MCP terminal tool, with the
+    session cwd and id injected into the call meta (never LLM-derived)."""
+    mcp_client = AsyncMock()
+    mcp_client.call_tool.return_value = _mcp_result("pwd-output")
+    mcp_clients = {ctx.session_id: mcp_client}
+
+    result = await execute_acp_terminal(
+        ctx, mcp_clients, "123", {"command": "pwd"}
+    )
+
+    mcp_client.call_tool.assert_awaited_once_with(
+        "terminal",
+        {"command": "pwd"},
+        meta={"cwd": "/tmp", "session_id": ctx.session_id},
+    )
+    assert result == "pwd-output"
+    mock_conn.create_terminal.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_no_capability_no_mcp_client_fails_the_call(ctx, mock_conn):
+    """No MCP client for the session -> the tool call reports failure."""
+    result = await execute_acp_terminal(ctx, {}, "123", {"command": "pwd"})
+    assert "Error" in result

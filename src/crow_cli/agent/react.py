@@ -624,9 +624,11 @@ async def _execute_tool_calls_inner(
                     }
                 )
                 continue
-            if tool_name == "terminal" and ctx.terminal_via_client:
+            # The one terminal handler: the ACP-terminal or MCP backend is
+            # chosen inside, from the client's advertised capability.
+            if tool_name == "terminal":
                 result_content = await execute_acp_terminal(
-                    ctx, llm_tool_call_id, arg_dict
+                    ctx, mcp_clients, llm_tool_call_id, arg_dict
                 )
             elif tool_name == "write" and ctx.writes_via_client:
                 result_content = await execute_acp_write(
