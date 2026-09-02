@@ -305,6 +305,10 @@ class Conversation(containers.Vertical):
             "cancel",
             "Cancel",
             tooltip="Cancel agent's turn",
+            # Priority so it survives the focus chain: while a turn is running
+            # (see check_action) Escape must reach cancel, not the prompt's
+            # dismiss handler, even when the text area holds focus.
+            priority=True,
         ),
         Binding(
             "ctrl+f",
@@ -374,7 +378,6 @@ class Conversation(containers.Vertical):
         self._loading: Loading | None = None
         self._agent_response: AgentResponse | None = None
         self._agent_thought: AgentThought | None = None
-        self._last_escape_time: float = monotonic()
         # Monotonic turn counter: a cancelled turn's late prompt response
         # must not clobber the UI state of a newer turn.
         self._turn_generation: int = 0
@@ -1716,30 +1719,34 @@ class Conversation(containers.Vertical):
                 cursor_block.block_cursor_down()
         self.refresh_block_cursor()
 
-    @work
-    async def action_cancel(self) -> None:
-        if monotonic() - self._last_escape_time < 3:
-            if (agent := self.agent) is not None:
-                if await agent.cancel():
-                    # Unlock the UI NOW. The session/prompt response (and
-                    # the dead turn's backlog) can finish draining in the
-                    # background; agent_turn_over reconciles when it lands.
-                    self.turn = "client"
-                    if self._loading is not None:
-                        await self._loading.remove()
-                        self._loading = None
-                    if (
-                        self._agent_thought is not None
-                        and self._agent_thought.loading
-                    ):
-                        await self._agent_thought.remove()
-                    self._agent_thought = None
-                    self.flash("Turn cancelled", style="success")
-                else:
-                    self.flash("Agent declined to cancel. Please wait.", style="error")
-        else:
-            self.flash("Press [b]esc[/] again to cancel agent's turn")
-            self._last_escape_time = monotonic()
+    def action_cancel(self) -> None:
+        """Cancel the agent's turn, immediately.
+
+        Deliberately not a worker and nothing awaited: this has to work while the
+        message pump is saturated by streaming. The decisive part — stop
+        rendering the dead turn, unlock the UI, put `session/cancel` on the wire —
+        happens synchronously; widget tidying is scheduled behind it.
+        """
+        agent = self.agent
+        if agent is None:
+            return
+        if not agent.begin_cancel():
+            self.flash("Agent isn't running", style="error")
+            return
+        self.turn = "client"
+        self.call_later(self._clear_cancelled_turn)
+        self.flash("Turn cancelled", style="success")
+
+    async def _clear_cancelled_turn(self) -> None:
+        """Drop the in-flight widgets left over from a cancelled turn."""
+        if (loading := self._loading) is not None:
+            self._loading = None
+            await loading.remove()
+        if (thought := self._agent_thought) is not None:
+            self._agent_thought = None
+            if thought.loading:
+                await thought.remove()
+        self._agent_response = None
 
     def focus_prompt(self, reset_cursor: bool = True, scroll_end: bool = True) -> None:
         """Focus the prompt input.

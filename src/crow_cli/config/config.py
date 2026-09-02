@@ -275,6 +275,10 @@ class Config:
     db_uri: str = ""
     skills_dir: str = str(SKILLS_DIR)
     mcp_servers: dict[str, Any] = field(default_factory=dict)
+    # Named agent servers the TUI can launch (Zed-style `agent_servers`):
+    # registry entries point at a published agent, custom entries at an
+    # arbitrary command. See crow_cli.tui.agent_servers.
+    agent_servers: dict[str, Any] = field(default_factory=dict)
     # image_store.s3 block (endpoint/bucket/access_key/secret_key) — when
     # present and reachable, images go to S3; else filesystem. Empty = FS.
     image_store: dict[str, Any] = field(default_factory=dict)
@@ -414,6 +418,7 @@ class Config:
 
         mcp_servers = parsed.get("mcpServers", {})
         _logger.info("FINAL mcp_servers stored in Config: %s", mcp_servers)
+        agent_servers = parsed.get("agent_servers", {})
         image_store = parsed.get("image_store") or {}
         system_prompt_path = None
         if "system_prompt_path" in parsed:
@@ -425,6 +430,7 @@ class Config:
             db_uri=db_uri,
             skills_dir=skills_dir,
             mcp_servers=mcp_servers,
+            agent_servers=agent_servers,
             image_store=image_store,
             system_prompt_path=system_prompt_path,
             **overrides,
@@ -456,6 +462,8 @@ def apply_config_overrides(config: "Config", config_file: Path | None) -> "Confi
         config.chunk_log = bool(overrides["chunk_log"])
     if "mcpServers" in overrides:
         config.mcp_servers = overrides["mcpServers"]
+    if "agent_servers" in overrides:
+        config.agent_servers = resolve_env_vars(overrides["agent_servers"]) or {}
     if "image_store" in overrides:
         config.image_store = resolve_env_vars(overrides["image_store"]) or {}
     return config

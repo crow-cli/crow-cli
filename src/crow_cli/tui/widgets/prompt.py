@@ -14,7 +14,7 @@ from textual.binding import Binding
 from textual.content import Content
 from textual import getters
 from textual.message import Message
-from textual.widgets import OptionList, TextArea, Label
+from textual.widgets import OptionList, TextArea, Label, Button
 from textual import containers
 from textual.widget import Widget
 from textual.widgets.option_list import Option
@@ -57,6 +57,10 @@ class InvokeFileSearch(Message):
 
 class InvokeSlashComplete(Message):
     pass
+
+
+class CancelTurn(Message):
+    """The user asked, by mouse, to stop the agent's current turn."""
 
 
 class AgentInfo(Label):
@@ -461,6 +465,11 @@ class Prompt(containers.VerticalGroup):
     current_mode: var[Mode | None] = var(None)
     modes: var[dict[str, Mode] | None] = var(None)
     status: var[str | Content] = var("")
+    turn: var[str | None] = var(None)
+
+    def watch_turn(self, turn: str | None) -> None:
+        """Offer the Cancel control only while the agent owns the turn."""
+        self.set_class(turn == "agent", "-streaming")
 
     app = getters.app(CrowApp)
 
@@ -764,6 +773,10 @@ class Prompt(containers.VerticalGroup):
                     working_directory=Prompt.working_directory,
                     slash_commands=Prompt.slash_commands,
                 )
+                # Keyboard-free escape hatch: while the agent streams, a click
+                # here must work even if key events are queued behind the
+                # stream. Hidden unless Prompt has -streaming (see tui.tcss).
+                yield Button("Cancel", id="cancel-button", variant="error")
         with containers.HorizontalGroup(id="info-container"):
             yield AgentInfo()
             yield CondensedPath().data_bind(path=Prompt.working_directory)

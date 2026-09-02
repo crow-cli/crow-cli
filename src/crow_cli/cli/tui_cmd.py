@@ -2,58 +2,16 @@
 
 The TUI is derived from Toad (see src/crow_cli/tui/NOTICE) and drives
 `crow-cli acp` exactly like any other ACP agent: it spawns the agent
-subprocess and speaks ACP over stdio. The agent command mirrors
-client/subagent.py — frozen builds call the binary's `acp` subcommand,
-dev runs call the module.
+subprocess and speaks ACP over stdio. Which agent to spawn comes from the
+`agent_servers` config block (see crow_cli.tui.agent_servers); with nothing
+configured it launches crow's own agent.
 """
 
-import shlex
-import sys
 from pathlib import Path
 
 import typer
 
-from crow_cli.tui.agent_schema import Agent
-
-
-def build_crow_agent(
-    model: str | None = None,
-    config_dir: Path | None = None,
-    config_file: Path | None = None,
-) -> Agent:
-    """The crow-cli agent definition, flags embedded in the launch command."""
-    args: list[str] = []
-    if config_dir is not None:
-        args += ["--config-dir", shlex.quote(str(config_dir))]
-    if config_file is not None:
-        args += ["--config-file", shlex.quote(str(config_file))]
-    if model is not None:
-        args += ["--model", shlex.quote(model)]
-    flag_str = (" " + " ".join(args)) if args else ""
-
-    is_frozen = getattr(sys, "frozen", False)
-    if is_frozen:
-        command = f"{shlex.quote(sys.executable)} acp{flag_str}"
-    else:
-        command = f"{shlex.quote(sys.executable)} -m crow_cli.agent.main{flag_str}"
-
-    return {
-        "identity": "crow-ai.dev",
-        "name": "Crow",
-        "short_name": "crow",
-        "url": "https://crow-ai.dev",
-        "protocol": "acp",
-        "type": "coding",
-        "author_name": "Crow AI",
-        "author_url": "https://crow-ai.dev",
-        "publisher_name": "Crow AI",
-        "publisher_url": "https://crow-ai.dev",
-        "description": "The Crow agent — transparent, observable, self-orchestrating.",
-        "tags": [],
-        "help": "crow-cli's own ACP agent.",
-        "run_command": {"*": command},
-        "actions": {},
-    }
+from crow_cli.tui.agent_servers import AgentServerError, crow_agent, resolve_agent_server
 
 
 def launch_tui(
@@ -62,6 +20,7 @@ def launch_tui(
     model: str | None = None,
     config_dir: Path | None = None,
     config_file: Path | None = None,
+    agent_server: str | None = None,
 ) -> None:
     """Launch the TUI against the given project directory."""
     try:
@@ -79,8 +38,26 @@ def launch_tui(
         typer.echo(f"Not a directory: {directory}", err=True)
         raise typer.Exit(1)
 
+    if agent_server is None:
+        agent_data = crow_agent(model, config_dir, config_file)
+    else:
+        from crow_cli.config import Config
+
+        config = Config.load(config_dir=config_dir)
+        try:
+            agent_data = resolve_agent_server(
+                agent_server,
+                config.agent_servers,
+                config_dir=str(config_dir) if config_dir else None,
+                config_file=str(config_file) if config_file else None,
+                model=model,
+            )
+        except AgentServerError as error:
+            typer.echo(str(error), err=True)
+            raise typer.Exit(1) from error
+
     app = CrowApp(
-        agent_data=build_crow_agent(model, config_dir, config_file),
+        agent_data=agent_data,
         project_dir=str(path),
         mode=None,
         session_id=session,

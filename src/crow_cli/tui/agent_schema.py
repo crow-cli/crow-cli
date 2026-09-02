@@ -66,5 +66,8 @@ class Agent(TypedDict):
     """A Markdown document shown to the user when the conversation starts. Should contain a welcome message and any advice on getting started."""
     run_command: dict[OS, str]
     """Command to run the agent, by OS or wildcard."""
+    env: NotRequired[dict[str, str]]
+    """Extra environment variables for the agent subprocess (from an
+    `agent_servers` entry); merged over the parent environment."""
     actions: dict[OS, dict[Action, Command]]
     """Scripts to perform actions, typically at least to install the agent."""

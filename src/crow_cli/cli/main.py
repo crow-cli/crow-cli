@@ -925,6 +925,12 @@ def global_callback(
         "--model",
         help="Model for the TUI's agent (bare `crow-cli` only).",
     ),
+    agent_server: str | None = typer.Option(
+        None,
+        "-a",
+        "--agent-server",
+        help="Named `agent_servers` entry from config to launch (bare `crow-cli` only).",
+    ),
     config_dir: Path | None = typer.Option(
         None,
         "--config-dir",
@@ -943,7 +949,7 @@ def global_callback(
     if ctx.invoked_subcommand is None:
         from crow_cli.cli.tui_cmd import launch_tui
 
-        launch_tui(directory, session, model, config_dir, config_file)
+        launch_tui(directory, session, model, config_dir, config_file, agent_server)
 
 
 def main():

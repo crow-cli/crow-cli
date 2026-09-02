@@ -33,6 +33,24 @@ from crow_cli.tui.answer import Answer
 
 PROTOCOL_VERSION = 1
 
+_LOG_FLUSH_INTERVAL = 0.2
+"""Seconds between wire-log flushes."""
+_LOG_BUFFER_LIMIT = 50_000
+"""Queued log lines before the oldest are dropped."""
+_LOG_WRITE_CHUNK = 5_000
+"""Max lines written per flush."""
+
+STREAM_FLUSH_INTERVAL = 0.03
+"""Coalescing window for streamed text (seconds).
+
+A fast endpoint emits hundreds of `session/update` chunks per second. Posting a
+Textual message per chunk floods the message pump — to the point where keyboard
+events stop being processed — so chunks are accumulated and flushed on roughly
+a frame cadence instead.
+"""
+STREAM_FLUSH_MAX_CHARS = 16_384
+"""Flush early once this much streamed text has accumulated."""
+
 
 class Mode(NamedTuple):
     """An agent mode."""
@@ -175,6 +193,12 @@ class Agent(AgentBase):
         # dropped so the pipe drains at wire speed instead of render speed —
         # cancel is prioritized over rendering the dead turn's backlog.
         self._cancelling: bool = False
+        # Streamed text awaiting a coalesced flush into the UI.
+        self._pending_text: list[str] = []
+        self._pending_thought: list[str] = []
+        self._pending_chars = 0
+        self._flush_handle: asyncio.TimerHandle | None = None
+        self._log_buffer: list[str] = []
 
     @property
     def command(self) -> str | None:
@@ -198,36 +222,42 @@ class Agent(AgentBase):
         yield self.command
 
     def log(self, line: str) -> None:
-        """Write text to the agent log file.
+        """Queue a line for the agent log file.
 
-        Args:
-            line: Text to be logged.
-
+        Deliberately cheap: this is called for every line of wire traffic, and
+        under a fast stream it would otherwise dominate. A single background
+        task drains the buffer to disk.
         """
-        if self._message_target is not None:
-            self._message_target.call_later(self._log, line)
-
-    async def _log(self, line: str) -> None:
-        """Write text to the agent log file.
-
-        Intended to be called from `log`
-
-        Args:
-            line: Text to be logged.
-        """
-
         if self._message_target is None:
             return
+        buffer = self._log_buffer
+        if len(buffer) >= _LOG_BUFFER_LIMIT:
+            # Losing log lines beats growing memory without bound.
+            del buffer[: len(buffer) - _LOG_BUFFER_LIMIT + 1]
+            buffer.append("[log buffer trimmed]")
+        buffer.append(line)
 
-        def write_log(log_file_path: Path, line: str):
-            """Write log in a thread."""
+    async def _flush_log(self) -> None:
+        """Write queued log lines to disk in one append."""
+        if not self._log_buffer:
+            return
+        lines, self._log_buffer = self._log_buffer[:_LOG_WRITE_CHUNK], self._log_buffer[_LOG_WRITE_CHUNK:]
+
+        def write(log_file_path: Path, lines: list[str]) -> None:
             try:
                 with log_file_path.open("at") as log_file:
-                    log_file.write(f"{line.rstrip()}\n")
+                    log_file.writelines(f"{line.rstrip()}\n" for line in lines)
             except OSError:
                 pass
 
-        await asyncio.to_thread(write_log, self._log_file_path, line)
+        await asyncio.to_thread(write, self._log_file_path, lines)
+
+    async def _log_writer(self) -> None:
+        """Background task: periodically flush the wire log."""
+        while True:
+            await asyncio.sleep(_LOG_FLUSH_INTERVAL)
+            with suppress(asyncio.CancelledError, Exception):
+                await self._flush_log()
 
     def get_info(self) -> Content:
         agent_name = self._agent_data["name"]
@@ -243,6 +273,41 @@ class Agent(AgentBase):
         except OSError:
             pass
         self._agent_task = asyncio.create_task(self._run_agent())
+        self._log_task = asyncio.create_task(self._log_writer())
+
+    def _schedule_flush(self) -> None:
+        """Queue a coalesced flush of streamed text into the UI."""
+        if self._flush_handle is not None:
+            return
+        self._flush_handle = asyncio.get_running_loop().call_later(
+            STREAM_FLUSH_INTERVAL, self._flush_stream
+        )
+
+    def _flush_stream(self) -> None:
+        """Post accumulated streamed text as one message per kind.
+
+        Called on the coalescing timer, and before any non-text update (tool
+        calls, plans, mode changes) so transcript ordering is preserved.
+        """
+        if self._flush_handle is not None:
+            self._flush_handle.cancel()
+            self._flush_handle = None
+        text, self._pending_text = "".join(self._pending_text), []
+        thought, self._pending_thought = "".join(self._pending_thought), []
+        self._pending_chars = 0
+        if thought:
+            self.post_message(messages.Thinking("text", thought))
+        if text:
+            self.post_message(messages.Update("text", text))
+
+    def _queue_stream(self, buffer: list[str], text: str) -> None:
+        """Accumulate one streamed chunk, flushing when it grows large."""
+        buffer.append(text)
+        self._pending_chars += len(text)
+        if self._pending_chars >= STREAM_FLUSH_MAX_CHARS:
+            self._flush_stream()
+        else:
+            self._schedule_flush()
 
     def send(self, request: jsonrpc.Request) -> None:
         """Send a request to the agent.
@@ -299,6 +364,27 @@ class Agent(AgentBase):
             # (the real turn-over signal) reaches us ASAP.
             return
 
+        # Streamed text is coalesced; everything else must appear after the
+        # text that preceded it, so drain first.
+        match update:
+            case {
+                "sessionUpdate": "agent_message_chunk",
+                "content": {"type": type, "text": text},
+            }:
+                if text:
+                    self._queue_stream(self._pending_text, text)
+                return
+
+            case {
+                "sessionUpdate": "agent_thought_chunk",
+                "content": {"type": type, "text": text},
+            }:
+                if text:
+                    self._queue_stream(self._pending_thought, text)
+                return
+
+        self._flush_stream()
+
         match update:
             case {
                 "sessionUpdate": "user_message_chunk",
@@ -306,18 +392,6 @@ class Agent(AgentBase):
             }:
                 if text:
                     self.post_message(messages.UserMessage(type, text))
-
-            case {
-                "sessionUpdate": "agent_message_chunk",
-                "content": {"type": type, "text": text},
-            }:
-                self.post_message(messages.Update(type, text))
-
-            case {
-                "sessionUpdate": "agent_thought_chunk",
-                "content": {"type": type, "text": text},
-            }:
-                self.post_message(messages.Thinking(type, text))
 
             case {
                 "sessionUpdate": "tool_call",
@@ -568,6 +642,7 @@ class Agent(AgentBase):
         PIPE = asyncio.subprocess.PIPE
         env = os.environ.copy()
         env["CROW_CWD"] = str(Path("./").absolute())
+        env.update(self._agent_data.get("env", {}))
 
         if (command := self.command) is None:
             self.post_message(
@@ -899,6 +974,10 @@ class Agent(AgentBase):
             # Turn is over one way or another (end_turn, cancelled, error):
             # render traffic flows again. The agent serializes turns per
             # session, so everything before this response was the old turn.
+            if self._cancelling:
+                self._drop_pending_stream()
+            else:
+                self._flush_stream()
             self._cancelling = False
 
         assert result is not None
@@ -930,18 +1009,38 @@ class Agent(AgentBase):
         db = DB()
         await db.session_update_title(self.session_pk, name)
 
-    async def acp_session_cancel(self) -> bool:
-        # Raise the drop-flag BEFORE the notification goes out: nothing the
-        # agent emits from this moment on is worth rendering.
-        self._cancelling = True
-        with self.request():
-            response = api.session_cancel(self.session_id, {})
-        try:
-            await response.wait()
-        except jsonrpc.APIError:
-            # No-op if there is nothing to cancel
+    def _drop_pending_stream(self) -> None:
+        """Discard streamed text that is no longer worth rendering."""
+        if self._flush_handle is not None:
+            self._flush_handle.cancel()
+            self._flush_handle = None
+        self._pending_text = []
+        self._pending_thought = []
+        self._pending_chars = 0
+
+    def begin_cancel(self) -> bool:
+        """Stop rendering the current turn and put `session/cancel` on the wire.
+
+        Synchronous on purpose: cancelling must not wait on a worker, an RPC
+        round-trip, or the message pump it is trying to escape. `session/cancel`
+        is a notification, so there is nothing to await — the bytes are written
+        to the agent's stdin before this returns.
+
+        Returns:
+            `True` if the notification was sent, `False` if no agent is running.
+        """
+        if self._process is None or self.session_id is None:
             return False
+        # Raise the drop-flag first: nothing the agent emits from here on is
+        # worth rendering, including text still buffered for the next flush.
+        self._cancelling = True
+        self._drop_pending_stream()
+        with self.request():
+            api.session_cancel(self.session_id, {})
         return True
 
+    async def acp_session_cancel(self) -> bool:
+        return self.begin_cancel()
+
     async def cancel(self) -> bool:
-        return await self.acp_session_cancel()
+        return self.begin_cancel()
