@@ -47,6 +47,18 @@ class AgentBase(ABC):
             str: The stop reason.
         """
 
+    def begin_cancel(self) -> bool:
+        """Cancel the current turn without awaiting anything.
+
+        Cancelling has to work while the message pump is saturated, so this is
+        synchronous by contract: implementations put `session/cancel` on the
+        wire before returning.
+
+        Returns:
+            `True` if a cancel was sent, `False` if there was no turn to cancel.
+        """
+        return False
+
     async def cancel(self) -> bool:
         """Cancel prompt.
 

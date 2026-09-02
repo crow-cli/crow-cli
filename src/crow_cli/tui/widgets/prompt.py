@@ -758,6 +758,11 @@ class Prompt(containers.VerticalGroup):
         if suggestion.startswith(self.text) and self.text != suggestion:
             self.prompt_text_area.suggestion = suggestion[len(self.text) :]
 
+    @on(Button.Pressed, "#cancel-button")
+    def on_cancel_pressed(self, event: Button.Pressed) -> None:
+        """Bubble a Cancel click up to the Conversation that owns the turn."""
+        self.post_message(CancelTurn())
+
     def compose(self) -> ComposeResult:
         yield PathSearch(self.project_path).data_bind(root=Prompt.project_path)
         yield SlashComplete().data_bind(slash_commands=Prompt.slash_commands)

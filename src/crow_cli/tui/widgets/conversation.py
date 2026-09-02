@@ -49,7 +49,7 @@ from crow_cli.tui.history import History
 from crow_cli.tui.widgets.flash import Flash
 from crow_cli.tui.widgets.menu import Menu
 from crow_cli.tui.widgets.note import Note
-from crow_cli.tui.widgets.prompt import Prompt
+from crow_cli.tui.widgets.prompt import CancelTurn, Prompt
 from crow_cli.tui.widgets.session_tabs import SessionsTabs
 from crow_cli.tui.widgets.terminal import Terminal
 from crow_cli.tui.widgets.throbber import Throbber
@@ -507,6 +507,7 @@ class Conversation(containers.Vertical):
             current_mode=Conversation.current_mode,
             modes=Conversation.modes,
             status=Conversation.status,
+            turn=Conversation.turn,
         )
 
     @property
@@ -618,7 +619,18 @@ class Conversation(containers.Vertical):
         if action == "mode_switcher":
             return bool(self.modes)
         if action == "cancel":
-            return True if (self.agent and self.turn == "agent") else None
+            if not (self.agent and self.turn == "agent"):
+                return None
+            # The cancel binding is priority, so while a turn runs Escape beats
+            # the focused widget. It must not beat a terminal: tapping escape
+            # twice is how you leave one. Fall through to it and let the mouse
+            # have the Cancel button.
+            focused = self.app.focused
+            if focused is not None and any(
+                isinstance(node, Terminal) for node in focused.ancestors_with_self
+            ):
+                return None
+            return True
         if action in {"expand_block", "collapse_block"}:
             if (cursor_block := self.cursor_block) is None:
                 return False
@@ -1734,19 +1746,35 @@ class Conversation(containers.Vertical):
             self.flash("Agent isn't running", style="error")
             return
         self.turn = "client"
-        self.call_later(self._clear_cancelled_turn)
-        self.flash("Turn cancelled", style="success")
 
-    async def _clear_cancelled_turn(self) -> None:
-        """Drop the in-flight widgets left over from a cancelled turn."""
+        # Claim the in-flight widgets by reference, now. Reading them from a
+        # deferred callback would race a prompt typed straight after cancelling
+        # -- which is exactly what a cancel is for -- and orphan the new turn's
+        # loading indicator instead of the dead one's.
+        stale: list[Widget] = []
         if (loading := self._loading) is not None:
             self._loading = None
-            await loading.remove()
+            stale.append(loading)
         if (thought := self._agent_thought) is not None:
             self._agent_thought = None
             if thought.loading:
-                await thought.remove()
+                stale.append(thought)
+        # The partial answer stays in the transcript; only the reference goes.
         self._agent_response = None
+
+        self.call_later(self._remove_cancelled_widgets, stale)
+        self.flash("Turn cancelled", style="success")
+
+    async def _remove_cancelled_widgets(self, widgets: list[Widget]) -> None:
+        """Remove the widgets a cancelled turn left behind."""
+        for widget in widgets:
+            if widget.is_mounted:
+                await widget.remove()
+
+    @on(CancelTurn)
+    def on_cancel_turn(self, event: CancelTurn) -> None:
+        """The Cancel button was clicked."""
+        self.action_cancel()
 
     def focus_prompt(self, reset_cursor: bool = True, scroll_end: bool = True) -> None:
         """Focus the prompt input.

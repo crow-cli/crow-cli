@@ -97,6 +97,22 @@ App.-compact-input {
     
 }
 
+/* The mouse path to `cancel`: lives in the prompt row, one line tall, and only
+   while the agent owns the turn. It has to be visible (and clickable) when the
+   keyboard is useless — see Conversation.action_cancel. */
+#cancel-button {
+    display: none;
+    min-width: 0;
+    height: 1;
+    margin: 0 0 0 1;
+    padding: 0 1;
+    border: none;
+}
+
+Prompt.-streaming #cancel-button {
+    display: block;
+}
+
 App.-show-sessions-bar {
     SessionsTabs {
         display: block;

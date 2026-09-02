@@ -193,6 +193,12 @@ class Agent(AgentBase):
         # dropped so the pipe drains at wire speed instead of render speed —
         # cancel is prioritized over rendering the dead turn's backlog.
         self._cancelling: bool = False
+        # True from the instant a prompt leaves the TUI (including the time
+        # spent building its content blocks) until the turn resolves. Cancel
+        # is only meaningful while it is set; cancelling an idle agent would
+        # leave `_cancelling` raised and swallow the *next* turn's updates.
+        self._turn_open: bool = False
+        self._turn_seq: int = 0
         # Streamed text awaiting a coalesced flush into the UI.
         self._pending_text: list[str] = []
         self._pending_thought: list[str] = []
@@ -806,10 +812,36 @@ class Agent(AgentBase):
         Args:
             prompt: Prompt text.
         """
-        prompt_content_blocks = await asyncio.to_thread(
-            build_prompt, self.project_root_path, prompt
-        )
-        return await self.acp_session_prompt(prompt_content_blocks)
+        # The turn starts here, not at the wire: building content blocks can
+        # take a while and Escape during that time still means "stop".
+        # A prompt may be in flight while the user fires the next one (cancel
+        # then immediately re-prompt), so the turn is numbered: only the turn
+        # that is still current gets to close it.
+        self._turn_seq += 1
+        turn = self._turn_seq
+        self._turn_open = True
+        # A fresh turn supersedes a cancel the agent never answered (a wedged
+        # agent); if the flag survived, this turn would render nothing.
+        self._cancelling = False
+        try:
+            prompt_content_blocks = await asyncio.to_thread(
+                build_prompt, self.project_root_path, prompt
+            )
+            if self._cancelling:
+                # Cancelled while its resources were being read: the turn never
+                # made it to the wire, so there is nothing for the agent to stop.
+                return "cancelled"
+            return await self.acp_session_prompt(prompt_content_blocks)
+        finally:
+            if self._turn_seq == turn:
+                # Turn over one way or another (end_turn, cancelled, error):
+                # render traffic flows again.
+                if self._cancelling:
+                    self._drop_pending_stream()
+                else:
+                    self._flush_stream()
+                self._turn_open = False
+                self._cancelling = False
 
     async def acp_initialize(self):
         """Initialize agent."""
@@ -970,15 +1002,8 @@ class Agent(AgentBase):
                 )
             )
             return None
-        finally:
-            # Turn is over one way or another (end_turn, cancelled, error):
-            # render traffic flows again. The agent serializes turns per
-            # session, so everything before this response was the old turn.
-            if self._cancelling:
-                self._drop_pending_stream()
-            else:
-                self._flush_stream()
-            self._cancelling = False
+        # The turn's lifecycle (and the render flag it owns) belongs to
+        # send_prompt, which can tell one turn from the next.
 
         assert result is not None
         # TODO: Where to display this?
@@ -1027,9 +1052,10 @@ class Agent(AgentBase):
         to the agent's stdin before this returns.
 
         Returns:
-            `True` if the notification was sent, `False` if no agent is running.
+            `True` if the notification was sent, `False` if there is no turn to
+            cancel (no agent running, or nothing in flight).
         """
-        if self._process is None or self.session_id is None:
+        if self._process is None or self.session_id is None or not self._turn_open:
             return False
         # Raise the drop-flag first: nothing the agent emits from here on is
         # worth rendering, including text still buffered for the next flush.
