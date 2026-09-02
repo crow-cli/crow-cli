@@ -10,6 +10,7 @@ ORIGINAL session untouched. The ``on_compact`` callback receives the original
 ``agent_id`` and the new session.
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -18,6 +19,35 @@ from crow_cli.agent.compact import compact
 from crow_cli.config import Config, LLModel
 from crow_cli.agent.session import AgentSession, lookup_or_create_prompt
 from crow_cli.memory import build_agent_id
+
+
+def _content_chunk(text):
+    """A streamed chunk carrying one content delta (final chunks have none)."""
+    return SimpleNamespace(
+        choices=[SimpleNamespace(delta=SimpleNamespace(content=text))], usage=None
+    )
+
+
+def _usage_chunk(prompt_tokens=100, completion_tokens=50, total_tokens=150):
+    """The closing chunk: no choices, usage only."""
+    return SimpleNamespace(
+        choices=[],
+        usage=SimpleNamespace(
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+        ),
+    )
+
+
+def _stream(chunks):
+    """An async iterator over ``chunks``, like the openai SDK's stream object."""
+
+    async def gen():
+        for chunk in chunks:
+            yield chunk
+
+    return gen()
 
 
 class TestCompaction:
@@ -53,16 +83,43 @@ class TestCompaction:
 
     @pytest.fixture
     def mock_llm(self):
-        """Mock LLM whose summarization call returns a fixed summary."""
+        """Mock LLM that STREAMS a fixed summary, split across several chunks.
+
+        Compaction must stream (see test_compact_streams_so_slow_models_do_not_time_out),
+        so the fake returns an async iterator of chat-completion chunks rather
+        than a single response object. The summary is deliberately fragmented to
+        prove the pieces are reassembled.
+        """
         llm = AsyncMock()
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "COMPACTED SUMMARY"
-        mock_response.usage = MagicMock(
-            prompt_tokens=100, completion_tokens=50, total_tokens=150
+        llm.chat.completions.create = AsyncMock(
+            return_value=_stream(
+                [
+                    _content_chunk("COMPACTED "),
+                    _content_chunk("SUMMARY"),
+                    _usage_chunk(),
+                ]
+            )
         )
-        llm.chat.completions.create = AsyncMock(return_value=mock_response)
         return llm
+
+    @pytest.mark.asyncio
+    async def test_compact_streams_so_slow_models_do_not_time_out(
+        self, setup_session, mock_llm, compact_config
+    ):
+        """Regression: compaction used a non-streaming request, so a local model
+        that takes minutes to produce the whole summary hit the client's read
+        timeout (openai.APITimeoutError) and compaction died. Streaming only has
+        to emit *a* chunk within the timeout window."""
+        session = setup_session
+        result = await compact(session, mock_llm, compact_config, logger=MagicMock())
+
+        kwargs = mock_llm.chat.completions.create.call_args.kwargs
+        assert kwargs["stream"] is True
+        assert kwargs["stream_options"] == {"include_usage": True}
+
+        # The fragmented deltas were accumulated into one summary, and usage
+        # came off the closing usage-only chunk.
+        assert "COMPACTED SUMMARY" in result.messages[1]["content"]
 
     @pytest.mark.asyncio
     async def test_compact_calls_llm_with_tool_choice_none(

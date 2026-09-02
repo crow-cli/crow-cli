@@ -78,6 +78,51 @@ def _fill_missing_tool_responses(messages: list[dict]) -> list[dict]:
     return list(messages)  # No tool calls found at all
 
 
+async def _stream_summary(
+    llm: AsyncOpenAI,
+    session: AgentSession,
+    messages: list[dict],
+    config: Config,
+) -> tuple[str, dict]:
+    """Summarize ``messages`` over a streamed request and accumulate the text.
+
+    Streaming matters for slow (local) models: a non-streaming request has to
+    generate the whole summary before the client's read timeout fires, while a
+    streamed one only has to produce *a* chunk inside the timeout window.
+
+    Returns the summary text and a usage dict — usage arrives on the final,
+    choice-less chunk when ``include_usage`` is set, and some providers omit it.
+    """
+    stream = await llm.chat.completions.create(
+        model=session.model_identifier,
+        messages=messages,
+        tools=session.tools if session.tools else None,
+        tool_choice="none",
+        max_tokens=MAX_OUTPUT_TOKENS,
+        stream=True,
+        stream_options={"include_usage": True},
+        **sampling_params_for(config, session.model_identifier),
+    )
+
+    parts: list[str] = []
+    usage = {
+        "prompt_tokens": None,
+        "completion_tokens": None,
+        "total_tokens": None,
+    }
+    async for chunk in stream:
+        if chunk.choices and chunk.choices[0].delta.content:
+            parts.append(chunk.choices[0].delta.content)
+        if chunk.usage:
+            usage = {
+                "prompt_tokens": getattr(chunk.usage, "prompt_tokens", None),
+                "completion_tokens": getattr(chunk.usage, "completion_tokens", None),
+                "total_tokens": getattr(chunk.usage, "total_tokens", None),
+            }
+
+    return "".join(parts), usage
+
+
 async def compact(
     session: AgentSession,
     llm: AsyncOpenAI,
@@ -128,20 +173,12 @@ async def compact(
     # model's reasoning_effort XOR temperature. Never the provider default
     # (temp 1.0 makes the model ramble instead of compress) and never the
     # session's request_params temperature.
-    response = await llm.chat.completions.create(
-        model=session.model_identifier,
-        messages=messages,
-        tools=session.tools if session.tools else None,
-        tool_choice="none",
-        max_tokens=MAX_OUTPUT_TOKENS,
-        **sampling_params_for(config, session.model_identifier),
-    )
-    summary = response.choices[0].message.content
-    usage = {
-        "prompt_tokens": getattr(response.usage, "prompt_tokens", None),
-        "completion_tokens": getattr(response.usage, "completion_tokens", None),
-        "total_tokens": getattr(response.usage, "total_tokens", None),
-    }
+    #
+    # Streaming is not cosmetic here: a non-streaming request must produce the
+    # ENTIRE summary before the client's read timeout fires, which kills
+    # compaction outright on slow local models (the summary can be tens of
+    # thousands of tokens). Streamed, the timeout only applies between chunks.
+    summary, usage = await _stream_summary(llm, session, messages, config)
     if logger:
         logger.info(f"Compact usage: {usage}")
 
