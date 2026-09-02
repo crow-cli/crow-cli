@@ -19,11 +19,12 @@ from tests.integration.test_react_loop_cancel_integrity import SESSION_ID, FakeC
 
 
 class SummarizerLLM:
-    """The LLM boundary: one non-streaming completion returning a fixed summary.
+    """The LLM boundary: one streamed completion carrying a fixed summary.
 
-    ``compact()`` asks for a plain (non-streamed) completion; everything else in
-    the compaction path — persistence, the new agent row, registry rebinding — is
-    the real thing.
+    ``compact()`` streams its summarization (a local model can take minutes for
+    a whole summary, which unstreamed trips the client's read timeout);
+    everything else in the compaction path — persistence, the new agent row,
+    registry rebinding — is the real thing.
     """
 
     def __init__(self, summary: str = "## Summary\nthe conversation so far"):
@@ -34,11 +35,35 @@ class SummarizerLLM:
         class Completions:
             async def create(self, **kwargs):
                 outer.create_kwargs.append(kwargs)
-                message = SimpleNamespace(content=outer.summary)
-                return SimpleNamespace(
-                    choices=[SimpleNamespace(message=message)],
-                    usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5, total_tokens=15),
-                )
+                if not kwargs.get("stream"):
+                    return SimpleNamespace(
+                        choices=[
+                            SimpleNamespace(
+                                message=SimpleNamespace(content=outer.summary)
+                            )
+                        ],
+                        usage=SimpleNamespace(
+                            prompt_tokens=10, completion_tokens=5, total_tokens=15
+                        ),
+                    )
+
+                async def gen():
+                    yield SimpleNamespace(
+                        choices=[
+                            SimpleNamespace(
+                                delta=SimpleNamespace(content=outer.summary)
+                            )
+                        ],
+                        usage=None,
+                    )
+                    yield SimpleNamespace(
+                        choices=[],
+                        usage=SimpleNamespace(
+                            prompt_tokens=10, completion_tokens=5, total_tokens=15
+                        ),
+                    )
+
+                return gen()
 
         self.chat = SimpleNamespace(completions=Completions())
 

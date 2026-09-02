@@ -42,9 +42,10 @@ logger = logging.getLogger(__name__)
 class MultiTurnLLM:
     """Pops one scripted response per create() call.
 
-    Entries are either a list of stream chunks (served as an async stream,
-    like react_loop's send_request) or a plain string (served as a
-    non-streaming completion, like compact()'s summarization call).
+    Script entries are plain strings — the text the model "says" — and are
+    served the way the caller asked for it: as a stream of content chunks when
+    ``stream=True`` (react_loop's send_request AND compact()'s summarization
+    call), as a single completion object otherwise.
     """
 
     def __init__(self, script: list):
@@ -57,6 +58,8 @@ class MultiTurnLLM:
                 outer.create_kwargs.append(kwargs)
                 entry = outer.script.pop(0)
                 if isinstance(entry, str):
+                    if kwargs.get("stream"):
+                        return fake_stream([content_chunk(entry)])
                     return SimpleNamespace(
                         choices=[
                             SimpleNamespace(
@@ -295,7 +298,7 @@ async def test_loop_survives_dead_client_on_usage_update(tmp_path):
 
 async def test_compaction_crossing_threshold_creates_new_agent(tmp_path):
     """usage.total_tokens > MAX_COMPACT_TOKENS triggers compaction: a
-    'compaction' event, a non-streaming summarization call, a NEW agent
+    'compaction' event, a streamed summarization call, a NEW agent
     (idx+1) holding summary + continuation, and the old agent untouched."""
     config, session = await make_test_session(tmp_path)
     await session.add_message({"role": "user", "content": "do the big job"})
@@ -303,7 +306,7 @@ async def test_compaction_crossing_threshold_creates_new_agent(tmp_path):
     llm = MultiTurnLLM(
         [
             [content_chunk("working on it "), usage_chunk(100)],  # turn 1: over 50
-            "SUMMARY of the big job",  # compact() summarization (non-stream)
+            "SUMMARY of the big job",  # compact() summarization (streamed)
             [content_chunk("done now"), usage_chunk(10)],  # turn 2: under 50
         ]
     )
@@ -326,11 +329,11 @@ async def test_compaction_crossing_threshold_creates_new_agent(tmp_path):
     events, stop = await drive_react_loop(gen)
     assert stop == "done", events
 
-    # One stream per turn plus the non-streaming summarization
+    # One request per turn plus the compaction summarization — which, like every
+    # other LLM call, must be streamed (a local model needs minutes to produce a
+    # whole summary; unstreamed it trips the client's read timeout).
     assert len(llm.create_kwargs) == 3
-    assert "stream" not in llm.create_kwargs[1] or not llm.create_kwargs[1].get(
-        "stream"
-    )
+    assert llm.create_kwargs[1].get("stream") is True
 
     # The loop announced compaction
     assert any(e["type"] == "compaction" for e in events)
@@ -373,7 +376,7 @@ async def test_per_model_compact_threshold_overrides_global(tmp_path):
     llm = MultiTurnLLM(
         [
             [content_chunk("working on it "), usage_chunk(100)],  # >50, <1000
-            "SUMMARY of the big job",  # compact() summarization (non-stream)
+            "SUMMARY of the big job",  # compact() summarization (streamed)
             [content_chunk("done now"), usage_chunk(10)],
         ]
     )
