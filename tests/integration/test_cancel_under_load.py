@@ -102,9 +102,14 @@ async def _start_stream(app: CrowApp, conversation: Conversation) -> None:
     await wait_until(lambda: conversation.turn == "agent", timeout=30)
 
 
-async def test_escape_cancels_immediately_under_600_tps(blast_agent, tmp_path: Path) -> None:
-    """One Escape cancels a turn streaming at 600 tokens/sec — immediately."""
-    agent_data, log_path = blast_agent
+async def _one_escape_cancels(
+    agent_data: dict, log_path: Path, label: str, tmp_path: Path
+) -> None:
+    """One Escape, mid-stream, must cancel — and do it now.
+
+    The original failure: key events were never processed while the stream ran,
+    so `session/cancel` was never sent and the UI stayed locked.
+    """
     project_dir = tmp_path / "project"
     project_dir.mkdir(parents=True, exist_ok=True)
     app = CrowApp(agent_data=agent_data, project_dir=str(project_dir))
@@ -118,7 +123,6 @@ async def test_escape_cancels_immediately_under_600_tps(blast_agent, tmp_path: P
         streamed = fragments()
         assert streamed > 0, "mock agent produced no stream; nothing to reproduce"
 
-        pressed = time.monotonic()
         press_key(app, "escape")
 
         try:
@@ -141,11 +145,31 @@ async def test_escape_cancels_immediately_under_600_tps(blast_agent, tmp_path: P
             ) from error
 
         print(
-            "\n--- cancel under 600 tokens/sec ---\n"
+            f"\n--- cancel under {label} ---\n"
             f"stream fragments consumed: {streamed}\n"
             f"session/cancel reached agent in {cancel_latency * 1000:.0f} ms\n"
-            f"UI unlocked {unlock_latency * 1000 + cancel_latency * 1000:.0f} ms after keypress"
+            f"UI unlocked {(cancel_latency + unlock_latency) * 1000:.0f} ms after keypress"
         )
+
+
+async def test_escape_cancels_immediately_under_600_tps(
+    blast_agent, tmp_path: Path
+) -> None:
+    """A realistic fast endpoint (600 tokens/sec): one Escape cancels."""
+    agent_data, log_path = blast_agent
+    await _one_escape_cancels(agent_data, log_path, "600 tokens/sec", tmp_path)
+
+
+async def test_escape_cancels_immediately_when_unthrottled(
+    flood_agent, tmp_path: Path
+) -> None:
+    """Stress variant: nothing paces the agent, the pump is saturated flat out.
+
+    600 tokens/sec is survivable; an unthrottled stream is what a local model,
+    or a pipe nobody rate-limits, actually produces.
+    """
+    agent_data, log_path = flood_agent
+    await _one_escape_cancels(agent_data, log_path, "unthrottled flood", tmp_path)
 
 
 async def test_stream_still_renders_at_600_tps(blast_agent, tmp_path: Path) -> None:
@@ -248,7 +272,6 @@ async def test_clicking_cancel_stops_a_600_tps_stream(
         assert fragments() > 0, "mock agent produced no stream; nothing to reproduce"
         assert _on_screen(button), "Cancel was not clickable during the stream"
 
-        pressed = time.monotonic()
         # The sanctioned way to drive a button; it refuses to post if the button
         # is hidden, so this is a real click on a real (visible) control.
         button.press()

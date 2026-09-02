@@ -4,6 +4,26 @@ Isolation matters: the TUI writes session tabs to the shared crow.db and logs
 under the XDG dirs, so point every home at a temp directory before anything
 reads it. `get_default_config_dir` resolves the module global at call time, so
 monkeypatching it redirects config + db cleanly.
+
+The fixtures hand back an agent definition resolved through
+`resolve_agent_server`, i.e. exactly what `crow-cli -a NAME` builds — tests
+launch the real subprocess (`mock_acp_agent.py`) over stdio and speak real ACP;
+nothing about the client is stubbed.
+
+Driving the app under load (see test_cancel_under_load.py):
+
+* `async with CrowApp(...).run_test(size=(120, 40))`, then wait for
+  `agent_ready and agent.session_id` — ACP orders the handshake strictly, so
+  prompting earlier is not a state a user can reach.
+* Never `pilot.pause()` while a stream runs: it waits for the message queue to
+  drain, and a saturated queue never drains. Poll with `asyncio.sleep`.
+* Inject keys with `app.post_message(events.Key(key=..., character=None))` —
+  still traverses the focus chain, skips the settle-wait. Click buttons with
+  `Button.press()`, which refuses to post when the button is hidden and so also
+  proves it was clickable.
+* Count what the UI *consumes* (wrap `Conversation.post_agent_response`), not
+  what it displays: streamed text sits in a coalescing buffer, so displayed
+  output lags by design.
 """
 
 from __future__ import annotations
@@ -64,6 +84,32 @@ def blast_agent(isolated_crow_home: Path) -> tuple[dict, Path]:
     log_path = isolated_crow_home.parent / "mock_agent.log"
     servers = {"blast": _blast_server({**BLAST_ENV, "CROW_MOCK_LOG": str(log_path)})}
     return resolve_agent_server("blast", servers), log_path
+
+
+@pytest.fixture
+def flood_agent(isolated_crow_home: Path) -> tuple[dict, Path]:
+    """The mock agent with no pacing whatsoever — the machine is the limit.
+
+    600 tokens/sec is what a fast endpoint does. This is the stress case: nothing
+    throttles the pipe, so the TUI's message pump is saturated as hard as the
+    host allows.
+    """
+    log_path = isolated_crow_home.parent / "flood_agent.log"
+    servers = {
+        "flood": _blast_server(
+            {
+                **BLAST_ENV,
+                "CROW_MOCK_TOKENS_PER_SEC": "0",
+                # Bounded on purpose. Flat out this is ~2MB of text and enough to
+                # saturate the pump for longer than any test needs; an unbounded
+                # flood that leaks (killed parent, no teardown) cooks the machine.
+                "CROW_MOCK_CHUNKS": "60000",
+                "CROW_MOCK_CHUNK_CHARS": "40",
+                "CROW_MOCK_LOG": str(log_path),
+            }
+        )
+    }
+    return resolve_agent_server("flood", servers), log_path
 
 
 @pytest.fixture
