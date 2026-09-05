@@ -22,6 +22,7 @@ from crow_cli.mcp.server.app import mcp
 
 # Import tools to register them with the mcp instance
 import crow_cli.mcp.editor.main  # noqa: F401
+import crow_cli.mcp.execute.main  # noqa: F401
 import crow_cli.mcp.memory.main
 import crow_cli.mcp.read.main  # noqa: F401
 import crow_cli.mcp.task.main  # noqa: F401

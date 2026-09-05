@@ -23,6 +23,7 @@ EXPECTED_TOOLS = {
     "write",
     "edit",
     "terminal",
+    "execute",
     "web_fetch",
     "web_search",
     "list_sessions",

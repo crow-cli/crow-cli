@@ -4,8 +4,10 @@ Same nine-level fuzzy engine as the MCP tool (imported from
 crow_cli.mcp.editor.main, not duplicated — the engine ``replace()`` is
 already a pure function that raises ValueError; the MCP wrapper is what
 flattens it into "Error: ..." strings). The contract here is the Python
-one: raise EditError on failure, return an EditResult the REPL prints as
-one line and later cells can reuse (.diff, .old_text, .new_text).
+one: raise EditError on failure, return an EditResult later cells can
+reuse (.diff, .old_text, .new_text). Nothing about the call reaches the
+model on its own — the cell's stdout is the LLM channel, and the ACP
+client gets the diff on its own.
 """
 
 from __future__ import annotations
@@ -38,6 +40,10 @@ async def edit(
 
     Raises:
         EditError: file missing/unreadable, no match, or ambiguous match.
+
+    Note:
+        The model sees only what the cell PRINTS — the return value is for
+        code, not for the conversation. ``print(res.diff)`` to surface it.
     """
     if old_string == new_string:
         raise EditError("old_string and new_string must be different")
