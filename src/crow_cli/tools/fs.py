@@ -30,9 +30,12 @@ meant, and vision(mode="file") is.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
+import os
 import re
 import shutil
+import tempfile
 from pathlib import Path
 
 from crow_cli.mcp.editor.main import _resolve_path
@@ -163,8 +166,11 @@ def _is_binary(path) -> bool:
 def _number(lines: list[str], offset: int, total: int) -> str:
     """Line-numbered window (1-indexed, arrow separator — the read tool's
     format, so a model that has read files before reads this the same way),
-    plus the paging notice when the file was cut."""
-    padding = len(str(offset + len(lines) - 1)) if lines else len(str(offset))
+    plus the paging notice when the file was cut. An empty window gets no
+    notice: "showing lines 1-0" is noise, and .truncated says it in code."""
+    if not lines:
+        return ""
+    padding = len(str(offset + len(lines) - 1))
     out = []
     for idx, line in enumerate(lines):
         if len(line) > _MAX_LINE_LENGTH:
@@ -213,6 +219,7 @@ def _read(path: Path, offset: int, limit: int) -> FileResult:
         text=_number(window, start + 1, len(all_lines)),
         lines=len(all_lines),
         offset=start + 1,
+        shown=len(window),
     )
 
 
@@ -227,36 +234,128 @@ def _excludes() -> list[str]:
     return [arg for name in _ALWAYS_EXCLUDE for arg in ("-g", f"!{name}/")]
 
 
-async def _run(argv: list[str], root: Path) -> str:
-    """Run rg with cwd=root and "." as the search path. Exit 1 means "no
-    matches", not failure.
+def _json_path(field) -> str:
+    """rg --json base64s a path it cannot emit as UTF-8 text. Taking only
+    ``.text`` yields "" for such a file, and "" joined onto the root blames
+    the ROOT DIRECTORY for a match inside it — so decode the bytes, with
+    fsdecode (surrogateescape) to keep the result a real, openable path."""
+    field = field or {}
+    if field.get("text") is not None:
+        return field["text"]
+    return os.fsdecode(base64.b64decode(field.get("bytes") or ""))
 
-    The cwd is not a detail: rg matches -g patterns that contain a slash
-    against the path RELATIVE TO THE CWD, not relative to the search path,
-    so `-g 'src/tools/*.py' /abs/root` from anywhere else matches nothing
-    (slashless patterns like '*.py' match at any level and hide the bug).
-    Running in the root makes patterns and output root-relative and
-    deterministic; callers absolutize.
+
+def _json_line(field) -> str:
+    """Same for the matched line's own bytes (a latin-1 file matches fine
+    and its text arrives base64'd — without this the match renders empty)."""
+    field = field or {}
+    if field.get("text") is not None:
+        return field["text"].rstrip("\n")
+    raw = base64.b64decode(field.get("bytes") or "")
+    return raw.decode("utf-8", "replace").rstrip("\n")
+
+
+def _file_items(root: Path):
+    """Parser for `rg --files`: one path per line, as raw bytes.
+
+    os.fsdecode, NOT decode(errors="replace"): a replacement character makes
+    a path that looks fine and does not exist, so glob would hand back
+    unopenable paths and an ast walk would silently skip the file."""
+
+    def parse(raw: bytes) -> Path | None:
+        line = raw.rstrip(b"\n")
+        return root / os.fsdecode(line) if line else None
+
+    return parse
+
+
+def _match_items(root: Path):
+    """Parser for `rg --json`: match records become SearchMatch, everything
+    else (begin/end/summary) is skipped."""
+
+    def parse(raw: bytes) -> SearchMatch | None:
+        raw = raw.rstrip(b"\n")
+        if not raw:
+            return None
+        try:
+            record = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        if record.get("type") != "match":
+            return None
+        data = record["data"]
+        return SearchMatch(
+            path=str(root / _json_path(data.get("path"))),
+            line=data.get("line_number") or 0,
+            text=_json_line(data.get("lines")),
+        )
+
+    return parse
+
+
+async def _rg_stream(argv: list[str], root: Path, parse, cap: int | None):
+    """Run rg with cwd=root and "." as the search path, STREAMING stdout.
+
+    Three reasons this is not ``proc.communicate()``:
+
+    * the cwd is not a detail — rg matches a -g pattern containing a slash
+      against the path relative to the PROCESS cwd, not the search path, so
+      `-g 'src/tools/*.py' /abs/root` returns nothing from anywhere else
+      (slashless patterns match at any level and hide the bug). Running in
+      the root makes patterns and output root-relative; callers absolutize.
+    * output is unbounded — a broad pattern over a big tree is gigabytes of
+      JSON. ``parse`` turns a stdout line into an item (or None to skip it)
+      and the stream STOPS at ``cap`` items, killing rg mid-flight and
+      draining the pipe it was killed with, so a search cannot buffer the
+      tree in the kernel. ``cap=None`` walks everything (the ast modes must
+      see every file).
+    * stderr goes to a temporary file, not a pipe: nothing drains it while
+      stdout is being read, and a full stderr buffer would deadlock rg.
+
+    The exit code is only read when rg finished on its own — 0 is matches, 1
+    is "no matches", >=2 is an error, and a process we killed has no
+    meaningful code.
     """
+    err_file = tempfile.TemporaryFile()
     proc = await asyncio.create_subprocess_exec(
-        *argv,
-        cwd=str(root),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        *argv, cwd=str(root), stdout=asyncio.subprocess.PIPE, stderr=err_file
     )
+    items: list = []
+    truncated = False
     try:
-        out, err = await asyncio.wait_for(proc.communicate(), _RG_TIMEOUT)
-    except asyncio.TimeoutError:
-        proc.kill()
-        await proc.wait()
+        async with asyncio.timeout(_RG_TIMEOUT):
+            async for raw in proc.stdout:
+                item = parse(raw)
+                if item is None:
+                    continue
+                items.append(item)
+                if cap is not None and len(items) > cap:
+                    truncated = True
+                    break
+        if not truncated:
+            await proc.wait()
+            if proc.returncode not in (0, 1):
+                err_file.seek(0)
+                detail = err_file.read().decode(errors="replace").strip()
+                raise FsError(f"ripgrep failed ({proc.returncode}): {detail}")
+    except TimeoutError:
         raise FsError(f"ripgrep timed out after {_RG_TIMEOUT}s") from None
-    if proc.returncode not in (0, 1):
-        detail = err.decode(errors="replace").strip()
-        raise FsError(f"ripgrep failed ({proc.returncode}): {detail}")
-    return out.decode(errors="replace")
+    finally:
+        if proc.returncode is None:
+            proc.kill()
+            # communicate(), NOT wait(). Breaking out of the stream early
+            # leaves the StreamReader over its high-water mark, which PAUSES
+            # the pipe transport: it comes off the selector, so EOF is never
+            # observed and wait() blocks forever — a wedged kernel, not a
+            # slow one (`yes hit` reproduces it every time; rg reproduces it
+            # whenever the reader happens to be paused at the break).
+            # Draining resumes the transport and reaps the child.
+            await proc.communicate()
+        err_file.close()
+    return items, truncated
 
 
-async def _glob(root: Path, pattern: str, limit: int) -> GlobResult:
+def _files_argv(file_pattern: str | None, extra: list[str] | None = None) -> list[str]:
     argv = [
         _rg(),
         "--files",
@@ -265,17 +364,21 @@ async def _glob(root: Path, pattern: str, limit: int) -> GlobResult:
         "--sort",
         "path",  # rg searches in parallel: unsorted output is nondeterministic
         *_excludes(),
-        "-g",
-        pattern,
-        ".",
     ]
-    out = await _run(argv, root)
-    paths = [str(root / ln) for ln in out.splitlines() if ln]
+    if file_pattern:
+        argv += ["-g", file_pattern]
+    return [*argv, *(extra or []), "."]
+
+
+async def _glob(root: Path, pattern: str, limit: int) -> GlobResult:
+    paths, truncated = await _rg_stream(
+        _files_argv(None, ["-g", pattern]), root, _file_items(root), limit
+    )
     return GlobResult(
         pattern=pattern,
         root=str(root),
-        paths=paths[:limit],
-        truncated=len(paths) > limit,
+        paths=[str(p) for p in paths[:limit]],
+        truncated=truncated,
     )
 
 
@@ -294,50 +397,21 @@ async def _search(
     if file_pattern:
         argv += ["-g", file_pattern]
     argv += ["--regexp", pattern, "."]
-    out = await _run(argv, root)
-
-    matches: list[SearchMatch] = []
-    for line in out.splitlines():
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if record.get("type") != "match":
-            continue
-        data = record["data"]
-        matches.append(
-            SearchMatch(
-                path=str(root / (data.get("path") or {}).get("text", "")),
-                line=data.get("line_number") or 0,
-                text=(data.get("lines") or {}).get("text", "").rstrip("\n"),
-            )
-        )
-        if len(matches) > limit:
-            break
+    matches, truncated = await _rg_stream(argv, root, _match_items(root), limit)
     return SearchResult(
         pattern=pattern,
         root=str(root),
         matches=matches[:limit],
-        truncated=len(matches) > limit,
+        truncated=truncated,
     )
 
 
 async def _walk(root: Path, file_pattern: str | None) -> list[Path]:
-    """Every file rg will list under root — gitignore-aware, excludes applied."""
-    argv = [
-        _rg(),
-        "--files",
-        "--no-messages",
-        "--no-config",
-        "--sort",
-        "path",
-        *_excludes(),
-    ]
-    if file_pattern:
-        argv += ["-g", file_pattern]
-    argv.append(".")
-    out = await _run(argv, root)
-    return [root / line for line in out.splitlines() if line]
+    """Every file rg will list under root — gitignore-aware, excludes
+    applied, and deliberately UNCAPPED: the ast modes have to see the whole
+    tree, and paths are small where matches are not."""
+    files, _ = await _rg_stream(_files_argv(file_pattern), root, _file_items(root), None)
+    return files
 
 
 def _lang_of(path: Path) -> str | None:
@@ -432,12 +506,36 @@ def _ast_scan(files: list[Path], pattern: str, lang: str | None, limit: int):
     return matches, False
 
 
+def _non_overlapping(nodes: list) -> list:
+    """The matches to actually edit: outermost wins, left to right.
+
+    A greedy pattern (``$CALL``, ``$$$BODY``) matches NESTED nodes too, and
+    commit_edits on overlapping ranges does not complain — it splices
+    garbage out of the file (``f(g(x))`` came back as ``wrapped(f(g(x))\\n)``
+    from the pattern ``$CALL``). So overlapping matches are dropped, the
+    same non-overlapping scan re.sub does, and the caller reports how many.
+    """
+    ordered = sorted(
+        nodes, key=lambda n: (n.range().start.index, -n.range().end.index)
+    )
+    kept = []
+    end = -1
+    for node in ordered:
+        span = node.range()
+        if span.start.index >= end:
+            kept.append(node)
+            end = span.end.index
+    return kept
+
+
 def _plan_rewrites(files: list[Path], pattern: str, rewrite: str, lang: str | None):
     """Every (path, old_text, new_text) the rewrite would produce, computed
-    BEFORE anything is written: a bad pattern fails with nothing touched."""
+    BEFORE anything is written: a bad pattern — or one unwritable file —
+    fails with the whole tree untouched."""
     planned: list[tuple[Path, str, str]] = []
     scanned = 0
     matches = 0
+    skipped = 0
     for path in files:
         text = _read_text(path)
         if text is None:
@@ -446,13 +544,18 @@ def _plan_rewrites(files: list[Path], pattern: str, rewrite: str, lang: str | No
         root, nodes = _parse(text, lang or _lang_of(path), pattern)
         if not nodes:
             continue
-        matches += len(nodes)
+        kept = _non_overlapping(nodes)
+        skipped += len(nodes) - len(kept)
+        matches += len(kept)
         new_text = root.commit_edits(
-            [node.replace(_expand(rewrite, node)) for node in nodes]
+            [node.replace(_expand(rewrite, node)) for node in kept]
         )
-        if new_text != text:
-            planned.append((path, text, new_text))
-    return planned, scanned, matches
+        if new_text == text:
+            continue
+        if not os.access(path, os.W_OK):
+            raise FsError(f"permission denied: {path} — nothing was written")
+        planned.append((path, text, new_text))
+    return planned, scanned, matches, skipped
 
 
 async def _ast(
@@ -473,7 +576,7 @@ async def _rewrite(
     file_pattern: str | None,
 ) -> RewriteResult:
     files = _candidates(await _walk(root, file_pattern), lang)
-    planned, scanned, matches = await asyncio.to_thread(
+    planned, scanned, matches, skipped = await asyncio.to_thread(
         _plan_rewrites, files, pattern, rewrite, lang
     )
     # Call-time import on purpose: reload() refreshes fs BEFORE write, so a
@@ -488,6 +591,7 @@ async def _rewrite(
         files=results,
         scanned=scanned,
         matches=matches,
+        skipped=skipped,
     )
 
 

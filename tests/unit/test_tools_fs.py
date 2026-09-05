@@ -6,6 +6,8 @@ binding, which is the only way the gitignore, cwd-relative-glob and
 metavar-expansion behaviour gets tested at all.
 """
 
+import asyncio
+import os
 import subprocess
 
 import pytest
@@ -15,6 +17,10 @@ from sqlalchemy.orm import sessionmaker
 from crow_cli.memory.db import create_database
 from crow_cli.memory.models import SubtoolCall
 from crow_cli.tools import fs
+
+# from-import, NOT `import crow_cli.tools.fs as m`: the facade caches the
+# resolved FUNCTION into the package dict, so the import-as form binds fs().
+from crow_cli.tools.fs import _rg_stream
 from crow_cli.tools.register import begin_cell, clear, pending
 from crow_cli.tools.results import (
     FileResult,
@@ -543,3 +549,243 @@ async def test_mode_dispatch_errors(tmp_path):
         await fs("rewrite", str(tmp_path), "os.path.join($A, $B)")
     with pytest.raises(FsError, match="not a directory"):
         await fs("search", str(tmp_path / "f.txt"), "x")
+
+
+# --- edge cases found by probing a live kernel ------------------------------
+#
+# Every test below is a bug that shipped, not a shape that was merely
+# untested: the assertions are what used to come back wrong.
+
+
+@pytest.mark.asyncio
+async def test_read_newline_only_file_counts_its_one_empty_line(tmp_path):
+    """shown is a FIELD, not len(content.splitlines()): a window holding a
+    single empty line has content "", which splitlines() counts as zero — so
+    a newline-only file reported lines=1 shown=0 truncated=True while .text
+    still rendered "1→"."""
+    target = tmp_path / "nl.txt"
+    target.write_text("\n")
+    r = await fs("read", str(target))
+    assert (r.lines, r.offset, r.shown, r.truncated) == (1, 1, 1, False)
+    assert r.content == ""
+    assert r.text == "1→"
+
+
+@pytest.mark.asyncio
+async def test_read_limit_zero_is_an_empty_window_with_no_notice(tmp_path):
+    """"showing lines 1-0 of 1 total" is noise: an empty window renders
+    nothing and .truncated says it in code."""
+    target = tmp_path / "f.txt"
+    target.write_text("one\n")
+    r = await fs("read", str(target), limit=0)
+    assert (r.content, r.text, r.shown) == ("", "", 0)
+    assert r.truncated is True
+
+
+@pytest.mark.asyncio
+async def test_read_empty_file(tmp_path):
+    target = tmp_path / "empty.py"
+    target.write_text("")
+    r = await fs("read", str(target))
+    assert (r.lines, r.shown, r.content, r.text, r.truncated) == (0, 0, "", "", False)
+
+
+@pytest.mark.asyncio
+async def test_read_normalizes_line_endings(tmp_path):
+    """.content is the window joined with \\n, so a CRLF file comes back LF —
+    pinned because writing .content straight back would re-write every line
+    ending in the file."""
+    target = tmp_path / "dos.txt"
+    target.write_bytes(b"one\r\ntwo\r\n")
+    r = await fs("read", str(target))
+    assert r.content == "one\ntwo"
+    assert r.text == "1→one\n2→two"
+    assert (r.lines, r.shown) == (2, 2)
+
+
+@pytest.mark.asyncio
+async def test_read_caps_a_long_line_in_text_but_not_in_content(tmp_path):
+    target = tmp_path / "long.txt"
+    target.write_text("x" * 5000 + "\n")
+    r = await fs("read", str(target))
+    assert r.text == "1→" + "x" * 2000 + "... [line truncated]"
+    assert r.content == "x" * 5000
+
+
+@pytest.mark.asyncio
+async def test_rewrite_drops_nested_matches_instead_of_splicing_garbage(tmp_path):
+    """$CALL matches NINE nodes in "f(g(x))" — module [0:8],
+    expression_statement [0:7], call [0:7], identifier [0:1],
+    argument_list [1:7], call [2:6], and three more inside that — and
+    commit_edits on overlapping ranges does not complain: it splices.
+    Outermost wins, left to right, and the drops are counted in .skipped.
+
+    The output is NOT corruption, which is what made this hard to see: the
+    outermost match is the `module` node, whose text is the whole file
+    INCLUDING the trailing newline, so wrapping it is the faithful expansion
+    of the one match that was applied."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    target = root / "nest.py"
+    target.write_text("f(g(x))\n")
+
+    r = await fs("rewrite", str(root), "$CALL", rewrite="wrapped($CALL)", lang="python")
+
+    assert (r.changed, r.matches, r.skipped) == (1, 1, 8)
+    assert target.read_text() == "wrapped(f(g(x))\n)"
+    assert "8 overlapping skipped" in r.summary
+
+
+@pytest.mark.asyncio
+async def test_rewrite_keeps_adjacent_matches_that_do_not_overlap(tmp_path):
+    """De-overlapping must not over-drop: two sibling calls on one line are
+    both applied."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    target = root / "two.py"
+    target.write_text("x = f(1) + f(2)\n")
+
+    r = await fs("rewrite", str(root), "f($N)", rewrite="g($N)", lang="python")
+
+    assert (r.matches, r.skipped) == (2, 0)
+    assert target.read_text() == "x = g(1) + g(2)\n"
+
+
+@pytest.mark.asyncio
+async def test_search_decodes_a_non_utf8_line_from_rg_base64(tmp_path):
+    """rg --json emits the matched line as {"bytes": <base64>} when it is not
+    valid UTF-8; reading only .text made every such match render EMPTY."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "latin.txt").write_bytes(b"caf\xe9 na\xefve\n")
+
+    r = await fs("search", str(root), "caf")
+
+    assert len(r.matches) == 1
+    assert (r.matches[0].line, r.matches[0].text) == (1, "caf\ufffd na\ufffdve")
+
+
+def _weird_py(root):
+    """A .py file whose NAME is not valid UTF-8 — made through the bytes API,
+    because no str can name it. Returns the fsdecode'd path, which is real
+    and openable (surrogateescape) where a replace-decoded one is not."""
+    root.mkdir(parents=True, exist_ok=True)
+    raw = os.path.join(os.fsencode(root), b"weird_\xff\xfe.py")
+    with open(raw, "wb") as f:
+        f.write(b"os.path.join(a, b)\n")
+    return os.fsdecode(raw)
+
+
+@pytest.mark.asyncio
+async def test_search_blames_the_file_not_the_root_for_a_non_utf8_name(tmp_path):
+    """rg --json base64s a path it cannot emit as text, and "" joined onto
+    the root blamed the ROOT DIRECTORY for a match inside it. The decode is
+    os.fsdecode, not errors="replace": a replacement character makes a path
+    that looks fine and does not exist."""
+    root = tmp_path / "proj"
+    weird = _weird_py(root)
+
+    r = await fs("search", str(root), "os.path.join")
+
+    assert len(r.matches) == 1
+    assert r.matches[0].path == weird != str(root)
+    with open(r.matches[0].path, "rb") as f:
+        assert f.read() == b"os.path.join(a, b)\n"
+
+
+@pytest.mark.asyncio
+async def test_glob_and_ast_reach_a_non_utf8_filename(tmp_path):
+    """`rg --files` output goes through the same decode: replace-decoding
+    made glob hand back paths that do not exist, and an ast walk skip the
+    file without a word."""
+    root = tmp_path / "proj"
+    weird = _weird_py(root)
+
+    g = await fs("glob", str(root), "**/*.py")
+    assert g.paths == [weird] and os.path.exists(g.paths[0])
+
+    a = await fs("ast", str(root), JOIN)
+    assert [m.path for m in a.matches] == [weird]
+
+
+@pytest.mark.asyncio
+async def test_rg_stream_stops_at_the_cap_and_kills_an_endless_producer(tmp_path):
+    """The cap is what keeps a broad search from buffering a tree in the
+    kernel, so the stream has to stop reading and KILL the producer.
+
+    The kill must be followed by communicate(), not wait(): breaking out
+    early leaves the StreamReader over its high-water mark, which PAUSES the
+    pipe transport — it comes off the selector, EOF is never observed, and
+    wait() blocks forever. `yes` wedged a live kernel permanently; the
+    timeout here turns a regression into a failure instead of a hang."""
+    async with asyncio.timeout(30):
+        items, truncated = await _rg_stream(
+            ["yes", "hit"], tmp_path, lambda raw: raw.decode().strip() or None, 5
+        )
+    assert len(items) == 6 and truncated is True  # one past cap = truncated
+
+
+@pytest.mark.asyncio
+async def test_rg_stream_does_not_deadlock_on_a_full_stderr(tmp_path):
+    """stderr goes to a temporary file, not a pipe: nothing drains it while
+    stdout is being read, so a child writing more than the 64KB pipe buffer
+    blocks forever and takes the kernel's loop with it. 20000 lines is
+    ~120KB."""
+    noise = "for i in $(seq 1 20000); do echo noise >&2; done; echo hit"
+    async with asyncio.timeout(30):
+        items, truncated = await _rg_stream(
+            ["sh", "-c", noise], tmp_path, lambda raw: raw.decode().strip() or None, 5
+        )
+    assert items == ["hit"] and truncated is False
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+@pytest.mark.asyncio
+async def test_rewrite_refuses_an_unwritable_file_before_writing_any(tmp_path):
+    """All-or-nothing. The writability check is in the PLAN, so one read-only
+    file fails the whole rewrite: the earlier shape transformed a.py and then
+    raised WriteError on b.py, leaving a half-rewritten tree behind."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    a, b = root / "a.py", root / "b.py"
+    a.write_text("os.path.join(a, b)\n")
+    b.write_text("os.path.join(c, d)\n")
+    b.chmod(0o444)
+    try:
+        with pytest.raises(FsError, match="permission denied.*nothing was written"):
+            await fs("rewrite", str(root), JOIN, rewrite="Path($A) / $B")
+        assert a.read_text() == "os.path.join(a, b)\n"
+        assert b.read_text() == "os.path.join(c, d)\n"
+    finally:
+        b.chmod(0o644)
+
+
+@pytest.mark.asyncio
+async def test_a_non_utf8_path_still_lands_its_row(tmp_path):
+    """os.fsdecode keeps a non-UTF8 filename a real path in the kernel, but a
+    lone surrogate cannot cross the wire: json.dumps escapes it to ``\\udcff``,
+    which is invalid JSON to a Rust/serde client, and the write-through
+    (which catches and logs) would have dropped the row SILENTLY. _wire_safe
+    replaces it at the row choke point — the row lands, the kernel keeps the
+    truth."""
+    db_uri = f"sqlite:///{tmp_path}/crow.db"
+    create_database(db_uri)
+    begin_cell(session_id="s1", parent_tool_call_id="turn-9/call_w", db_uri=db_uri)
+    root = tmp_path / "proj"
+    weird = _weird_py(root)
+
+    r = await fs("search", str(root), "os.path.join")
+    assert r.matches[0].path == weird  # kernel-side truth, surrogates intact
+    assert "\udcff" in pending()[0].acp_payload["text"]
+
+    engine = create_engine(db_uri)
+    with sessionmaker(engine)() as session:
+        rows = session.execute(select(SubtoolCall)).scalars().all()
+        session.expunge_all()
+    engine.dispose()
+
+    assert len(rows) == 1  # not silently dropped
+    text = rows[0].acp_payload["text"]
+    assert "\udcff" not in text
+    assert "weird_" in text and ":1: os.path.join(a, b)" in text
+    text.encode("utf-8")  # a lone surrogate would raise UnicodeEncodeError

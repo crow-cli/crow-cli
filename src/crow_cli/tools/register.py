@@ -163,6 +163,29 @@ def _sink():
     return _sink_engine
 
 
+def _wire_safe(value: Any) -> Any:
+    """Replace lone surrogates before anything reaches the DB row.
+
+    os.fsdecode keeps a non-UTF8 FILENAME a real, openable path on the
+    Python side (surrogateescape), and that is right for a result object —
+    but a lone surrogate cannot cross the wire: json.dumps escapes it to
+    ``\\udcff``, which is invalid JSON to a Rust/serde client, and the
+    write-through would otherwise drop the row silently. The row gets "?";
+    the kernel keeps the truth.
+    """
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            return value.encode("utf-8", "replace").decode("utf-8")
+        return value
+    if isinstance(value, dict):
+        return {_wire_safe(k): _wire_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_wire_safe(v) for v in value]
+    return value
+
+
 def _row_values(entry: SubtoolEntry) -> dict[str, Any]:
     return {
         "session_id": entry.session_id,
@@ -171,12 +194,12 @@ def _row_values(entry: SubtoolEntry) -> dict[str, Any]:
         "cell_seq": entry.cell_seq,
         "tool": entry.tool,
         "mode": entry.mode,
-        "args": entry.args,
+        "args": _wire_safe(entry.args),
         "status": entry.status,
         "result_kind": entry.result_kind,
-        "acp_payload": entry.acp_payload,
+        "acp_payload": _wire_safe(entry.acp_payload),
         "llm_images": entry.llm_images,
-        "error": entry.error,
+        "error": _wire_safe(entry.error),
     }
 
 

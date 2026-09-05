@@ -141,10 +141,16 @@ class VisionError(ToolError):
 class FileResult(ToolResult):
     """One file's window, read.
 
-    ``content`` is the raw text (what code wants — slice it, regex it, hand
-    it to edit); ``text`` is the same window line-numbered, with the
-    paging notice when the file was cut, which is what print() should show
-    and what the client renders.
+    ``content`` is the window's lines joined with ``\\n`` — what code wants
+    (slice it, regex it, hand it to edit). Note that this NORMALIZES line
+    endings: a CRLF file comes back with LF, so writing ``content`` back
+    would re-write the whole file's endings. ``text`` is the same window
+    line-numbered, with the paging notice when the file was cut, which is
+    what print() should show and what the client renders.
+
+    ``shown`` is a field, not ``len(content.splitlines())``: a window
+    holding a single empty line has content ``""``, which splitlines()
+    counts as zero.
     """
 
     path: str
@@ -152,6 +158,7 @@ class FileResult(ToolResult):
     text: str
     lines: int  # total lines in the file
     offset: int = 1  # 1-indexed first line of the window
+    shown: int = 0  # lines in the window
 
     result_kind = "read"
 
@@ -159,10 +166,6 @@ class FileResult(ToolResult):
         # Mirrors agent/tools.py execute_acp_read: the numbered text on a
         # read-kind call, located at the path.
         return {"content": "read", "path": self.path, "text": self.text}
-
-    @property
-    def shown(self) -> int:
-        return len(self.content.splitlines())
 
     @property
     def truncated(self) -> bool:
@@ -234,6 +237,12 @@ class RewriteResult(ToolResult):
     copies of N files. ``.files`` holds the EditResults for code that wants
     the diffs (and the preimages: each carries whole old_text/new_text, so
     crow.db is the undo log — no separate shadow store needed).
+
+    ``matches`` counts the edits APPLIED, and ``skipped`` the matches dropped
+    because they overlapped one already applied: a greedy pattern
+    (``$CALL``) matches nested nodes, and committing overlapping edits
+    corrupts the file, so the outermost match wins and the ones inside it
+    are dropped — left-to-right non-overlapping, like re.sub.
     """
 
     pattern: str
@@ -241,7 +250,8 @@ class RewriteResult(ToolResult):
     root: str
     files: list  # EditResult per changed file
     scanned: int  # files parsed
-    matches: int  # structural matches found
+    matches: int  # structural matches APPLIED
+    skipped: int = 0  # matches dropped for overlapping an applied one
 
     result_kind = "text"
 
@@ -258,9 +268,10 @@ class RewriteResult(ToolResult):
 
     @property
     def summary(self) -> str:
+        overlap = f", {self.skipped} overlapping skipped" if self.skipped else ""
         return (
             f"rewrote {self.changed} of {self.scanned} parsed file(s), "
-            f"{self.matches} match(es): {self.pattern} -> {self.rewrite}"
+            f"{self.matches} match(es){overlap}: {self.pattern} -> {self.rewrite}"
         )
 
 

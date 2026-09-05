@@ -213,6 +213,35 @@ it and background work never bleeds into the next cell's drain.
        1 kernel-level (the native extension loads in the kernel SUBPROCESS —
        the packaging-shaped failure in-process tests cannot see).
        pyproject.toml + uv.lock (ast-grep-py>=0.45.3) commit with this step.
+- [x] 6c. BUG HUNT on 6a+6b — "step is not done until it is bugless".
+       Probed every edge in a live kernel against scratch trees (newline-only
+       file, limit=0, empty file, CRLF, 5000-char line, latin-1 content,
+       non-UTF8 FILENAME, read-only file mid-rewrite, greedy nested pattern,
+       endless producer, 120KB of stderr, /usr/share and the worktree at
+       cap and uncapped). NINE bugs found and fixed, each with a regression
+       test in test_tools_fs.py (50 tests, +14):
+       (A) FileResult.shown derived from content.splitlines() -> stored field;
+       (B) limit=0 rendered "showing lines 1-0" -> empty window, no notice;
+       (C) overlapping ast matches spliced garbage -> _non_overlapping,
+           outermost wins, .skipped counts the drops;
+       (E) rg --json base64 `lines` -> _json_line;
+       (F) rg --json base64 `path` blamed the root, and replace-decoded
+           `rg --files` output returned paths that don't exist -> _json_path
+           + _file_items, both os.fsdecode; plus _wire_safe in register so a
+           lone surrogate cannot silently drop the row;
+       (G) proc.communicate() buffered all of rg -> _rg_stream (streamed,
+           capped, kills rg mid-flight);
+       (G') THE BIG ONE, found by the regression test itself: after an early
+           break the paused pipe transport means `await proc.wait()` in the
+           finally NEVER RETURNS — a permanently wedged kernel, timing-
+           dependent with rg and deterministic with `yes`. communicate().
+       (H) read-only file mid-rewrite -> partial rewrite; writability is now
+           pre-flighted in the plan.
+       Non-bugs pinned by probing: empty file, binary in a walk (rg skips),
+       dangling symlink (rg skips), long line (capped in .text, raw in
+       .content), latin-1 on mode="read" (FsError, by design — code can
+       read_bytes().decode()), .svg is text (vision refuses it, fs does not).
+       Sweep: 659 passed.
 - [x] 7. vision — modes: file, webcam (the robotics door — first class,
        never dropped), video later (video-frames skill as a mode: frame
        extraction -> N file results). Bytes -> ImageStore at call time;
@@ -291,7 +320,10 @@ it and background work never bleeds into the next cell's drain.
 - The tools facade caches resolved FUNCTIONS into `crow_cli.tools.__dict__`,
   shadowing same-named submodules: `import crow_cli.tools.vision as vmod`
   binds the FUNCTION, not the module. Use
-  `sys.modules["crow_cli.tools.vision"]` in tests and cells. Same trap in
+  `sys.modules["crow_cli.tools.vision"]` in tests and cells — or
+  `from crow_cli.tools.vision import _helper`, which is SAFE (verified: the
+  from-form resolves through sys.modules, only the `as` form goes through
+  getattr on the poisoned package dict). Same trap in
   reverse under importlib.reload: reload re-executes a module in its
   EXISTING dict, so cached facade functions survive it — purge the `_LAZY`
   keys from `crow_cli.tools.__dict__` before resolving the names again.
@@ -367,6 +399,50 @@ it and background work never bleeds into the next cell's drain.
   nondeterministic and any test asserting hit order flakes. And
   `--no-config`, or the user's ~/.ripgreprc changes the tool's behaviour.
   Exit 1 is "no matches", not failure — only >=2 is an error.
+- KILLING AN ASYNC SUBPROCESS IS NOT ENOUGH — DRAIN IT. Breaking out of
+  `async for line in proc.stdout` early leaves the StreamReader over its
+  high-water mark (64KB), which PAUSES the pipe transport: it comes off the
+  selector, so EOF is never observed and `await proc.wait()` blocks FOREVER.
+  Not a slow tool call — a wedged kernel, recoverable only by reset.
+  `yes hit` reproduces it in one line (measured: `wait()` HUNG >5s,
+  `communicate()` returned in 0.000s with rc=-9); rg reproduces it whenever
+  the reader happens to be paused at the break, which is timing, so it flares
+  in production and not in tests. After `proc.kill()`, `await
+  proc.communicate()`: draining resumes the transport and reaps the child.
+  Same deadlock from the other side: stderr must NOT be a pipe nobody drains
+  (a child writing more than the pipe buffer blocks and takes the loop with
+  it) — fs sends stderr to a `tempfile.TemporaryFile()`.
+- rg --json BASE64s what it cannot emit as UTF-8, and it does so for `path`
+  AND for `lines` (`{"bytes": "<b64>"}` instead of `{"text": ...}`). Taking
+  only `.text` yields `""`: a latin-1 match renders as an empty line, and an
+  empty path joined onto the root BLAMES THE ROOT DIRECTORY for a hit inside
+  it. Decode both.
+- For PATHS the decode is `os.fsdecode` (surrogateescape), never
+  `decode(errors="replace")`: a replacement character makes a path that looks
+  fine and does not exist, so glob hands back unopenable paths and an ast
+  walk skips the file without a word. fsdecode keeps it real and openable —
+  and then a lone surrogate CANNOT CROSS THE WIRE: json.dumps escapes it to
+  `\udcff`, which is invalid JSON to a Rust/serde client, and register's
+  write-through (catch + log) would drop the row SILENTLY. Hence
+  `_wire_safe` at the row choke point: the DB row gets `?`, the kernel-side
+  result object keeps the truth.
+- ast-grep matches the `module` node. A bare-metavar pattern (`$CALL`)
+  matches every node that fits, nested ones included — 9 matches for
+  `f(g(x))`, outermost being `module [0:8]` whose text is the whole file
+  INCLUDING the trailing newline. `commit_edits` on overlapping ranges does
+  not complain, it splices garbage, so fs de-overlaps (outermost wins, left
+  to right, like re.sub) and counts the drops in `.skipped`. The output
+  `wrapped(f(g(x))\n)` is the FAITHFUL expansion of that one applied match,
+  not corruption — which is exactly what made the bug hard to see.
+- A REWRITE MUST BE ALL-OR-NOTHING: `os.access(path, os.W_OK)` is checked
+  inside the PLAN, so one read-only file fails the whole rewrite before any
+  write. Without the pre-flight, a.py came back transformed and b.py raised
+  WriteError — a half-rewritten tree, the worst of both outcomes.
+- A COUNT DERIVED FROM A RENDERED STRING LIES. `shown=len(content.
+  splitlines())` reported 0 for a window holding one empty line, because
+  `"\n".join([""])` is `""` — so a newline-only file claimed
+  lines=1/shown=0/truncated=True while .text still rendered `1→`. Anything
+  the caller reasons about (.shown, .truncated) is a stored field.
 
 ## Pending decisions — these DELETE landed code, so they wait for a yes
 
