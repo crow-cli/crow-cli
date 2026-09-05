@@ -11,10 +11,13 @@ them is the return value:
    semantic dict (diff, image ref, text). The server-side drain renders it
    into acp types (ToolCallStart/Progress content); this package never
    imports acp.
-3. LLM — what the model sees: execute's text output (stdout + Out[n]
-   reprs) plus, for vision results, ``llm_images()`` ImageStore refs
-   hydrated into image_url blocks prepended to the response. Images are
-   first-class citizens: tools DECLARE them, no autodetection from blobs.
+3. LLM — what the model sees: execute's output, UNMODIFIED (code output on
+   success, traceback on failure — tools raise, execute is the guard). The
+   one exception, and the only reason this channel exists: when vision
+   tools ran, hydrated image_url blocks are PREPENDED to that output, or
+   vision models could never see images. The signal is ``llm_images()``
+   ImageStore refs riding the DB row — non-empty means prepend. No text
+   markers, no repr tricks, no blob autodetection.
 """
 
 from __future__ import annotations
@@ -85,19 +88,17 @@ class EditError(ToolError):
     pass
 
 
-#: The repr blob doubles as the LLM-channel marker: execute's text output
-#: carries ``![image](crow-image://<key>)`` and the server-side drain
-#: hydrates the key into a real image_url block prepended to the response.
-#: ~60 chars — cheap in text, machine-extractable, renders in markdown.
-VISION_BLOB = "![image](crow-image://{key})"
-
-
 @dataclass(repr=False)
 class VisionResult(ToolResult):
     """One captured image. Bytes live in the ImageStore under ``key``
     (content-addressed ``<sha256hex><ext>``, same scheme as message
     images) — the result object, the register entry, and the DB row all
-    hold refs, never bytes."""
+    hold refs, never bytes.
+
+    The LLM side needs no marker in the text: ``llm_images()`` refs ride
+    the row, and the server-side drain prepends hydrated image_url blocks
+    to execute's output when any are present (has_vision, in effect).
+    """
 
     key: str
     mime: str
@@ -108,17 +109,18 @@ class VisionResult(ToolResult):
     result_kind = "image"
 
     def acp_payload(self) -> dict:
-        # Rendered server-side into acp.schema.ImageContentBlock
-        # ({"type": "image", "data": <b64>, "mimeType": ...}) — bytes
-        # hydrated from the ImageStore by key.
+        # Rendered server-side into an acp image content block — bytes
+        # hydrated from the ImageStore by key at emission time.
         return {"content": "image", "key": self.key, "mime": self.mime}
 
     def llm_images(self) -> list[dict]:
         return [{"key": self.key, "mime": self.mime}]
 
     def __repr__(self) -> str:
-        blob = VISION_BLOB.format(key=self.key)
-        return f"VisionResult({blob}, {self.mime}, {self.width}x{self.height}, {self.source})"
+        return (
+            f"VisionResult({self.mime}, {self.width}x{self.height}, "
+            f"{self.source})"
+        )
 
 
 class VisionError(ToolError):

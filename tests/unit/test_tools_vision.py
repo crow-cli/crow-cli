@@ -54,9 +54,10 @@ async def test_file_mode_stores_and_returns_result(tmp_path, images_dir):
     assert blob.startswith(b"\x89PNG")
     assert image_key(blob, "image/png") == result.key
 
-    # The repr carries the hydration blob.
-    assert f"![image](crow-image://{result.key})" in repr(result)
-    assert "image/png" in repr(result) and "64x48" in repr(result)
+    # Plain compact repr — no LLM markers; the refs ride llm_images().
+    assert repr(result) == (
+        f"VisionResult(image/png, 64x48, {src})"
+    )
 
     # Three-fold channels.
     assert result.result_kind == "image"

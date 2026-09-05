@@ -18,11 +18,21 @@ non-paging: ipykernel pydoc falls to plain stdout).
   vision). `crow_cli.tools` never imports acp. ACP v1 has no parent field on
   the wire: subcalls emit as siblings inside execute's window; lineage lives
   in the table (+ field_meta later).
-- **LLM** — what the model sees: execute text (stdout + Out[n], cap ~5k
-  tokens) with hydrated image_url blocks PREPENDED when vision tools ran.
-  Images are first-class: tools DECLARE them via `llm_images()` returning
-  ImageStore refs (content-addressed sha256 keys, same scheme as
-  messages.extract_images — dupes dedupe free). No blob autodetection.
+- **LLM** — what the model sees: THE OUTPUT OF EXECUTE. Unmodified. Code
+  output on success; traceback on failure (tools RAISE — they don't need
+  their own guards because they run inside a properly guarded,
+  defensively-coded MCP tool that catches and shows the error to the LLM).
+  No tool injects anything into the text — an edit inside a cell costs
+  zero extra LLM-side rendering; diffs are ACP-only. The ONE modification,
+  the only reason the LLM side exists: when vision tools ran, hydrated
+  image_url blocks are PREPENDED — without them vision models have no way
+  to actually see images. The signal is a has_vision bool in effect: the
+  drained llm_images refs (ImageStore keys, same content-addressed scheme
+  as messages.extract_images — dupes dedupe free) non-empty. Tools DECLARE
+  images via llm_images(); no blob autodetection, no repr markers. Memory
+  returns polars DataFrames — execute's output renders them, done. ACP
+  emission is a different story entirely: every subtool gets its proper
+  semantic rendering (diffs, images, terminal stream).
 
 Identity: per-cell prologue `begin_cell(session_id, parent_tool_call_id,
 cell_seq)` injected by execute before the model's code — model never sees,
@@ -84,9 +94,11 @@ it and background work never bleeds into the next cell's drain.
        device_index=6)` — explicit kwargs beat a union-args list
        (self-documenting, `help()` reads clean, _bind_args records
        faithfully, @subtool gained dynamic mode from the runtime arg).
-       The repr IS the LLM blob: `VisionResult(![image](crow-image://<key>),
-       mime, WxH, source)` — ~60 chars of text in Out[n], machine-
-       extractable, renders in markdown. ACP channel: acp_payload
+       VisionResult(key, mime, width, height, source) with a plain compact
+       repr — an earlier draft put a `![image](crow-image://<key>)` blob
+       in the repr as an "LLM marker"; RETRACTED — the llm_images refs on
+       the row are the only signal the drain needs (has_vision in effect),
+       repr markers are redundant noise. ACP channel: acp_payload
        {"content":"image", key, mime} -> drain hydrates bytes from the
        ImageStore -> tool_content(image_block(...)) on the sibling call
        (ToolCallProgress.content takes ContentToolCallContent WRAPPERS,
@@ -119,8 +131,14 @@ it and background work never bleeds into the next cell's drain.
 - [ ] 12. ACP v2: execute transitions to terminal-type — full stream to
        client, coalesced ANSI-stripped result for LLM. Register/drain
        unchanged; emission timing changes.
-- [ ] 13. Pare crow_cli.mcp to the single execute tool; system prompt
-       rewrite around the omni tool.
+- [ ] 13. THE ENDGAME: everything but `execute` moves into crow_cli.tools
+       with zero-day autoload (PRELUDE) — crow_cli.mcp gets pared to the
+       single execute tool; the old MCP tool wrappers (edit/write/read/
+       terminal/web_*/capture_webcam/read_image_file/memory tools) come
+       off the server registration; system prompt rewritten around the
+       omni tool (help() is the just-in-time schema). The LLM's tool list
+       is ONE entry. Nothing is lost: ACP emission covers the client,
+       execute output covers the model.
 
 ## Hard-won caveats (from the session that started this)
 

@@ -140,9 +140,10 @@ async def vision(
 
     Returns:
         VisionResult — .key (ImageStore ref), .mime, .width, .height,
-        .source. Its repr carries the ``![image](crow-image://<key>)`` blob
-        the server hydrates into the LLM's view; the client sees a real
-        image block.
+        .source. The llm_images refs on the register entry tell the
+        server-side drain to prepend hydrated image blocks to execute's
+        output — the only LLM-side modification that exists; the client
+        sees a real image block on the sibling tool call.
 
     Raises:
         VisionError: bad mode/path, undecodable file, no store, dead webcam.

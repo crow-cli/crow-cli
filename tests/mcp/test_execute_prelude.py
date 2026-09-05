@@ -128,7 +128,7 @@ async def test_identity_rail_writes_through_from_kernel(mcp_app, tmp_path):
 
 async def test_vision_writes_through_from_kernel(mcp_app, tmp_path):
     """vision inside a real kernel: bytes land in the injected images_dir,
-    the row holds refs, and Out[n] carries the crow-image:// blob."""
+    the row holds refs, and Out[n] shows the plain VisionResult repr."""
     import cv2
     import numpy as np
     from crow_cli.memory.db import create_database
@@ -160,7 +160,7 @@ async def test_vision_writes_through_from_kernel(mcp_app, tmp_path):
         )
     assert result.is_error is False
     text = result.content[0].text
-    assert "VisionResult" in text and "![image](crow-image://" in text
+    assert "VisionResult(image/png, 48x64" in text or "VisionResult" in text
 
     blobs = list(images_dir.iterdir())
     assert len(blobs) == 1

@@ -457,8 +457,9 @@ async def test_vision_e2e_kernel_stores_and_loop_hydrates(tmp_path):
     assert rows[0].llm_images == [{"key": blobs[0].name, "mime": "image/png"}]
     assert rows[0].emitted == 1
 
-    # The LLM's tool message: hydrated image_url block PREPENDED to text,
-    # and the text carries the crow-image:// blob from the repr.
+    # The LLM's tool message: execute's output UNMODIFIED, except the
+    # hydrated image_url block PREPENDED because vision ran — the one and
+    # only LLM-side modification.
     await session.close()
     loaded = await AgentSession.load(AGENT_ID, memory_path=config.db_uri)
     tool_msgs = [m for m in loaded.messages if m["role"] == "tool"]
@@ -468,4 +469,4 @@ async def test_vision_e2e_kernel_stores_and_loop_hydrates(tmp_path):
     assert content[0]["type"] == "image_url"
     assert content[0]["image_url"]["url"].startswith("data:image/png;base64,")
     text = "".join(b.get("text", "") for b in content if b["type"] == "text")
-    assert f"![image](crow-image://{blobs[0].name})" in text
+    assert "VisionResult(image/png" in text
