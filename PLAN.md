@@ -1,187 +1,183 @@
-# PLAN — open files in helix inside a terminal tab
+# PLAN — the self-improving loop (tentative)
 
 ## **DO NOT ASK USER FOR FEEDBACK — THIS IS THE USER FEEDBACK.**
 ## **DO NOT ASK USER FOR NEXT STEPS — THESE ARE THE NEXT STEPS.**
 
-### The unlock (user, 30Aug2026)
-Clicking a file in the TUI's project explorer must open **helix editing that
-file inside a new session tab**, where the tab body is a **real terminal
-emulator running the `hx` process**. NOT a fullscreen takeover of the TUI,
-NOT an external editor — a terminal-shaped emulator *inside* the tab, as
-pass-through as possible ("open the space for helix to fill like a good TUI
-app"). `:wq!` (helix quitting) closes the tab. The tab model becomes generic:
-`SessionTab: AcpClientChat | Terminal | Editor` (decoupled from session-id).
-The `!command` fire-and-get-text-back shell stays as-is for now — do NOT
-revolutionize the chat interface this sprint.
-
-### Reuse, don't hand-roll
-- `widgets/terminal_tool.py::TerminalTool(Terminal)` already does the full PTY
-  dance (openpty, subprocess, read loop, `write_stdin`, `resize_pty`,
-  `wait_for_exit`, `kill`). EditorTerminal subclasses it.
-- Tabs are Textual **modes**: `CrowApp.new_session_screen(get_screen, title)`
-  registers a mode + screen and tracks it in `SessionTracker`; the
-  `SessionsTabs` widget renders tabs from `session_tracker` (it reads
-  `app.session_tracker` + `app.current_mode`, so it works on ANY screen).
-- `SessionClose` message + `MainScreen.on_session_close` already implement
-  "switch to neighbour, close tracker entry, remove mode".
+Crow-cli's revealed preference (2886 agents, ~80% in crow's own repos, 144
+agent-authored commits joined to full traces via Session-Id trailers): it
+is an agent built for working on itself. This plan makes the improvement
+loop self-driving: compaction produces critique → critique lands in files
+→ maintainer agent validates and patches → patched harness runs the next
+session. TODO.md has the unordered scope; this file orders it.
 
 ### Build/test gate
-`uv --project . run pytest tests/unit -q` after each step (there is no TUI
-test dir yet — create `tests/unit/tui/`). Live smoke in tmux session
-`crowtui-test` (NEVER touch other sessions / the user's live rio windows;
-this agent is itself a crow-cli instance — do not kill crow processes).
-Commit when green, `Session-Id: terrific-heron-of-splendid-greatness` trailer.
+Floor after each step: `uv --project . run pytest tests/unit -q`.
+Full gate: `./run_tests.sh` (unit + integration + e2e live LLM).
+Commit at each green checkpoint with the Session-Id trailer.
 
-## Steps
+### Ground rules carried by every phase
+- Extension is HOOKS (callables passed at construction), never inheritance.
+- The existing compaction prompt/algorithm is protected — riff around it.
+- Analysis/ideas output is FOREGROUND (never background — too important),
+  files over db rows (ls is the interface), evidence mandatory.
+- User corrections outrank agent suggestions absolutely.
 
-> STATUS (30Aug2026): steps 1–7 DONE. Steps 1–6 committed (a52e3d41,
-> 296a568c, 3d8597e5); step 7 (slice 2) committed this segment. Live smoke
-> green end-to-end: file click → helix renders inside the tab in the chat's
-> column with the sidebar visible, keys pass through, `:wq!` writes & closes
-> the tab; the tab `✕` affordance closes an editor tab gracefully (sends
-> `:wq!\r`, helix exits, no orphan process) and a chat tab directly. Full
-> gate green: 518 passed (unit + integration + e2e + memory).
->
-> Root-cause fix landed in 3d8597e5: the child PTY was never made the
-> controlling terminal, so helix read /dev/tty size from the OUTER terminal
-> (187 cols) and never got SIGWINCH — that, not the ANSI state, caused the
-> blank/garbled editor. Fixed via preexec setsid()+TIOCSCTTY + pre-spawn
-> PTY sizing.
->
-> Slice-2 notes: programmatic keys to helix must end in `\r` (TERMINAL_KEY_MAP
-> maps `enter`→`\r`, and helix ignores `\n`). `kill()` now kills the whole
-> process group (os.killpg) and `EditorTerminal.on_unmount` calls it, so a
-> closed tab never leaks `sh`/`hx`.
+## Phase 1 — compaction hook fabric + the analysis/ideas passes
 
-1. ✅ **`tui/widgets/editor_terminal.py::EditorTerminal(TerminalTool)`**
-   - Pure pass-through `on_key`: forward EVERY key incl. `escape` immediately
-     (no double-tap-to-blur — helix needs ESC). `event.prevent_default();
-     event.stop()` then `state.key_event_to_stdin` → `write_process_stdin`.
-   - Override `update_size` to also `resize_pty(self._shell_fd, w, h)` so
-     helix redraws on tab/window resize (TerminalTool only sizes once).
-   - Post `Exited(return_code)` Message when the process exits.
-   - CSS: fill the tab (`width:100%; height:1fr;`), no border/`-success` noise.
-   - Verify: headless run_test with a trivial program (`cat`/`printf`) →
-     output lands in the buffer; ESC/key bytes reach stdin; Exited fires.
+1.1 Promote `on_compact` from single callback to the constructor hook
+    idiom: `AcpAgent(config, hooks=..., compact_hooks=...)`, plumbed
+    through react_loop/TurnCtx exactly like hooks/snapshot_hooks. The two
+    existing call sites (react threshold, /compact) keep working.
+    Verify: existing tests green + unit test asserting multiple hooks fire
+    in order with (old_agent_id, new_session).
+1.2 `analysis` default hook: same message prefix as the summary pass
+    (shared prefix cache, fired alongside it), ANALYSIS_PROMPT appended
+    instead of COMPACTION_PROMPT. Output: XML items, each with surface
+    ({system_prompt, tool, skill, compaction, memory, config, acp, tui,
+    other}), type ({helpful, friction, bug, suggestion, idea, other}),
+    impact, evidence (quote/turn pointer — NO evidence, no item),
+    actionable+proposal. One file per agent generation:
+    `feedback/inbox/{ts}_{session_id}-{agent_idx}_analysis.xml`.
+    Verify: live compaction (or /compact on a real session) produces a
+    parseable file; unit tests pin the XML schema.
+1.3 `ideas` default hook: project-level strategic ideation prompt —
+    interrogate deeper goals, not surface regurgitation; frontmatter for
+    enumeration/regeneration; `{ts}_{session_id}-{agent_idx}_ideas.xml`.
+    Verify: file lands with valid frontmatter; prompt includes the
+    project-not-crow-cli scoping rule.
+1.4 Two-layer thresholds: soft compact hook at ~160k (budget notice +
+    5-7 turn wind-down react loop with existing tools), hard endpoint at
+    MAX_COMPACT_TOKENS. Read-only behavior for analysis/ideas forks via
+    prompt instructions.
+    Verify: unit tests on threshold resolution (per-model
+    max_compact_tokens still wins); live eyeball of the soft notice.
 
-2. ✅ **`tui/screens/editor.py::EditorScreen(Screen)` + `editor.tcss`**
-   - compose: `SessionsTabs()`, `EditorTerminal`, `Footer()`.
-   - on_mount: `terminal.start(w,h)` with the `hx <path>` command, focus it.
-   - Handle `EditorTerminal.Exited` → post `SessionClose(self.id)` (tab closes
-     when helix quits). Reuse the close semantics of MainScreen.on_session_close.
-   - Session-nav bindings (`ctrl+[` / `ctrl+]`) so you can leave the tab;
-     a `ctrl+q` binding → `quit_editor()` sends `:wq!\r` to stdin.
-   - Verify: headless test opens EditorScreen with a quick-exit command →
-     mounts, focuses terminal, closes on exit.
+## Phase 2 — feedback directory + learn skill rewrite
 
-3. ✅ **Generic tab model** — `session_tracker.SessionDetails` gains
-   `kind: Literal["chat","editor"]="chat"`; thread through
-   `SessionTracker.new_session(title, kind)` and
-   `CrowApp.new_session_screen(get_screen, title, kind)`. SessionsTabs may
-   render an editor glyph by kind (keep minimal).
-   - Verify: existing unit tests green; kind defaults to chat.
+2.1 Feedback dir convention: global `~/.agents/crow/feedback/` +
+    project-local resolution copied from skill_roots (project scopes
+    first, user scope last). Lifecycle dirs inbox/validated/accepted/
+    rejected/landed. Frontmatter schema shared by analysis/ideas files.
+    Verify: ls-able tree after a live compaction; schema doc in repo.
+2.2 learn skill rewrite (in ~/.agents/skills/learn, then publish): stupid
+    simple — read feedback dirs, precedence stack (user corrections from
+    query_memory on USER MESSAGES > recurring friction > evidenced items >
+    ideas), validate (evidence → reproduce → bench), patch, PR. Bench
+    instances drawn from the real workload distribution.
+    Verify: skill renders in catalog; one dry-run pass over existing
+    inbox items produces sensible triage.
+2.3 Bump web_search: prompt mutation + analysis rubric dimension
+    ("did the agent research before guessing?").
+    Verify: diff reviewed; next session's tool histogram shows movement
+    (baseline: 548 calls / 1.6%).
 
-4. ✅ **`CrowApp.open_file_in_editor(path)`** — build `Command(editor.command,
-   [str(path)], env, cwd=project)` and `new_session_screen(get_screen,
-   title=f"hx {path.name}", kind="editor")`. Editor command from settings key
-   `editor.command` (default `hx`) — add to `settings_schema.py` SCHEMA.
-   - Verify: headless — call it, assert a new editor mode/screen exists.
+## Phase 3 — memory SQL tool + skill
 
-5. ✅ **Rewire the explorer click** — `MainScreen.on_project_directory_tree_selected`
-   → `self.app.open_file_in_editor(data.path)` (instead of
-   `insert_path_into_prompt`). `@file` path-insert via path_search is unchanged.
-   - Verify: simulate `DirectoryTree.FileSelected` → open_file_in_editor called.
+3.1 New MCP tool in crow-mcp (next to query_memory, augmenting not
+    replacing): raw SQL over a REAL read-only connection (get_ro_engine).
+    Tool description = parsimonious table descriptions + example queries
+    that reveal structure (progressive disclosure).
+    Verify: mcp tests; write attempts rejected at the connection level.
+3.2 Companion skill (SQL-against-the-db-through-MCP = a way to run code).
+    Verify: skill in catalog; a fresh agent can answer a schema question
+    using only the skill + tool.
+3.3 Design note for later: project/session-specific MCP servers and
+    swapping MCP servers during compaction (probably slash command).
+    Captured in TODO; not built this phase.
 
-6. ✅ **Live smoke (tmux `crowtui-test`)** — launch TUI, open a file from the
-   explorer, confirm helix renders inside the tab, keys pass through, `:wq!`
-   closes the tab and returns to chat. Capture frames to verify rendering.
+## Phase 4 — ipykernel tool
 
-7. ✅ **(slice 2) tab `x` close affordance** — every tab label renders a
-   trailing `✕` (`session_tabs.CLOSE_GLYPH`); `SessionLabel.on_click`
-   hit-tests `offset.x >= content_region.width` and posts
-   `messages.SessionRequestClose(mode)`. `CrowApp.on_session_request_close`
-   is graceful for editor tabs (sends `:wq!\r` — `\r`, not `\n` — and lets
-   the resulting Exited→SessionClose cascade remove the tab) and direct for
-   chat tabs. `terminal_tool.kill()` kills the process group and
-   `EditorTerminal.on_unmount` calls it, so closing never orphans `sh`/`hx`.
-   - Verify: unit `test_x_affordance_gracefully_closes_editor_tab` (asserts
-     the editor received `:wq!` and the tab closes on exit) + live tmux
-     smoke (click `✕` → helix exits, no orphan). Both green.
+4.1 Transplant CrowKernel (gist 1cdba586d9d57422bad5d91d320b75ae) into
+    crow-mcp: kernel launched on first call, owned by the MCP server
+    process, reused across calls; python = sys.executable by default,
+    project venv override; reset/reload subcommand.
+    Verify: state persists across two tool calls (x=42; print(x));
+    error-first formatting; `!` escape; reset clears state.
+4.2 Transport lifetime: stdio = session-scoped (default); http mode
+    ("one server, many clients") gets a session-keyed kernel registry
+    (session id rides call _meta, the 39e65ebb pattern).
+    Verify: two concurrent http sessions get isolated kernels.
 
----
+## Phase 5 — project-level agent surface + self-healing
 
-# PLAN — mature the ANSI emulator + editor tab = chat page
+5.1 Discovery + spawn: `$cwd/.agents/crow/` custom agent script /
+    `src/crow-cli` checkout → `uv --project ... run crow-cli acp`;
+    `--system` opts out; re-exec sentinel; init pre-syncs the venv.
+    Verify: project with a checkout runs from source; sentinel prevents
+    re-spawn loop.
+5.2 Self-healing: spawn fails → system agent with the fix prompt ("load
+    the crow-cli skill and fix this error: {error}") + bug-dir report →
+    retry original prompt ONCE → still broken = system boot with loud
+    note. Verify: deliberately broken checkout exercises the full path.
+5.3 More hook points: session-creation seams (template/skills/agents-
+    context — hook the seams, never fork the factory), notes-to-self
+    surfacing as a prompt_args block with priority/germaneness filtering.
+    Verify: a repl-agent-pattern script overrides character without core
+    changes.
 
-## **DO NOT ASK USER FOR FEEDBACK — THIS IS THE USER FEEDBACK.**
-## **DO NOT ASK USER FOR NEXT STEPS — THESE ARE THE NEXT STEPS.**
+## Phase 6 — maintainer agent + init clones + publishing
 
-### The unlock (user, this segment)
-Two user reports with screenshots:
-1. **Editor tab must be the SAME page as the chat page** — "they're really
-   the same page… align completely". Chat: tab bar INSIDE the right column
-   (right of sidebar, top of the Conversation widget). Editor: tab bar
-   full-width ABOVE the sidebar. Fix = move `SessionsTabs()` inside
-   `#editor-body` and mirror Conversation's column CSS exactly.
-2. **Holding `down` in helix garbles the display** — jumbled line numbers,
-   statusline fragments scattered at the right edge, scroll dead.
+6.1 Maintainer/evaluator script (repl-agent pattern, global db, decision-
+    log compact hook, worktrees under accepted/ items).
+    Verify: it triages a real inbox and opens (or stages) a fix.
+6.2 `crow-cli init` clones crow-cli + crow-cli.github.io into
+    `~/.agents/crow/src/`, installs the crow-cli map skill globally
+    (the BIOS — always global).
+    Verify: fresh config dir exercises init end-to-end.
+6.3 Publish skill: sync-skills.py → PR to crow-cli.github.io.
+    Verify: crow-ai.dev/skills/<name>/SKILL.md resolves after deploy.
 
-### Research done (verified, don't redo)
-- **pyte oracle**: our `TerminalState` matches pyte with 0 mismatches at
-  fixed size (120×40, 100 downs) AND under the app's real resize sequence
-  (headless 150×50 and user's 187×50). Core emulation is CORRECT.
-- **The divergence is resize semantics**: our `TerminalState.update_size` →
-  `_reflow()` FOLDS stale wide lines on width shrink; pyte `Screen.resize`
-  TRUNCATES columns at the right and deletes rows from the TOP on height
-  shrink. Folded stale alt-screen lines break CUP row addressing
-  (fold-index ≠ row-index) → exactly the garble the user saw.
-- **Copied notes from mitosch/textual-terminal** (the project doing exactly
-  this — pyte inside a Textual widget): `on_resize` sets ncol/nrow from the
-  widget size, tells the PTY via set_size, and calls `screen.resize(nrow,
-  ncol)` — real-terminal semantics, NO folding, NO buffer wipes. Renders by
-  iterating `screen.buffer[y][x]` Char cells; mouse toggled by sniffing
-  DECSET 1000h/l (we already do the equivalent). Also noted:
-  par-term-emu-tui-rust (Textual widget over Rust core) as the mature/perf
-  option; neovim :terminal uses libvterm and still has resize-drift bugs.
-- Widget mitigation (`update_size` wipes alt buffer on alt+size change)
-  exists but is a lossy band-aid; the state itself must be grid-faithful.
+## Phase 7 — fork delegation pattern (read-only forks)
 
-## Steps
+7.1 session/fork-based relevance checks: fork reads the maybe-relevant
+    file, reports yes/no; parent context stays slim; fork FALLS BACK TO
+    BEFORE THE FORKED TOOL CALL (no infinity mirror); warm-KV reuse.
+    Verify: a forked interrogation completes with zero-tools and the
+    parent history shows no mirror recursion.
 
-1. ✅ **pyte-semantics resize in `tui/ansi/_ansi.py::TerminalState.update_size`**
-   - Alternate screen: width shrink → TRUNCATE every line at the new width
-     (never fold — grid rows must stay 1:1 with buffer lines); height
-     shrink → delete rows from the TOP; height grow → pad blank rows at the
-     bottom; clamp the cursor; rebuild fold index; mark all lines updated.
-   - Scrollback (normal) screen: keep the existing fold/reflow behavior
-     (presentation wrapping is a chat feature).
-   - Fix the `width is None` bug (compared `previous_width != width` with
-     `width=None` → spurious reflow).
-   - `widgets/terminal.py::update_size`: pass `self._height` (not the raw
-     arg) to `state.update_size`; drop the lossy alt-buffer wipe — with
-     grid-faithful resize the truncated content is exactly what a real
-     terminal shows until the program's SIGWINCH repaint lands.
-   - Verify: `tests/unit/tui/test_ansi_resize.py` — pyte-oracle regression
-     (helix-shaped paint → shrink → repaint, 0 mismatches), CUP addressing
-     after shrink lands on the right row, scrollback still folds.
+## Parked
+- v2 heartbeat janitor (needs ACP v2 persistent servers; TaskDelivery is
+  the poke).
+- TUI items from the prior sprint (see TODO.md parked section).
 
-2. ✅ **Editor tab = chat page** — `screens/editor.py` compose: move
-   `SessionsTabs()` inside `#editor-body` (above EditorTerminal);
-   `editor.tcss`: `#editor-body` gets Conversation's chrome (`padding-left:
-   1`, `&.-column { max-width: 100; background: black 7%; }`) and
-   `_apply_column_width` toggles `-column` exactly like MainScreen's
-   `watch_column`. Verify: unit test asserts SessionsTabs is a descendant of
-   #editor-body; live smoke compares both tabs' tab bars.
+## Research notes — what the world is doing (2026-09-05, don't redo)
 
-3. ✅ **Gate + live smoke** — `pytest tests/unit -q`, full gate, tmux
-   `crowtui-test`: open file in helix, hold down (100 downs via SGR keys or
-   repeated sends), resize the window, verify no garble; compare chat vs
-   editor tab bar placement via capture-pane.
+Every capability in this plan is in the air; none of it is ours by
+invention. That's the point — the claim is composition + self-application,
+not novelty.
 
-4. ✅ **Commit** (Session-Id trailer) + PLAN/TODO status updates.
+- **Self-improving harnesses are THE 2026 topic.** Lilian Weng, "Harness
+  Engineering for Self-Improvement" (lilianweng.github.io, Jul 2026);
+  arXiv 2606.09498 "Self-Harness: Harnesses That Improve Themselves"
+  (harness design is model-specific; human expert engineering scales
+  poorly); leezythu/Awesome-Harness-Self-Improvement reading list frames
+  harness engineering as the substrate for recursive self-improvement.
+- **GEPA went official** (gepa-ai/gepa): reflective prompt evolution,
+  Pareto-aware selection, "90x cheaper" than RL-style optimization. It is
+  a library you wrap around a system. Our stance stays as documented in
+  the learn skill: the AGENT is the optimizer, no adapters — the
+  optimization loop is a crow-cli session reading its own traces.
+- **Persistent Jupyter kernels for agents exist as bolt-ons**:
+  jupyter-live-kernel skills on the skill marketplaces (May 2026:
+  "stateful Python REPL via a live Jupyter kernel, variables persist
+  across executions") and rwollman/persistent_jupyter ("explore an API
+  interactively instead of generating a 200-line script and hoping").
+  All of them are tools/skills bolted onto an agent. None of them are
+  transport-aware fabric: kernel owned by the MCP server, lifetime
+  decided by stdio-vs-http the way memory's is decided by
+  sqlite-vs-postgres.
+- **Progressive disclosure is a named agentic technique** — LangChain's
+  SQL-assistant tutorial literally teaches "skills via progressive
+  disclosure" for a SQL assistant; prdeving.wordpress.com explores it for
+  tools generally. Our memory SQL tool is the same idea applied to the
+  agent's OWN memory db.
 
-## Deferred (still open, not this sprint)
-- TUI image attachments as ACP image content (previous PLAN, steps preserved
-  in TODO.md item).
-- TUI ACP-client migration onto the official `acp` SDK (TODO.md item).
-- `!command` shell UX improvements (reveal/scroll lag) — fire-and-forget is
-  acceptable for now per user.
+How crow-cli differs, without bombast: (1) introspection rides the
+compaction pass it already pays for — prefix-cached, foreground, free;
+(2) feedback is ls-able files and git PRs, not another store; (3) hooks
+not inheritance, transport decides lifetime; (4) the fixed point — the
+harness's dominant workload is the harness itself (2886 agents, ~80% in
+crow repos, commits joined to traces by Session-Id trailers, prompts
+table already versioning character). Anyone can build these capabilities;
+the loop that improves the thing running the loop, inside one product, is
+the part that compounds.
