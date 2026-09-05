@@ -658,6 +658,180 @@ async def execute_acp_task(
         return f"Error: {str(e)}"
 
 
+async def execute_acp_execute(
+    ctx: TurnCtx,
+    mcp_clients: dict[str, MCPClient],
+    tool_call_id: str,
+    args: dict[str, Any],
+) -> str:
+    """Execute Python in the persistent kernel — the MCP `execute` tool.
+
+    Same reporting contract as the other MCP-backed tools (in_progress, then
+    completed/failed with content). The session cwd and id ride the call's
+    `_meta` so the kernel is keyed per session and starts in the session's
+    working directory — arguments the LLM never derived and cannot forge, the
+    same channel terminal and task use.
+    """
+    conn, logger = ctx.conn, ctx.logger
+    session_id = ctx.session_id
+    acp_tool_call_id = ctx.tcid(tool_call_id)
+    try:
+        await conn.session_update(
+            session_id=session_id,
+            update=ToolCallStart(
+                session_update="tool_call",
+                tool_call_id=acp_tool_call_id,
+                title="execute",
+                kind="execute",
+                status="pending",
+            ),
+        )
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(acp_tool_call_id, status="in_progress"),
+        )
+
+        logger.info(f"Executing execute tool via MCP for session {session_id}")
+        mcp_client = mcp_clients.get(session_id)
+        if not mcp_client:
+            raise RuntimeError(f"No MCP client for session {session_id}")
+        result = await mcp_client.call_tool(
+            "execute",
+            args,
+            meta={
+                "cwd": ctx.cwd,
+                "session_id": session_id,
+                "tool_call_id": acp_tool_call_id,
+                "db_uri": ctx.config.db_uri,
+            },
+        )
+
+        # Tools called INSIDE the cell wrote themselves through to
+        # subtool_calls; re-emit them for the client before execute's own
+        # completion — the ACP channel of the three-fold split.
+        await _emit_subtool_calls(ctx, acp_tool_call_id)
+
+        acp_content_blocks = mcp_content_to_acp_blocks(result.content)
+        result_content = mcp_content_to_openai_format(result.content)
+
+        status = "completed" if not getattr(result, "isError", False) else "failed"
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(
+                acp_tool_call_id,
+                status=status,
+                content=acp_content_blocks,
+            ),
+        )
+
+        return result_content
+
+    except Exception as e:
+        logger.error(f"Error executing execute tool: {e}", exc_info=True)
+        # A cell that died halfway still made real edits — rows were written
+        # through at call time, so the drain works even on a wedged kernel.
+        await _emit_subtool_calls(ctx, acp_tool_call_id)
+        await conn.session_update(
+            session_id=session_id,
+            update=update_tool_call(acp_tool_call_id, status="failed"),
+        )
+        return f"Error: {str(e)}"
+
+
+_SUBTOOL_KINDS = {
+    "edit": "edit",
+    "write": "edit",
+    "terminal": "execute",
+    "fs": "search",
+    "web": "fetch",
+    "vision": "other",
+    "memory": "search",
+    "rlm": "think",
+}
+
+
+async def _emit_subtool_calls(ctx: TurnCtx, parent_acp_id: str) -> None:
+    """Drain subtool_calls recorded by tools inside an execute cell and
+    re-emit each as a sibling ACP tool call under the execute call's window.
+
+    The client sees every edit the code made — diffs and all — even though
+    the LLM only ever called execute. Rows were written through from the
+    kernel at call time (the table is the queue), so this works even if the
+    kernel wedged mid-cell. ACP v1 has no parent field on the wire: lineage
+    lives in the table, and sub ids are ``<parent>/sub:<row>`` —
+    deterministic and collision-free.
+    """
+    if not ctx.config.db_uri:
+        return
+    try:
+        from sqlalchemy import select
+        from sqlalchemy import update as sa_update
+
+        from crow_cli.memory.db import get_engine
+        from crow_cli.memory.models import SubtoolCall
+
+        engine = get_engine(ctx.config.db_uri)
+        try:
+            with engine.begin() as conn:
+                rows = list(
+                    conn.execute(
+                        select(SubtoolCall)
+                        .where(
+                            SubtoolCall.parent_tool_call_id == parent_acp_id,
+                            SubtoolCall.emitted == 0,
+                        )
+                        .order_by(SubtoolCall.id)
+                    )
+                )
+                if rows:
+                    conn.execute(
+                        sa_update(SubtoolCall)
+                        .where(SubtoolCall.id.in_([r.id for r in rows]))
+                        .values(emitted=1)
+                    )
+        finally:
+            engine.dispose()
+    except Exception:
+        ctx.logger.warning("subtool drain failed", exc_info=True)
+        return
+
+    for row in rows:
+        payload = row.acp_payload or {}
+        sub_id = f"{parent_acp_id}/sub:{row.id}"
+        if row.result_kind == "diff":
+            title = f"{row.tool}: {payload.get('path', '')}"
+            content = [
+                tool_diff_content(
+                    path=payload.get("path", ""),
+                    new_text=payload.get("new_text", ""),
+                    old_text=payload.get("old_text"),
+                )
+            ]
+        else:
+            title = f"{row.tool}/{row.mode}" if row.mode else row.tool
+            content = []
+        status = "completed" if row.status == "completed" else "failed"
+        try:
+            await ctx.conn.session_update(
+                session_id=ctx.session_id,
+                update=ToolCallStart(
+                    session_update="tool_call",
+                    tool_call_id=sub_id,
+                    title=title,
+                    kind=_SUBTOOL_KINDS.get(row.tool, "other"),
+                    status="in_progress",
+                ),
+            )
+            await ctx.conn.session_update(
+                session_id=ctx.session_id,
+                update=update_tool_call(sub_id, status=status, content=content),
+            )
+        except Exception:
+            ctx.logger.warning(
+                f"subtool emission failed: {sub_id}", exc_info=True
+            )
+
+
 async def execute_acp_tool(
     ctx: TurnCtx,
     mcp_clients: dict[str, MCPClient],

@@ -41,6 +41,7 @@ from crow_cli.memory import get_engine, parse_agent_id, running_tasks, wire_sess
 from crow_cli.memory.writes import claim_deliveries
 from crow_cli.agent.tools import (
     execute_acp_edit,
+    execute_acp_execute,
     execute_acp_read,
     execute_acp_task,
     execute_acp_terminal,
@@ -644,6 +645,10 @@ async def _execute_tool_calls_inner(
                 )
             elif tool_name == "task":
                 result_content = await execute_acp_task(
+                    ctx, mcp_clients, llm_tool_call_id, arg_dict
+                )
+            elif tool_name == "execute":
+                result_content = await execute_acp_execute(
                     ctx, mcp_clients, llm_tool_call_id, arg_dict
                 )
             else:

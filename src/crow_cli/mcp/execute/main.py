@@ -25,19 +25,59 @@ logger = getLogger(__name__)
 _kernels: dict[str, CrowKernel] = {}
 
 
-def _kernel_context(ctx: Context) -> tuple[str, str]:
-    """Return ``(key, cwd)`` from the caller-injected ``_meta``.
+def _kernel_context(ctx: Context) -> tuple[str, str, str | None, str | None, str | None]:
+    """Return ``(key, cwd, session_id, parent_tcid, db_uri)`` from the
+    caller-injected ``_meta``.
 
     The agent injects these (``execute_acp_execute``) so the kernel is keyed
     per session and starts in the session's working directory. The Context
     parameter is filtered out of the LLM-facing schema, so the model never
-    sees — and cannot forge — either value. No meta means a bare caller: key
+    sees — and cannot forge — any of it. No meta means a bare caller: key
     and cwd fall back to the server process's cwd.
+
+    ``parent_tcid`` (the execute call's own ACP tool-call id) and ``db_uri``
+    feed the per-cell begin_cell prologue: they stamp subtool register
+    entries and point the write-through sink at crow.db so the server-side
+    drain can re-emit in-cell tool calls to the ACP client.
     """
     meta = ctx.request_context.meta if ctx.request_context else None
     cwd = getattr(meta, "cwd", None) or os.getcwd()
     session_id = getattr(meta, "session_id", None)
-    return (session_id or cwd, cwd)
+    parent_tcid = getattr(meta, "tool_call_id", None)
+    db_uri = getattr(meta, "db_uri", None)
+    return (session_id or cwd, cwd, session_id, parent_tcid, db_uri)
+
+
+# ~5k tokens — the same discipline as terminal's MAX_CMD_OUTPUT_SIZE.
+MAX_OUTPUT_CHARS = 20_000
+_TAIL_CHARS = 4_000
+
+
+def _cap(output: str) -> str:
+    """Head+tail truncation so one runaway cell can't eat the context."""
+    if len(output) <= MAX_OUTPUT_CHARS:
+        return output
+    head = MAX_OUTPUT_CHARS - _TAIL_CHARS
+    elided = len(output) - head - _TAIL_CHARS
+    return f"{output[:head]}\n... [{elided} chars elided] ...\n{output[-_TAIL_CHARS:]}"
+
+
+def _prologue(
+    session_id: str | None, parent_tcid: str | None, db_uri: str | None
+) -> str:
+    """Identity injection prepended to every non-empty cell: stamps the
+    subtool register before the model's code runs. Fail-open — a broken
+    prologue warns on stderr and the cell still runs; the tools work
+    without identity (entries record None)."""
+    return (
+        "try:\n"
+        "    from crow_cli.tools.register import begin_cell as _crow_begin\n"
+        f"    _crow_begin(session_id={session_id!r},"
+        f" parent_tool_call_id={parent_tcid!r}, db_uri={db_uri!r})\n"
+        "except Exception as _crow_e:\n"
+        "    import sys as _crow_sys\n"
+        "    print(f'crow prologue: {_crow_e}', file=_crow_sys.stderr)\n"
+    )
 
 
 def get_kernel(key: str, cwd: str) -> CrowKernel:
@@ -108,7 +148,7 @@ async def execute(
         execute("", reset=True)           # fresh kernel, all state cleared
     """
     try:
-        key, cwd = _kernel_context(ctx)
+        key, cwd, session_id, parent_tcid, db_uri = _kernel_context(ctx)
 
         if reset:
             old = _kernels.pop(key, None)
@@ -119,8 +159,10 @@ async def execute(
                 return "Kernel reset successfully. All previous state lost."
 
         kernel = get_kernel(key, cwd)
+        if code.strip():
+            code = _prologue(session_id, parent_tcid, db_uri) + code
         output = kernel.execute(code)
-        return output if output else "[no output]"
+        return _cap(output) if output else "[no output]"
 
     except Exception as e:
         logger.error(f"Execute error: {e}", exc_info=True)

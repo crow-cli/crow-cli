@@ -134,3 +134,33 @@ class Message(Base):
     prompt_tokens = Column(Integer, nullable=True)
     completion_tokens = Column(Integer, nullable=True)
     total_tokens = Column(Integer, nullable=True)
+
+
+class SubtoolCall(Base):
+    """One tool call made inside an execute cell — a subtool of the omni-tool.
+
+    Written through from the in-kernel register (crow_cli.tools.register) at
+    call time; the server-side drain (agent/tools.py _emit_subtool_calls)
+    selects unemitted rows by parent_tool_call_id, renders acp_payload into
+    sibling ACP tool calls, and flips emitted. The table is the queue: rows
+    survive a wedged kernel. Heavy bytes (images) never land here — they go
+    to the ImageStore by content-addressed key and llm_images holds refs.
+    """
+
+    __tablename__ = "subtool_calls"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(Text, nullable=True, index=True)
+    agent_id = Column(Text, nullable=True)
+    parent_tool_call_id = Column(Text, nullable=True, index=True)
+    cell_seq = Column(Integer, nullable=True)
+    tool = Column(Text, nullable=False)
+    mode = Column(Text, nullable=True)
+    args = Column(JSON, nullable=False, default=dict)
+    status = Column(Text, nullable=False)  # completed | failed
+    result_kind = Column(Text, nullable=False, default="text")  # diff|image|text|error
+    acp_payload = Column(JSON, nullable=True)
+    llm_images = Column(JSON, nullable=False, default=list)  # ImageStore refs
+    error = Column(Text, nullable=True)
+    emitted = Column(Integer, nullable=False, default=0)
+    created_at = Column(Text, nullable=False, default=now_iso)

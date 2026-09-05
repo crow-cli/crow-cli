@@ -41,18 +41,32 @@ it and background work never bleeds into the next cell's drain.
        already pure + raising), returns EditResult, raises EditError. Prelude
        wired into execute get_kernel (start AND reset). Tests: 9 unit +
        4 real-kernel, all green; existing test_execute.py unaffected.
-- [ ] 3. `subtool_calls` table (memory/models.py + migration, migrate_v6
-       pattern): session_id, agent_id, parent_tool_call_id, cell_seq, tool,
-       mode, args JSON (FULL fidelity — heavy bytes go to ImageStore by ref,
-       never truncate/hash), acp_payload JSON, result_kind, result_ref,
-       status, error, emitted, created_at. Register sink writes through at
-       call time — the table is the queue, records survive a wedged kernel.
-- [ ] 4. Drain + emission: execute/main.py reads parent tcid from _meta
-       (agent/tools.py adds it), injects the begin_cell prologue, drains in
-       a finally (partial cells still made real edits), emits ACP updates,
-       marks emitted. react.py: prepend image_urls from drained vision refs
-       (hydrate via crow_cli.memory like session messages). Cap execute
-       output ~5k tokens.
+- [x] 3. `subtool_calls` table (memory/models.py — no migration script:
+       create_database is create_all, additive, and runs on production
+       startup at agent/memory.py + tui/db.py): session_id, agent_id,
+       parent_tool_call_id, cell_seq, tool, mode, args JSON (FULL fidelity —
+       heavy bytes go to ImageStore by ref, never truncate/hash),
+       acp_payload JSON, result_kind, status, error, emitted, created_at.
+       Register sink writes through at call time (begin_cell gained db_uri;
+       cell_seq auto from IPython execution_count) — the table is the queue,
+       records survive a wedged kernel. Sink is fail-open: unwritable DB
+       logs a warning, the in-memory entry still stands, the tool works.
+- [x] 4. Drain + emission: execute/main.py reads parent tcid + db_uri from
+       _meta (agent/tools.py execute_acp_execute injects both), prepends the
+       begin_cell prologue to every non-empty cell (fail-open), caps output
+       at ~5k tokens head+tail. execute_acp_execute drains via
+       _emit_subtool_calls BEFORE its own completion update AND in the
+       except branch (partial cells still made real edits). Emission:
+       sibling ToolCallStart (id `<parent>/sub:<row id>`, kind from
+       _SUBTOOL_KINDS, title `tool: path` for diffs else `tool/mode`) +
+       update_tool_call with tool_diff_content for diff payloads; flips
+       emitted in the same transaction as the SELECT. react.py image_url
+       prepend DEFERRED to step 7 (vision) — nothing emits images yet.
+       Tests: 6 register-db unit, 2 new real-kernel (cross-process
+       write-through, cap), 4 emission integration (focused drain x3 +
+       full e2e: scripted LLM -> react loop -> real kernel -> `await
+       edit(...)` -> row written by kernel process -> drained -> FakeConn
+       saw sibling edit call with diff -> EditResult in the tool message).
 - [ ] 5. write — diff payload, same pattern.
 - [ ] 6. fs — modes: read (FileResult; polite "use vision.file" on images),
        glob (gitignore/.venv/.node_modules-aware — pathspec), search (rg),
@@ -91,3 +105,7 @@ it and background work never bleeds into the next cell's drain.
   contextvar, never at drain time.
 - Kernel has a running loop: top-level await, never asyncio.run.
 - Drain in finally: a cell that raised halfway still made real edits.
+- SQLAlchemy trap: `Connection.execute(select(ORMClass)).scalars()` yields
+  first-column ints (Row tuples, no identity map) — drain iterates Rows
+  directly; tests use `sessionmaker` + expunge for detached attribute access.
+- fastmcp Client CallToolResult spells it `is_error`, not MCP's `isError`.

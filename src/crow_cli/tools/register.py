@@ -30,6 +30,7 @@ from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from functools import wraps
+from logging import getLogger
 from typing import Any
 
 from .results import ToolResult
@@ -53,11 +54,28 @@ def begin_cell(
     parent_tool_call_id: str | None = None,
     cell_seq: int | None = None,
     agent_id: str | None = None,
+    db_uri: str | None = None,
 ) -> None:
-    """Set the identity for the cell about to run (execute's prologue)."""
+    """Set the identity for the cell about to run (execute's prologue).
+
+    ``db_uri`` points the write-through sink at crow.db — the server
+    resolves it and injects it; the kernel reads NO config. ``cell_seq``
+    defaults to IPython's execution_count when running inside a kernel.
+    """
+    if db_uri is not None:
+        configure_sink(db_uri)
+    if cell_seq is None:
+        cell_seq = _ipython_execution_count()
     _current_cell.set(
         CellContext(session_id, parent_tool_call_id, cell_seq, agent_id)
     )
+
+
+def _ipython_execution_count() -> int | None:
+    try:
+        return get_ipython().execution_count  # noqa: F821 — IPython builtin
+    except Exception:
+        return None
 
 
 def current_cell() -> CellContext | None:
@@ -87,11 +105,74 @@ class SubtoolEntry:
 
 _entries: list[SubtoolEntry] = []
 
+# Write-through sink: the subtool_calls table is the queue — rows land at
+# call time and survive a wedged kernel. Configured by begin_cell(db_uri=...)
+# from execute's prologue; None keeps entries in kernel memory only (plain
+# Python use, tests).
+_sink_uri: str | None = None
+_sink_engine: Any = None
+
+
+def configure_sink(db_uri: str | None) -> None:
+    global _sink_uri, _sink_engine
+    db_uri = db_uri or None
+    if db_uri == _sink_uri:
+        return
+    _sink_uri = db_uri
+    if _sink_engine is not None:
+        try:
+            _sink_engine.dispose()
+        except Exception:
+            pass
+        _sink_engine = None
+
+
+def _sink():
+    global _sink_engine
+    if _sink_uri is None:
+        return None
+    if _sink_engine is None:
+        from crow_cli.memory.db import get_engine
+
+        _sink_engine = get_engine(_sink_uri)
+    return _sink_engine
+
+
+def _row_values(entry: SubtoolEntry) -> dict[str, Any]:
+    return {
+        "session_id": entry.session_id,
+        "agent_id": entry.agent_id,
+        "parent_tool_call_id": entry.parent_tool_call_id,
+        "cell_seq": entry.cell_seq,
+        "tool": entry.tool,
+        "mode": entry.mode,
+        "args": entry.args,
+        "status": entry.status,
+        "result_kind": entry.result_kind,
+        "acp_payload": entry.acp_payload,
+        "llm_images": entry.llm_images,
+        "error": entry.error,
+    }
+
 
 def record(entry: SubtoolEntry) -> None:
     _entries.append(entry)
-    # Write-through to the subtool_calls table joins here, so records
-    # survive a wedged kernel — the table is the queue.
+    engine = _sink()
+    if engine is None:
+        return
+    try:
+        from crow_cli.memory.models import SubtoolCall
+
+        with engine.begin() as conn:
+            conn.execute(
+                SubtoolCall.__table__.insert().values(**_row_values(entry))
+            )
+    except Exception:
+        # A DB failure must never break the tool call itself — the
+        # in-memory entry still stands for a kernel-side drain.
+        getLogger(__name__).warning(
+            "subtool write-through failed", exc_info=True
+        )
 
 
 def pending(cell_seq: int | None = None) -> list[SubtoolEntry]:
@@ -114,6 +195,7 @@ def drain(cell_seq: int | None = None) -> list[SubtoolEntry]:
 def clear() -> None:
     """Test hygiene."""
     _entries.clear()
+    configure_sink(None)
 
 
 def _json_safe(value: Any) -> Any:
