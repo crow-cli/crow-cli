@@ -1,5 +1,10 @@
 """Integration: tool calls made INSIDE an execute cell are re-emitted to the
-ACP client as sibling tool calls under execute's window.
+ACP client as their OWN tool calls — one synthetic call per subtool row, in
+call-record order, shaped exactly like a call the LLM made (kind, title,
+locations, rawInput = the args the code passed, content = the diff / image /
+error text). The client sees every file the code touched; the LLM sees none
+of it, only execute's printed output plus image blocks prepended iff vision
+ran.
 
 Two levels, both with REAL persistence (sqlite) and the real drain
 (_emit_subtool_calls):
@@ -13,6 +18,7 @@ Two levels, both with REAL persistence (sqlite) and the real drain
 
 import json
 import logging
+import re
 
 import pytest
 from fastmcp import Client
@@ -103,12 +109,50 @@ def _fetch_row(db_uri, row_id):
         engine.dispose()
 
 
+def _fetch_rows(db_uri):
+    from sqlalchemy import select
+    from sqlalchemy.orm import sessionmaker
+
+    from crow_cli.memory.db import get_engine
+    from crow_cli.memory.models import SubtoolCall
+
+    engine = get_engine(db_uri)
+    try:
+        with sessionmaker(engine)() as session:
+            rows = session.execute(select(SubtoolCall)).scalars().all()
+            session.expunge_all()
+            return rows
+    finally:
+        engine.dispose()
+
+
 async def _make_ctx(config, session, conn, turn_id="turn-1"):
     from crow_cli.agent.context import TurnCtx
 
     return TurnCtx(
         conn=conn, config=config, session=session, turn_id=turn_id, logger=logger
     )
+
+
+def _tool_call_updates(conn):
+    return [
+        u
+        for u in conn.updates
+        if getattr(u, "session_update", None) in ("tool_call", "tool_call_update")
+    ]
+
+
+def _by_id(conn, tool_call_id):
+    return [u for u in _tool_call_updates(conn) if u.tool_call_id == tool_call_id]
+
+
+def _sub_ids_in_order(conn):
+    """Synthetic subtool ids, in first-appearance (call-record) order."""
+    seen = []
+    for u in _tool_call_updates(conn):
+        if u.tool_call_id not in seen:
+            seen.append(u.tool_call_id)
+    return seen
 
 
 async def test_drain_emits_diff_subtool_and_flips(tmp_path):
@@ -119,45 +163,59 @@ async def test_drain_emits_diff_subtool_and_flips(tmp_path):
 
     from crow_cli.agent.tools import _emit_subtool_calls
 
-    await _emit_subtool_calls(ctx, "turn-1/call_x")
+    llm_blocks = await _emit_subtool_calls(ctx, "turn-1/call_x")
 
-    # Two updates: sibling tool_call start, then completion with the diff.
-    assert len(conn.updates) == 2, conn.updates
-    start, done = conn.updates
-    sub_id = f"turn-1/call_x/sub:{row_id}"
+    assert llm_blocks == []
+
+    # The subtool got its OWN call on the wire, shaped like a real edit:
+    # pending start (kind, title, location, the args as rawInput) ->
+    # in_progress carrying the diff -> completed.
+    sub_id = f"turn-1/call_sub{row_id}"
+    start, progress, done = _by_id(conn, sub_id)
     assert start.session_update == "tool_call"
-    assert start.tool_call_id == sub_id
     assert start.kind == "edit"
+    assert start.status == "pending"
     assert start.title == "edit: /tmp/f.py"
-    assert start.status == "in_progress"
-    assert done.tool_call_id == sub_id
-    assert done.status == "completed"
-    assert len(done.content) == 1
-    block = done.content[0]
+    assert [loc.path for loc in start.locations] == ["/tmp/f.py"]
+    assert start.raw_input == {
+        "file_path": "/tmp/f.py",
+        "old_string": "a",
+        "new_string": "b",
+    }
+
+    assert progress.session_update == "tool_call_update"
+    assert progress.status == "in_progress"
+    block = progress.content[0]
     assert block.type == "diff"
     assert block.path == "/tmp/f.py"
     assert block.old_text == "a\n"
     assert block.new_text == "b\n"
 
+    assert done.status == "completed"
+    assert done.content is None
+
+    # Nothing rode execute's own id — the diff is the subtool's call.
+    assert _by_id(conn, "turn-1/call_x") == []
+
     # Emitted flipped — a second drain is a no-op.
     assert _fetch_row(config.db_uri, row_id).emitted == 1
-    conn.updates.clear()
-    await _emit_subtool_calls(ctx, "turn-1/call_x")
-    assert conn.updates == []
+    again = await _emit_subtool_calls(ctx, "turn-1/call_x")
+    assert again == []
+    assert len(_tool_call_updates(conn)) == 3
     await session.close()
 
 
-async def test_drain_emits_failed_and_non_diff_rows(tmp_path):
+async def test_drain_renders_text_and_failed_rows(tmp_path):
     config, session = await make_test_session(tmp_path)
-    ok_id = _seed_row(
+    text_id = _seed_row(
         config.db_uri,
         parent_tool_call_id="turn-1/call_y",
         tool="web",
         mode="fetch",
         result_kind="text",
-        acp_payload=None,
+        acp_payload={"text": "fetched 123 bytes"},
     )
-    bad_id = _seed_row(
+    failed_id = _seed_row(
         config.db_uri,
         parent_tool_call_id="turn-1/call_y",
         status="failed",
@@ -172,22 +230,30 @@ async def test_drain_emits_failed_and_non_diff_rows(tmp_path):
 
     await _emit_subtool_calls(ctx, "turn-1/call_y")
 
-    assert len(conn.updates) == 4
-    s1, d1, s2, d2 = conn.updates
-    assert s1.tool_call_id == f"turn-1/call_y/sub:{ok_id}"
-    assert s1.title == "web/fetch"
-    assert s1.kind == "fetch"
-    assert d1.status == "completed"
-    assert d1.content == []
-    assert s2.tool_call_id == f"turn-1/call_y/sub:{bad_id}"
-    assert d2.status == "failed"
+    assert _sub_ids_in_order(conn) == [
+        f"turn-1/call_sub{text_id}",
+        f"turn-1/call_sub{failed_id}",
+    ]
+
+    start, progress, done = _by_id(conn, f"turn-1/call_sub{text_id}")
+    assert start.title == "web/fetch"
+    assert progress.content[0].type == "content"
+    assert progress.content[0].content.type == "text"
+    assert progress.content[0].content.text == "fetched 123 bytes"
+    assert done.status == "completed"
+
+    start, progress, done = _by_id(conn, f"turn-1/call_sub{failed_id}")
+    assert start.kind == "edit"
+    assert progress.content[0].content.text == "edit failed: EditError: no match"
+    assert done.status == "failed"
     await session.close()
 
 
 async def test_drain_emits_parallel_subtools_in_row_order(tmp_path):
     """A cell that gathered three subtools wrote three rows (completion
-    order, ids assigned at insert); the drain emits siblings sorted by id
-    so the client sees them in call-record order, diffs and images mixed."""
+    order, ids assigned at insert); the wire keeps call-record order — one
+    synthetic call per row, diffs and images interleaved as the code ran
+    them."""
     import base64
 
     from crow_cli.memory.image_store import FsImageStore
@@ -198,9 +264,9 @@ async def test_drain_emits_parallel_subtools_in_row_order(tmp_path):
     key = image_key(raw, "image/png")
     FsImageStore(tmp_path / "images").put(key, raw)
 
-    ids = []
+    row_ids = []
     for i, kind in enumerate(["diff", "image", "diff"]):
-        ids.append(
+        row_ids.append(
             _seed_row(
                 config.db_uri,
                 parent_tool_call_id="turn-5/call_g",
@@ -230,13 +296,22 @@ async def test_drain_emits_parallel_subtools_in_row_order(tmp_path):
 
     llm_blocks = await _emit_subtool_calls(ctx, "turn-5/call_g")
 
-    starts = [u for u in conn.updates if u.session_update == "tool_call"]
-    assert [s.tool_call_id for s in starts] == [
-        f"turn-5/call_g/sub:{i}" for i in ids
-    ]
-    # kinds follow the row's tool: edit -> edit, vision -> other
-    assert [s.kind for s in starts] == ["edit", "other", "edit"]
-    # exactly one image block hydrated, from the middle row
+    assert _sub_ids_in_order(conn) == [f"turn-5/call_sub{r}" for r in row_ids]
+    assert len(_tool_call_updates(conn)) == 9  # three beats per call
+
+    # The middle call is the vision one: an image block, kind from the tool.
+    start, progress, done = _by_id(conn, f"turn-5/call_sub{row_ids[1]}")
+    assert start.title == "vision/file"
+    assert progress.content[0].content.type == "image"
+    assert done.status == "completed"
+
+    # The two edits carry their diffs.
+    for rid, i in ((row_ids[0], 0), (row_ids[2], 2)):
+        progress = _by_id(conn, f"turn-5/call_sub{rid}")[1]
+        assert progress.content[0].type == "diff"
+        assert progress.content[0].path == f"/tmp/p{i}.py"
+
+    # exactly one image block hydrated for the LLM, from the middle row
     assert len(llm_blocks) == 1
     assert base64.b64decode(
         llm_blocks[0]["image_url"]["url"].split(";base64,")[1]
@@ -246,13 +321,12 @@ async def test_drain_emits_parallel_subtools_in_row_order(tmp_path):
 
 async def test_parallel_gather_e2e_kernel_to_client(tmp_path):
     """One cell, asyncio.gather over two edits and a vision: the kernel
-    wrote three rows under one parent tcid, the drain emitted three
-    sibling calls (two diffs, one image), and the image block was
-    prepended to the cell's printed output — the whole pipeline holds up
-    under parallel tool calls."""
-    import numpy as np
+    wrote three rows under one parent tcid, the drain put three synthetic
+    tool calls on the wire (two edit diffs, one image) while execute's own
+    call carried only its printed output, and the image block was prepended
+    to the LLM's view — the whole pipeline holds up under parallel calls."""
     import cv2
-    from fastmcp import Client
+    import numpy as np
 
     from crow_cli.mcp.server.app import mcp
 
@@ -309,37 +383,61 @@ async def test_parallel_gather_e2e_kernel_to_client(tmp_path):
     assert stop == "done", events
 
     parent = "turn-1/call_g1"
-    subs = [
-        u
-        for u in conn.updates
-        if getattr(u, "tool_call_id", "").startswith(parent + "/sub:")
-    ]
-    assert len(subs) == 6  # three siblings x (start + completion)
-    starts = [u for u in subs if u.session_update == "tool_call"]
+    exec_updates = _by_id(conn, parent)
+    assert len(exec_updates) == 3  # pending, in_progress, completed
+    done = exec_updates[-1]
+    assert done.status == "completed"
+    # execute's own completion carries ONLY its printed output — the diffs
+    # went out as their own tool calls.
+    assert [c.type for c in done.content] == ["content"]
+    assert done.content[0].content.type == "text"
+    assert "2 32" in done.content[0].content.text
+
+    sub_ids = [i for i in _sub_ids_in_order(conn) if i != parent]
+    assert len(sub_ids) == 3
+    assert all(re.fullmatch(r"turn-1/call_sub\d+", i) for i in sub_ids), sub_ids
+    subs = [u for u in _tool_call_updates(conn) if u.tool_call_id in sub_ids]
+    assert len(subs) == 9
+
+    for tid in sub_ids:
+        start, progress, final = _by_id(conn, tid)
+        assert [start.status, progress.status, final.status] == [
+            "pending",
+            "in_progress",
+            "completed",
+        ]
+        assert start.raw_input, "the args the code passed must ride rawInput"
+
+    starts = [_by_id(conn, tid)[0] for tid in sub_ids]
     assert sorted(s.kind for s in starts) == ["edit", "edit", "other"]
-    done = [u for u in subs if u.session_update == "tool_call_update"]
-    kinds = [type(c).__name__ for u in done for c in (u.content or [])]
-    assert kinds.count("ContentToolCallContent") >= 1  # the image wrapper
+
     diffs = [
         c
-        for u in done
-        for c in (u.content or [])
-        if getattr(c, "type", None) == "diff"
+        for tid in sub_ids
+        for c in (_by_id(conn, tid)[1].content or [])
+        if c.type == "diff"
     ]
-    assert len(diffs) == 2
+    assert sorted(d.path for d in diffs) == sorted([str(a), str(b)])
+    assert {d.new_text for d in diffs} == {"ONE\n", "TWO\n"}
+
+    images = [
+        c.content
+        for tid in sub_ids
+        for c in (_by_id(conn, tid)[1].content or [])
+        if c.type == "content" and c.content.type == "image"
+    ]
+    assert len(images) == 1
+
+    # The edit calls carry the code's own arguments.
+    edit_inputs = sorted(
+        (s.raw_input["file_path"], s.raw_input["new_string"])
+        for s in starts
+        if s.kind == "edit"
+    )
+    assert edit_inputs == [(str(a), "ONE"), (str(b), "TWO")]
 
     # The row set: three, one parent, all emitted.
-    from sqlalchemy import select
-    from sqlalchemy.orm import sessionmaker
-
-    from crow_cli.memory.db import get_engine
-    from crow_cli.memory.models import SubtoolCall
-
-    engine = get_engine(config.db_uri)
-    with sessionmaker(engine)() as dbsession:
-        rows = dbsession.execute(select(SubtoolCall)).scalars().all()
-        dbsession.expunge_all()
-    engine.dispose()
+    rows = _fetch_rows(config.db_uri)
     assert len(rows) == 3
     assert {r.parent_tool_call_id for r in rows} == {parent}
     assert all(r.emitted == 1 for r in rows)
@@ -371,19 +469,18 @@ async def test_drain_ignores_other_parents(tmp_path):
 
 
 async def test_drain_emits_image_block_and_hydrates_llm(tmp_path):
-    """Image rows: the client gets a real ACP image block (bytes hydrated
-    from the ImageStore by ref), the caller gets OpenAI image_url blocks
-    for the LLM — the row itself never carried bytes."""
+    """Image rows: the client gets its own tool call wrapping a real ACP
+    image block (bytes hydrated from the ImageStore by ref), the caller gets
+    OpenAI image_url blocks for the LLM — the row itself never carried
+    bytes."""
     import base64
 
     from crow_cli.memory.image_store import FsImageStore
-
-    config, session = await make_test_session(tmp_path)
-    images_dir = tmp_path / "images"
-    store = FsImageStore(images_dir)
-    raw = b"\x89PNG-fake-but-real-bytes"
     from crow_cli.memory.messages import image_key
 
+    config, session = await make_test_session(tmp_path)
+    store = FsImageStore(tmp_path / "images")
+    raw = b"\x89PNG-fake-but-real-bytes"
     key = image_key(raw, "image/png")
     store.put(key, raw)
 
@@ -403,17 +500,16 @@ async def test_drain_emits_image_block_and_hydrates_llm(tmp_path):
 
     llm_blocks = await _emit_subtool_calls(ctx, "turn-1/call_x")
 
-    sub_id = f"turn-1/call_x/sub:{row_id}"
-    start, done = conn.updates
+    start, progress, done = _by_id(conn, f"turn-1/call_sub{row_id}")
     assert start.title == "vision/file"
-    assert start.kind == "other"
-    assert done.status == "completed"
-    wrapper = done.content[0]
+    assert start.raw_input == {"mode": "file", "path": "/tmp/shot.png"}
+    wrapper = progress.content[0]
     assert wrapper.type == "content"
     block = wrapper.content
     assert block.type == "image"
     assert block.mime_type == "image/png"
     assert base64.b64decode(block.data) == raw
+    assert done.status == "completed"
 
     # LLM channel: hydrated image_url block, data URL and all.
     assert llm_blocks == [
@@ -428,8 +524,10 @@ async def test_drain_emits_image_block_and_hydrates_llm(tmp_path):
 
 
 async def test_drain_image_missing_blob_warns_not_raises(tmp_path):
+    """A dead ref must not take the drain down: the call still goes out
+    (status completed, no content) and the LLM gets no image block."""
     config, session = await make_test_session(tmp_path)
-    _seed_row(
+    row_id = _seed_row(
         config.db_uri,
         tool="vision",
         mode="file",
@@ -445,17 +543,18 @@ async def test_drain_image_missing_blob_warns_not_raises(tmp_path):
     llm_blocks = await _emit_subtool_calls(ctx, "turn-1/call_x")
 
     assert llm_blocks == []
-    # start + completion still emitted, just with no content
-    assert len(conn.updates) == 2
-    assert conn.updates[1].content == []
+    start, progress, done = _by_id(conn, f"turn-1/call_sub{row_id}")
+    assert start.status == "pending"
+    assert progress.content is None
+    assert done.status == "completed"
     await session.close()
 
 
 async def test_execute_e2e_kernel_writes_and_loop_emits(tmp_path):
     """Full circle: LLM calls execute -> real kernel runs `await edit(...)`
-    -> kernel writes the row through -> react loop drains it -> FakeConn saw
-    a sibling edit tool call with a real diff, and the LLM's tool message
-    carries the EditResult repr."""
+    -> kernel writes the row through -> react loop drains it -> the client
+    saw an edit tool call with the diff and the code's own args, while the
+    LLM's tool message carries only what the cell printed."""
     from crow_cli.mcp.server.app import mcp
 
     import crow_cli.mcp.execute.main  # noqa: F401 — registers the tool
@@ -499,38 +598,43 @@ async def test_execute_e2e_kernel_writes_and_loop_emits(tmp_path):
     assert stop == "done", events
     assert target.read_text() == "x = 2\n"
 
-    # The sibling edit tool call rode execute's window, BEFORE execute's
-    # own completion update.
     parent = "turn-1/call_e1"
-    subs = [u for u in conn.updates if getattr(u, "tool_call_id", "").startswith(parent + "/sub:")]
-    assert len(subs) == 2, conn.updates
-    start, done = subs
-    assert start.session_update == "tool_call"
-    assert start.kind == "edit"
-    assert start.title == f"edit: {target}"
+    exec_updates = _by_id(conn, parent)
+    assert len(exec_updates) == 3  # pending, in_progress, completed
+    done = exec_updates[-1]
     assert done.status == "completed"
-    block = done.content[0]
-    assert block.type == "diff"
-    assert block.new_text == "x = 2\n"
-    exec_updates = [u for u in conn.updates if getattr(u, "tool_call_id", None) == parent]
-    assert conn.updates.index(done) < conn.updates.index(exec_updates[-1])
+    assert [c.type for c in done.content] == ["content"]
+    assert "1 1" in done.content[0].content.text
 
-    # The row was written by the KERNEL process and flipped by the drain.
-    from sqlalchemy import select
-    from sqlalchemy.orm import sessionmaker
-
-    from crow_cli.memory.db import get_engine
-    from crow_cli.memory.models import SubtoolCall
-
-    engine = get_engine(config.db_uri)
-    with sessionmaker(engine)() as dbsession:
-        rows = dbsession.execute(select(SubtoolCall)).scalars().all()
-        dbsession.expunge_all()
-    engine.dispose()
+    # The in-cell edit is its own call on the wire — a real edit tool call
+    # as far as the client is concerned.
+    rows = _fetch_rows(config.db_uri)
     assert len(rows) == 1
     assert rows[0].parent_tool_call_id == parent
     assert rows[0].session_id == SESSION_ID
     assert rows[0].emitted == 1
+
+    sub_id = f"turn-1/call_sub{rows[0].id}"
+    start, progress, final = _by_id(conn, sub_id)
+    assert start.session_update == "tool_call"
+    assert start.kind == "edit"
+    assert start.title == f"edit: {target}"
+    assert [loc.path for loc in start.locations] == [str(target)]
+    assert start.raw_input == {
+        "file_path": str(target),
+        "old_string": "x = 1",
+        "new_string": "x = 2",
+        "replace_all": False,
+    }
+    block = progress.content[0]
+    assert block.type == "diff"
+    assert block.path == str(target)
+    assert block.old_text == "x = 1\n"
+    assert block.new_text == "x = 2\n"
+    assert final.status == "completed"
+
+    # Nothing else on the wire but execute and its one subtool.
+    assert _sub_ids_in_order(conn) == [parent, sub_id]
 
     # The LLM saw the edit's numbers in its tool message — because the
     # CELL PRINTED them, not because a repr rode along.
@@ -544,11 +648,11 @@ async def test_execute_e2e_kernel_writes_and_loop_emits(tmp_path):
 async def test_vision_e2e_kernel_stores_and_loop_hydrates(tmp_path):
     """Full circle for the image channel: LLM calls execute -> real kernel
     runs `await vision(mode='file')` -> bytes land in the session
-    ImageStore, row holds refs -> drain emits an ACP image block AND
-    prepends a hydrated image_url block to the LLM's tool message."""
-    import numpy as np
+    ImageStore, row holds refs -> drain emits the vision call with an ACP
+    image block AND prepends a hydrated image_url block to the LLM's tool
+    message."""
     import cv2
-    from fastmcp import Client
+    import numpy as np
 
     from crow_cli.mcp.server.app import mcp
 
@@ -595,20 +699,32 @@ async def test_vision_e2e_kernel_stores_and_loop_hydrates(tmp_path):
 
     assert stop == "done", events
 
-    # The sibling vision call carried a real image block to the client.
     parent = "turn-1/call_v1"
-    subs = [
-        u
-        for u in conn.updates
-        if getattr(u, "tool_call_id", "").startswith(parent + "/sub:")
-    ]
-    assert len(subs) == 2, conn.updates
-    start, done = subs
-    assert start.title == "vision/file"
+    exec_updates = _by_id(conn, parent)
+    assert len(exec_updates) == 3
+    done = exec_updates[-1]
     assert done.status == "completed"
-    block = done.content[0].content
+    # execute's own content is just the printed text — the image went out
+    # on the vision call.
+    assert [c.type for c in done.content] == ["content"]
+    assert done.content[0].content.type == "text"
+    assert "image/png 64 48" in done.content[0].content.text
+
+    rows = _fetch_rows(config.db_uri)
+    assert len(rows) == 1
+    assert rows[0].result_kind == "image"
+    assert rows[0].emitted == 1
+
+    start, progress, final = _by_id(conn, f"turn-1/call_sub{rows[0].id}")
+    assert start.title == "vision/file"
+    # rawInput is the bound call — what the code passed, plus signature
+    # defaults the register applied.
+    assert start.raw_input["mode"] == "file"
+    assert start.raw_input["path"] == str(src)
+    block = progress.content[0].content
     assert block.type == "image"
     assert block.mime_type == "image/png"
+    assert final.status == "completed"
 
     # The blob is in the session ImageStore under the content-addressed key.
     images_dir = tmp_path / "images"
@@ -618,23 +734,7 @@ async def test_vision_e2e_kernel_stores_and_loop_hydrates(tmp_path):
 
     raw = blobs[0].read_bytes()
     assert blobs[0].name == image_key(raw, "image/png")
-
-    # The row holds refs, not bytes.
-    from sqlalchemy import select
-    from sqlalchemy.orm import sessionmaker
-
-    from crow_cli.memory.db import get_engine
-    from crow_cli.memory.models import SubtoolCall
-
-    engine = get_engine(config.db_uri)
-    with sessionmaker(engine)() as dbsession:
-        rows = dbsession.execute(select(SubtoolCall)).scalars().all()
-        dbsession.expunge_all()
-    engine.dispose()
-    assert len(rows) == 1
-    assert rows[0].result_kind == "image"
     assert rows[0].llm_images == [{"key": blobs[0].name, "mime": "image/png"}]
-    assert rows[0].emitted == 1
 
     # The LLM's tool message: execute's output UNMODIFIED, except the
     # hydrated image_url block PREPENDED because vision ran — the one and

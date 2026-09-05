@@ -15,11 +15,26 @@ non-paging: ipykernel pydoc falls to plain stdout).
   that's an MCP wire convention, not a Python one. NO designed reprs:
   display strings are not a channel.
 - **ACP** — what the client sees: `acp_payload()` JSON-native semantic dicts
-  recorded by `@subtool`, rendered server-side by the drain into
-  ToolCallStart/Progress (diffs via tool_diff_content, image blocks for
-  vision). `crow_cli.tools` never imports acp. ACP v1 has no parent field
-  on the wire: subcalls emit as siblings inside execute's window; lineage
-  lives in the table (+ field_meta later).
+  recorded by `@subtool`, rendered server-side by the drain into ONE
+  SYNTHETIC TOOL CALL PER ROW — the pretty face. Each goes out shaped like
+  a call the LLM made: `start_tool_call(<turn>/call_sub<row>, title,
+  kind=get_tool_kind(tool), status="pending", locations=[path],
+  raw_input=row.args)` -> in_progress carrying the artifact (diff via
+  tool_diff_content, image via tool_content(image_block), failure text via
+  tool_content(text_block)) -> completed/failed. A multi-diff payload earns
+  one call per file (`call_sub<row>_<part>`).
+  Why siblings, not a union list on execute's own call (that was built, then
+  reversed): the client renders ONE ToolCall widget per toolCallId
+  (tui/widgets/conversation.py on_acp_tool_call_update, keyed by
+  encode_tool_call_id) and post_tool_call renders a DiffView per diff
+  content — so a union list did render, but as "execute printed some
+  diffs". A diff has to arrive as the output of AN edit/write call to look
+  like what it is: attributed, titled, located, with the code's own args on
+  rawInput. The 1-1 LLM<->ACP mapping is NOT broken by synthetic ids,
+  because the LLM never sees the ACP stream — subtool calls are not
+  recorded as conversation, they are code. Lineage lives in the table
+  (parent_tool_call_id); ACP v1 has no parent field on the wire.
+  `crow_cli.tools` never imports acp.
 - **LLM** — what the model sees: WHAT THE CELL PRINTED. stdout + stderr,
   or the traceback on failure (tools raise; execute is the guard). The
   kernel drains execute_result (Out[n]) off iopub and DISCARDS it — the
@@ -65,28 +80,45 @@ it and background work never bleeds into the next cell's drain.
 - [x] 4. Drain + emission: execute/main.py reads parent tcid + db_uri from
        _meta (agent/tools.py execute_acp_execute injects both), prepends the
        begin_cell prologue to every non-empty cell (fail-open), caps output
-       at ~5k tokens head+tail. execute_acp_execute drains via
-       _emit_subtool_calls BEFORE its own completion update AND in the
-       except branch (partial cells still made real edits). Emission:
-       sibling ToolCallStart (id `<parent>/sub:<row id>`, kind from
-       _SUBTOOL_KINDS, title `tool: path` for diffs else `tool/mode`) +
-       update_tool_call with tool_diff_content for diff payloads; flips
-       emitted in the same transaction as the SELECT. react.py image_url
+       at ~5k tokens head+tail.        execute_acp_execute drains via _emit_subtool_calls BEFORE its own
+       completion update AND in the except branch (partial cells still
+       made real edits). Emission (REVISED TWICE per the plan-person:
+       siblings -> union list -> back to SIBLINGS after reading the
+       client): the drain emits one synthetic tool call per row and
+       RETURNS only llm_blocks, which prepend to the LLM view; execute's
+       own completion carries nothing but its printed output. Flips
+       emitted in the same transaction as the SELECT.
+ react.py image_url
        prepend DEFERRED to step 7 (vision) — nothing emits images yet.
        (Landed with step 7 — in execute_acp_execute itself, not react.py:
        the drain returns hydrated image_url blocks, the executor prepends
        them to the text result. react.py never needed to know.)
        Tests: 6 register-db unit, 2 new real-kernel (cross-process
-       write-through, cap), 4 emission integration (focused drain x3 +
-       full e2e: scripted LLM -> react loop -> real kernel -> `await
-       edit(...)` -> row written by kernel process -> drained -> FakeConn
-       saw sibling edit call with diff -> EditResult in the tool message).
+       write-through, cap), 8 emission integration (focused drain: diff,
+       text+failed, parallel row order, image, dead ref, other parents;
+       plus react-loop e2e with a real kernel: single edit, gather x3,
+       vision), AND ONE REAL CLIENT — tests/e2e/test_execute_acp_client.py
+       spawns a real agent subprocess (SubagentDriver: this interpreter, so
+       agent + MCP server + kernel are all live code) and asserts on the
+       session_update stream the client actually receives: a `call_sub<N>`
+       tool call with kind="edit", title, locations, rawInput = the args
+       the CODE passed, and a FileEditToolCallContent diff — while
+       execute's own completion carries only the printed text. In-process
+       tests cannot catch deployment-shaped failures (a stale MCP server
+       with no prologue, a db missing subtool_calls): everything still
+       passes while the client sees nothing. This tier can.
 - [x] 5. write — diff payload, same pattern. LANDED: returns EditResult
        (a write IS a diff — old_text "" for new files, previous content
        for overwrites; parent dirs created; binary-ish files diff against
-       empty), raises WriteError. _SUBTOOL_KINDS already mapped write ->
-       edit kind, so emission needed zero changes. 7 unit tests + ambient
-       prelude check.
+       empty), raises WriteError. Kind comes from get_tool_kind("write") =
+       "edit", so emission needed zero changes. 7 unit tests + ambient
+       prelude check. Docstring carries the print contract (the model sees
+       only what the cell prints; the client gets the diff regardless).
+       THE ORPHAN: tests/unit/test_tools_write.py was committed in
+       4223945e but write.py and its facade/PRELUDE registration were not
+       — `git commit -a` stages TRACKED files only, so a brand-new module
+       silently stays out and HEAD shipped a test importing a module that
+       did not exist. `git status` for untracked sources before committing.
 - [ ] 6. fs — modes: read (FileResult; polite "use vision.file" on images),
        glob (gitignore/.venv/.node_modules-aware — pathspec), search (rg),
        ast (ast_grep_py bindings — search AND replace; shadow-git when no
@@ -168,7 +200,11 @@ it and background work never bleeds into the next cell's drain.
   just an empty list on the wire. Check the wire, not the constructor.
 - The tools facade caches resolved FUNCTIONS into `crow_cli.tools.__dict__`,
   shadowing same-named submodules: `import crow_cli.tools.vision as vmod`
-  binds the function. Use `sys.modules["crow_cli.tools.vision"]` in tests.
+  binds the FUNCTION, not the module. Use
+  `sys.modules["crow_cli.tools.vision"]` in tests and cells. Same trap in
+  reverse under importlib.reload: reload re-executes a module in its
+  EXISTING dict, so cached facade functions survive it — purge the `_LAZY`
+  keys from `crow_cli.tools.__dict__` before resolving the names again.
 - OUT[n] IS NOT A CHANNEL (the carve-out): CrowKernel drains
   execute_result off iopub and discards it; execute returns stdout +
   stderr or the traceback. print() is how code talks to the model. Custom
@@ -180,3 +216,29 @@ it and background work never bleeds into the next cell's drain.
   print. Parallel tool calls (asyncio.gather) are first-class: contextvar
   identity inherits into tasks, every call writes its row, drain emits
   siblings in row order, image refs hydrate once.
+- PICKING UP HARNESS CHANGES MID-SESSION: the kernel imports crow_cli fresh
+  on start/reset, but a full reset throws away every variable. importlib
+  .reload IN A CELL is the cheap path — reload crow_cli.tools.{results,
+  register,edit,write,vision}, then the facade (purging its cache), rebind
+  the names, and RE-APPLY begin_cell with the identity captured before the
+  reload: reloading register re-creates its contextvar and drops
+  _sink_uri/_images_dir, silently killing the rail for the rest of the
+  cell. Verified live — a docstring changed with the edit tool showed up in
+  the same kernel, execution_count unchanged.
+- DEPLOYMENT SHAPE — the rail needs THREE processes on this tree's code and
+  only one of them is the kernel: the AGENT (meta injection + drain), the
+  MCP SERVER (prologue + sink config) and the KERNEL (the tools). A live
+  session diagnosed here had an agent from the main tree (no drain at all)
+  and an MCP server started 06:01, before _prologue landed at 08:02 — so no
+  begin_cell, `register.current_cell()` None, zero rows, zero diffs, and
+  every in-process test still green. Detect from inside a cell:
+  `"_crow_begin" in globals()` (the prologue's own import) and
+  `sys.modules["crow_cli.tools.register"].current_cell()`. Fix: restart the
+  agent from this tree's venv; server and kernel follow.
+- A spawned child agent comes up with ZERO tools unless the client passes
+  mcp_servers to session/new — cli/main.py does
+  `fastmcp_config_to_acp_servers(config.mcp_servers)`, while
+  SubagentDriver.new_session defaults to []. With no tools the model emits
+  its tool call as TEXT and the turn ends at once: looks like a model
+  failure, is a wiring failure. Read the child's "Created session ... with
+  N tools" log line first.

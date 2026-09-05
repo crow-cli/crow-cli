@@ -18,12 +18,14 @@ from acp import (
 from acp.helpers import (
     start_edit_tool_call,
     start_read_tool_call,
+    start_tool_call,
     tool_content,
     tool_diff_content,
     update_tool_call,
 )
 from acp.schema import (
     TerminalToolCallContent,
+    ToolCallLocation,
     ToolCallProgress,
     ToolCallStart,
     ToolKind,
@@ -708,10 +710,11 @@ async def execute_acp_execute(
         )
 
         # Tools called INSIDE the cell wrote themselves through to
-        # subtool_calls; re-emit them for the client before execute's own
-        # completion — the ACP channel of the three-fold split. The drain
-        # returns the LLM channel: hydrated image_url blocks (vision refs)
-        # PREPENDED to execute's text so the model sees what the code saw.
+        # subtool_calls; the drain emits each as its OWN ACP tool call —
+        # diff content, args, locations — so the client sees every file the
+        # code touched. It returns the LLM channel: hydrated image_url
+        # blocks PREPENDED to execute's text, the one addition to what the
+        # cell printed.
         image_blocks = await _emit_subtool_calls(ctx, acp_tool_call_id)
 
         acp_content_blocks = mcp_content_to_acp_blocks(result.content)
@@ -745,18 +748,6 @@ async def execute_acp_execute(
         return f"Error: {str(e)}"
 
 
-_SUBTOOL_KINDS = {
-    "edit": "edit",
-    "write": "edit",
-    "terminal": "execute",
-    "fs": "search",
-    "web": "fetch",
-    "vision": "other",
-    "memory": "search",
-    "rlm": "think",
-}
-
-
 def _images_dir(config) -> str:
     """Session ImageStore directory — same derivation as agent/memory.py:
     sqlite -> beside the db file; other backends -> beside the config."""
@@ -768,20 +759,82 @@ def _images_dir(config) -> str:
     return str(Path(config.config_dir) / "images")
 
 
+def _subtool_id(ctx: TurnCtx, row_id: int, part: int = 0) -> str:
+    """Synthetic ACP toolCallId for a call made inside an execute cell.
+
+    Shaped like every other id on the wire (``<turn>/call_...``) so the
+    client renders it as the tool call it stands for; the row id keeps it
+    deterministic and collision-free, and ``part`` splits a multi-diff row
+    into one call per file.
+    """
+    suffix = f"_{part}" if part else ""
+    return ctx.tcid(f"call_sub{row_id}{suffix}")
+
+
+async def _emit_subtool_call(
+    ctx: TurnCtx,
+    sub_id: str,
+    row: Any,
+    title: str,
+    kind: ToolKind,
+    *,
+    path: str | None = None,
+    content: list | None = None,
+) -> None:
+    """Put one in-cell tool call on the wire.
+
+    Three beats, the same ones crow sends for a real edit/write call:
+    pending (carrying the args the code passed as ``rawInput`` plus the file
+    location), in_progress with the artifact (diff / image / error text),
+    then the final status. The client cannot tell this from a call the LLM
+    made — which is the point: the user sees every file the code touched.
+    """
+    status = "completed" if row.status == "completed" else "failed"
+    try:
+        await ctx.conn.session_update(
+            session_id=ctx.session_id,
+            update=start_tool_call(
+                sub_id,
+                title,
+                kind=kind,
+                status="pending",
+                locations=[ToolCallLocation(path=path)] if path else None,
+                raw_input=row.args or None,
+            ),
+        )
+        await ctx.conn.session_update(
+            session_id=ctx.session_id,
+            update=update_tool_call(sub_id, status="in_progress", content=content),
+        )
+        await ctx.conn.session_update(
+            session_id=ctx.session_id,
+            update=update_tool_call(sub_id, status=status),
+        )
+    except Exception:
+        ctx.logger.warning(f"subtool emission failed: {sub_id}", exc_info=True)
+
+
 async def _emit_subtool_calls(ctx: TurnCtx, parent_acp_id: str) -> list[dict]:
-    """Drain subtool_calls recorded by tools inside an execute cell and
-    re-emit each as a sibling ACP tool call under the execute call's window.
+    """Drain subtool_calls recorded by tools inside an execute cell and emit
+    each as its OWN ACP tool call — the client's view of the work the code
+    did, even though the LLM only ever called execute.
 
-    The client sees every edit the code made — diffs and all — even though
-    the LLM only ever called execute. Rows were written through from the
-    kernel at call time (the table is the queue), so this works even if the
-    kernel wedged mid-cell. ACP v1 has no parent field on the wire: lineage
-    lives in the table, and sub ids are ``<parent>/sub:<row>`` —
-    deterministic and collision-free.
+    Two channels, deliberately different:
 
-    Returns the LLM channel: hydrated ``image_url`` blocks for image rows
-    (bytes fetched from the ImageStore by the refs the kernel wrote), for
-    the caller to PREPEND to execute's text result.
+    * ACP gets the pretty face — one synthetic tool call per artifact,
+      shaped exactly like a real edit/write call (kind, title, locations,
+      ``rawInput`` = the args the code passed, content = the diff / image /
+      error text) so the client renders a diff view per file changed.
+    * The LLM gets NONE of this. It sees execute's stdout and, when a vision
+      tool ran, the hydrated image_url blocks this returns for the caller to
+      PREPEND. Subtools are code, not conversation.
+
+    Lineage lives in the table (parent_tool_call_id); ACP v1 has no parent
+    field on the wire, so the synthetic ids carry the turn prefix like every
+    other call and the row id keeps them deterministic and collision-free.
+
+    Rows were written through from the kernel at call time (the table is the
+    queue), so this works even if the kernel wedged mid-cell.
     """
     if not ctx.config.db_uri:
         return []
@@ -821,29 +874,47 @@ async def _emit_subtool_calls(ctx: TurnCtx, parent_acp_id: str) -> list[dict]:
     store = None  # resolved lazily — only image rows touch the store
     for row in rows:
         payload = row.acp_payload or {}
-        sub_id = f"{parent_acp_id}/sub:{row.id}"
-        content = []
+        kind = get_tool_kind(row.tool)
+        title = f"{row.tool}/{row.mode}" if row.mode else row.tool
         if row.result_kind == "diff":
-            title = f"{row.tool}: {payload.get('path', '')}"
-            content = [
-                tool_diff_content(
-                    path=payload.get("path", ""),
-                    new_text=payload.get("new_text", ""),
-                    old_text=payload.get("old_text"),
+            # A multi-diff payload (one call, many files — the fs ast
+            # rewrite) earns one synthetic call per file: the client renders
+            # a diff view per artifact, attributed to the call that made it.
+            diffs = (
+                payload.get("diffs") or []
+                if payload.get("content") == "multi-diff"
+                else [payload]
+            )
+            for part, d in enumerate(diffs):
+                path = d.get("path", "")
+                await _emit_subtool_call(
+                    ctx,
+                    _subtool_id(ctx, row.id, part),
+                    row,
+                    title=f"{row.tool}: {path}",
+                    kind=kind,
+                    path=path,
+                    content=[
+                        tool_diff_content(
+                            path=path,
+                            new_text=d.get("new_text", ""),
+                            old_text=d.get("old_text"),
+                        )
+                    ],
                 )
-            ]
         elif row.result_kind == "image":
-            title = f"{row.tool}/{row.mode}" if row.mode else row.tool
             import base64
 
             if store is None:
-                from crow_cli.memory.image_store import resolve_image_store
                 from pathlib import Path
+
+                from crow_cli.memory.image_store import resolve_image_store
 
                 store = resolve_image_store(
                     ctx.config.image_store.get("s3"),
                     Path(_images_dir(ctx.config)),
                 )
+            blocks = []
             for ref in row.llm_images or []:
                 data = store.get(ref.get("key", ""))
                 if data is None:
@@ -851,36 +922,32 @@ async def _emit_subtool_calls(ctx: TurnCtx, parent_acp_id: str) -> list[dict]:
                     continue
                 mime = ref.get("mime", "image/png")
                 b64 = base64.b64encode(data).decode()
-                # ToolCallProgress.content takes ContentToolCallContent
-                # wrappers, not bare content blocks — tool_content() wraps.
-                content.append(tool_content(image_block(data=b64, mime_type=mime)))
+                blocks.append(tool_content(image_block(data=b64, mime_type=mime)))
                 llm_blocks.append(
                     {
                         "type": "image_url",
                         "image_url": {"url": f"data:{mime};base64,{b64}"},
                     }
                 )
+            await _emit_subtool_call(
+                ctx,
+                _subtool_id(ctx, row.id),
+                row,
+                title=title,
+                kind=kind,
+                content=blocks or None,
+            )
         else:
-            title = f"{row.tool}/{row.mode}" if row.mode else row.tool
-        status = "completed" if row.status == "completed" else "failed"
-        try:
-            await ctx.conn.session_update(
-                session_id=ctx.session_id,
-                update=ToolCallStart(
-                    session_update="tool_call",
-                    tool_call_id=sub_id,
-                    title=title,
-                    kind=_SUBTOOL_KINDS.get(row.tool, "other"),
-                    status="in_progress",
-                ),
+            text = payload.get("text") or (
+                f"{title} failed: {row.error}" if row.status == "failed" else ""
             )
-            await ctx.conn.session_update(
-                session_id=ctx.session_id,
-                update=update_tool_call(sub_id, status=status, content=content),
-            )
-        except Exception:
-            ctx.logger.warning(
-                f"subtool emission failed: {sub_id}", exc_info=True
+            await _emit_subtool_call(
+                ctx,
+                _subtool_id(ctx, row.id),
+                row,
+                title=title,
+                kind=kind,
+                content=[tool_content(text_block(text))] if text else None,
             )
     return llm_blocks
 
