@@ -163,5 +163,93 @@ async def test_output_capped(mcp_app):
     assert text.rstrip().endswith("AAAA")
 
 
+async def test_reload_is_ambient_on_start(mcp_app):
+    """PRELUDE calls reload(): the name is bound, and the tools came from
+    it — reload re-resolves them into the kernel's namespace."""
+    out = await _call(mcp_app, "print(reload.__module__, edit.__module__)")
+    assert out.strip() == "crow_cli.tools crow_cli.tools.edit"
+
+
+async def test_reload_re_executes_and_purges_the_facade_cache(mcp_app):
+    """The trap reload() exists for: importlib.reload re-executes a module
+    in its EXISTING dict, so the facade's cached function survives it and
+    callers keep running the old code forever."""
+    code = (
+        "import sys\n"
+        "import crow_cli.tools as T\n"
+        "before = sys.modules['crow_cli.tools.edit'].edit\n"
+        "T.__dict__['edit'] = 'STALE'\n"
+        "reload()\n"
+        "after = sys.modules['crow_cli.tools.edit'].edit\n"
+        "print(before is after, T.__dict__.get('edit') == 'STALE')\n"
+        "print(T.edit.__module__, edit is after)"
+    )
+    out = await _call(mcp_app, code)
+    assert out.strip().splitlines() == [
+        "False False",
+        "crow_cli.tools.edit True",
+    ]
+
+
+async def test_reload_preserves_the_identity_rail(mcp_app, tmp_path):
+    """Reloading register re-creates its identity contextvar and drops the
+    sink and images_dir the per-cell prologue just set. Without capture-and-
+    reapply, a mid-cell reload would silently stop write-through for the
+    rest of the cell — no rows, no diffs, no error anywhere."""
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import sessionmaker
+
+    from crow_cli.memory.db import create_database
+    from crow_cli.memory.models import SubtoolCall
+
+    db_uri = f"sqlite:///{tmp_path}/crow.db"
+    create_database(db_uri)
+    images_dir = tmp_path / "images"
+    target = tmp_path / "f.txt"
+    target.write_text("one\n")
+
+    code = (
+        "from crow_cli.tools import register\n"
+        "before = register.current_cell()\n"
+        "reload()\n"  # mid-cell: the prologue already stamped identity
+        "after = register.current_cell()\n"
+        # Not `before == after`: reload re-creates the CellContext class, so
+        # dataclass eq fails on class identity. The values are the contract.
+        "fields = lambda c: (c.session_id, c.parent_tool_call_id, c.cell_seq,"
+        " c.agent_id)\n"
+        "print(fields(before) == fields(after), after.parent_tool_call_id,"
+        " register._sink_uri is not None, register._images_dir)\n"
+        f"r = await edit({str(target)!r}, 'one', 'ONE')\n"
+        "print(r.added)"
+    )
+    async with Client(mcp_app) as client:
+        result = await client.call_tool(
+            "execute",
+            {"code": code},
+            meta={
+                "cwd": str(tmp_path),
+                "session_id": "sess-reload-rail",
+                "tool_call_id": "turn-9/call_r",
+                "db_uri": db_uri,
+                "images_dir": str(images_dir),
+            },
+        )
+    assert result.is_error is False, result.content
+    lines = result.content[0].text.strip().splitlines()
+    assert lines[0] == f"True turn-9/call_r True {images_dir}"
+    assert lines[1] == "1"
+
+    # The edit made AFTER the reload still wrote its row through: the rail
+    # survived, which is the whole point of re-applying identity.
+    engine = create_engine(db_uri)
+    with sessionmaker(engine)() as session:
+        rows = session.execute(select(SubtoolCall)).scalars().all()
+        session.expunge_all()
+    engine.dispose()
+    assert len(rows) == 1
+    assert rows[0].parent_tool_call_id == "turn-9/call_r"
+    assert rows[0].tool == "edit" and rows[0].status == "completed"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

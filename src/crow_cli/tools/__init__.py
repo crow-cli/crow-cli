@@ -9,10 +9,12 @@ described in crow_cli.tools.results.
 Attributes resolve LAZILY (PEP 562), same pattern as crow_cli.mcp: the
 package import stays cheap until a tool is actually used.
 
-PRELUDE is the zero-day import line execute runs on kernel start/reset so
-these names are ambient — part of Python's standard library as far as the
-agent is concerned. help(tool) works out of the box: ipykernel's pydoc
-falls to plain stdout, nothing pages.
+PRELUDE is the zero-day import line execute runs on kernel start/reset: it
+calls :func:`reload`, which re-imports every tool module from source and
+binds the names into the caller's namespace. So the tools are ambient —
+part of Python's standard library as far as the agent is concerned — and no
+cached module state survives a reset. help(tool) works out of the box:
+ipykernel's pydoc falls to plain stdout, nothing pages.
 """
 
 _LAZY = {
@@ -21,9 +23,81 @@ _LAZY = {
     "write": ("crow_cli.tools.write", "write"),
 }
 
-PRELUDE = "from crow_cli.tools import edit, vision, write"
+PRELUDE = "from crow_cli.tools import reload\nreload()"
 
-__all__ = [*_LAZY, "PRELUDE"]
+__all__ = [*_LAZY, "PRELUDE", "reload"]
+
+
+def reload() -> None:
+    """Re-import every tool module from source, in THIS running kernel.
+
+    The workflow for iterating on crow_cli.tools mid-session: edit a tool,
+    call ``reload()``, and the next line runs the new code — no kernel
+    reset, so variables, imports and cwd all survive. PRELUDE calls it on
+    every kernel start and reset, so cached module state never carries over.
+
+    Four things make this more than a loop of ``importlib.reload``:
+
+    * the facade is LAZY, so a fresh kernel has imported nothing but this
+      package — each submodule is imported if absent, reloaded if present;
+    * reload re-executes a module in its EXISTING dict, so this package's
+      cached facade functions would survive it — they are purged;
+    * names are re-resolved from the fresh submodules and bound into the
+      CALLER's globals (the kernel's user namespace), including ``reload``
+      itself, so the next call runs the new one;
+    * reloading ``register`` re-creates its identity contextvar and drops
+      the sink/images_dir the per-cell prologue set, which would silently
+      kill the subtool rail for the rest of the cell — the identity is
+      captured first and re-applied after.
+
+    Scope is ``crow_cli.tools.*`` only: the subtools, which is what runs in
+    here. The MCP server (execute's prologue, output cap) and the agent
+    (the drain, ACP emission) are separate long-lived processes — changes
+    there need a restart, and changes to modules the tools import from
+    (crow_cli.mcp.editor's engine, crow_cli.memory) need a kernel reset.
+    """
+    import importlib
+    import sys
+
+    caller = sys._getframe(1).f_globals
+
+    register = sys.modules.get("crow_cli.tools.register")
+    identity = None
+    if register is not None:
+        identity = (
+            register.current_cell(),
+            register._sink_uri,
+            register._images_dir,
+        )
+
+    # Import-if-absent, reload-if-present: the facade is lazy, so a fresh
+    # kernel has imported nothing but this package yet.
+    for name in ("results", "register", *_LAZY):
+        module_name = f"crow_cli.tools.{name}"
+        module = sys.modules.get(module_name)
+        if module is None:
+            importlib.import_module(module_name)
+        else:
+            importlib.reload(module)
+
+    package = importlib.reload(sys.modules[__name__])
+    for key in [k for k in list(package.__dict__) if k in package._LAZY]:
+        del package.__dict__[key]  # reload kept the stale cache — purge it
+
+    for name, (module_name, attr) in package._LAZY.items():
+        caller[name] = getattr(importlib.import_module(module_name), attr)
+    caller["reload"] = package.reload
+
+    cell, sink_uri, images_dir = identity or (None, None, None)
+    if cell is not None:
+        sys.modules["crow_cli.tools.register"].begin_cell(
+            session_id=cell.session_id,
+            parent_tool_call_id=cell.parent_tool_call_id,
+            cell_seq=cell.cell_seq,
+            agent_id=cell.agent_id,
+            db_uri=sink_uri,
+            images_dir=images_dir,
+        )
 
 
 def __getattr__(name):
@@ -39,4 +113,4 @@ def __getattr__(name):
 
 
 def __dir__():
-    return sorted(set(globals()) | set(_LAZY))
+    return sorted(set(globals()) | set(_LAZY) | {"reload"})

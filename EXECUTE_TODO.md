@@ -119,6 +119,15 @@ it and background work never bleeds into the next cell's drain.
        — `git commit -a` stages TRACKED files only, so a brand-new module
        silently stays out and HEAD shipped a test importing a module that
        did not exist. `git status` for untracked sources before committing.
+- [x] 5b. `crow_cli.tools.reload()` — the self-reloading harness, wired into
+       PRELUDE so it runs on every kernel start AND reset. An agent can now
+       edit a subtool and use the new code on the next line of the same
+       cell, no reset, no restart. Tested at kernel level (3 tests in
+       tests/mcp/test_execute_prelude.py: ambient on start, facade-cache
+       purge + re-execution, identity rail preserved through a mid-cell
+       reload with a real edit writing its row afterwards). See the
+       PICKING UP HARNESS CHANGES caveat for the three traps and the two
+       test-author traps.
 - [ ] 6. fs — modes: read (FileResult; polite "use vision.file" on images),
        glob (gitignore/.venv/.node_modules-aware — pathspec), search (rg),
        ast (ast_grep_py bindings — search AND replace; shadow-git when no
@@ -216,15 +225,34 @@ it and background work never bleeds into the next cell's drain.
   print. Parallel tool calls (asyncio.gather) are first-class: contextvar
   identity inherits into tasks, every call writes its row, drain emits
   siblings in row order, image refs hydrate once.
-- PICKING UP HARNESS CHANGES MID-SESSION: the kernel imports crow_cli fresh
-  on start/reset, but a full reset throws away every variable. importlib
-  .reload IN A CELL is the cheap path — reload crow_cli.tools.{results,
-  register,edit,write,vision}, then the facade (purging its cache), rebind
-  the names, and RE-APPLY begin_cell with the identity captured before the
-  reload: reloading register re-creates its contextvar and drops
-  _sink_uri/_images_dir, silently killing the rail for the rest of the
-  cell. Verified live — a docstring changed with the edit tool showed up in
-  the same kernel, execution_count unchanged.
+- PICKING UP HARNESS CHANGES MID-SESSION is now HARNESS, not a hand recipe:
+  `crow_cli.tools.reload()` re-imports every tool module from source in the
+  LIVE kernel and rebinds the names into the kernel namespace, and PRELUDE
+  is `from crow_cli.tools import reload; reload()` — so it runs on every
+  kernel start AND every reset ("clear cached nonsense"). Mid-cell, just
+  call `reload()`: variables, imports, cwd and execution_count all survive
+  (verified live: a docstring changed with the in-kernel edit tool showed up
+  on the next line). Scope is crow_cli.tools.* — the subtools, which is
+  exactly what the kernel can own. The MCP server (prologue, output cap) and
+  the agent (drain, ACP emission) are separate long-lived processes and need
+  a restart; changes to modules the tools IMPORT (crow_cli.mcp.editor's
+  engine, crow_cli.memory) need a kernel reset. Three traps it handles:
+  * the facade is LAZY, so a fresh kernel has imported nothing but the
+    package — reload must IMPORT-if-absent, not skip (skipping then
+    `getattr(sys.modules[m], a)` = KeyError in the prelude, and the prelude
+    is best-effort so the kernel came up with NO tools and only a truncated
+    `output[:200]` warning to show for it);
+  * importlib.reload re-executes in the EXISTING dict, so the facade's
+    cached functions survive it — purge `_LAZY` keys from the package dict;
+  * reloading register re-creates its contextvar and drops
+    _sink_uri/_images_dir, silently killing the rail for the rest of the
+    cell — capture the identity first, RE-APPLY begin_cell after.
+  And one for test authors: reload creates NEW class objects, so (a) never
+  test it in-process (other modules' collection-time `from ... import
+  WriteError` + `pytest.raises` stop matching, and pytest-randomly shuffles
+  the order) — test it in the kernel subprocess; (b) don't assert
+  `before == after` on a reloaded dataclass, dataclass eq requires class
+  identity. Compare fields.
 - DEPLOYMENT SHAPE — the rail needs THREE processes on this tree's code and
   only one of them is the kernel: the AGENT (meta injection + drain), the
   MCP SERVER (prologue + sink config) and the KERNEL (the tools). A live
@@ -234,7 +262,12 @@ it and background work never bleeds into the next cell's drain.
   every in-process test still green. Detect from inside a cell:
   `"_crow_begin" in globals()` (the prologue's own import) and
   `sys.modules["crow_cli.tools.register"].current_cell()`. Fix: restart the
-  agent from this tree's venv; server and kernel follow.
+  agent from this tree's venv; server and kernel follow. A stale server also
+  pins the PRELUDE string it read at import time, so `reload` won't be
+  ambient in that kernel either — bootstrap it once with
+  `importlib.reload(sys.modules["crow_cli.tools"]).reload()` (re-executes
+  __init__ from current source WITHOUT purging sys.modules, so the identity
+  capture inside reload() still sees register).
 - A spawned child agent comes up with ZERO tools unless the client passes
   mcp_servers to session/new — cli/main.py does
   `fastmcp_config_to_acp_servers(config.mcp_servers)`, while
