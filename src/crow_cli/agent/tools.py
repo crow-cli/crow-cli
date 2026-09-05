@@ -703,16 +703,23 @@ async def execute_acp_execute(
                 "session_id": session_id,
                 "tool_call_id": acp_tool_call_id,
                 "db_uri": ctx.config.db_uri,
+                "images_dir": _images_dir(ctx.config),
             },
         )
 
         # Tools called INSIDE the cell wrote themselves through to
         # subtool_calls; re-emit them for the client before execute's own
-        # completion — the ACP channel of the three-fold split.
-        await _emit_subtool_calls(ctx, acp_tool_call_id)
+        # completion — the ACP channel of the three-fold split. The drain
+        # returns the LLM channel: hydrated image_url blocks (vision refs)
+        # PREPENDED to execute's text so the model sees what the code saw.
+        image_blocks = await _emit_subtool_calls(ctx, acp_tool_call_id)
 
         acp_content_blocks = mcp_content_to_acp_blocks(result.content)
         result_content = mcp_content_to_openai_format(result.content)
+        if image_blocks:
+            if isinstance(result_content, str):
+                result_content = [{"type": "text", "text": result_content}]
+            result_content = [*image_blocks, *result_content]
 
         status = "completed" if not getattr(result, "isError", False) else "failed"
         await conn.session_update(
@@ -750,7 +757,18 @@ _SUBTOOL_KINDS = {
 }
 
 
-async def _emit_subtool_calls(ctx: TurnCtx, parent_acp_id: str) -> None:
+def _images_dir(config) -> str:
+    """Session ImageStore directory — same derivation as agent/memory.py:
+    sqlite -> beside the db file; other backends -> beside the config."""
+    from pathlib import Path
+
+    db_uri = config.db_uri or ""
+    if db_uri.startswith("sqlite:///"):
+        return str(Path(db_uri.removeprefix("sqlite:///")).parent / "images")
+    return str(Path(config.config_dir) / "images")
+
+
+async def _emit_subtool_calls(ctx: TurnCtx, parent_acp_id: str) -> list[dict]:
     """Drain subtool_calls recorded by tools inside an execute cell and
     re-emit each as a sibling ACP tool call under the execute call's window.
 
@@ -760,9 +778,13 @@ async def _emit_subtool_calls(ctx: TurnCtx, parent_acp_id: str) -> None:
     kernel wedged mid-cell. ACP v1 has no parent field on the wire: lineage
     lives in the table, and sub ids are ``<parent>/sub:<row>`` —
     deterministic and collision-free.
+
+    Returns the LLM channel: hydrated ``image_url`` blocks for image rows
+    (bytes fetched from the ImageStore by the refs the kernel wrote), for
+    the caller to PREPEND to execute's text result.
     """
     if not ctx.config.db_uri:
-        return
+        return []
     try:
         from sqlalchemy import select
         from sqlalchemy import update as sa_update
@@ -793,11 +815,14 @@ async def _emit_subtool_calls(ctx: TurnCtx, parent_acp_id: str) -> None:
             engine.dispose()
     except Exception:
         ctx.logger.warning("subtool drain failed", exc_info=True)
-        return
+        return []
 
+    llm_blocks: list[dict] = []
+    store = None  # resolved lazily — only image rows touch the store
     for row in rows:
         payload = row.acp_payload or {}
         sub_id = f"{parent_acp_id}/sub:{row.id}"
+        content = []
         if row.result_kind == "diff":
             title = f"{row.tool}: {payload.get('path', '')}"
             content = [
@@ -807,9 +832,36 @@ async def _emit_subtool_calls(ctx: TurnCtx, parent_acp_id: str) -> None:
                     old_text=payload.get("old_text"),
                 )
             ]
+        elif row.result_kind == "image":
+            title = f"{row.tool}/{row.mode}" if row.mode else row.tool
+            import base64
+
+            if store is None:
+                from crow_cli.memory.image_store import resolve_image_store
+                from pathlib import Path
+
+                store = resolve_image_store(
+                    ctx.config.image_store.get("s3"),
+                    Path(_images_dir(ctx.config)),
+                )
+            for ref in row.llm_images or []:
+                data = store.get(ref.get("key", ""))
+                if data is None:
+                    ctx.logger.warning(f"image blob missing: {ref.get('key')}")
+                    continue
+                mime = ref.get("mime", "image/png")
+                b64 = base64.b64encode(data).decode()
+                # ToolCallProgress.content takes ContentToolCallContent
+                # wrappers, not bare content blocks — tool_content() wraps.
+                content.append(tool_content(image_block(data=b64, mime_type=mime)))
+                llm_blocks.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{mime};base64,{b64}"},
+                    }
+                )
         else:
             title = f"{row.tool}/{row.mode}" if row.mode else row.tool
-            content = []
         status = "completed" if row.status == "completed" else "failed"
         try:
             await ctx.conn.session_update(
@@ -830,6 +882,7 @@ async def _emit_subtool_calls(ctx: TurnCtx, parent_acp_id: str) -> None:
             ctx.logger.warning(
                 f"subtool emission failed: {sub_id}", exc_info=True
             )
+    return llm_blocks
 
 
 async def execute_acp_tool(

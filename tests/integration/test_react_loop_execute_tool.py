@@ -154,5 +154,6 @@ async def test_execute_meta_injects_session_and_cwd(tmp_path):
         "session_id": SESSION_ID,
         "tool_call_id": "turn-meta/call_x",
         "db_uri": config.db_uri,
+        "images_dir": str(tmp_path / "images"),
     }
     await session.close()

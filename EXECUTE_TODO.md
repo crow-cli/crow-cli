@@ -62,6 +62,9 @@ it and background work never bleeds into the next cell's drain.
        update_tool_call with tool_diff_content for diff payloads; flips
        emitted in the same transaction as the SELECT. react.py image_url
        prepend DEFERRED to step 7 (vision) — nothing emits images yet.
+       (Landed with step 7 — in execute_acp_execute itself, not react.py:
+       the drain returns hydrated image_url blocks, the executor prepends
+       them to the text result. react.py never needed to know.)
        Tests: 6 register-db unit, 2 new real-kernel (cross-process
        write-through, cap), 4 emission integration (focused drain x3 +
        full e2e: scripted LLM -> react loop -> real kernel -> `await
@@ -72,10 +75,33 @@ it and background work never bleeds into the next cell's drain.
        glob (gitignore/.venv/.node_modules-aware — pathspec), search (rg),
        ast (ast_grep_py bindings — search AND replace; shadow-git when no
        git detected).
-- [ ] 7. vision — modes: file, webcam (the robotics door — first class,
+- [x] 7. vision — modes: file, webcam (the robotics door — first class,
        never dropped), video later (video-frames skill as a mode: frame
        extraction -> N file results). Bytes -> ImageStore at call time;
        entries hold refs; llm_images() declares hydration.
+       LANDED (file+webcam; video still pending): signature is
+       `await vision(mode="file", path=...)` / `vision(mode="webcam",
+       device_index=6)` — explicit kwargs beat a union-args list
+       (self-documenting, `help()` reads clean, _bind_args records
+       faithfully, @subtool gained dynamic mode from the runtime arg).
+       The repr IS the LLM blob: `VisionResult(![image](crow-image://<key>),
+       mime, WxH, source)` — ~60 chars of text in Out[n], machine-
+       extractable, renders in markdown. ACP channel: acp_payload
+       {"content":"image", key, mime} -> drain hydrates bytes from the
+       ImageStore -> tool_content(image_block(...)) on the sibling call
+       (ToolCallProgress.content takes ContentToolCallContent WRAPPERS,
+       not bare blocks — pydantic silently drops them otherwise). LLM
+       channel: drain RETURNS hydrated image_url blocks; execute_acp_
+       execute PREPENDS them to the text result (step 4's deferred half —
+       done). images_dir rides the meta rail (server derives it exactly
+       like agent/memory.py: sqlite -> db parent / "images"); kernel side
+       is FsImageStore by design — the server's HybridReadStore fs
+       fallback means kernel-written blobs hydrate even with S3 primary.
+       Key scheme shared: memory/messages.py image_key() now used by BOTH
+       extract_images and vision — same bytes, same key, cross-process
+       dedupe free. cv2 runs in asyncio.to_thread (blocking C off the
+       kernel's loop). File mode keeps the old MCP tool's 1568px cap +
+       re-encode normalization.
 - [ ] 8. web — modes: search, fetch, run (playwright python bindings).
 - [ ] 9. memory — modes: list, search, sql (read-only conn -> polars
        DataFrame). Python objects, not LLM-markdown strings.
@@ -109,3 +135,10 @@ it and background work never bleeds into the next cell's drain.
   first-column ints (Row tuples, no identity map) — drain iterates Rows
   directly; tests use `sessionmaker` + expunge for detached attribute access.
 - fastmcp Client CallToolResult spells it `is_error`, not MCP's `isError`.
+- ACP pydantic SILENTLY DROPS bare content blocks in ToolCallProgress
+  .content — the union is Content|FileEdit|Terminal ToolCallContent;
+  images must ride `tool_content(image_block(...))`. No validation error,
+  just an empty list on the wire. Check the wire, not the constructor.
+- The tools facade caches resolved FUNCTIONS into `crow_cli.tools.__dict__`,
+  shadowing same-named submodules: `import crow_cli.tools.vision as vmod`
+  binds the function. Use `sys.modules["crow_cli.tools.vision"]` in tests.

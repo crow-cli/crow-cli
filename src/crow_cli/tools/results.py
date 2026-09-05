@@ -83,3 +83,43 @@ class EditResult(ToolResult):
 
 class EditError(ToolError):
     pass
+
+
+#: The repr blob doubles as the LLM-channel marker: execute's text output
+#: carries ``![image](crow-image://<key>)`` and the server-side drain
+#: hydrates the key into a real image_url block prepended to the response.
+#: ~60 chars — cheap in text, machine-extractable, renders in markdown.
+VISION_BLOB = "![image](crow-image://{key})"
+
+
+@dataclass(repr=False)
+class VisionResult(ToolResult):
+    """One captured image. Bytes live in the ImageStore under ``key``
+    (content-addressed ``<sha256hex><ext>``, same scheme as message
+    images) — the result object, the register entry, and the DB row all
+    hold refs, never bytes."""
+
+    key: str
+    mime: str
+    width: int
+    height: int
+    source: str  # original file path, or "webcam:<device_index>"
+
+    result_kind = "image"
+
+    def acp_payload(self) -> dict:
+        # Rendered server-side into acp.schema.ImageContentBlock
+        # ({"type": "image", "data": <b64>, "mimeType": ...}) — bytes
+        # hydrated from the ImageStore by key.
+        return {"content": "image", "key": self.key, "mime": self.mime}
+
+    def llm_images(self) -> list[dict]:
+        return [{"key": self.key, "mime": self.mime}]
+
+    def __repr__(self) -> str:
+        blob = VISION_BLOB.format(key=self.key)
+        return f"VisionResult({blob}, {self.mime}, {self.width}x{self.height}, {self.source})"
+
+
+class VisionError(ToolError):
+    pass

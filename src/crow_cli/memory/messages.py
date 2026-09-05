@@ -16,6 +16,16 @@ from .image_store import ImageStore
 _MIME_EXT = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
 
 
+def image_key(raw: bytes, mime: str) -> str:
+    """Content-addressed ImageStore key: ``<sha256hex><ext>``.
+
+    Shared by message extraction and the in-kernel vision tool so both
+    processes compute the SAME key for the same bytes — dupes dedupe
+    across the seam for free.
+    """
+    return f"{hashlib.sha256(raw).hexdigest()}{_MIME_EXT.get(mime, '.png')}"
+
+
 def _block_bytes(block: dict) -> tuple[bytes, str] | None:
     """Decode an inline image block (OpenAI image_url or ACP image) to bytes."""
     btype = block.get("type")
@@ -53,7 +63,7 @@ def extract_images(message: dict, store: ImageStore) -> dict:
             cleaned.append(block)
             continue
         raw, mime = decoded
-        key = f"{hashlib.sha256(raw).hexdigest()}{_MIME_EXT.get(mime, '.png')}"
+        key = image_key(raw, mime)
         store.put(key, raw)
         cleaned.append({"type": "image_ref", "path": key, "mime": mime})
     out = dict(message)

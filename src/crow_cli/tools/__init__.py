@@ -17,9 +17,10 @@ falls to plain stdout, nothing pages.
 
 _LAZY = {
     "edit": ("crow_cli.tools.edit", "edit"),
+    "vision": ("crow_cli.tools.vision", "vision"),
 }
 
-PRELUDE = "from crow_cli.tools import edit"
+PRELUDE = "from crow_cli.tools import edit, vision"
 
 __all__ = [*_LAZY, "PRELUDE"]
 

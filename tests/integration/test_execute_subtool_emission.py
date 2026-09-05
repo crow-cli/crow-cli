@@ -198,6 +198,87 @@ async def test_drain_ignores_other_parents(tmp_path):
     await session.close()
 
 
+async def test_drain_emits_image_block_and_hydrates_llm(tmp_path):
+    """Image rows: the client gets a real ACP image block (bytes hydrated
+    from the ImageStore by ref), the caller gets OpenAI image_url blocks
+    for the LLM — the row itself never carried bytes."""
+    import base64
+
+    from crow_cli.memory.image_store import FsImageStore
+
+    config, session = await make_test_session(tmp_path)
+    images_dir = tmp_path / "images"
+    store = FsImageStore(images_dir)
+    raw = b"\x89PNG-fake-but-real-bytes"
+    from crow_cli.memory.messages import image_key
+
+    key = image_key(raw, "image/png")
+    store.put(key, raw)
+
+    row_id = _seed_row(
+        config.db_uri,
+        tool="vision",
+        mode="file",
+        args={"mode": "file", "path": "/tmp/shot.png"},
+        result_kind="image",
+        acp_payload={"content": "image", "key": key, "mime": "image/png"},
+        llm_images=[{"key": key, "mime": "image/png"}],
+    )
+    conn = FakeConn()
+    ctx = await _make_ctx(config, session, conn)
+
+    from crow_cli.agent.tools import _emit_subtool_calls
+
+    llm_blocks = await _emit_subtool_calls(ctx, "turn-1/call_x")
+
+    sub_id = f"turn-1/call_x/sub:{row_id}"
+    start, done = conn.updates
+    assert start.title == "vision/file"
+    assert start.kind == "other"
+    assert done.status == "completed"
+    wrapper = done.content[0]
+    assert wrapper.type == "content"
+    block = wrapper.content
+    assert block.type == "image"
+    assert block.mime_type == "image/png"
+    assert base64.b64decode(block.data) == raw
+
+    # LLM channel: hydrated image_url block, data URL and all.
+    assert llm_blocks == [
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/png;base64,{base64.b64encode(raw).decode()}"
+            },
+        }
+    ]
+    await session.close()
+
+
+async def test_drain_image_missing_blob_warns_not_raises(tmp_path):
+    config, session = await make_test_session(tmp_path)
+    _seed_row(
+        config.db_uri,
+        tool="vision",
+        mode="file",
+        result_kind="image",
+        acp_payload={"content": "image", "key": "deadbeef.png", "mime": "image/png"},
+        llm_images=[{"key": "deadbeef.png", "mime": "image/png"}],
+    )
+    conn = FakeConn()
+    ctx = await _make_ctx(config, session, conn)
+
+    from crow_cli.agent.tools import _emit_subtool_calls
+
+    llm_blocks = await _emit_subtool_calls(ctx, "turn-1/call_x")
+
+    assert llm_blocks == []
+    # start + completion still emitted, just with no content
+    assert len(conn.updates) == 2
+    assert conn.updates[1].content == []
+    await session.close()
+
+
 async def test_execute_e2e_kernel_writes_and_loop_emits(tmp_path):
     """Full circle: LLM calls execute -> real kernel runs `await edit(...)`
     -> kernel writes the row through -> react loop drains it -> FakeConn saw
@@ -282,3 +363,109 @@ async def test_execute_e2e_kernel_writes_and_loop_emits(tmp_path):
     tool_msgs = [m for m in loaded.messages if m["role"] == "tool"]
     assert len(tool_msgs) == 1
     assert "EditResult" in str(tool_msgs[0]["content"])
+
+
+async def test_vision_e2e_kernel_stores_and_loop_hydrates(tmp_path):
+    """Full circle for the image channel: LLM calls execute -> real kernel
+    runs `await vision(mode='file')` -> bytes land in the session
+    ImageStore, row holds refs -> drain emits an ACP image block AND
+    prepends a hydrated image_url block to the LLM's tool message."""
+    import numpy as np
+    import cv2
+    from fastmcp import Client
+
+    from crow_cli.mcp.server.app import mcp
+
+    import crow_cli.mcp.execute.main  # noqa: F401 — registers the tool
+
+    config, session = await make_test_session(tmp_path)
+    await session.add_message({"role": "user", "content": "look at this"})
+
+    src = tmp_path / "shot.png"
+    frame = np.zeros((48, 64, 3), dtype=np.uint8)
+    frame[:, :] = (0, 255, 0)
+    assert cv2.imwrite(str(src), frame)
+
+    code = f"await vision(mode='file', path={str(src)!r})"
+    turn1 = [
+        tool_call_chunk(
+            0, id="call_v1", name="execute", args=json.dumps({"code": code})
+        ),
+        usage_chunk(30),
+    ]
+    turn2 = [content_chunk("It is green."), usage_chunk(10)]
+    llm = MultiTurnLLM([turn1, turn2])
+    conn = FakeConn()
+
+    async with Client(mcp) as mcp_client:
+        gen = react_loop(
+            conn=conn,
+            config=config,
+            client_capabilities=None,
+            turn_id="turn-1",
+            mcp_clients={SESSION_ID: mcp_client},
+            llm=llm,
+            tools=[],
+            sessions={AGENT_ID: session},
+            agent_id=AGENT_ID,
+            state_accumulators={},
+            logger=logger,
+            hooks=[],
+        )
+        events, stop = await drive_react_loop(gen)
+
+    assert stop == "done", events
+
+    # The sibling vision call carried a real image block to the client.
+    parent = "turn-1/call_v1"
+    subs = [
+        u
+        for u in conn.updates
+        if getattr(u, "tool_call_id", "").startswith(parent + "/sub:")
+    ]
+    assert len(subs) == 2, conn.updates
+    start, done = subs
+    assert start.title == "vision/file"
+    assert done.status == "completed"
+    block = done.content[0].content
+    assert block.type == "image"
+    assert block.mime_type == "image/png"
+
+    # The blob is in the session ImageStore under the content-addressed key.
+    images_dir = tmp_path / "images"
+    blobs = list(images_dir.iterdir())
+    assert len(blobs) == 1
+    from crow_cli.memory.messages import image_key
+
+    raw = blobs[0].read_bytes()
+    assert blobs[0].name == image_key(raw, "image/png")
+
+    # The row holds refs, not bytes.
+    from sqlalchemy import select
+    from sqlalchemy.orm import sessionmaker
+
+    from crow_cli.memory.db import get_engine
+    from crow_cli.memory.models import SubtoolCall
+
+    engine = get_engine(config.db_uri)
+    with sessionmaker(engine)() as dbsession:
+        rows = dbsession.execute(select(SubtoolCall)).scalars().all()
+        dbsession.expunge_all()
+    engine.dispose()
+    assert len(rows) == 1
+    assert rows[0].result_kind == "image"
+    assert rows[0].llm_images == [{"key": blobs[0].name, "mime": "image/png"}]
+    assert rows[0].emitted == 1
+
+    # The LLM's tool message: hydrated image_url block PREPENDED to text,
+    # and the text carries the crow-image:// blob from the repr.
+    await session.close()
+    loaded = await AgentSession.load(AGENT_ID, memory_path=config.db_uri)
+    tool_msgs = [m for m in loaded.messages if m["role"] == "tool"]
+    assert len(tool_msgs) == 1
+    content = tool_msgs[0]["content"]
+    assert isinstance(content, list)
+    assert content[0]["type"] == "image_url"
+    assert content[0]["image_url"]["url"].startswith("data:image/png;base64,")
+    text = "".join(b.get("text", "") for b in content if b["type"] == "text")
+    assert f"![image](crow-image://{blobs[0].name})" in text

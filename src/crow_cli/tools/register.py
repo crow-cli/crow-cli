@@ -55,15 +55,21 @@ def begin_cell(
     cell_seq: int | None = None,
     agent_id: str | None = None,
     db_uri: str | None = None,
+    images_dir: str | None = None,
 ) -> None:
     """Set the identity for the cell about to run (execute's prologue).
 
     ``db_uri`` points the write-through sink at crow.db — the server
-    resolves it and injects it; the kernel reads NO config. ``cell_seq``
-    defaults to IPython's execution_count when running inside a kernel.
+    resolves it and injects it; the kernel reads NO config. ``images_dir``
+    points the image sink at the session's ImageStore directory (same
+    derivation server-side: db parent / "images"). ``cell_seq`` defaults
+    to IPython's execution_count when running inside a kernel.
     """
+    global _images_dir
     if db_uri is not None:
         configure_sink(db_uri)
+    if images_dir is not None:
+        _images_dir = images_dir
     if cell_seq is None:
         cell_seq = _ipython_execution_count()
     _current_cell.set(
@@ -111,6 +117,25 @@ _entries: list[SubtoolEntry] = []
 # Python use, tests).
 _sink_uri: str | None = None
 _sink_engine: Any = None
+
+# Image sink: vision tools store bytes in the session's ImageStore at call
+# time (content-addressed keys) and results/entries/rows hold refs. The
+# server injects images_dir via begin_cell; None means no store configured
+# (plain Python use) and vision raises rather than dropping bytes.
+_images_dir: str | None = None
+
+
+def image_store():
+    """The kernel-side FsImageStore, or None when begin_cell got no
+    images_dir. Filesystem by design: the server's store may be S3 with a
+    filesystem read-fallback (HybridReadStore), so kernel-written blobs
+    hydrate either way."""
+    if _images_dir is None:
+        return None
+    from crow_cli.memory.image_store import FsImageStore
+    from pathlib import Path
+
+    return FsImageStore(Path(_images_dir))
 
 
 def configure_sink(db_uri: str | None) -> None:
@@ -194,7 +219,9 @@ def drain(cell_seq: int | None = None) -> list[SubtoolEntry]:
 
 def clear() -> None:
     """Test hygiene."""
+    global _images_dir
     _entries.clear()
+    _images_dir = None
     configure_sink(None)
 
 
@@ -236,6 +263,9 @@ def subtool(tool: str, mode: str | None = None):
         async def wrapper(*args, **kwargs):
             ctx = current_cell() or CellContext()
             call_args = _bind_args(fn, args, kwargs)
+            # Multi-mode tools (vision) pass mode as a runtime arg; the
+            # decorator's static mode is the fallback for single-mode tools.
+            call_mode = call_args.get("mode") or mode
             started = time.time()
             try:
                 result = await fn(*args, **kwargs)
@@ -243,7 +273,7 @@ def subtool(tool: str, mode: str | None = None):
                 record(
                     SubtoolEntry(
                         tool=tool,
-                        mode=mode,
+                        mode=call_mode,
                         args=call_args,
                         status="failed",
                         result_kind="error",
@@ -269,7 +299,7 @@ def subtool(tool: str, mode: str | None = None):
             record(
                 SubtoolEntry(
                     tool=tool,
-                    mode=mode,
+                    mode=call_mode,
                     args=call_args,
                     status="completed",
                     result_kind=kind,

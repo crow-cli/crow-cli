@@ -41,6 +41,11 @@ async def test_edit_is_ambient_on_start(mcp_app):
     assert "crow_cli.tools.edit.edit" in out and "EditResult" in out
 
 
+async def test_vision_is_ambient_on_start(mcp_app):
+    out = await _call(mcp_app, "vision")
+    assert "crow_cli.tools.vision.vision" in out and "VisionResult" in out
+
+
 async def test_edit_runs_and_registers(mcp_app, tmp_path):
     f = tmp_path / "hello.txt"
     f.write_text("one\ntwo\n")
@@ -119,6 +124,58 @@ async def test_identity_rail_writes_through_from_kernel(mcp_app, tmp_path):
     assert row.result_kind == "diff"
     assert row.emitted == 0
     assert target.read_text() == "x = 2\n"
+
+
+async def test_vision_writes_through_from_kernel(mcp_app, tmp_path):
+    """vision inside a real kernel: bytes land in the injected images_dir,
+    the row holds refs, and Out[n] carries the crow-image:// blob."""
+    import cv2
+    import numpy as np
+    from crow_cli.memory.db import create_database
+    from crow_cli.memory.models import SubtoolCall
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import sessionmaker
+
+    db_uri = f"sqlite:///{tmp_path}/crow.db"
+    create_database(db_uri)
+    images_dir = tmp_path / "images"
+
+    src = tmp_path / "shot.png"
+    frame = np.zeros((48, 64, 3), dtype=np.uint8)
+    frame[:, :] = (255, 0, 0)
+    assert cv2.imwrite(str(src), frame)
+
+    code = f"await vision(mode='file', path={str(src)!r})"
+    async with Client(mcp_app) as client:
+        result = await client.call_tool(
+            "execute",
+            {"code": code},
+            meta={
+                "cwd": str(tmp_path),
+                "session_id": "sess-vision",
+                "tool_call_id": "turn-8/call_v",
+                "db_uri": db_uri,
+                "images_dir": str(images_dir),
+            },
+        )
+    assert result.is_error is False
+    text = result.content[0].text
+    assert "VisionResult" in text and "![image](crow-image://" in text
+
+    blobs = list(images_dir.iterdir())
+    assert len(blobs) == 1
+
+    engine = create_engine(db_uri)
+    with sessionmaker(engine)() as session:
+        rows = session.execute(select(SubtoolCall)).scalars().all()
+        session.expunge_all()
+    engine.dispose()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row.tool == "vision" and row.mode == "file"
+    assert row.parent_tool_call_id == "turn-8/call_v"
+    assert row.result_kind == "image"
+    assert row.llm_images == [{"key": blobs[0].name, "mime": "image/png"}]
 
 
 async def test_output_capped(mcp_app):
