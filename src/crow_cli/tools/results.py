@@ -243,6 +243,10 @@ class RewriteResult(ToolResult):
     (``$CALL``) matches nested nodes, and committing overlapping edits
     corrupts the file, so the outermost match wins and the ones inside it
     are dropped — left-to-right non-overlapping, like re.sub.
+
+    A rewrite that reproduces the source counts as a match and changes no
+    file, so ``changed == 0`` with ``matches > 0`` reads as what it is: the
+    pattern hit, the rewrite was a no-op.
     """
 
     pattern: str

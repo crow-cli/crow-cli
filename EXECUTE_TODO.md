@@ -218,8 +218,8 @@ it and background work never bleeds into the next cell's drain.
        file, limit=0, empty file, CRLF, 5000-char line, latin-1 content,
        non-UTF8 FILENAME, read-only file mid-rewrite, greedy nested pattern,
        endless producer, 120KB of stderr, /usr/share and the worktree at
-       cap and uncapped). NINE bugs found and fixed, each with a regression
-       test in test_tools_fs.py (50 tests, +14):
+       cap and uncapped). FIRST RING — nine bugs found and fixed, each with
+       a regression test in test_tools_fs.py:
        (A) FileResult.shown derived from content.splitlines() -> stored field;
        (B) limit=0 rendered "showing lines 1-0" -> empty window, no notice;
        (C) overlapping ast matches spliced garbage -> _non_overlapping,
@@ -237,11 +237,32 @@ it and background work never bleeds into the next cell's drain.
            dependent with rg and deterministic with `yes`. communicate().
        (H) read-only file mid-rewrite -> partial rewrite; writability is now
            pre-flighted in the plan.
+       Then a SECOND ring, probed after the first was committed — four more,
+       each with its own regression test (54 tests, +18 total):
+       (I) limit flowed straight into `[:limit]`, so limit=-1 silently
+           dropped the last line (read) or emptied the result while still
+           claiming truncated (glob/search: cap=-1 trips `len(items) > cap`
+           on the first match). A limit is a COUNT -> FsError if negative.
+       (J) `fs("read", fifo)` HUNG: open() on a FIFO with no writer blocks,
+           in a worker thread that cannot be cancelled. `not path.is_file()`
+           -> FsError (also covers sockets and devices; a symlink to a
+           regular file still reads).
+       (K) THE KILL DID NOT REACH GRANDCHILDREN. `sh -c 'echo hit; sleep 30'`
+           timed out, sh was SIGKILLed, and `sleep` kept stdout open — so the
+           drain waited ~30s for an EOF that was not coming. Found by probing
+           the timeout path, which wedged the kernel a second time.
+           start_new_session=True + os.killpg(pid, SIGKILL): 1.00s, no orphan.
+       (L) cancellation of a streaming search left the producer running and
+           had to keep propagating CancelledError (the react loop depends on
+           it) — pinned by a test that checks pgrep before and after.
        Non-bugs pinned by probing: empty file, binary in a walk (rg skips),
        dangling symlink (rg skips), long line (capped in .text, raw in
        .content), latin-1 on mode="read" (FsError, by design — code can
-       read_bytes().decode()), .svg is text (vision refuses it, fs does not).
-       Sweep: 659 passed.
+       read_bytes().decode()), .svg is text (vision refuses it, fs does not),
+       no-op rewrite (changed=0 with matches>0 reads as "pattern hit,
+       rewrite changed nothing" — documented on RewriteResult), negative
+       offset (clamped to 1, unlike a negative limit).
+       Sweep: 663 passed.
 - [x] 7. vision — modes: file, webcam (the robotics door — first class,
        never dropped), video later (video-frames skill as a mode: frame
        extraction -> N file results). Bytes -> ImageStore at call time;
@@ -412,6 +433,27 @@ it and background work never bleeds into the next cell's drain.
   Same deadlock from the other side: stderr must NOT be a pipe nobody drains
   (a child writing more than the pipe buffer blocks and takes the loop with
   it) — fs sends stderr to a `tempfile.TemporaryFile()`.
+  AND THE KILL MUST REACH THE PROCESS GROUP: `proc.kill()` hits the direct
+  child only, so a grandchild that inherited stdout (`sh -c 'echo hit; sleep
+  30'`, or rg with a `--pre` preprocessor) keeps the pipe open and the drain
+  waits ~30s for an EOF that is not coming. Start the child with
+  `start_new_session=True` and kill with `os.killpg(proc.pid, SIGKILL)`
+  (fall back to `proc.kill()` on ProcessLookupError/PermissionError). Measured:
+  30s hang -> 1.00s, and `pgrep -f` shows no orphan. Cancellation goes through
+  the same finally, so a cancelled cell leaves nothing running either.
+- open() ON A NON-REGULAR FILE BLOCKS FOREVER. A FIFO with no writer, a
+  socket, a device: `open()` waits, and in `asyncio.to_thread` that is a
+  worker thread which CANNOT be cancelled — the cell hangs, the loop is fine,
+  and reset is the only way out. `path.is_file()` is the guard (False for
+  pipes/sockets/devices and for a dangling symlink, True for a symlink to a
+  regular file). Same class of bug as the subprocess drain: not a wrong
+  answer, a wedged kernel.
+- A LIMIT IS A COUNT, NOT A SLICE END. Passing the caller's `limit` straight
+  into `window[:limit]` means -1 silently drops the LAST line and a search
+  comes back empty while still claiming truncated (cap=-1 satisfies
+  `len(items) > cap` on the very first match). Validate at the cap helper,
+  once, for every mode. Offsetting is different: a negative or past-EOF
+  offset is clamped, because "start at the beginning" is a sane reading of it.
 - rg --json BASE64s what it cannot emit as UTF-8, and it does so for `path`
   AND for `lines` (`{"bytes": "<b64>"}` instead of `{"text": ...}`). Taking
   only `.text` yields `""`: a latin-1 match renders as an empty line, and an

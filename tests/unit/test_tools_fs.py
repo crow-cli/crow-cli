@@ -8,7 +8,9 @@ metavar-expansion behaviour gets tested at all.
 
 import asyncio
 import os
+import random
 import subprocess
+import sys
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -789,3 +791,92 @@ async def test_a_non_utf8_path_still_lands_its_row(tmp_path):
     assert "\udcff" not in text
     assert "weird_" in text and ":1: os.path.join(a, b)" in text
     text.encode("utf-8")  # a lone surrogate would raise UnicodeEncodeError
+
+
+def _living(marker: str) -> int:
+    """Processes still carrying marker in their command line. pgrep excludes
+    itself and the marker is random per run, so nothing else can match —
+    which is the whole point: `pgrep -f 'sleep 30'` from a shell matches the
+    shell that ran it."""
+    probe = subprocess.run(["pgrep", "-f", marker], capture_output=True, text=True)
+    return len(probe.stdout.split())
+
+
+@pytest.mark.asyncio
+async def test_a_negative_limit_is_refused_not_sliced(tmp_path):
+    """limit is a COUNT, not a slice end. It flowed straight into
+    ``window[:limit]``, so limit=-1 handed back the window minus its last
+    line, and a search came back EMPTY while still claiming truncated
+    (cap=-1 trips `len(items) > cap` on the very first match)."""
+    root = _tree(tmp_path / "proj")
+    for coro in (
+        fs("read", str(root / "src" / "a.py"), limit=-1),
+        fs("glob", str(root), "**/*.py", limit=-1),
+        fs("search", str(root), "alpha", limit=-1),
+        fs("ast", str(root), JOIN, limit=-1),
+    ):
+        with pytest.raises(FsError, match="limit must be >= 0"):
+            await coro
+    r = await fs("read", str(root / "src" / "a.py"), limit=0)  # 0 is legal
+    assert (r.shown, r.content) == (0, "")
+
+
+@pytest.mark.asyncio
+async def test_read_refuses_a_pipe_instead_of_blocking_forever(tmp_path):
+    """open() on a FIFO with no writer BLOCKS, and it blocks in a worker
+    thread that cannot be cancelled — a hung cell, not a slow one. is_file()
+    is False for pipes, sockets and devices, and still True for a symlink to
+    a regular file. The wait_for turns a regression into a failure."""
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+    with pytest.raises(FsError, match="Not a regular file"):
+        await asyncio.wait_for(fs("read", str(fifo)), 5)
+
+    real = tmp_path / "real.txt"
+    real.write_text("through a symlink\n")
+    link = tmp_path / "link.txt"
+    link.symlink_to(real)
+    assert (await fs("read", str(link))).content == "through a symlink"
+
+
+@pytest.mark.asyncio
+async def test_rg_stream_timeout_kills_the_whole_process_group(tmp_path, monkeypatch):
+    """The timeout has to leave nothing behind. Killing only the direct child
+    lets a grandchild keep stdout open, and the drain then waits for an EOF
+    that will not come: `sh -c 'echo hit; sleep 30'` cost a full 30s before
+    its FsError. start_new_session + killpg reaches the group."""
+    monkeypatch.setattr(sys.modules["crow_cli.tools.fs"], "_RG_TIMEOUT", 1.0)
+    nap = f"37.{random.randint(100, 999)}"
+
+    with pytest.raises(FsError, match="timed out"):
+        await _rg_stream(
+            ["sh", "-c", f"echo hit; sleep {nap}"],
+            tmp_path,
+            lambda raw: raw.decode().strip() or None,
+            5,
+        )
+
+    await asyncio.sleep(0.2)
+    assert _living(f"sleep {nap}") == 0
+
+
+@pytest.mark.asyncio
+async def test_rg_stream_cancellation_kills_the_child_and_propagates(tmp_path):
+    """A cancelled cell (escape pressed, react loop gave up) must not leave
+    the producer running, and must not swallow the CancelledError — the loop
+    above depends on it arriving."""
+    marker = f"fs-cancel-{random.randint(100000, 999999)}"
+    task = asyncio.create_task(
+        _rg_stream(
+            ["yes", marker], tmp_path, lambda raw: raw.decode().strip() or None, None
+        )
+    )
+    await asyncio.sleep(0.3)
+    assert _living(marker) > 0  # it really was running
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    await asyncio.sleep(0.2)
+    assert _living(marker) == 0

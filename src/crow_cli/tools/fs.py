@@ -35,6 +35,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import tempfile
 from pathlib import Path
 
@@ -138,7 +139,15 @@ _METAVAR = re.compile(r"\$\$\$\w+|\$\w+")
 
 
 def _cap(limit: int | None, mode: str) -> int:
-    return int(limit) if limit is not None else _DEFAULT_LIMIT[mode]
+    """The per-mode cap. A limit is a COUNT, not a slice end: negative would
+    silently drop lines off the tail (read) or empty the result while still
+    claiming truncated (glob/search), so it is refused rather than clamped."""
+    if limit is None:
+        return _DEFAULT_LIMIT[mode]
+    limit = int(limit)
+    if limit < 0:
+        raise FsError(f"limit must be >= 0, got {limit}")
+    return limit
 
 
 def _is_binary(path) -> bool:
@@ -193,6 +202,11 @@ def _read(path: Path, offset: int, limit: int) -> FileResult:
             f"Path is a directory: {path} — fs(mode='glob', path={str(path)!r})"
             " lists it"
         )
+    if not path.is_file():
+        # A pipe, socket or device: open() on a FIFO with no writer BLOCKS
+        # FOREVER, and it blocks in a worker thread that cannot be
+        # cancelled — a hung cell, not a slow one.
+        raise FsError(f"Not a regular file: {path} — nothing to read as text")
     if path.suffix.lower() in _IMAGE_EXTS:
         raise FsError(
             f"{path} is an image — vision(mode='file', path={str(path)!r}) sees it,"
@@ -293,6 +307,21 @@ def _match_items(root: Path):
     return parse
 
 
+def _kill_group(proc) -> None:
+    """SIGKILL the child's whole process group, not just the child.
+
+    A grandchild that inherited stdout keeps the pipe open after the child
+    we killed is gone, and the drain below then waits for an EOF that will
+    not arrive until it exits — ``sh -c 'echo hit; sleep 30'`` cost a full
+    30s. The child is started with start_new_session=True, so its pgid is
+    its pid.
+    """
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        proc.kill()
+
+
 async def _rg_stream(argv: list[str], root: Path, parse, cap: int | None):
     """Run rg with cwd=root and "." as the search path, STREAMING stdout.
 
@@ -305,10 +334,10 @@ async def _rg_stream(argv: list[str], root: Path, parse, cap: int | None):
       the root makes patterns and output root-relative; callers absolutize.
     * output is unbounded — a broad pattern over a big tree is gigabytes of
       JSON. ``parse`` turns a stdout line into an item (or None to skip it)
-      and the stream STOPS at ``cap`` items, killing rg mid-flight and
-      draining the pipe it was killed with, so a search cannot buffer the
-      tree in the kernel. ``cap=None`` walks everything (the ast modes must
-      see every file).
+      and the stream STOPS at ``cap`` items, killing rg's whole process
+      group mid-flight and draining the pipe it was killed with, so a search
+      cannot buffer the tree in the kernel. ``cap=None`` walks everything
+      (the ast modes must see every file).
     * stderr goes to a temporary file, not a pipe: nothing drains it while
       stdout is being read, and a full stderr buffer would deadlock rg.
 
@@ -318,7 +347,11 @@ async def _rg_stream(argv: list[str], root: Path, parse, cap: int | None):
     """
     err_file = tempfile.TemporaryFile()
     proc = await asyncio.create_subprocess_exec(
-        *argv, cwd=str(root), stdout=asyncio.subprocess.PIPE, stderr=err_file
+        *argv,
+        cwd=str(root),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=err_file,
+        start_new_session=True,  # its own process group — see _kill_group
     )
     items: list = []
     truncated = False
@@ -342,7 +375,7 @@ async def _rg_stream(argv: list[str], root: Path, parse, cap: int | None):
         raise FsError(f"ripgrep timed out after {_RG_TIMEOUT}s") from None
     finally:
         if proc.returncode is None:
-            proc.kill()
+            _kill_group(proc)
             # communicate(), NOT wait(). Breaking out of the stream early
             # leaves the StreamReader over its high-water mark, which PAUSES
             # the pipe transport: it comes off the selector, so EOF is never
