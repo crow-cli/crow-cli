@@ -770,16 +770,19 @@ _KIND_BY_RESULT: dict[str, ToolKind] = {
 error) fall back to the mode, then the tool."""
 
 
-def _subtool_id(ctx: TurnCtx, row_id: int, part: int = 0) -> str:
+def _subtool_id(ctx: TurnCtx, row_id: int) -> str:
     """Synthetic ACP toolCallId for a call made inside an execute cell.
 
     Shaped like every other id on the wire (``<turn>/call_...``) so the
     client renders it as the tool call it stands for; the row id keeps it
-    deterministic and collision-free, and ``part`` splits a multi-diff row
-    into one call per file.
+    deterministic and collision-free.
+
+    One row is one call. A tool that touches N files records N rows — that
+    is what fs rewrite does, by calling write() per changed file — so the
+    artifacts land where the diffs already live instead of megabytes of
+    whole files going into a single row.
     """
-    suffix = f"_{part}" if part else ""
-    return ctx.tcid(f"call_sub{row_id}{suffix}")
+    return ctx.tcid(f"call_sub{row_id}")
 
 
 async def _emit_subtool_call(
@@ -890,31 +893,22 @@ async def _emit_subtool_calls(ctx: TurnCtx, parent_acp_id: str) -> list[dict]:
         )
         title = f"{row.tool}/{row.mode}" if row.mode else row.tool
         if row.result_kind == "diff":
-            # A multi-diff payload (one call, many files — the fs ast
-            # rewrite) earns one synthetic call per file: the client renders
-            # a diff view per artifact, attributed to the call that made it.
-            diffs = (
-                payload.get("diffs") or []
-                if payload.get("content") == "multi-diff"
-                else [payload]
+            path = payload.get("path", "")
+            await _emit_subtool_call(
+                ctx,
+                _subtool_id(ctx, row.id),
+                row,
+                title=f"{row.tool}: {path}",
+                kind=kind,
+                path=path,
+                content=[
+                    tool_diff_content(
+                        path=path,
+                        new_text=payload.get("new_text", ""),
+                        old_text=payload.get("old_text"),
+                    )
+                ],
             )
-            for part, d in enumerate(diffs):
-                path = d.get("path", "")
-                await _emit_subtool_call(
-                    ctx,
-                    _subtool_id(ctx, row.id, part),
-                    row,
-                    title=f"{row.tool}: {path}",
-                    kind=kind,
-                    path=path,
-                    content=[
-                        tool_diff_content(
-                            path=path,
-                            new_text=d.get("new_text", ""),
-                            old_text=d.get("old_text"),
-                        )
-                    ],
-                )
         elif row.result_kind == "read":
             # Mirrors execute_acp_read: a read-kind call located at the
             # file, carrying the text the code read.

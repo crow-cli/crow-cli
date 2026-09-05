@@ -21,8 +21,10 @@ non-paging: ipykernel pydoc falls to plain stdout).
   kind=get_tool_kind(tool), status="pending", locations=[path],
   raw_input=row.args)` -> in_progress carrying the artifact (diff via
   tool_diff_content, image via tool_content(image_block), failure text via
-  tool_content(text_block)) -> completed/failed. A multi-diff payload earns
-  one call per file (`call_sub<row>_<part>`).
+  tool_content(text_block)) -> completed/failed. ONE ROW IS ONE CALL: a tool
+  that touches N files records N rows (fs rewrite does exactly that, via
+  write()), so there is no "many artifacts in one row" payload shape — it
+  was built as `multi-diff`, never gained a producer, and is now deleted.
   Why siblings, not a union list on execute's own call (that was built, then
   reversed): the client renders ONE ToolCall widget per toolCallId
   (tui/widgets/conversation.py on_acp_tool_call_update, keyed by
@@ -175,9 +177,9 @@ it and background work never bleeds into the next cell's drain.
          rewrite string, summary text). One row carrying N whole files would
          have put megabytes of JSON in a single subtool_calls row for a
          300-file rewrite; N rows put the same bytes where the diffs already
-         live. CONSEQUENCE: the drain's `content == "multi-diff"` branch now
-         has no producer — candidate for deletion (see the simplification
-         list at the bottom).
+         live. RATIFIED by the plan-personified, and the consequence is now
+         acted on: the drain's `content == "multi-diff"` branch (and
+         `_subtool_id`'s `part` argument) are DELETED — one row, one call.
        * NO ImageStore preimage shadow. Each per-file EditResult carries
          whole old_text/new_text into its row's acp_payload, so crow.db IS
          the undo log for a rewritten tree, whether or not it is a git
@@ -510,21 +512,31 @@ it and background work never bleeds into the next cell's drain.
   lines=1/shown=0/truncated=True while .text still rendered `1→`. Anything
   the caller reasons about (.shown, .truncated) is a stored field.
 
-## Pending decisions — these DELETE landed code, so they wait for a yes
+## Decided — the four simplification candidates (settled, not pending)
 
-1. `register._entries` / `pending()` / `drain()` are dead in production: the
-   DB table is the queue (write-through at call time, the server drains by
-   parent tcid). The in-kernel list is a second source of truth that only
-   kernel-local tests read (tests/mcp/test_execute_prelude.py asserts on
-   `drain()`, tests/unit/test_tools_*.py on `pending()`). Deleting it means
-   rewriting those assertions against the table.
-2. The drain's `content == "multi-diff"` branch has no producer since 6b
-   chose per-file write rows over one N-file payload. Delete the branch (and
-   `_subtool_id`'s `part` argument) or keep it as the documented way to emit
-   one call per artifact from a single row.
-3. `acp_payload()` is redundant for the diff tools — the drain needs exactly
-   EditResult's fields. RECOMMEND KEEP: it is what keeps crow_cli.tools
-   acp-free, and it is the seam a new artifact type plugs into.
-4. `_emit_subtool_call` sends three beats (pending / in_progress /
-   completed) where two would do. RECOMMEND KEEP at three: it is byte-for-byte
-   the shape crow sends for a real edit call, and the client merges them.
+Ruled on by the plan-personified: "do that" = delete #2, keep #1 for now,
+keep #3 and #4 as recommended, and ratify all four deviations (the three in
+6b plus glob-is-ripgrep-not-pathspec in 6a).
+
+1. `register._entries` / `pending()` / `drain()` — KEPT FOR NOW, deleted in
+   step 13 (the endgame) when the test suite is rewritten anyway. They are
+   dead in production: the DB table is the queue (write-through at call
+   time, the server drains by parent tcid), and the in-kernel list is a
+   second source of truth that only kernel-local tests read
+   (tests/mcp/test_execute_prelude.py asserts on `drain()`,
+   tests/unit/test_tools_*.py on `pending()`). Deleting it today buys
+   cleanliness and costs a dozen rewritten assertions; deleting it in 13
+   costs nothing extra. DO NOT FORGET IT — it is the only item here with a
+   future action attached.
+2. The drain's `content == "multi-diff"` branch — DELETED, along with
+   `_subtool_id`'s `part` argument. Nothing produced it once 6b chose
+   per-file write rows, and the rewrite proved N rows is the better shape:
+   the bytes land where the diffs already live instead of megabytes of
+   whole files going into one row. One row, one call.
+3. `acp_payload()` — KEPT. Redundant for the diff tools (the drain needs
+   exactly EditResult's fields), but it is what keeps crow_cli.tools
+   acp-free, and it is the seam a new artifact type plugs into — image and
+   read results both work through it.
+4. `_emit_subtool_call`'s three beats (pending / in_progress / completed) —
+   KEPT at three where two would do: byte-for-byte the shape crow sends for
+   a real edit call, and the client merges them.
