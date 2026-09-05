@@ -184,6 +184,178 @@ async def test_drain_emits_failed_and_non_diff_rows(tmp_path):
     await session.close()
 
 
+async def test_drain_emits_parallel_subtools_in_row_order(tmp_path):
+    """A cell that gathered three subtools wrote three rows (completion
+    order, ids assigned at insert); the drain emits siblings sorted by id
+    so the client sees them in call-record order, diffs and images mixed."""
+    import base64
+
+    from crow_cli.memory.image_store import FsImageStore
+    from crow_cli.memory.messages import image_key
+
+    config, session = await make_test_session(tmp_path)
+    raw = b"png-bytes-for-parallel"
+    key = image_key(raw, "image/png")
+    FsImageStore(tmp_path / "images").put(key, raw)
+
+    ids = []
+    for i, kind in enumerate(["diff", "image", "diff"]):
+        ids.append(
+            _seed_row(
+                config.db_uri,
+                parent_tool_call_id="turn-5/call_g",
+                tool="vision" if kind == "image" else "edit",
+                mode="file",
+                result_kind=kind,
+                acp_payload=(
+                    {"content": "image", "key": key, "mime": "image/png"}
+                    if kind == "image"
+                    else {
+                        "content": "diff",
+                        "path": f"/tmp/p{i}.py",
+                        "old_text": "a\n",
+                        "new_text": "b\n",
+                    }
+                ),
+                llm_images=(
+                    [{"key": key, "mime": "image/png"}] if kind == "image" else []
+                ),
+            )
+        )
+
+    conn = FakeConn()
+    ctx = await _make_ctx(config, session, conn, turn_id="turn-5")
+
+    from crow_cli.agent.tools import _emit_subtool_calls
+
+    llm_blocks = await _emit_subtool_calls(ctx, "turn-5/call_g")
+
+    starts = [u for u in conn.updates if u.session_update == "tool_call"]
+    assert [s.tool_call_id for s in starts] == [
+        f"turn-5/call_g/sub:{i}" for i in ids
+    ]
+    # kinds follow the row's tool: edit -> edit, vision -> other
+    assert [s.kind for s in starts] == ["edit", "other", "edit"]
+    # exactly one image block hydrated, from the middle row
+    assert len(llm_blocks) == 1
+    assert base64.b64decode(
+        llm_blocks[0]["image_url"]["url"].split(";base64,")[1]
+    ) == raw
+    await session.close()
+
+
+async def test_parallel_gather_e2e_kernel_to_client(tmp_path):
+    """One cell, asyncio.gather over two edits and a vision: the kernel
+    wrote three rows under one parent tcid, the drain emitted three
+    sibling calls (two diffs, one image), and the image block was
+    prepended to the cell's printed output — the whole pipeline holds up
+    under parallel tool calls."""
+    import numpy as np
+    import cv2
+    from fastmcp import Client
+
+    from crow_cli.mcp.server.app import mcp
+
+    import crow_cli.mcp.execute.main  # noqa: F401 — registers the tool
+
+    config, session = await make_test_session(tmp_path)
+    await session.add_message({"role": "user", "content": "do three things"})
+
+    a = tmp_path / "a.txt"
+    b = tmp_path / "b.txt"
+    a.write_text("one\n")
+    b.write_text("two\n")
+    src = tmp_path / "shot.png"
+    frame = np.zeros((24, 32, 3), dtype=np.uint8)
+    frame[:, :] = (1, 2, 3)
+    assert cv2.imwrite(str(src), frame)
+
+    code = (
+        "import asyncio\n"
+        f"ra, rb, rv = await asyncio.gather(\n"
+        f"    edit({str(a)!r}, 'one', 'ONE'),\n"
+        f"    edit({str(b)!r}, 'two', 'TWO'),\n"
+        f"    vision(mode='file', path={str(src)!r}),\n"
+        ")\n"
+        "print(ra.added + rb.added, rv.width)"
+    )
+    turn1 = [
+        tool_call_chunk(
+            0, id="call_g1", name="execute", args=json.dumps({"code": code})
+        ),
+        usage_chunk(30),
+    ]
+    turn2 = [content_chunk("Done, three things."), usage_chunk(10)]
+    llm = MultiTurnLLM([turn1, turn2])
+    conn = FakeConn()
+
+    async with Client(mcp) as mcp_client:
+        gen = react_loop(
+            conn=conn,
+            config=config,
+            client_capabilities=None,
+            turn_id="turn-1",
+            mcp_clients={SESSION_ID: mcp_client},
+            llm=llm,
+            tools=[],
+            sessions={AGENT_ID: session},
+            agent_id=AGENT_ID,
+            state_accumulators={},
+            logger=logger,
+            hooks=[],
+        )
+        events, stop = await drive_react_loop(gen)
+
+    assert stop == "done", events
+
+    parent = "turn-1/call_g1"
+    subs = [
+        u
+        for u in conn.updates
+        if getattr(u, "tool_call_id", "").startswith(parent + "/sub:")
+    ]
+    assert len(subs) == 6  # three siblings x (start + completion)
+    starts = [u for u in subs if u.session_update == "tool_call"]
+    assert sorted(s.kind for s in starts) == ["edit", "edit", "other"]
+    done = [u for u in subs if u.session_update == "tool_call_update"]
+    kinds = [type(c).__name__ for u in done for c in (u.content or [])]
+    assert kinds.count("ContentToolCallContent") >= 1  # the image wrapper
+    diffs = [
+        c
+        for u in done
+        for c in (u.content or [])
+        if getattr(c, "type", None) == "diff"
+    ]
+    assert len(diffs) == 2
+
+    # The row set: three, one parent, all emitted.
+    from sqlalchemy import select
+    from sqlalchemy.orm import sessionmaker
+
+    from crow_cli.memory.db import get_engine
+    from crow_cli.memory.models import SubtoolCall
+
+    engine = get_engine(config.db_uri)
+    with sessionmaker(engine)() as dbsession:
+        rows = dbsession.execute(select(SubtoolCall)).scalars().all()
+        dbsession.expunge_all()
+    engine.dispose()
+    assert len(rows) == 3
+    assert {r.parent_tool_call_id for r in rows} == {parent}
+    assert all(r.emitted == 1 for r in rows)
+    assert sorted(r.tool for r in rows) == ["edit", "edit", "vision"]
+
+    # LLM: image block prepended to what the cell printed ("2 32").
+    await session.close()
+    loaded = await AgentSession.load(AGENT_ID, memory_path=config.db_uri)
+    tool_msgs = [m for m in loaded.messages if m["role"] == "tool"]
+    content = tool_msgs[0]["content"]
+    assert isinstance(content, list)
+    assert content[0]["type"] == "image_url"
+    text = "".join(bl.get("text", "") for bl in content if bl["type"] == "text")
+    assert "2 32" in text
+
+
 async def test_drain_ignores_other_parents(tmp_path):
     config, session = await make_test_session(tmp_path)
     _seed_row(config.db_uri, parent_tool_call_id="turn-1/call_other")
@@ -293,7 +465,10 @@ async def test_execute_e2e_kernel_writes_and_loop_emits(tmp_path):
 
     target = tmp_path / "f.py"
     target.write_text("x = 1\n")
-    code = f"await edit({str(target)!r}, 'x = 1', 'x = 2')"
+    code = (
+        f"r = await edit({str(target)!r}, 'x = 1', 'x = 2')\n"
+        "print(r.added, r.removed)"
+    )
     turn1 = [
         tool_call_chunk(
             0, id="call_e1", name="execute", args=json.dumps({"code": code})
@@ -357,12 +532,13 @@ async def test_execute_e2e_kernel_writes_and_loop_emits(tmp_path):
     assert rows[0].session_id == SESSION_ID
     assert rows[0].emitted == 1
 
-    # The LLM saw the EditResult in its tool message.
+    # The LLM saw the edit's numbers in its tool message — because the
+    # CELL PRINTED them, not because a repr rode along.
     await session.close()
     loaded = await AgentSession.load(AGENT_ID, memory_path=config.db_uri)
     tool_msgs = [m for m in loaded.messages if m["role"] == "tool"]
     assert len(tool_msgs) == 1
-    assert "EditResult" in str(tool_msgs[0]["content"])
+    assert "1 1" in str(tool_msgs[0]["content"])
 
 
 async def test_vision_e2e_kernel_stores_and_loop_hydrates(tmp_path):
@@ -386,7 +562,10 @@ async def test_vision_e2e_kernel_stores_and_loop_hydrates(tmp_path):
     frame[:, :] = (0, 255, 0)
     assert cv2.imwrite(str(src), frame)
 
-    code = f"await vision(mode='file', path={str(src)!r})"
+    code = (
+        f"r = await vision(mode='file', path={str(src)!r})\n"
+        "print(r.mime, r.width, r.height)"
+    )
     turn1 = [
         tool_call_chunk(
             0, id="call_v1", name="execute", args=json.dumps({"code": code})
@@ -469,4 +648,4 @@ async def test_vision_e2e_kernel_stores_and_loop_hydrates(tmp_path):
     assert content[0]["type"] == "image_url"
     assert content[0]["image_url"]["url"].startswith("data:image/png;base64,")
     text = "".join(b.get("text", "") for b in content if b["type"] == "text")
-    assert "VisionResult(image/png" in text
+    assert "image/png 64 48" in text

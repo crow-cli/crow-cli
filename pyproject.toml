@@ -47,6 +47,7 @@ dependencies = [
     "typing-extensions>=4.15.0",
     "watchdog>=6.0.0",
     "xdg-base-dirs>=6.0.2",
+    "pillow>=12.3.0",
 ]
 
 [project.urls]

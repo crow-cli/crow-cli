@@ -9,30 +9,31 @@ non-paging: ipykernel pydoc falls to plain stdout).
 
 ## The three-fold split (every tool call inside a cell)
 
-- **Python** — what the code gets: result objects (truthy, compact repr for
-  Out[n], real fields for reuse). Failures RAISE ToolError subclasses; no
-  "Error: ..." strings — that's an MCP wire convention, not a Python one.
+- **Python** — what the calling code gets: result objects (truthy, real
+  fields for reuse — EditResult.diff/.added, VisionResult.image as a PIL
+  Image). Failures RAISE ToolError subclasses; no "Error: ..." strings —
+  that's an MCP wire convention, not a Python one. NO designed reprs:
+  display strings are not a channel.
 - **ACP** — what the client sees: `acp_payload()` JSON-native semantic dicts
   recorded by `@subtool`, rendered server-side by the drain into
   ToolCallStart/Progress (diffs via tool_diff_content, image blocks for
-  vision). `crow_cli.tools` never imports acp. ACP v1 has no parent field on
-  the wire: subcalls emit as siblings inside execute's window; lineage lives
-  in the table (+ field_meta later).
-- **LLM** — what the model sees: THE OUTPUT OF EXECUTE. Unmodified. Code
-  output on success; traceback on failure (tools RAISE — they don't need
-  their own guards because they run inside a properly guarded,
-  defensively-coded MCP tool that catches and shows the error to the LLM).
-  No tool injects anything into the text — an edit inside a cell costs
-  zero extra LLM-side rendering; diffs are ACP-only. The ONE modification,
-  the only reason the LLM side exists: when vision tools ran, hydrated
-  image_url blocks are PREPENDED — without them vision models have no way
-  to actually see images. The signal is a has_vision bool in effect: the
-  drained llm_images refs (ImageStore keys, same content-addressed scheme
-  as messages.extract_images — dupes dedupe free) non-empty. Tools DECLARE
-  images via llm_images(); no blob autodetection, no repr markers. Memory
-  returns polars DataFrames — execute's output renders them, done. ACP
-  emission is a different story entirely: every subtool gets its proper
-  semantic rendering (diffs, images, terminal stream).
+  vision). `crow_cli.tools` never imports acp. ACP v1 has no parent field
+  on the wire: subcalls emit as siblings inside execute's window; lineage
+  lives in the table (+ field_meta later).
+- **LLM** — what the model sees: WHAT THE CELL PRINTED. stdout + stderr,
+  or the traceback on failure (tools raise; execute is the guard). The
+  kernel drains execute_result (Out[n]) off iopub and DISCARDS it — the
+  REPL's display of the last expression is a notebook affordance, not
+  program output, and it fired only by the accident of expression
+  position. The ONE modification, the only reason the LLM side exists:
+  vision ran (drained llm_images refs non-empty — has_vision in effect)
+  -> hydrated image_url blocks PREPENDED, or vision models are blind.
+  1-1 with ACP: same refs render as image_url (LLM) and image content
+  blocks (client). Memory returns polars DataFrames; code prints what it
+  wants the model to see. Parallel tool calls (asyncio.gather) hold up:
+  contextvar identity is inherited by tasks, every call writes its row,
+  the drain emits siblings in row order.
+
 
 Identity: per-cell prologue `begin_cell(session_id, parent_tool_call_id,
 cell_seq)` injected by execute before the model's code — model never sees,
@@ -80,7 +81,12 @@ it and background work never bleeds into the next cell's drain.
        full e2e: scripted LLM -> react loop -> real kernel -> `await
        edit(...)` -> row written by kernel process -> drained -> FakeConn
        saw sibling edit call with diff -> EditResult in the tool message).
-- [ ] 5. write — diff payload, same pattern.
+- [x] 5. write — diff payload, same pattern. LANDED: returns EditResult
+       (a write IS a diff — old_text "" for new files, previous content
+       for overwrites; parent dirs created; binary-ish files diff against
+       empty), raises WriteError. _SUBTOOL_KINDS already mapped write ->
+       edit kind, so emission needed zero changes. 7 unit tests + ambient
+       prelude check.
 - [ ] 6. fs — modes: read (FileResult; polite "use vision.file" on images),
        glob (gitignore/.venv/.node_modules-aware — pathspec), search (rg),
        ast (ast_grep_py bindings — search AND replace; shadow-git when no
@@ -94,11 +100,14 @@ it and background work never bleeds into the next cell's drain.
        device_index=6)` — explicit kwargs beat a union-args list
        (self-documenting, `help()` reads clean, _bind_args records
        faithfully, @subtool gained dynamic mode from the runtime arg).
-       VisionResult(key, mime, width, height, source) with a plain compact
-       repr — an earlier draft put a `![image](crow-image://<key>)` blob
-       in the repr as an "LLM marker"; RETRACTED — the llm_images refs on
-       the row are the only signal the drain needs (has_vision in effect),
-       repr markers are redundant noise. ACP channel: acp_payload
+       VisionResult(key, mime, width, height, source); code gets a real
+       image via .image (PIL Image loaded from the store — pillow added
+       as a dep). An earlier draft put a `![image](crow-image://<key>)`
+       blob in a custom repr as an "LLM marker"; RETRACTED twice over —
+       first the blob, then the whole designed-repr idea: the llm_images
+       refs on the row are the only signal the drain needs (has_vision in
+       effect), and execute's output is what the cell PRINTED, nothing
+       else. ACP channel: acp_payload
        {"content":"image", key, mime} -> drain hydrates bytes from the
        ImageStore -> tool_content(image_block(...)) on the sibling call
        (ToolCallProgress.content takes ContentToolCallContent WRAPPERS,
@@ -160,3 +169,14 @@ it and background work never bleeds into the next cell's drain.
 - The tools facade caches resolved FUNCTIONS into `crow_cli.tools.__dict__`,
   shadowing same-named submodules: `import crow_cli.tools.vision as vmod`
   binds the function. Use `sys.modules["crow_cli.tools.vision"]` in tests.
+- OUT[n] IS NOT A CHANNEL (the carve-out): CrowKernel drains
+  execute_result off iopub and discards it; execute returns stdout +
+  stderr or the traceback. print() is how code talks to the model. Custom
+  __repr__s on result objects were MCP-brain leaking into execution-brain
+  (a tool-result voice for something that is CODE, firing only by the
+  accident of expression position) — deleted; default dataclass repr is
+  display for a human at the REPL, nothing more. Tests that asserted
+  repr-in-output were encoding the wrong contract and got rewritten to
+  print. Parallel tool calls (asyncio.gather) are first-class: contextvar
+  identity inherits into tasks, every call writes its row, drain emits
+  siblings in row order, image refs hydrate once.

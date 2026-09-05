@@ -119,6 +119,62 @@ async def test_cell_seq_captured_when_available(tmp_path, db, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_parallel_calls_all_recorded(tmp_path, db):
+    """asyncio.gather over subtools: every task inherits the cell identity
+    (contextvar), so parallel calls all stamp + write through — no bleed,
+    no loss. Order of record is completion order; the drain sorts by id."""
+    import asyncio
+
+    files = []
+    for i in range(3):
+        f = tmp_path / f"f{i}.txt"
+        f.write_text("old\n")
+        files.append(f)
+    begin_cell(session_id="s1", parent_tool_call_id="turn-3/call_p", db_uri=db)
+
+    results = await asyncio.gather(
+        *[edit(str(f), "old", f"new{i}") for i, f in enumerate(files)]
+    )
+
+    assert len(results) == 3
+    entries = pending()
+    assert len(entries) == 3
+    assert {e.parent_tool_call_id for e in entries} == {"turn-3/call_p"}
+    assert {e.cell_seq for e in entries} == {None}  # no IPython in pytest
+
+    rows = _rows(db)
+    assert len(rows) == 3
+    assert all(r.parent_tool_call_id == "turn-3/call_p" for r in rows)
+    assert all(r.status == "completed" for r in rows)
+    # distinct payloads, one per file
+    assert {r.args["new_string"] for r in rows} == {"new0", "new1", "new2"}
+
+
+@pytest.mark.asyncio
+async def test_parallel_mixed_success_and_failure(tmp_path, db):
+    """One failing call in a gather must not swallow the others: gather
+    with return_exceptions, entries record completed AND failed."""
+    import asyncio
+
+    good = tmp_path / "good.txt"
+    good.write_text("old\n")
+    begin_cell(session_id="s1", parent_tool_call_id="turn-4/call_m", db_uri=db)
+
+    outcomes = await asyncio.gather(
+        edit(str(good), "old", "new"),
+        edit(str(tmp_path / "ghost.txt"), "a", "b"),
+        return_exceptions=True,
+    )
+    assert isinstance(outcomes[1], EditError)
+
+    rows = _rows(db)
+    assert [(r.status, r.tool) for r in sorted(rows, key=lambda r: r.id)] == [
+        ("completed", "edit"),
+        ("failed", "edit"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_drain_clears_memory_but_rows_persist(tmp_path, db):
     target = tmp_path / "f.py"
     target.write_text("x = 1\n")

@@ -27,7 +27,7 @@ async def test_success_returns_edit_result(tmp_path):
     assert r  # truthy on success
     assert (r.added, r.removed) == (1, 1)
     assert f.read_text() == "x = 2\n"
-    assert repr(r).startswith("EditResult(") and "+1/-1" in repr(r)
+    assert r.added == 1 and r.removed == 1
 
 
 async def test_fuzzy_indentation_match(tmp_path):

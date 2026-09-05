@@ -54,10 +54,9 @@ async def test_file_mode_stores_and_returns_result(tmp_path, images_dir):
     assert blob.startswith(b"\x89PNG")
     assert image_key(blob, "image/png") == result.key
 
-    # Plain compact repr — no LLM markers; the refs ride llm_images().
-    assert repr(result) == (
-        f"VisionResult(image/png, 64x48, {src})"
-    )
+    # Plain dataclass repr — display, not a channel. The refs ride
+    # llm_images(); nothing about the LLM lives in the string.
+    assert repr(result).startswith("VisionResult(key=")
 
     # Three-fold channels.
     assert result.result_kind == "image"
@@ -67,6 +66,27 @@ async def test_file_mode_stores_and_returns_result(tmp_path, images_dir):
         "mime": "image/png",
     }
     assert result.llm_images() == [{"key": result.key, "mime": "image/png"}]
+
+
+@pytest.mark.asyncio
+async def test_image_property_returns_pil(tmp_path, images_dir):
+    """Code gets a real image object, not a key: .image loads the stored
+    bytes as a PIL Image (the interchange format for everything else)."""
+    from PIL import Image as PILImage
+
+    src = _make_png(tmp_path / "shot.png", w=32, h=16, color=(7, 8, 9))
+    result = await vision(mode="file", path=str(src))
+
+    img = result.image
+    assert isinstance(img, PILImage.Image)
+    assert img.size == (32, 16)
+    # cv2 wrote BGR(7,8,9); PIL reads RGB
+    assert img.getpixel((0, 0)) == (9, 8, 7)
+
+    # and it round-trips like any PIL image
+    out = tmp_path / "roundtrip.png"
+    img.save(out)
+    assert out.read_bytes().startswith(b"\x89PNG")
 
 
 @pytest.mark.asyncio

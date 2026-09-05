@@ -138,22 +138,25 @@ async def execute(
     use the terminal tool instead.
 
     Args:
-        code: Python code to execute. The last expression's value is returned
-              (like a REPL's Out[n]). print() output, warnings, and tracebacks
-              are captured.
+        code: Python code to execute. print() is how the code talks back:
+              the returned output is stdout + stderr, or an ANSI-stripped
+              traceback on error. The last expression's value is NOT
+              returned (no REPL Out[n]) — assign it, print it, or use it.
         reset: If True, shut down the kernel and start a fresh one, clearing
                all state (variables, imports). Use if the kernel is in a bad
                state. With empty code, just resets. Cannot clear a single
                variable — reset clears everything.
 
     Returns:
-        REPL-style output: stdout, stderr, and the last expression's value, or
-        an ANSI-stripped traceback on error.
+        The program's output: stdout and stderr, or a traceback on error.
+        When vision tools ran inside the cell, the server prepends
+        hydrated image blocks to this text for the model — the one and
+        only addition to execute's output.
 
     Examples:
-        execute("x = 42")                 # set a variable
-        execute("x * 2")                  # -> "84" (state persisted)
-        execute("import sqlalchemy; sqlalchemy.__version__")
+        execute("x = 42")                 # set a variable (no output)
+        execute("print(x * 2)")           # -> "84"
+        execute("import sqlalchemy; print(sqlalchemy.__version__)")
         execute("", reset=True)           # fresh kernel, all state cleared
     """
     try:

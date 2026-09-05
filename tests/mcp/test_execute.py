@@ -49,16 +49,17 @@ async def test_schema_hides_context(mcp_app):
     assert set(tool.inputSchema.get("properties", {}).keys()) == {"code", "reset"}
 
 
-async def test_expression_result(mcp_app):
-    """The last expression's value comes back like a REPL's Out[n]."""
+async def test_no_out_n_in_output(mcp_app):
+    """The REPL's display of the last expression is NOT a channel: a bare
+    expression produces no output. print() is how code talks back."""
     out = await _call(mcp_app, "1 + 1")
-    assert out.strip() == "2"
+    assert out == "[no output]"
 
 
 async def test_state_persists_across_calls(mcp_app):
     """The whole point: a variable set in one call is alive in the next."""
     await _call(mcp_app, "x = 42", session_id="persist")
-    out = await _call(mcp_app, "x * 2", session_id="persist")
+    out = await _call(mcp_app, "print(x * 2)", session_id="persist")
     assert out.strip() == "84"
 
 
@@ -77,9 +78,9 @@ async def test_error_traceback_is_clean(mcp_app):
 async def test_crow_interpreter_and_deps(mcp_app):
     """The kernel runs crow's OWN interpreter, so crow's deps are importable
     and sys.executable points inside the project venv."""
-    ver = await _call(mcp_app, "import sqlalchemy; sqlalchemy.__version__")
+    ver = await _call(mcp_app, "import sqlalchemy; print(sqlalchemy.__version__)")
     assert "." in ver  # a version string like '2.0.51' came back
-    exe = await _call(mcp_app, "import sys; sys.executable")
+    exe = await _call(mcp_app, "import sys; print(sys.executable)")
     assert ".venv" in exe or "crow-cli" in exe
 
 
@@ -95,9 +96,9 @@ async def test_reset_clears_state(mcp_app):
 async def test_sessions_isolated(mcp_app):
     """Two session ids get two kernels: state never leaks between them."""
     await _call(mcp_app, "secret = 'alpha'", session_id="sess-a")
-    out = await _call(mcp_app, "secret", session_id="sess-b")
+    out = await _call(mcp_app, "print(secret)", session_id="sess-b")
     assert "NameError" in out
-    out_a = await _call(mcp_app, "secret", session_id="sess-a")
+    out_a = await _call(mcp_app, "print(secret)", session_id="sess-a")
     assert "alpha" in out_a
 
 

@@ -4,19 +4,21 @@ A tool call inside an execute cell produces three outputs, and only one of
 them is the return value:
 
 1. Python — what the calling code gets back: these result objects. Truthy
-   on success, compact repr for the REPL's Out[n], real attributes for
-   reuse in later cells. Failures RAISE (ToolError subclasses); "Error: ..."
-   strings are an MCP wire convention, not a Python one.
+   on success, real attributes for reuse in later cells (EditResult.diff,
+   VisionResult.image as a PIL Image). Failures RAISE (ToolError
+   subclasses); "Error: ..." strings are an MCP wire convention, not a
+   Python one. No designed reprs: execute returns what the cell PRINTED,
+   so display strings are not a channel — print() is.
 2. ACP — what the client sees: ``acp_payload()`` returns a JSON-native
    semantic dict (diff, image ref, text). The server-side drain renders it
    into acp types (ToolCallStart/Progress content); this package never
    imports acp.
-3. LLM — what the model sees: execute's output, UNMODIFIED (code output on
-   success, traceback on failure — tools raise, execute is the guard). The
-   one exception, and the only reason this channel exists: when vision
-   tools ran, hydrated image_url blocks are PREPENDED to that output, or
-   vision models could never see images. The signal is ``llm_images()``
-   ImageStore refs riding the DB row — non-empty means prepend. No text
+3. LLM — what the model sees: execute's output — stdout + stderr, or the
+   traceback on failure — UNMODIFIED. The one exception, and the only
+   reason this channel exists: when vision tools ran, hydrated image_url
+   blocks are PREPENDED to that output, or vision models could never see
+   images. The signal is ``llm_images()`` ImageStore refs riding the DB
+   row — non-empty means prepend (has_vision, in effect). No text
    markers, no repr tricks, no blob autodetection.
 """
 
@@ -45,7 +47,7 @@ class ToolResult:
         return True
 
 
-@dataclass(repr=False)
+@dataclass
 class EditResult(ToolResult):
     path: str
     old_text: str
@@ -80,24 +82,23 @@ class EditResult(ToolResult):
             if ln.startswith("-") and not ln.startswith("---")
         )
 
-    def __repr__(self) -> str:
-        return f"EditResult({self.path}, +{self.added}/-{self.removed})"
-
 
 class EditError(ToolError):
     pass
 
 
-@dataclass(repr=False)
+@dataclass
 class VisionResult(ToolResult):
     """One captured image. Bytes live in the ImageStore under ``key``
     (content-addressed ``<sha256hex><ext>``, same scheme as message
     images) — the result object, the register entry, and the DB row all
     hold refs, never bytes.
 
-    The LLM side needs no marker in the text: ``llm_images()`` refs ride
-    the row, and the server-side drain prepends hydrated image_url blocks
-    to execute's output when any are present (has_vision, in effect).
+    Code gets a real image: ``.image`` loads the bytes from the store as a
+    PIL Image (save/resize/compose/pass along). The LLM side needs no
+    marker anywhere: ``llm_images()`` refs ride the row, and the
+    server-side drain prepends hydrated image_url blocks to execute's
+    output when any are present (has_vision, in effect).
     """
 
     key: str
@@ -116,11 +117,20 @@ class VisionResult(ToolResult):
     def llm_images(self) -> list[dict]:
         return [{"key": self.key, "mime": self.mime}]
 
-    def __repr__(self) -> str:
-        return (
-            f"VisionResult({self.mime}, {self.width}x{self.height}, "
-            f"{self.source})"
-        )
+    @property
+    def image(self):
+        """The bytes as a PIL Image, loaded from the ImageStore."""
+        import io
+
+        from PIL import Image
+
+        from .register import image_store
+
+        store = image_store()
+        raw = store.get(self.key) if store is not None else None
+        if raw is None:
+            raise VisionError(f"image blob missing from store: {self.key}")
+        return Image.open(io.BytesIO(raw))
 
 
 class VisionError(ToolError):

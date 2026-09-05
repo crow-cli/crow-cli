@@ -56,13 +56,21 @@ class CrowKernel:
             time.sleep(2)
 
     def execute(self, code: str, timeout: float = 30) -> str:
-        """Execute Python code and return REPL-style, human-readable output."""
+        """Execute Python code and return what the cell PRINTED.
+
+        stdout + stderr, or the ANSI-stripped traceback on error. The
+        REPL's display of the last expression (execute_result / Out[n])
+        is drained off iopub and DISCARDED: it is a notebook affordance,
+        not program output, and the LLM's view of execute is the program's
+        output — plus image blocks the server prepends when vision ran.
+        Code talks to the model with print(); values talk to later code by
+        being values.
+        """
         self.client.execute(code)
         reply = self.client.get_shell_msg(timeout=timeout)
 
         stdout: list[str] = []
         stderr: list[str] = []
-        result = None
         error = None
 
         # Drain iopub messages until the kernel reports idle for this cell.
@@ -77,8 +85,6 @@ class CrowKernel:
                         stdout.append(content["text"])
                     else:
                         stderr.append(content["text"])
-                elif msg_type == "execute_result":
-                    result = content["data"].get("text/plain")
                 elif msg_type == "error":
                     error = content
                 elif msg_type == "status" and content["execution_state"] == "idle":
@@ -89,7 +95,6 @@ class CrowKernel:
         return self._format_output(
             stdout="".join(stdout),
             stderr="".join(stderr),
-            result=result,
             error=error,
         )
 
@@ -97,10 +102,9 @@ class CrowKernel:
         self,
         stdout: str,
         stderr: str,
-        result: str | None,
         error: dict | None,
     ) -> str:
-        """Format output like a human would see in a REPL."""
+        """The program's output, nothing else."""
         # Error first — that's what matters when it breaks.
         if error:
             traceback_lines = [
@@ -113,9 +117,6 @@ class CrowKernel:
             output.append(stdout.rstrip())
         if stderr:
             output.append(stderr.rstrip())
-        # The last expression's value, like a REPL's Out[n].
-        if result is not None:
-            output.append(result)
         return "\n".join(output)
 
     def shutdown(self) -> None:
