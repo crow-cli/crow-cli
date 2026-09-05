@@ -263,6 +263,24 @@ it and background work never bleeds into the next cell's drain.
        rewrite changed nothing" — documented on RewriteResult), negative
        offset (clamped to 1, unlike a negative limit).
        Sweep: 663 passed.
+       THIRD RING — one more bug, plus two silent-corruption classes that
+       probing found CORRECT and therefore pinned (57 tests, +21 total):
+       (M) `~` was never expanded: `Path("~/x").is_absolute()` is False, so
+           it became `<cwd>/~/x` and failed with a path that reads like a bug
+           report. Fixed in `_resolve_path` — the choke point that edit,
+           write and the old MCP read all share, so all of them get it (136
+           tests across those tools still pass).
+       PINNED, NOT FIXED: ast-grep's `range().start.index` is a CHARACTER
+           offset, not a byte offset — `_expand` slices a Python str with it,
+           so a byte offset would mangle every file with accents or CJK in
+           it, silently, and only for those files (fixture: a 35-byte,
+           27-character first line). And a tree containing a SYNTAX ERROR
+           parses partially and rewrites fine — tree-sitter ERROR nodes are
+           not fatal, which matters because a pyo3 panic is a BaseException
+           and would take the kernel with it.
+       Also observed live: reload() does NOT pick up a change to a module the
+       tools import (see the mid-session caveat, corrected).
+       Sweep: 666 passed.
 - [x] 7. vision — modes: file, webcam (the robotics door — first class,
        never dropped), video later (video-frames skill as a mode: frame
        extraction -> N file results). Bytes -> ImageStore at call time;
@@ -370,7 +388,13 @@ it and background work never bleeds into the next cell's drain.
   exactly what the kernel can own. The MCP server (prologue, output cap) and
   the agent (drain, ACP emission) are separate long-lived processes and need
   a restart; changes to modules the tools IMPORT (crow_cli.mcp.editor's
-  engine, crow_cli.memory) need a kernel reset. Three traps it handles:
+  engine, crow_cli.memory) are NOT covered by reload() — verified live, not
+  reasoned: fixing `_resolve_path` in crow_cli.mcp.editor.main and calling
+  `reload()` still showed the old behaviour, because fs re-imports the
+  function object from the already-loaded module. Reload that module
+  explicitly first (`importlib.reload(sys.modules["crow_cli.mcp.editor.
+  main"])`, then `reload()`), or reset the kernel if the dependency chain is
+  deep. Three traps it handles:
   * the facade is LAZY, so a fresh kernel has imported nothing but the
     package — reload must IMPORT-if-absent, not skip (skipping then
     `getattr(sys.modules[m], a)` = KeyError in the prelude, and the prelude

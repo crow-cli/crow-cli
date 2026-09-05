@@ -32,7 +32,10 @@ def _get_working_dir() -> Path:
 def _resolve_path(path: str) -> Path:
     """Resolve a path to its canonical absolute form.
 
-    Relative paths are resolved against the current working directory. There is
+    Relative paths are resolved against the current working directory, and a
+    leading ``~`` against the user's home — before the absolute check, since
+    ``Path("~/x").is_absolute()`` is False and would otherwise become
+    ``<cwd>/~/x``. There is
     no working-directory sandbox here: access control is delegated to the
     operating system. The agent runs as the local user, so it can edit exactly
     the files that user's Unix permissions allow (and nothing else). This keeps
@@ -40,7 +43,7 @@ def _resolve_path(path: str) -> Path:
     which impose a cwd restriction.
     """
     working_dir = _get_working_dir()
-    requested = Path(path)
+    requested = Path(path).expanduser()
     full_path = requested if requested.is_absolute() else working_dir / requested
 
     try:

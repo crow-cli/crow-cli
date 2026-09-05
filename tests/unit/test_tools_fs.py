@@ -11,6 +11,7 @@ import os
 import random
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -880,3 +881,67 @@ async def test_rg_stream_cancellation_kills_the_child_and_propagates(tmp_path):
 
     await asyncio.sleep(0.2)
     assert _living(marker) == 0
+
+
+@pytest.mark.asyncio
+async def test_read_expands_a_leading_tilde(tmp_path, monkeypatch):
+    """``~`` has to expand BEFORE the absolute check:
+    ``Path("~/x").is_absolute()`` is False, so it became ``<cwd>/~/x`` and
+    failed with a path that reads like a bug report. Fixed in _resolve_path,
+    which edit and write share."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    target = tmp_path / "f.txt"
+    target.write_text("home\n")
+
+    r = await fs("read", "~/f.txt")
+
+    assert r.path == str(target.resolve())
+    assert r.content == "home"
+
+
+@pytest.mark.asyncio
+async def test_rewrite_expands_metavars_by_character_not_byte_offset(tmp_path):
+    """_expand slices a Python str with ast-grep's range indices. Were those
+    BYTE offsets, every non-ASCII file would come back mangled — silently,
+    and only for files with accents or CJK in them. The prefix here is 35
+    bytes and 27 characters."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    target = root / "u.py"
+    src = 'GREETING = "café naïve 日本語"\n\n\np = os.path.join(a, b, c)\n'
+    target.write_text(src, encoding="utf-8")
+    first = src.splitlines()[0]
+    assert len(first.encode()) != len(first)  # the whole point of the fixture
+
+    r = await fs(
+        "rewrite", str(root), "os.path.join($A, $$$REST)", rewrite="Path($A, $$$REST)"
+    )
+
+    assert r.matches == 1
+    assert target.read_text(encoding="utf-8") == src.replace(
+        "os.path.join(a, b, c)", "Path(a, b, c)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_ast_and_rewrite_survive_a_syntax_error(tmp_path):
+    """A tree containing a broken file is the COMMON case, not the exotic
+    one: tree-sitter parses partially, ast-grep still finds the call inside
+    the broken file, and nothing panics (a pyo3 panic is a BaseException —
+    it would take the kernel with it)."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    broken = root / "broken.py"
+    broken.write_text("def f(:\n    os.path.join(a, b)\n")
+    fine = root / "fine.py"
+    fine.write_text("os.path.join(c, d)\n")
+
+    r = await fs("ast", str(root), JOIN)
+    assert [(Path(m.path).name, m.line) for m in r.matches] == [
+        ("broken.py", 2),
+        ("fine.py", 1),
+    ]
+
+    w = await fs("rewrite", str(root), JOIN, rewrite="Path($A) / $B")
+    assert (w.changed, w.matches) == (2, 2)
+    assert broken.read_text() == "def f(:\n    Path(a) / b\n"
