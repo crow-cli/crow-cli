@@ -52,6 +52,26 @@ async def test_write_is_ambient_on_start(mcp_app):
     assert out.strip() == "crow_cli.tools.write"
 
 
+async def test_fs_is_ambient_on_start(mcp_app):
+    out = await _call(mcp_app, "print(fs.__module__)")
+    assert out.strip() == "crow_cli.tools.fs"
+
+
+async def test_fs_runs_in_the_kernel(mcp_app, tmp_path):
+    """All three modes in a real kernel subprocess (read is to_thread'd,
+    glob/search spawn ripgrep) — and the cell's print is all the LLM sees."""
+    (tmp_path / "f.py").write_text("def alpha():\n    return 1\n")
+    out = await _call(
+        mcp_app,
+        f"r = await fs('read', {str(tmp_path / 'f.py')!r})\n"
+        "print(r.lines, r.shown, r.truncated)\n"
+        f"g = await fs('glob', {str(tmp_path)!r}, '*.py')\n"
+        f"s = await fs('search', {str(tmp_path)!r}, 'alpha')\n"
+        "print(len(g.paths), s.matches[0].line, s.paths == g.paths)",
+    )
+    assert out.strip().splitlines() == ["2 2 False", "1 1 True"]
+
+
 async def test_edit_runs_and_registers(mcp_app, tmp_path):
     f = tmp_path / "hello.txt"
     f.write_text("one\ntwo\n")

@@ -135,3 +135,91 @@ class VisionResult(ToolResult):
 
 class VisionError(ToolError):
     pass
+
+
+@dataclass
+class FileResult(ToolResult):
+    """One file's window, read.
+
+    ``content`` is the raw text (what code wants — slice it, regex it, hand
+    it to edit); ``text`` is the same window line-numbered, with the
+    paging notice when the file was cut, which is what print() should show
+    and what the client renders.
+    """
+
+    path: str
+    content: str
+    text: str
+    lines: int  # total lines in the file
+    offset: int = 1  # 1-indexed first line of the window
+
+    result_kind = "read"
+
+    def acp_payload(self) -> dict:
+        # Mirrors agent/tools.py execute_acp_read: the numbered text on a
+        # read-kind call, located at the path.
+        return {"content": "read", "path": self.path, "text": self.text}
+
+    @property
+    def shown(self) -> int:
+        return len(self.content.splitlines())
+
+    @property
+    def truncated(self) -> bool:
+        return self.offset - 1 + self.shown < self.lines
+
+
+@dataclass
+class GlobResult(ToolResult):
+    """Files matching a gitignore-style pattern under a root."""
+
+    pattern: str
+    root: str
+    paths: list[str]
+    truncated: bool = False
+
+    result_kind = "search"
+
+    def acp_payload(self) -> dict:
+        return {
+            "content": "text",
+            "text": "\n".join(self.paths) or f"no files match {self.pattern}",
+        }
+
+
+@dataclass
+class SearchMatch:
+    """One ripgrep hit — a plain record, not a channel of its own."""
+
+    path: str
+    line: int
+    text: str
+
+
+@dataclass
+class SearchResult(ToolResult):
+    """Regex hits under a root, structured for code and rendered for print."""
+
+    pattern: str
+    root: str
+    matches: list[SearchMatch]
+    truncated: bool = False
+
+    result_kind = "search"
+
+    def acp_payload(self) -> dict:
+        return {"content": "text", "text": self.text or f"no matches for {self.pattern}"}
+
+    @property
+    def text(self) -> str:
+        return "\n".join(f"{m.path}:{m.line}: {m.text}" for m in self.matches)
+
+    @property
+    def paths(self) -> list[str]:
+        """The files that matched, in hit order, deduplicated."""
+        return list(dict.fromkeys(m.path for m in self.matches))
+
+
+class FsError(ToolError):
+    pass
+

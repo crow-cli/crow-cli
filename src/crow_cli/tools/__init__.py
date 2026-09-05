@@ -19,6 +19,7 @@ ipykernel's pydoc falls to plain stdout, nothing pages.
 
 _LAZY = {
     "edit": ("crow_cli.tools.edit", "edit"),
+    "fs": ("crow_cli.tools.fs", "fs"),
     "vision": ("crow_cli.tools.vision", "vision"),
     "write": ("crow_cli.tools.write", "write"),
 }

@@ -759,6 +759,17 @@ def _images_dir(config) -> str:
     return str(Path(config.config_dir) / "images")
 
 
+_KIND_BY_RESULT: dict[str, ToolKind] = {
+    "diff": "edit",
+    "read": "read",
+    "search": "search",
+}
+"""ACP kind follows the ARTIFACT, not the tool name: a multi-mode tool
+(``fs``) is one name doing read/glob/search, and ``get_tool_kind("fs")`` is
+"other". Rows whose result_kind isn't an artifact shape (image, text,
+error) fall back to the mode, then the tool."""
+
+
 def _subtool_id(ctx: TurnCtx, row_id: int, part: int = 0) -> str:
     """Synthetic ACP toolCallId for a call made inside an execute cell.
 
@@ -874,7 +885,9 @@ async def _emit_subtool_calls(ctx: TurnCtx, parent_acp_id: str) -> list[dict]:
     store = None  # resolved lazily — only image rows touch the store
     for row in rows:
         payload = row.acp_payload or {}
-        kind = get_tool_kind(row.tool)
+        kind = _KIND_BY_RESULT.get(row.result_kind) or get_tool_kind(
+            row.mode or row.tool
+        )
         title = f"{row.tool}/{row.mode}" if row.mode else row.tool
         if row.result_kind == "diff":
             # A multi-diff payload (one call, many files — the fs ast
@@ -902,6 +915,20 @@ async def _emit_subtool_calls(ctx: TurnCtx, parent_acp_id: str) -> list[dict]:
                         )
                     ],
                 )
+        elif row.result_kind == "read":
+            # Mirrors execute_acp_read: a read-kind call located at the
+            # file, carrying the text the code read.
+            path = payload.get("path", "")
+            text = payload.get("text", "")
+            await _emit_subtool_call(
+                ctx,
+                _subtool_id(ctx, row.id),
+                row,
+                title=f"{title}: {path}",
+                kind=kind,
+                path=path,
+                content=[tool_content(text_block(text))] if text else None,
+            )
         elif row.result_kind == "image":
             import base64
 

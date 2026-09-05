@@ -249,6 +249,114 @@ async def test_drain_renders_text_and_failed_rows(tmp_path):
     await session.close()
 
 
+async def test_drain_emits_read_subtool_located_at_the_file(tmp_path):
+    """fs/read: kind follows the ARTIFACT (result_kind "read"), not the tool
+    name — get_tool_kind("fs") is "other". The call is located at the file
+    and carries the numbered text, exactly like execute_acp_read."""
+    config, session = await make_test_session(tmp_path)
+    row_id = _seed_row(
+        config.db_uri,
+        parent_tool_call_id="turn-1/call_rd",
+        tool="fs",
+        mode="read",
+        args={"mode": "read", "path": "/tmp/f.py", "offset": 1, "limit": 2000},
+        result_kind="read",
+        acp_payload={"content": "read", "path": "/tmp/f.py", "text": "1→x = 1"},
+    )
+    conn = FakeConn()
+    ctx = await _make_ctx(config, session, conn)
+
+    from crow_cli.agent.tools import _emit_subtool_calls
+
+    llm_blocks = await _emit_subtool_calls(ctx, "turn-1/call_rd")
+
+    assert llm_blocks == []  # a read is not an image: nothing prepended
+    start, progress, done = _by_id(conn, f"turn-1/call_sub{row_id}")
+    assert start.kind == "read"
+    assert start.title == "fs/read: /tmp/f.py"
+    assert [loc.path for loc in start.locations] == ["/tmp/f.py"]
+    assert start.raw_input["mode"] == "read"
+    assert progress.content[0].content.text == "1→x = 1"
+    assert done.status == "completed"
+    await session.close()
+
+
+async def test_drain_emits_search_subtool_as_text(tmp_path):
+    """fs/search and fs/glob: search kind, text artifact, no location (many
+    files, none of them THE file)."""
+    config, session = await make_test_session(tmp_path)
+    search_id = _seed_row(
+        config.db_uri,
+        parent_tool_call_id="turn-1/call_se",
+        tool="fs",
+        mode="search",
+        args={"mode": "search", "path": "/tmp/proj", "pattern": "def _read"},
+        result_kind="search",
+        acp_payload={"content": "text", "text": "/tmp/proj/a.py:12: def _read():"},
+    )
+    glob_id = _seed_row(
+        config.db_uri,
+        parent_tool_call_id="turn-1/call_se",
+        tool="fs",
+        mode="glob",
+        args={"mode": "glob", "path": "/tmp/proj", "pattern": "**/*.py"},
+        result_kind="search",
+        acp_payload={"content": "text", "text": "/tmp/proj/a.py"},
+    )
+    conn = FakeConn()
+    ctx = await _make_ctx(config, session, conn)
+
+    from crow_cli.agent.tools import _emit_subtool_calls
+
+    await _emit_subtool_calls(ctx, "turn-1/call_se")
+
+    assert _sub_ids_in_order(conn) == [
+        f"turn-1/call_sub{search_id}",
+        f"turn-1/call_sub{glob_id}",
+    ]
+    for row_id, title, text in [
+        (search_id, "fs/search", "/tmp/proj/a.py:12: def _read():"),
+        (glob_id, "fs/glob", "/tmp/proj/a.py"),
+    ]:
+        start, progress, done = _by_id(conn, f"turn-1/call_sub{row_id}")
+        assert start.kind == "search"
+        assert start.title == title
+        assert start.locations is None
+        assert progress.content[0].content.text == text
+        assert done.status == "completed"
+    await session.close()
+
+
+async def test_drain_failed_fs_row_keeps_the_mode_kind(tmp_path):
+    """A failed row's result_kind is "error", so kind falls back to the MODE:
+    a read that raised still arrives as a read call, not "other"."""
+    config, session = await make_test_session(tmp_path)
+    row_id = _seed_row(
+        config.db_uri,
+        parent_tool_call_id="turn-1/call_f",
+        tool="fs",
+        mode="read",
+        args={"mode": "read", "path": "/tmp/ghost.png"},
+        status="failed",
+        result_kind="error",
+        acp_payload=None,
+        error="FsError: /tmp/ghost.png is an image — vision(mode='file')",
+    )
+    conn = FakeConn()
+    ctx = await _make_ctx(config, session, conn)
+
+    from crow_cli.agent.tools import _emit_subtool_calls
+
+    await _emit_subtool_calls(ctx, "turn-1/call_f")
+
+    start, progress, done = _by_id(conn, f"turn-1/call_sub{row_id}")
+    assert start.kind == "read"
+    assert start.title == "fs/read"
+    assert "is an image" in progress.content[0].content.text
+    assert done.status == "failed"
+    await session.close()
+
+
 async def test_drain_emits_parallel_subtools_in_row_order(tmp_path):
     """A cell that gathered three subtools wrote three rows (completion
     order, ids assigned at insert); the wire keeps call-record order — one
@@ -749,3 +857,99 @@ async def test_vision_e2e_kernel_stores_and_loop_hydrates(tmp_path):
     assert content[0]["image_url"]["url"].startswith("data:image/png;base64,")
     text = "".join(b.get("text", "") for b in content if b["type"] == "text")
     assert "image/png 64 48" in text
+
+
+async def test_fs_e2e_kernel_reads_and_loop_emits(tmp_path):
+    """Full circle for the read/search channels: LLM calls execute -> real
+    kernel runs `await fs('read', ...)` and `await fs('glob', ...)` -> two
+    rows written through -> the drain emits TWO siblings, a read-kind call
+    located at the file carrying the numbered text, and a search-kind call
+    carrying the listing. The LLM's tool message is execute's printed output
+    and nothing else (no vision ran, so no image blocks prepended)."""
+    from crow_cli.mcp.server.app import mcp
+
+    import crow_cli.mcp.execute.main  # noqa: F401 — registers the tool
+
+    config, session = await make_test_session(tmp_path)
+    await session.add_message({"role": "user", "content": "what is in the file"})
+
+    target = tmp_path / "f.py"
+    target.write_text("x = 1\ny = 2\n")
+    code = (
+        f"r = await fs('read', {str(target)!r})\n"
+        "print(r.lines, r.shown)\n"
+        f"g = await fs('glob', {str(tmp_path)!r}, '*.py')\n"
+        "print(len(g.paths))"
+    )
+    turn1 = [
+        tool_call_chunk(
+            0, id="call_e1", name="execute", args=json.dumps({"code": code})
+        ),
+        usage_chunk(30),
+    ]
+    turn2 = [content_chunk("Two assignments."), usage_chunk(10)]
+    llm = MultiTurnLLM([turn1, turn2])
+    conn = FakeConn()
+
+    async with Client(mcp) as mcp_client:
+        gen = react_loop(
+            conn=conn,
+            config=config,
+            client_capabilities=None,
+            turn_id="turn-1",
+            mcp_clients={SESSION_ID: mcp_client},
+            llm=llm,
+            tools=[],
+            sessions={AGENT_ID: session},
+            agent_id=AGENT_ID,
+            state_accumulators={},
+            logger=logger,
+            hooks=[],
+        )
+        events, stop = await drive_react_loop(gen)
+
+    assert stop == "done", events
+
+    parent = "turn-1/call_e1"
+    rows = _fetch_rows(config.db_uri)
+    assert [(r.tool, r.mode, r.result_kind, r.emitted) for r in rows] == [
+        ("fs", "read", "read", 1),
+        ("fs", "glob", "search", 1),
+    ]
+    assert all(r.parent_tool_call_id == parent for r in rows)
+    read_id, glob_id = (r.id for r in rows)
+
+    assert _sub_ids_in_order(conn) == [
+        parent,
+        f"turn-1/call_sub{read_id}",
+        f"turn-1/call_sub{glob_id}",
+    ]
+
+    start, progress, final = _by_id(conn, f"turn-1/call_sub{read_id}")
+    assert start.kind == "read"
+    assert start.title == f"fs/read: {target}"
+    assert [loc.path for loc in start.locations] == [str(target)]
+    assert start.raw_input["mode"] == "read"
+    assert start.raw_input["path"] == str(target)
+    assert progress.content[0].content.text == "1→x = 1\n2→y = 2"
+    assert final.status == "completed"
+
+    start, progress, final = _by_id(conn, f"turn-1/call_sub{glob_id}")
+    assert start.kind == "search"
+    assert start.title == "fs/glob"
+    assert start.locations is None
+    assert progress.content[0].content.text == str(target)
+    assert final.status == "completed"
+
+    # execute's own completion carries only what the cell printed.
+    done = _by_id(conn, parent)[-1]
+    assert done.status == "completed"
+    assert [c.type for c in done.content] == ["content"]
+    assert "2 2" in done.content[0].content.text
+    assert "1" in done.content[0].content.text
+
+    await session.close()
+    loaded = await AgentSession.load(AGENT_ID, memory_path=config.db_uri)
+    tool_msgs = [m for m in loaded.messages if m["role"] == "tool"]
+    assert len(tool_msgs) == 1
+    assert "2 2" in str(tool_msgs[0]["content"])

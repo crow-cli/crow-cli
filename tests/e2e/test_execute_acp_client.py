@@ -6,9 +6,11 @@ its MCP server and the kernel are all live code from this tree — is driven
 by a real ACP client (crow_cli.client.subagent.SubagentDriver, the same
 machinery the task system uses). The client's session_update stream is the
 assertion surface: the model calls `execute` ONCE, the cell calls `write()`
-in-kernel, and the client must see an honest ACP tool call for that write —
-kind="edit", a file location, the code's own arguments as rawInput, and diff
-content the frontend renders as a diff view.
+and `fs('read')` in-kernel, and the client must see an honest ACP tool call
+for each — the write as kind="edit" with a file location, the code's own
+arguments as rawInput and diff content the frontend renders as a diff view;
+the read as kind="read", located at the same file, carrying the numbered
+text.
 
 This is the tier the in-process tests cannot cover. They drive the react
 loop directly, so a stale MCP server (started before the identity-rail
@@ -62,7 +64,7 @@ def _updates_by_id(updates, tool_call_id):
     ]
 
 
-async def test_client_sees_in_cell_write_as_an_edit_tool_call(tmp_path):
+async def test_client_sees_in_cell_write_and_read_as_their_own_calls(tmp_path):
     config = _live_config_or_skip()
     model = _model_name(config)
 
@@ -76,7 +78,12 @@ async def test_client_sees_in_cell_write_as_an_edit_tool_call(tmp_path):
 
     target = tmp_path / "hello.txt"
     content = "hello from the kernel\n"
-    code = f"r = await write({str(target)!r}, {content!r})\nprint(r.path, r.added)"
+    code = (
+        f"r = await write({str(target)!r}, {content!r})\n"
+        f"back = await fs('read', {str(target)!r})\n"
+        "print(r.path, r.added)\n"
+        "print(back.text)"
+    )
     prompt = (
         "Call the `execute` tool EXACTLY ONCE, with this code verbatim:\n\n"
         f"{code}\n\n"
@@ -123,10 +130,10 @@ async def test_client_sees_in_cell_write_as_an_edit_tool_call(tmp_path):
     ]
     assert exec_ids, f"no execute tool call on the wire: {ids}"
 
-    # The in-cell write: its OWN tool call, synthetic id shaped like a real
-    # one (<turn>/call_sub<row>), kind edit, located at the file.
+    # The in-cell write and read: each its OWN tool call, synthetic id shaped
+    # like a real one (<turn>/call_sub<row>), in call-record order.
     sub_ids = [i for i in ids if re.search(r"/call_sub\d+", i)]
-    assert sub_ids, f"the in-cell write never reached the client: {ids}"
+    assert len(sub_ids) == 2, f"the in-cell calls never reached the client: {ids}"
     sub_id = sub_ids[0]
 
     start, progress, final = _updates_by_id(updates, sub_id)
@@ -150,6 +157,23 @@ async def test_client_sees_in_cell_write_as_an_edit_tool_call(tmp_path):
 
     assert final.status == "completed"
 
+    # The in-cell read: kind follows the artifact ("read", not the "other"
+    # that get_tool_kind("fs") would give), located at the file, carrying the
+    # numbered text — the same shape execute_acp_read sends.
+    read_start, read_progress, read_final = _updates_by_id(updates, sub_ids[1])
+    assert read_start.kind == "read"
+    assert read_start.title == f"fs/read: {target}"
+    assert [loc.path for loc in (read_start.locations or [])] == [str(target)]
+    assert read_start.raw_input["mode"] == "read"
+    assert read_start.raw_input["path"] == str(target)
+    read_texts = [
+        c.content.text
+        for c in (read_progress.content or [])
+        if c.type == "content" and c.content.type == "text"
+    ]
+    assert read_texts == ["1→hello from the kernel"]
+    assert read_final.status == "completed"
+
     # The LLM's view is untouched by any of this: execute's own completion
     # carries only what the cell printed.
     exec_done = _updates_by_id(updates, exec_ids[0])[-1]
@@ -160,4 +184,7 @@ async def test_client_sees_in_cell_write_as_an_edit_tool_call(tmp_path):
         if c.type == "content" and c.content.type == "text"
     ]
     assert any(str(target) in t for t in texts), texts
+    # The read reached the MODEL too, but only because the cell printed it —
+    # the artifact on the sibling call is the client's channel, not the LLM's.
+    assert any("1→hello from the kernel" in t for t in texts), texts
     assert not [c for c in (exec_done.content or []) if c.type == "diff"]

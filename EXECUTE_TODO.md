@@ -128,10 +128,42 @@ it and background work never bleeds into the next cell's drain.
        reload with a real edit writing its row afterwards). See the
        PICKING UP HARNESS CHANGES caveat for the three traps and the two
        test-author traps.
-- [ ] 6. fs — modes: read (FileResult; polite "use vision.file" on images),
-       glob (gitignore/.venv/.node_modules-aware — pathspec), search (rg),
-       ast (ast_grep_py bindings — search AND replace; shadow-git when no
-       git detected).
+- [x] 6a. fs — modes read/glob/search. LANDED: `fs(mode, path, pattern,
+       offset, limit, file_pattern)` in tools/fs.py; FileResult (.content
+       raw / .text numbered / .lines / .offset / .shown / .truncated),
+       GlobResult (.paths), SearchResult (.matches of SearchMatch(path,
+       line, text), .paths deduped, .text rendered). result_kind gained
+       "read" and "search"; the drain maps ARTIFACT -> kind
+       (`_KIND_BY_RESULT = {"diff": "edit", "read": "read", "search":
+       "search"}`) and falls back to `get_tool_kind(row.mode or row.tool)`
+       — kind must follow the mode for a multi-mode tool, since
+       get_tool_kind("fs") is "other" and a FAILED row's result_kind is
+       "error" (so a read that raised still arrives as a read call). Read
+       emission mirrors execute_acp_read: located at the file, numbered text
+       in a text block. glob/search emit text with no location.
+       DEVIATION from the plan: glob is ripgrep (`rg --files -g`), NOT
+       pathspec. pathspec is already a dependency but ships no gitignore
+       walker (no nested .gitignore, no .git/info/exclude), so it meant
+       reimplementing git semantics; rg gives them for free and is already
+       the search engine — one external binary, two modes, and it is
+       fail-fast (FsError) when absent rather than degraded.
+       read ports `_is_binary_file`/`_format_with_line_numbers` from
+       mcp/read (copied, not imported: mcp/read is endgame-deleted) and
+       `_resolve_path` from mcp/editor (imported, like edit/write — the
+       engine survives). Images refuse politely and point at
+       vision(mode='file'); directories point at fs(mode='glob'); .svg is
+       TEXT (readable — vision rejects it, fs does not).
+       Tests: 22 unit (real files + real rg, no mocks), 4 drain (read
+       located, search/glob text, failed-row kind), 1 kernel e2e (all three
+       modes in a real subprocess), 2 prelude (ambient + runs), and the
+       live-client e2e now asserts a read arrives at the client as
+       kind="read" with the numbered text while the model sees it only
+       because the cell printed it.
+- [ ] 6b. fs ast — ast_grep_py bindings: search AND replace; a rewrite is a
+       multi-diff payload (the drain already emits one call per file);
+       shadow the preimage into the ImageStore when the tree isn't git.
+       Commit pyproject.toml + uv.lock (ast-grep-py>=0.45.3, already added
+       and deliberately held) with this step.
 - [x] 7. vision — modes: file, webcam (the robotics door — first class,
        never dropped), video later (video-frames skill as a mode: frame
        extraction -> N file results). Bytes -> ImageStore at call time;
@@ -275,3 +307,14 @@ it and background work never bleeds into the next cell's drain.
   its tool call as TEXT and the turn ends at once: looks like a model
   failure, is a wiring failure. Read the child's "Created session ... with
   N tools" log line first.
+- ripgrep's `-g` glob is matched against the path RELATIVE TO THE PROCESS
+  CWD, not relative to the search path you pass. `rg --files -g
+  'src/tools/*.py' /abs/root` returns NOTHING when the cwd is anywhere else,
+  while `-g '*.py'` (slashless — matches at any level) works and hides the
+  bug. fs therefore runs rg with `cwd=root` and `.` as the path, then
+  absolutizes the output (`str(root / rel)`; pathlib collapses the leading
+  `./`, and `--json` paths come back as `./src/...`). Also `--sort path` on
+  both modes: rg searches in parallel, so unsorted output order is
+  nondeterministic and any test asserting hit order flakes. And
+  `--no-config`, or the user's ~/.ripgreprc changes the tool's behaviour.
+  Exit 1 is "no matches", not failure — only >=2 is an error.
