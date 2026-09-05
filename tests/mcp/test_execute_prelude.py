@@ -72,6 +72,28 @@ async def test_fs_runs_in_the_kernel(mcp_app, tmp_path):
     assert out.strip().splitlines() == ["2 2 False", "1 1 True"]
 
 
+async def test_fs_ast_runs_in_the_kernel(mcp_app, tmp_path):
+    """ast-grep is a native extension, imported lazily inside the kernel
+    subprocess — this tier is the only one that proves it loads there at all
+    (a packaging/PyInstaller-shaped failure is invisible in-process)."""
+    target = tmp_path / "f.py"
+    target.write_text("import os\nos.path.join(a, b)\n")
+    out = await _call(
+        mcp_app,
+        f"s = await fs('ast', {str(tmp_path)!r}, 'os.path.join($A, $B)')\n"
+        "print(len(s.matches), s.matches[0].line)\n"
+        f"w = await fs('rewrite', {str(tmp_path)!r}, 'os.path.join($A, $B)',"
+        " rewrite='Path($A) / $B')\n"
+        "print(w.summary)",
+    )
+    assert out.strip().splitlines() == [
+        "1 2",
+        "rewrote 1 of 1 parsed file(s), 1 match(es):"
+        " os.path.join($A, $B) -> Path($A) / $B",
+    ]
+    assert target.read_text() == "import os\nPath(a) / b\n"
+
+
 async def test_edit_runs_and_registers(mcp_app, tmp_path):
     f = tmp_path / "hello.txt"
     f.write_text("one\ntwo\n")

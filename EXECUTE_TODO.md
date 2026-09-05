@@ -159,11 +159,60 @@ it and background work never bleeds into the next cell's drain.
        live-client e2e now asserts a read arrives at the client as
        kind="read" with the numbered text while the model sees it only
        because the cell printed it.
-- [ ] 6b. fs ast — ast_grep_py bindings: search AND replace; a rewrite is a
-       multi-diff payload (the drain already emits one call per file);
-       shadow the preimage into the ImageStore when the tree isn't git.
-       Commit pyproject.toml + uv.lock (ast-grep-py>=0.45.3, already added
-       and deliberately held) with this step.
+- [x] 6b. fs ast — `fs(mode="ast")` structural search and
+       `fs(mode="rewrite")` structural transform, on the ast-grep-py
+       binding. ast returns the SAME SearchResult shape as regex search
+       (SearchMatch(path, line, text), match text whitespace-collapsed and
+       capped at 160 chars because a structural match can span lines);
+       rewrite returns RewriteResult (.files of EditResult, .paths,
+       .changed, .scanned, .matches, .summary). The walk is rg --files
+       (gitignore-aware, same excludes), narrowed by `lang=` or by every
+       mapped extension; parsing + planning run in asyncio.to_thread.
+       THREE DEVIATIONS from the plan, all deliberate:
+       * NO multi-diff payload. A rewrite calls `write()` per changed file,
+         so each file is its OWN row and its own edit-kind diff call on the
+         client, and the rewrite's own row is the operation (pattern,
+         rewrite string, summary text). One row carrying N whole files would
+         have put megabytes of JSON in a single subtool_calls row for a
+         300-file rewrite; N rows put the same bytes where the diffs already
+         live. CONSEQUENCE: the drain's `content == "multi-diff"` branch now
+         has no producer — candidate for deletion (see the simplification
+         list at the bottom).
+       * NO ImageStore preimage shadow. Each per-file EditResult carries
+         whole old_text/new_text into its row's acp_payload, so crow.db IS
+         the undo log for a rewritten tree, whether or not it is a git
+         checkout. Storing the preimage a second time would duplicate it.
+       * `lang` is VALIDATED against the extension map before anything
+         reaches SgRoot: an unsupported language makes the native binding
+         PANIC — pyo3_runtime.PanicException, a BaseException that sails
+         through `except Exception` (and would swallow asyncio cancellation
+         if caught broadly). Bundled grammars: python, javascript,
+         typescript, tsx, jsx, rust, go, c, cpp, csharp, java, ruby, html,
+         css, json, yaml, markdown, bash, kotlin, swift, php, lua, scala,
+         elixir, haskell, dart, nix, solidity. NOT bundled (raise): sql,
+         toml, zig, r, vue, svelte, erlang, qml, shell (it's "bash").
+       Binding facts, verified: `SgRoot(src, lang).root()`;
+       `root.find_all(pattern=...)`; `node.replace(text)` returns an Edit
+       (start_pos/end_pos/inserted_text) and inserts LITERALLY — there is no
+       fix engine, so metavar expansion is ours; `root.commit_edits(edits)`
+       -> new source; `node.range().start.line` is 0-INDEXED; a bad pattern
+       raises RuntimeError("cannot get matcher") -> FsError;
+       `node.get_root()` returns an SgRoot (needs `.root()` again).
+       THE METAVAR TRAP: `$$$REST` captures the punctuation nodes too
+       ([b, ",", c] for `join(a, b, c)`), so joining capture texts gives
+       `b, ,, c`. Expansion is the SOURCE SPAN — first capture's start index
+       to last capture's end index, sliced out of the root text. And only
+       metavars the pattern CAPTURED expand (`get_match(name) is None` ->
+       left literal), which is ast-grep's own rule and why a JS template
+       literal `${name}` survives in both source and rewrite string.
+       Planning happens for every file BEFORE any write, so a bad pattern
+       leaves the tree untouched.
+       Tests: 14 more unit (36 total in test_tools_fs.py), 1 drain (the
+       rewrite summary row is kind="edit" — get_tool_kind("rewrite") hits
+       the "write" substring rule; pinned so a change there is a decision),
+       1 kernel-level (the native extension loads in the kernel SUBPROCESS —
+       the packaging-shaped failure in-process tests cannot see).
+       pyproject.toml + uv.lock (ast-grep-py>=0.45.3) commit with this step.
 - [x] 7. vision — modes: file, webcam (the robotics door — first class,
        never dropped), video later (video-frames skill as a mode: frame
        extraction -> N file results). Bytes -> ImageStore at call time;
@@ -318,3 +367,22 @@ it and background work never bleeds into the next cell's drain.
   nondeterministic and any test asserting hit order flakes. And
   `--no-config`, or the user's ~/.ripgreprc changes the tool's behaviour.
   Exit 1 is "no matches", not failure — only >=2 is an error.
+
+## Pending decisions — these DELETE landed code, so they wait for a yes
+
+1. `register._entries` / `pending()` / `drain()` are dead in production: the
+   DB table is the queue (write-through at call time, the server drains by
+   parent tcid). The in-kernel list is a second source of truth that only
+   kernel-local tests read (tests/mcp/test_execute_prelude.py asserts on
+   `drain()`, tests/unit/test_tools_*.py on `pending()`). Deleting it means
+   rewriting those assertions against the table.
+2. The drain's `content == "multi-diff"` branch has no producer since 6b
+   chose per-file write rows over one N-file payload. Delete the branch (and
+   `_subtool_id`'s `part` argument) or keep it as the documented way to emit
+   one call per artifact from a single row.
+3. `acp_payload()` is redundant for the diff tools — the drain needs exactly
+   EditResult's fields. RECOMMEND KEEP: it is what keeps crow_cli.tools
+   acp-free, and it is the seam a new artifact type plugs into.
+4. `_emit_subtool_call` sends three beats (pending / in_progress /
+   completed) where two would do. RECOMMEND KEEP at three: it is byte-for-byte
+   the shape crow sends for a real edit call, and the client merges them.

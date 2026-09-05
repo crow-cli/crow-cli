@@ -1,16 +1,27 @@
-"""fs — read, glob, search: the filesystem, Python-shaped.
+"""fs — read, glob, search, ast, rewrite: the filesystem, Python-shaped.
 
 Modes:
-- ``read``   — one file as a line-numbered window (offset/limit). The old
+- ``read``    — one file as a line-numbered window (offset/limit). The old
   MCP read tool's contract, ported here rather than imported: crow_cli.mcp
   is pared to execute in the endgame, and this is the part that survives.
-- ``glob``   — gitignore-style pattern -> matching FILES under a root.
-- ``search`` — regex -> structured matches (path, line, text) under a root.
+- ``glob``    — gitignore-style pattern -> matching FILES under a root.
+- ``search``  — regex -> structured matches (path, line, text) under a root.
+- ``ast``     — structural search (ast-grep patterns: ``os.path.join($A,
+  $B)``, ``def $F($$$ARGS): $$$BODY``) -> the same SearchResult shape.
+- ``rewrite`` — the same pattern plus a ``rewrite=`` string with the
+  pattern's own metavariables -> every matching file rewritten.
 
-glob and search both shell out to ripgrep, which is why they get real
-gitignore semantics for free (nested .gitignore, .git/info/exclude, hidden
-files skipped) instead of a reimplementation: one engine, two modes. It is
-an external binary — absent, fs raises rather than degrading.
+glob, search, ast and rewrite all walk with ripgrep, which is why they get
+real gitignore semantics for free (nested .gitignore, .git/info/exclude,
+hidden files skipped) instead of a reimplementation: one engine, every mode
+that touches a tree. It is an external binary — absent, fs raises rather
+than degrading. ast-grep is imported lazily, so a kernel that never parses
+a tree never loads the native extension.
+
+A rewrite does NOT carry N files in one payload: each changed file goes
+through write(), so each is its own subtool row and its own diff on the
+client, and crow.db holds every preimage. The rewrite's own row is the
+operation — pattern, rewrite string, summary.
 
 Images are refused politely: reading a png as text is never what the caller
 meant, and vision(mode="file") is.
@@ -20,13 +31,21 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shutil
 from pathlib import Path
 
 from crow_cli.mcp.editor.main import _resolve_path
 
 from .register import subtool
-from .results import FileResult, FsError, GlobResult, SearchMatch, SearchResult
+from .results import (
+    FileResult,
+    FsError,
+    GlobResult,
+    RewriteResult,
+    SearchMatch,
+    SearchResult,
+)
 
 _MAX_LINE_LENGTH = 2000
 _BINARY_CHECK_SIZE = 8192
@@ -52,6 +71,71 @@ _IMAGE_EXTS = {
 _ALWAYS_EXCLUDE = (".git", ".venv", "__pycache__", "node_modules")
 
 _RG_TIMEOUT = 60.0
+
+# A structural match can span lines (a whole function); the rendered line
+# collapses whitespace and caps, so one match is one line of output.
+_MATCH_TEXT_MAX = 160
+
+# ast-grep's bundled grammars, by extension. This map is also the language
+# VALIDATOR: an unsupported language makes the native binding PANIC (a
+# pyo3 PanicException, which is a BaseException — it would sail straight
+# through an `except Exception`), so nothing reaches SgRoot unless it is a
+# value in here. sql, toml, zig, r, vue and svelte are notably absent.
+_LANG_BY_EXT = {
+    ".py": "python",
+    ".pyi": "python",
+    ".js": "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    ".jsx": "jsx",
+    ".ts": "typescript",
+    ".mts": "typescript",
+    ".cts": "typescript",
+    ".tsx": "tsx",
+    ".rs": "rust",
+    ".go": "go",
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".cxx": "cpp",
+    ".hpp": "cpp",
+    ".hh": "cpp",
+    ".hxx": "cpp",
+    ".cs": "csharp",
+    ".java": "java",
+    ".rb": "ruby",
+    ".html": "html",
+    ".htm": "html",
+    ".css": "css",
+    ".json": "json",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".md": "markdown",
+    ".sh": "bash",
+    ".bash": "bash",
+    ".kt": "kotlin",
+    ".kts": "kotlin",
+    ".swift": "swift",
+    ".php": "php",
+    ".lua": "lua",
+    ".scala": "scala",
+    ".ex": "elixir",
+    ".exs": "elixir",
+    ".hs": "haskell",
+    ".dart": "dart",
+    ".nix": "nix",
+    ".sol": "solidity",
+}
+
+_LANGS = sorted(set(_LANG_BY_EXT.values()))
+
+# $$$MULTI before $SINGLE, or the tail of a multi-metavar matches first.
+_METAVAR = re.compile(r"\$\$\$\w+|\$\w+")
+
+
+def _cap(limit: int | None, mode: str) -> int:
+    return int(limit) if limit is not None else _DEFAULT_LIMIT[mode]
 
 
 def _is_binary(path) -> bool:
@@ -238,6 +322,175 @@ async def _search(
     )
 
 
+async def _walk(root: Path, file_pattern: str | None) -> list[Path]:
+    """Every file rg will list under root — gitignore-aware, excludes applied."""
+    argv = [
+        _rg(),
+        "--files",
+        "--no-messages",
+        "--no-config",
+        "--sort",
+        "path",
+        *_excludes(),
+    ]
+    if file_pattern:
+        argv += ["-g", file_pattern]
+    argv.append(".")
+    out = await _run(argv, root)
+    return [root / line for line in out.splitlines() if line]
+
+
+def _lang_of(path: Path) -> str | None:
+    return _LANG_BY_EXT.get(path.suffix.lower())
+
+
+def _candidates(files: list[Path], lang: str | None) -> list[Path]:
+    """The walk, narrowed to what ast-grep can parse: one language when the
+    caller named it, every mapped extension otherwise."""
+    if lang:
+        return [p for p in files if _lang_of(p) == lang]
+    return [p for p in files if _lang_of(p)]
+
+
+def _read_text(path: Path) -> str | None:
+    """None for anything that is not decodable text. A tree walk turns up
+    binaries, huge files and exotic encodings; in a walk those are skips,
+    not errors (mode='read' raises on exactly the same conditions)."""
+    try:
+        if path.stat().st_size > _MAX_FILE_SIZE or _is_binary(path):
+            return None
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _parse(text: str, lang: str, pattern: str):
+    """(root, matches). A bad PATTERN raises RuntimeError in the binding,
+    which becomes an FsError naming the pattern."""
+    from ast_grep_py import SgRoot
+
+    try:
+        root = SgRoot(text, lang).root()
+        return root, root.find_all(pattern=pattern)
+    except RuntimeError as e:
+        raise FsError(f"ast-grep cannot match pattern {pattern!r}: {e}") from None
+
+
+def _match_text(node) -> str:
+    text = " ".join(node.text().split())
+    return text if len(text) <= _MATCH_TEXT_MAX else text[:_MATCH_TEXT_MAX] + "\u2026"
+
+
+def _expand(rewrite: str, node) -> str:
+    """Substitute the pattern's own metavariables into the rewrite string —
+    the binding's ``replace()`` inserts literally, there is no fix engine.
+
+    Only metavars the pattern actually CAPTURED expand, so a ``$`` that
+    belongs to the target language (a JS template literal, a shell variable,
+    a PHP variable) survives untouched. That is ast-grep's own rule, and it
+    is why ``$NAME`` needs no escaping here.
+
+    A ``$$$MULTI`` expands to the SOURCE SPAN it captured, not to its
+    captures joined: tree-sitter hands back the punctuation too (``$$$REST``
+    on ``join(a, b, c)`` is [b, ",", c]), so joining re-invents separators
+    and produces ``b, ,, c``. First capture's start to last capture's end,
+    sliced out of the root text, is the original source verbatim.
+    """
+
+    def sub(match: re.Match) -> str:
+        token = match.group(0)
+        name = token.lstrip("$")
+        if token.startswith("$$$"):
+            multi = node.get_multiple_matches(name)
+            if not multi:
+                return token
+            source = node.get_root().root().text()
+            return source[
+                multi[0].range().start.index : multi[-1].range().end.index
+            ]
+        hit = node.get_match(name)
+        return hit.text() if hit is not None else token
+
+    return _METAVAR.sub(sub, rewrite)
+
+
+def _ast_scan(files: list[Path], pattern: str, lang: str | None, limit: int):
+    """Structural search, synchronous — tree-sitter parsing is CPU work and
+    belongs off the kernel's loop. Stops at limit matches."""
+    matches: list[SearchMatch] = []
+    for path in files:
+        text = _read_text(path)
+        if text is None:
+            continue
+        _, nodes = _parse(text, lang or _lang_of(path), pattern)
+        for node in nodes:
+            matches.append(
+                SearchMatch(str(path), node.range().start.line + 1, _match_text(node))
+            )
+            if len(matches) > limit:
+                return matches[:limit], True
+    return matches, False
+
+
+def _plan_rewrites(files: list[Path], pattern: str, rewrite: str, lang: str | None):
+    """Every (path, old_text, new_text) the rewrite would produce, computed
+    BEFORE anything is written: a bad pattern fails with nothing touched."""
+    planned: list[tuple[Path, str, str]] = []
+    scanned = 0
+    matches = 0
+    for path in files:
+        text = _read_text(path)
+        if text is None:
+            continue
+        scanned += 1
+        root, nodes = _parse(text, lang or _lang_of(path), pattern)
+        if not nodes:
+            continue
+        matches += len(nodes)
+        new_text = root.commit_edits(
+            [node.replace(_expand(rewrite, node)) for node in nodes]
+        )
+        if new_text != text:
+            planned.append((path, text, new_text))
+    return planned, scanned, matches
+
+
+async def _ast(
+    root: Path, pattern: str, lang: str | None, file_pattern: str | None, limit: int
+) -> SearchResult:
+    files = _candidates(await _walk(root, file_pattern), lang)
+    matches, truncated = await asyncio.to_thread(_ast_scan, files, pattern, lang, limit)
+    return SearchResult(
+        pattern=pattern, root=str(root), matches=matches, truncated=truncated
+    )
+
+
+async def _rewrite(
+    root: Path,
+    pattern: str,
+    rewrite: str,
+    lang: str | None,
+    file_pattern: str | None,
+) -> RewriteResult:
+    files = _candidates(await _walk(root, file_pattern), lang)
+    planned, scanned, matches = await asyncio.to_thread(
+        _plan_rewrites, files, pattern, rewrite, lang
+    )
+    # Call-time import on purpose: reload() refreshes fs BEFORE write, so a
+    # module-level `from .write import write` would keep the stale function.
+    from .write import write
+
+    results = [await write(str(path), new_text) for path, _, new_text in planned]
+    return RewriteResult(
+        pattern=pattern,
+        rewrite=rewrite,
+        root=str(root),
+        files=results,
+        scanned=scanned,
+        matches=matches,
+    )
+
+
 @subtool(tool="fs")
 async def fs(
     mode: str,
@@ -246,36 +499,56 @@ async def fs(
     offset: int = 1,
     limit: int | None = None,
     file_pattern: str | None = None,
+    lang: str | None = None,
+    rewrite: str | None = None,
 ):
-    """Read a file, glob for files, or search their contents.
+    """Read a file, glob for files, search their contents, or rewrite their syntax.
 
     Args:
-        mode: "read", "glob" or "search".
-        path: read — the file. glob/search — the root directory to walk
+        mode: "read", "glob", "search", "ast" or "rewrite".
+        path: read — the file. every other mode — the root directory to walk
             (default: the kernel's cwd). Absolute, or relative to cwd.
         pattern: glob — a gitignore-style glob ("**/*.py", "tests/*_fs.py").
-            search — a regex (rg's; "(?i)" for case-insensitive).
+            search — a regex (rg's; "(?i)" for case-insensitive). ast and
+            rewrite — an ast-grep pattern, where $NAME captures one node and
+            $$$NAME captures many ("os.path.join($A, $B)",
+            "def $F($$$ARGS): $$$BODY").
         offset: read only — 1-indexed first line (default 1).
-        limit: cap per mode — read: lines (2000), glob: files (500),
-            search: matches (200). Result carries .truncated.
-        file_pattern: search only — restrict to files matching a glob
-            (rg -g, e.g. "*.py").
+        limit: cap per mode — read: lines (2000), glob: files (500), search
+            and ast: matches (200). Result carries .truncated.
+        file_pattern: glob/search/ast/rewrite — restrict the walk to files
+            matching a glob (rg -g, e.g. "*.py").
+        lang: ast/rewrite only — one grammar instead of every mapped
+            extension (python, javascript, typescript, tsx, jsx, rust, go,
+            c, cpp, csharp, java, ruby, html, css, json, yaml, markdown,
+            bash, kotlin, swift, php, lua, scala, elixir, haskell, dart,
+            nix, solidity). Unsupported languages raise — the binding panics
+            on them, so they are refused before they get near it.
+        rewrite: rewrite only — the replacement, with the pattern's own
+            metavariables substituted ($A, $$$ARGS). A $ that the pattern
+            did not capture is left alone, so target-language $ syntax
+            survives.
 
     Returns:
         read -> FileResult (.content raw, .text line-numbered, .lines,
         .offset, .shown, .truncated); glob -> GlobResult (.paths,
-        .truncated); search -> SearchResult (.matches of SearchMatch(path,
-        line, text), .paths deduplicated, .text rendered, .truncated).
+        .truncated); search and ast -> SearchResult (.matches of
+        SearchMatch(path, line, text), .paths deduplicated, .text rendered,
+        .truncated); rewrite -> RewriteResult (.files of EditResult, .paths,
+        .changed, .scanned, .matches, .summary).
 
     Raises:
-        FsError: missing mode/path/pattern, directory or image or binary or
-            oversized file on read, ripgrep absent, failed or timed out.
+        FsError: missing mode/path/pattern/rewrite, directory or image or
+            binary or oversized file on read, unsupported language,
+            unmatchable ast pattern, ripgrep absent, failed or timed out.
 
     Note:
         The model sees only what the cell PRINTS — ``print(r.text)`` after a
-        read, ``print(r.text)`` or ``print(*r.paths, sep="\\n")`` after a
-        search/glob. The client gets its own view regardless: a read arrives
-        as a read-kind tool call located at the file, glob/search as text.
+        read/search/ast, ``print(r.summary)`` after a rewrite. The client
+        gets its own view regardless: a read arrives as a read-kind call
+        located at the file, glob/search/ast as text, and a rewrite as one
+        edit-kind diff call PER FILE (each went through write()) plus the
+        rewrite's own summary call.
     """
     if mode == "read":
         if not path:
@@ -284,22 +557,34 @@ async def fs(
             target = _resolve_path(path)
         except ValueError as e:
             raise FsError(str(e)) from None
-        cap = limit if limit is not None else _DEFAULT_LIMIT["read"]
         # Blocking file IO — keep the kernel's loop responsive.
-        return await asyncio.to_thread(_read, target, int(offset), int(cap))
+        return await asyncio.to_thread(_read, target, int(offset), _cap(limit, mode))
 
-    if mode in ("glob", "search"):
+    if mode in ("glob", "search", "ast", "rewrite"):
         if not pattern:
             raise FsError(f"mode={mode!r} requires pattern=")
+        if mode == "rewrite" and not rewrite:
+            raise FsError("mode='rewrite' requires rewrite=")
+        if lang is not None and lang not in _LANGS:
+            raise FsError(
+                f"unsupported ast language {lang!r} — expected one of:"
+                f" {', '.join(_LANGS)}"
+            )
         try:
             root = _resolve_path(path or ".")
         except ValueError as e:
             raise FsError(str(e)) from None
         if not root.is_dir():
             raise FsError(f"not a directory: {root}")
-        cap = limit if limit is not None else _DEFAULT_LIMIT[mode]
         if mode == "glob":
-            return await _glob(root, pattern, int(cap))
-        return await _search(root, pattern, int(cap), file_pattern)
+            return await _glob(root, pattern, _cap(limit, mode))
+        if mode == "search":
+            return await _search(root, pattern, _cap(limit, mode), file_pattern)
+        if mode == "ast":
+            return await _ast(root, pattern, lang, file_pattern, _cap(limit, "search"))
+        return await _rewrite(root, pattern, rewrite, lang, file_pattern)
 
-    raise FsError(f"unknown fs mode {mode!r} — expected 'read', 'glob' or 'search'")
+    raise FsError(
+        f"unknown fs mode {mode!r} — expected 'read', 'glob', 'search',"
+        " 'ast' or 'rewrite'"
+    )

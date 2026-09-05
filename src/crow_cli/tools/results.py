@@ -223,3 +223,44 @@ class SearchResult(ToolResult):
 class FsError(ToolError):
     pass
 
+
+@dataclass
+class RewriteResult(ToolResult):
+    """A structural rewrite across files.
+
+    Each changed file was written through ``write()``, so every one of them
+    is its OWN subtool row and its own diff on the client — this result is
+    the operation that caused them, and its payload is the summary, not N
+    copies of N files. ``.files`` holds the EditResults for code that wants
+    the diffs (and the preimages: each carries whole old_text/new_text, so
+    crow.db is the undo log — no separate shadow store needed).
+    """
+
+    pattern: str
+    rewrite: str
+    root: str
+    files: list  # EditResult per changed file
+    scanned: int  # files parsed
+    matches: int  # structural matches found
+
+    result_kind = "text"
+
+    def acp_payload(self) -> dict:
+        return {"content": "text", "text": self.summary}
+
+    @property
+    def changed(self) -> int:
+        return len(self.files)
+
+    @property
+    def paths(self) -> list[str]:
+        return [f.path for f in self.files]
+
+    @property
+    def summary(self) -> str:
+        return (
+            f"rewrote {self.changed} of {self.scanned} parsed file(s), "
+            f"{self.matches} match(es): {self.pattern} -> {self.rewrite}"
+        )
+
+

@@ -357,6 +357,44 @@ async def test_drain_failed_fs_row_keeps_the_mode_kind(tmp_path):
     await session.close()
 
 
+async def test_drain_rewrite_summary_row_is_an_edit_kind_call(tmp_path):
+    """A rewrite's own row is a text summary, so kind falls back to the MODE
+    — and get_tool_kind("rewrite") is "edit", because "write" is a substring
+    of it. Pinned deliberately: the per-file diffs arrive as their own edit
+    calls, and the operation that caused them must not look like "other"."""
+    config, session = await make_test_session(tmp_path)
+    summary = "rewrote 2 of 3 parsed file(s), 2 match(es): join($A, $B) -> Path($A) / $B"
+    row_id = _seed_row(
+        config.db_uri,
+        parent_tool_call_id="turn-1/call_rw",
+        tool="fs",
+        mode="rewrite",
+        args={
+            "mode": "rewrite",
+            "path": "/tmp/proj",
+            "pattern": "join($A, $B)",
+            "rewrite": "Path($A) / $B",
+        },
+        result_kind="text",
+        acp_payload={"content": "text", "text": summary},
+    )
+    conn = FakeConn()
+    ctx = await _make_ctx(config, session, conn)
+
+    from crow_cli.agent.tools import _emit_subtool_calls
+
+    await _emit_subtool_calls(ctx, "turn-1/call_rw")
+
+    start, progress, done = _by_id(conn, f"turn-1/call_sub{row_id}")
+    assert start.kind == "edit"
+    assert start.title == "fs/rewrite"
+    assert start.locations is None
+    assert start.raw_input["rewrite"] == "Path($A) / $B"
+    assert progress.content[0].content.text == summary
+    assert done.status == "completed"
+    await session.close()
+
+
 async def test_drain_emits_parallel_subtools_in_row_order(tmp_path):
     """A cell that gathered three subtools wrote three rows (completion
     order, ids assigned at insert); the wire keeps call-record order — one
