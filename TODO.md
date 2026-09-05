@@ -18,9 +18,12 @@ items are parked at the bottom.
 - [ ] **Three default compaction hooks** — callable hooks (the
       compact.py/main.py pattern of extension — NOT inheritance), all three
       fire at compaction, sharing the summary's prefix cache:
-      1. `compact` — the existing summary handoff. Untouchable. The user is
-         extremely happy with the compaction prompt/algorithm; riff AROUND
-         it, never mutate it casually.
+      1. `compact` — the existing summary handoff, promoted to be the FIRST
+         default hook — co-equal with the other two, replaceable/extensible
+         like any of them. Shipping as today's default is NOT protected
+         status: the point of the refactor is that compaction is a hook
+         surface (character of compaction = character of the agent, and
+         project-level agents get to redefine it).
       2. `analysis` — introspective session critique. Same context as the
          summary, different task (NOT summary-minded). Evidence-mandatory
          items (quote/point at the moment in-session), taxonomy of

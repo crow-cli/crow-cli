@@ -17,7 +17,9 @@ Commit at each green checkpoint with the Session-Id trailer.
 
 ### Ground rules carried by every phase
 - Extension is HOOKS (callables passed at construction), never inheritance.
-- The existing compaction prompt/algorithm is protected — riff around it.
+- Compaction is a hook surface: the existing summary pass becomes the
+  FIRST default hook, co-equal and replaceable like the rest —
+  extensible, never sclerotic.
 - Analysis/ideas output is FOREGROUND (never background — too important),
   files over db rows (ls is the interface), evidence mandatory.
 - User corrections outrank agent suggestions absolutely.
@@ -26,7 +28,9 @@ Commit at each green checkpoint with the Session-Id trailer.
 
 1.1 Promote `on_compact` from single callback to the constructor hook
     idiom: `AcpAgent(config, hooks=..., compact_hooks=...)`, plumbed
-    through react_loop/TurnCtx exactly like hooks/snapshot_hooks. The two
+    through react_loop/TurnCtx exactly like hooks/snapshot_hooks. The
+    summary pass ITSELF becomes the first default compact_hook, with
+    analysis/ideas as sibling hooks — three co-equal callables. The two
     existing call sites (react threshold, /compact) keep working.
     Verify: existing tests green + unit test asserting multiple hooks fire
     in order with (old_agent_id, new_session).
