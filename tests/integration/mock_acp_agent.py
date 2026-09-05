@@ -20,7 +20,12 @@ Tuning (environment):
                             flat out (default 0). One chunk is treated as a token.
     CROW_MOCK_DELAY_MS      fixed sleep between chunks, ms (default 0)
     CROW_MOCK_IGNORE_CANCEL ignore session/cancel and stream to the end
+    CROW_MOCK_MAX_SECONDS   hard lifetime cap on a prompt; keeps a leaked agent
+                            from blasting forever if its parent died (default 0)
     CROW_MOCK_LOG           append diagnostics (chunk counts, cancel arrival) here
+
+The agent also sets PR_SET_PDEATHSIG so it is signalled the moment the process
+that spawned it goes away — never leave a saturated stream running behind you.
 
 Run standalone: `python mock_acp_agent.py` (it speaks ACP on stdio).
 """
@@ -53,6 +58,23 @@ from acp.schema import (
 
 def _env_int(name: str, default: int) -> int:
     return int(os.environ.get(name, default))
+
+
+def _never_outlive_the_harness() -> None:
+    """Die with whoever spawned us.
+
+    A leaked load agent streams flat out and starves whatever runs next; when a
+    test runner is killed mid-stream nothing else reaps it. Linux gives the
+    kernel the job — elsewhere fall back to CROW_MOCK_MAX_SECONDS.
+    """
+    import ctypes
+    import signal
+
+    PR_SET_PDEATHSIG = 1
+    try:
+        ctypes.CDLL("libc.so.6", use_errno=True).prctl(PR_SET_PDEATHSIG, signal.SIGTERM)
+    except (OSError, AttributeError):
+        pass
 
 
 def _diag(line: str) -> None:
@@ -127,6 +149,7 @@ class LoadBlastAgent(Agent):
         delay_s = _env_int("CROW_MOCK_DELAY_MS", 0) / 1000.0
         tokens_per_sec = _env_int("CROW_MOCK_TOKENS_PER_SEC", 0)
         ignore_cancel = os.environ.get("CROW_MOCK_IGNORE_CANCEL") == "1"
+        max_seconds = _env_int("CROW_MOCK_MAX_SECONDS", 0)
 
         cancelled = self._event(session_id)
         cancelled.clear()
@@ -143,6 +166,10 @@ class LoadBlastAgent(Agent):
                 elapsed = time.monotonic() - started
                 _diag(f"prompt stopped early: {self._streamed} chunks in {elapsed:.3f}s")
                 return PromptResponse(stop_reason="cancelled")
+
+            if max_seconds and time.monotonic() - started > max_seconds:
+                _diag(f"prompt cut short by lifetime cap: {self._streamed} chunks")
+                return PromptResponse(stop_reason="end_turn")
 
             await self._conn.session_update(
                 session_id=session_id,
@@ -165,6 +192,7 @@ class LoadBlastAgent(Agent):
 
 
 async def main() -> None:
+    _never_outlive_the_harness()
     await run_agent(LoadBlastAgent())
 
 

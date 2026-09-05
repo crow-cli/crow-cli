@@ -752,16 +752,34 @@ class Agent(AgentBase):
         self._process = None
 
     async def stop(self) -> None:
-        """Gracefully stop the process."""
+        """Gracefully stop the process — but never wait on it forever."""
         if self.session_pk is not None:
             db = DB()
             await db.session_update_last_used(self.session_pk)
 
-        if self._process is not None:
+        if (process := self._process) is not None:
+            # Closing stdin first gives an agent blocked writing a full stdout
+            # pipe something to fail on; it cannot be drained any more.
+            if process.stdin is not None:
+                try:
+                    process.stdin.close()
+                except Exception:
+                    pass
             try:
-                self._process.terminate()
+                process.terminate()
             except OSError:
-                pass
+                return
+            # SIGTERM is only a request — an agent that traps it, or one still
+            # streaming into a pipe nobody reads, must not outlive the TUI. The
+            # event loop waits on its children at shutdown, so a survivor here
+            # is a hang later.
+            try:
+                await asyncio.wait_for(process.wait(), timeout=2.0)
+            except TimeoutError:
+                process.kill()
+            except asyncio.CancelledError:
+                process.kill()
+                raise
 
     async def run(self) -> None:
         """The main logic of the Agent."""
