@@ -636,6 +636,19 @@ async def memory(
           "select m.id, m.role from messages m where m.data like
            '%EXECUTE_TODO%' and m.role='assistant' limit 20"  — the scan that
            sees what the FTS index cannot: tool call arguments.
+          "select a.session_id, a.cwd, count(*) n, min(m.created_at) first,
+           max(m.created_at) last from messages m join agents a on
+           a.agent_id=m.agent_id where m.created_at >= '2026-09-04' and
+           m.created_at < '2026-09-06' group by 1,2 order by n desc" — WHICH
+           session was huge and ended at 4am. bm25 cannot answer a shape
+           question; an aggregate can. Find the session here, then read it.
+          "select m.id, m.created_at, json_extract(m.data,'$.content') from
+           messages m join agents a on a.agent_id=m.agent_id where
+           a.session_id='x' and m.role='user' order by m.id" — everything the
+           USER said, in order. A long-running agent has thousands of messages
+           and its user has dozens; this is the whole brief in one query, and
+           it beats keyword search for "what did we decide". No bound
+           parameters — inline the id.
 
         The connection is read-only: memory cannot be written from here. That
         is a guarantee about crow.db, not a sandbox — the kernel has write(),

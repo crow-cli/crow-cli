@@ -35,7 +35,7 @@ def test_run_init_yes_mode_renders_postgres(tmp_path, monkeypatch):
         if key.startswith(_CLEAN_PREFIXES):
             monkeypatch.delenv(key, raising=False)
 
-    run_init(config_dir=tmp_path, yes=True)
+    run_init(config_dir=tmp_path, yes=True, source=False)
 
     compose = yaml.safe_load((tmp_path / "compose.yaml").read_text())
     assert "postgres" in compose["services"]
@@ -88,7 +88,7 @@ def test_run_init_skip_postgres_keeps_sqlite(tmp_path, monkeypatch):
 
     monkeypatch.setattr("rich.prompt.Confirm.ask", staticmethod(confirm))
 
-    run_init(config_dir=tmp_path, yes=False)
+    run_init(config_dir=tmp_path, yes=False, source=False)
 
     compose = yaml.safe_load((tmp_path / "compose.yaml").read_text())
     assert "postgres" not in compose["services"]

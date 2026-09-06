@@ -1,7 +1,10 @@
 """
 crow-cli init - Interactive configuration setup wizard.
 
-Builds config.yaml and .env in ~/.agents/crow (or --config-dir).
+Builds config.yaml and .env in ~/.agents/crow (or --config-dir), then clones
+the source checkout into <config-dir>/src and installs the crow-cli skill
+globally. Crow is source-first: the installed tool is the bootloader, the
+checkout is the program the TUI spawns (see crow_cli.cli.source).
 
 Configuration priority (highest to lowest):
 1. LLM_*_API_KEY / LLM_*_BASE_URL env vars
@@ -27,6 +30,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
+from crow_cli.cli.source import bootstrap as source_bootstrap
 from crow_cli.config.default import (
     COMPOSE_YAML,
     SEARXNG_SETTINGS_YML,
@@ -137,8 +141,12 @@ def is_dashscope_url(base_url: str) -> bool:
 
 
 
-def run_init(config_dir: Path, yes: bool = False):
-    """Run the interactive initialization wizard."""
+def run_init(config_dir: Path, yes: bool = False, source: bool = True):
+    """Run the interactive initialization wizard.
+
+    ``source=False`` skips the source checkout clone (Step 5) — the escape
+    hatch for offline installs and for tests that must not touch the network.
+    """
     config_dir = Path(os.path.expanduser(str(config_dir)))
 
     console.print(
@@ -508,6 +516,28 @@ def run_init(config_dir: Path, yes: bool = False):
     (config_dir / "logs").mkdir(exist_ok=True)
 
     # =========================================================================
+    # STEP 5: Source checkout + the crow-cli skill
+    # =========================================================================
+    # Crow is source-first: there is no non-source distribution. The installed
+    # tool is the bootloader; the checkout at <config_dir>/src/crow-cli is the
+    # program the TUI actually spawns (`uv --project ... run crow-cli acp`), so
+    # a `git pull` there is an upgrade and pure-Python changes are live with no
+    # reinstall. The skill is installed GLOBALLY because it is the BIOS — when
+    # a project-level spawn is broken, the agent that fixes it cannot fetch the
+    # skill from the broken thing it is repairing.
+    source_report: dict[str, Any] = {"checkouts": {}, "errors": [], "skill": None}
+    if source:
+        console.print("\n[bold cyan]═══ Step 5: Source & Skills ═══[/bold cyan]\n")
+        source_report = source_bootstrap(config_dir, log=console.print)
+        for error in source_report["errors"]:  # type: ignore[index]
+            console.print(f"[yellow]Retry:[/yellow] [dim]{error}[/dim]")
+    else:
+        console.print(
+            "\n[dim]--no-source: skipping the source checkout; the TUI will run "
+            "the installed crow-cli.[/dim]"
+        )
+
+    # =========================================================================
     # Done
     # =========================================================================
     config_logs = config_dir / "logs"
@@ -530,13 +560,17 @@ def run_init(config_dir: Path, yes: bool = False):
     ]
     if active_services:
         done_lines.append(f"Compose:  [cyan]{compose_file}[/cyan]")
+    if checkout := source_report["checkouts"].get("crow-cli"):  # type: ignore[union-attr]
+        done_lines.append(f"Source:   [cyan]{checkout}[/cyan] [dim](git pull = upgrade)[/dim]")
+    if skill := source_report["skill"]:
+        done_lines.append(f"Skill:    [cyan]{Path(str(skill)).parent}[/cyan]")
     done_lines.append(f'[dim]Test:[/dim] [bold white]crow-cli run "hey"[/bold white]')
     console.print(Panel.fit("\n".join(done_lines), border_style="green"))
 
 
 # For typer integration
-def init_command(config_dir: Path = None, yes: bool = False):
+def init_command(config_dir: Path = None, yes: bool = False, source: bool = True):
     """Initialize Crow configuration interactively."""
     if config_dir is None:
         config_dir = Path(os.path.expanduser("~/.agents/crow"))
-    run_init(config_dir=config_dir, yes=yes)
+    run_init(config_dir=config_dir, yes=yes, source=source)

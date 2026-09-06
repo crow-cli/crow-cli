@@ -200,7 +200,7 @@ def _git_root(start: Path) -> Path | None:
     return None
 
 
-def _ancestors(cwd: Path) -> list[Path]:
+def ancestors(cwd: Path) -> list[Path]:
     """``cwd`` up to the git root inclusive, nearest first.
 
     Outside a repository this is just ``[cwd]``: walking an arbitrary directory
@@ -248,7 +248,7 @@ def skill_roots(cwd: str, skills_dir: str) -> list[Path]:
             seen.add(key)
             roots.append(candidate)
 
-    for directory in _ancestors(Path(cwd)):
+    for directory in ancestors(Path(cwd)):
         for hidden in _hidden_dirs(directory):
             root = hidden / "skills"
             if root.is_dir():
@@ -357,7 +357,7 @@ def build_agents_context(cwd: str) -> dict[str, list[dict]]:
     take(AGENTS_DIR / "AGENTS.md", full_ok=True)
     take(cwd_path / "AGENTS.md", full_ok=True)
 
-    for directory in _ancestors(cwd_path):
+    for directory in ancestors(cwd_path):
         candidates = [directory / "AGENTS.md", *(h / "AGENTS.md" for h in _hidden_dirs(directory))]
         for candidate in candidates:
             take(candidate, full_ok=False)

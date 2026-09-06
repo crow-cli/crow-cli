@@ -36,7 +36,7 @@ def test_run_init_yes_mode_renders_rustfs(tmp_path, monkeypatch):
         if key.startswith("LLM_") or key.startswith(("YES_INSTALL_", "RUSTFS_", "SEARXNG_")):
             monkeypatch.delenv(key, raising=False)
 
-    run_init(config_dir=tmp_path, yes=True)
+    run_init(config_dir=tmp_path, yes=True, source=False)
 
     compose = yaml.safe_load((tmp_path / "compose.yaml").read_text())
     assert "rustfs" in compose["services"]

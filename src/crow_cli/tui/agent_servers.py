@@ -24,9 +24,9 @@ already consumes (agent_schema.Agent), so nothing downstream changes.
 from __future__ import annotations
 
 import shlex
-import sys
 from typing import Any, Literal, NotRequired, TypedDict
 
+from crow_cli.cli.source import spawn_command
 from crow_cli.tui.agent_schema import Agent
 
 
@@ -53,31 +53,37 @@ def crow_agent(
     model: str | None = None,
     config_dir: str | None = None,
     config_file: str | None = None,
+    system: bool = False,
 ) -> Agent:
     """The crow-cli agent definition, flags embedded in the launch command.
 
-    Frozen builds call the binary's `acp` subcommand; dev runs call the module.
+    Launches from the source checkout at ``<config_dir>/src/crow-cli`` when
+    there is one (``uv --project <checkout> run crow-cli acp``) so a
+    ``git pull`` there is an upgrade and pure-Python changes are live with no
+    reinstall. ``system=True`` runs the installed crow-cli instead; with no
+    checkout, frozen builds call the binary's ``acp`` subcommand and dev runs
+    call the module. See :mod:`crow_cli.cli.source`.
     """
     args: list[str] = []
     if config_dir is not None:
-        args += ["--config-dir", shlex.quote(str(config_dir))]
+        args += ["--config-dir", str(config_dir)]
     if config_file is not None:
-        args += ["--config-file", shlex.quote(str(config_file))]
+        args += ["--config-file", str(config_file)]
     if model is not None:
-        args += ["--model", shlex.quote(model)]
-    flag_str = (" " + " ".join(args)) if args else ""
+        args += ["--model", model]
 
-    if getattr(sys, "frozen", False):
-        command = f"{shlex.quote(sys.executable)} acp{flag_str}"
-    else:
-        command = f"{shlex.quote(sys.executable)} -m crow_cli.agent.main{flag_str}"
+    # spawn_command shell-quotes; hand it raw values.
+    command, kind = spawn_command(args, config_dir=config_dir, system=system)
 
     return _agent(
         identity="crow-ai.dev",
         name="Crow",
         short_name="crow",
         description="The Crow agent — transparent, observable, self-orchestrating.",
-        help="crow-cli's own ACP agent.",
+        help=(
+            "crow-cli's own ACP agent.\n\n"
+            f"Launching from: {'the source checkout' if kind == 'source' else 'the installed crow-cli'}."
+        ),
         run_command={"*": command},
     )
 
@@ -115,11 +121,14 @@ def resolve_agent_server(
     config_dir: str | None = None,
     config_file: str | None = None,
     model: str | None = None,
+    system: bool = False,
 ) -> Agent:
     """Resolve a configured agent server name into an Agent definition.
 
     `model` (from -m) overrides the entry's `default_config_options.model`;
     it applies to `registry` entries only — a `custom` entry owns its argv.
+    `system` likewise only affects `registry` entries: a `custom` entry is
+    already an explicit command.
 
     Raises:
         AgentServerError: The name is not configured, or its entry is invalid.
@@ -146,6 +155,7 @@ def resolve_agent_server(
             model=model or options.get("model"),
             config_dir=config_dir,
             config_file=config_file,
+            system=system,
         )
     else:
         raise AgentServerError(
