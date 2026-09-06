@@ -8,14 +8,29 @@ summarizes the conversation into a NEW agent record (``agent_idx + 1``) whose
 history is ``[system, user(summary + last_messages)]``, and leaves the
 ORIGINAL session untouched. The ``on_compact`` callback receives the original
 ``agent_id`` and the new session.
+
+Compaction makes THREE LLM calls, not one: the summary, then a harness analysis
+and a set of project ideas over the same history (``write_reflections``). The
+``mock_llm`` fixture answers each prompt with distinguishable text so a test can
+tell which pass produced what; ``_summary_call`` picks the first call back out of
+``call_args_list`` for assertions that are about the summary specifically.
 """
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from crow_cli.agent.compact import compact
+from crow_cli.agent.compact import (
+    ANALYSIS_PROMPT,
+    COMPACTION_PROMPT,
+    IDEAS_PROMPT,
+    analysis_path,
+    compact,
+    ideas_path,
+    write_reflections,
+)
 from crow_cli.config import Config, LLModel
 from crow_cli.agent.session import AgentSession, lookup_or_create_prompt
 from crow_cli.memory import build_agent_id
@@ -50,20 +65,58 @@ def _stream(chunks):
     return gen()
 
 
+# What each pass "returns". Keyed on the trailing prompt so the fake can tell
+# the three calls apart the way the real provider would.
+_BODIES = {
+    COMPACTION_PROMPT: ["COMPACTED ", "SUMMARY"],
+    ANALYSIS_PROMPT: ["## What worked well\n", "ANALYSIS BODY"],
+    IDEAS_PROMPT: ["## Prior art you should steal from\n", "IDEAS BODY"],
+}
+
+
+def _fake_stream(messages):
+    """A fresh stream for one call, keyed on that call's trailing prompt.
+
+    A fresh generator per call matters: an async generator is consumed once, so
+    a single ``return_value`` would leave passes two and three reading an
+    exhausted iterator and silently produce empty files.
+    """
+    body = _BODIES[messages[-1]["content"]]
+    return _stream([_content_chunk(t) for t in body] + [_usage_chunk()])
+
+
+def _summary_call(mock_llm):
+    """The first LLM call — the summary. ``call_args`` is the LAST one."""
+    return mock_llm.chat.completions.create.call_args_list[0]
+
+
 class TestCompaction:
     """Test the new-agent-record compaction contract without live LLM calls."""
 
     @pytest.fixture
-    def compact_config(self, memory_service):
-        """Real config; persistence is redirected to the in-memory fake."""
+    def compact_config(self, memory_service, tmp_path):
+        """Real config; persistence AND the config dir are redirected.
+
+        ``config_dir`` has to move: the harness analysis is written to
+        ``<config_dir>/ideas/``, and a unit test must not leave files in the
+        developer's real ``~/.agents/crow``.
+        """
         config = Config.load()
         # Inline template so make_agent_session doesn't read a prompt file.
         config.system_prompt = "You are {{name}}. Workspace: {{workspace}}."
+        config.config_dir = tmp_path / "crow"
         return config
 
     @pytest.fixture
-    async def setup_session(self, memory_service, sample_prompt_template):
-        """Create a 1-positioned session with a long conversation."""
+    async def setup_session(self, memory_service, sample_prompt_template, tmp_path):
+        """Create a 1-positioned session with a long conversation.
+
+        ``cwd`` is a tmp path for the same reason ``config_dir`` is: project
+        ideas are written to ``<cwd>/.agents/crow/ideas/``. It is created
+        because ``make_agent_session`` walks it to build the directory tree.
+        """
+        project = tmp_path / "project"
+        project.mkdir()
         prompt_id = await lookup_or_create_prompt(sample_prompt_template, name="test-prompt")
         session = await AgentSession.create(
             prompt_id=prompt_id,
@@ -71,7 +124,7 @@ class TestCompaction:
             tool_definitions=[],
             request_params={"temperature": 0.7},
             model_identifier="test-model",
-            cwd="/tmp",
+            cwd=str(project),
             agent_idx=1,
         )
         for i in range(20):
@@ -83,22 +136,16 @@ class TestCompaction:
 
     @pytest.fixture
     def mock_llm(self):
-        """Mock LLM that STREAMS a fixed summary, split across several chunks.
+        """Mock LLM that STREAMS a fixed answer per pass, split across chunks.
 
         Compaction must stream (see test_compact_streams_so_slow_models_do_not_time_out),
         so the fake returns an async iterator of chat-completion chunks rather
-        than a single response object. The summary is deliberately fragmented to
+        than a single response object. Each body is deliberately fragmented to
         prove the pieces are reassembled.
         """
         llm = AsyncMock()
         llm.chat.completions.create = AsyncMock(
-            return_value=_stream(
-                [
-                    _content_chunk("COMPACTED "),
-                    _content_chunk("SUMMARY"),
-                    _usage_chunk(),
-                ]
-            )
+            side_effect=lambda **kwargs: _fake_stream(kwargs["messages"])
         )
         return llm
 
@@ -113,7 +160,7 @@ class TestCompaction:
         session = setup_session
         result = await compact(session, mock_llm, compact_config, logger=MagicMock())
 
-        kwargs = mock_llm.chat.completions.create.call_args.kwargs
+        kwargs = _summary_call(mock_llm).kwargs
         assert kwargs["stream"] is True
         assert kwargs["stream_options"] == {"include_usage": True}
 
@@ -125,12 +172,11 @@ class TestCompaction:
     async def test_compact_calls_llm_with_tool_choice_none(
         self, setup_session, mock_llm, compact_config
     ):
-        """Compaction summarizes via a single non-tool-calling request."""
+        """Compaction summarizes via a non-tool-calling request."""
         session = setup_session
         await compact(session, mock_llm, compact_config, logger=MagicMock())
 
-        mock_llm.chat.completions.create.assert_called_once()
-        kwargs = mock_llm.chat.completions.create.call_args.kwargs
+        kwargs = _summary_call(mock_llm).kwargs
         assert kwargs["tool_choice"] == "none"
         assert kwargs["model"] == "test-model"
 
@@ -149,7 +195,7 @@ class TestCompaction:
         )
         await compact(setup_session, mock_llm, compact_config, logger=MagicMock())
 
-        kwargs = mock_llm.chat.completions.create.call_args.kwargs
+        kwargs = _summary_call(mock_llm).kwargs
         assert kwargs["temperature"] == 0.4
         assert "reasoning_effort" not in kwargs
 
@@ -166,7 +212,7 @@ class TestCompaction:
         )
         await compact(setup_session, mock_llm, compact_config, logger=MagicMock())
 
-        kwargs = mock_llm.chat.completions.create.call_args.kwargs
+        kwargs = _summary_call(mock_llm).kwargs
         assert kwargs["reasoning_effort"] == "high"
         assert "temperature" not in kwargs
 
@@ -252,3 +298,261 @@ class TestCompaction:
 
         assert result.tools == session.tools
         assert result.model_identifier == session.model_identifier
+
+    # ---------------------------------------------------------------------
+    # The two extra passes: harness analysis (global) + project ideas (local).
+    # ---------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_compact_runs_three_passes_over_an_identical_prefix(
+        self, setup_session, mock_llm, compact_config
+    ):
+        """The kv-cache contract: all three passes send a byte-identical message
+        prefix and differ only in the trailing user prompt.
+
+        Prefix caching is provider-side, so "reuse the warm cache" means the
+        bytes have to match, not that the passes have to share a Python list.
+        Each pass rebuilds its own prefix from the session — which also means
+        one pass cannot leak its prompt into the next.
+        """
+        session = setup_session
+        await compact(session, mock_llm, compact_config, logger=MagicMock())
+
+        calls = mock_llm.chat.completions.create.call_args_list
+        assert len(calls) == 3
+        assert [c.kwargs["messages"][-1]["content"] for c in calls] == [
+            COMPACTION_PROMPT,
+            ANALYSIS_PROMPT,
+            IDEAS_PROMPT,
+        ]
+
+        prefixes = [c.kwargs["messages"][:-1] for c in calls]
+        assert prefixes[0] == prefixes[1] == prefixes[2]
+        assert prefixes[0][0]["role"] == "system"
+        # Fresh list per pass, not one shared list appended to three times.
+        assert calls[0].kwargs["messages"] is not calls[1].kwargs["messages"]
+
+        # Every pass is a non-tool-calling streamed request to the same model.
+        for call in calls:
+            assert call.kwargs["tool_choice"] == "none"
+            assert call.kwargs["stream"] is True
+            assert call.kwargs["model"] == "test-model"
+
+        # And the session's own history was never mutated to build them.
+        assert len(session.messages) == 41  # system + 20 user/assistant pairs
+        assert all(COMPACTION_PROMPT not in str(m) for m in session.messages)
+
+    @pytest.mark.asyncio
+    async def test_compact_writes_analysis_globally_and_ideas_into_the_project(
+        self, setup_session, mock_llm, compact_config
+    ):
+        """Analysis -> <config_dir>/ideas/<agent-id>.md (it is about crow-cli, so
+        it has to outlive the repo). Ideas -> <cwd>/.agents/crow/ideas/<agent-id>.md
+        (they are about this repo, so they belong in its tree).
+
+        Both are named for the generation being COMPACTED — that is the history
+        they read, and the id a reader joins them back to.
+        """
+        session = setup_session
+        await compact(session, mock_llm, compact_config, logger=MagicMock())
+
+        analysis = analysis_path(compact_config.config_dir, session.agent_id)
+        ideas = ideas_path(session.cwd, session.agent_id)
+        assert analysis == compact_config.config_dir / "ideas" / f"{session.agent_id}.md"
+        assert ideas.read_text().endswith("IDEAS BODY\n")
+        assert "ANALYSIS BODY" in analysis.read_text()
+        assert "IDEAS BODY" not in analysis.read_text()
+        assert "ANALYSIS BODY" not in ideas.read_text()
+
+    @pytest.mark.asyncio
+    async def test_reflection_files_carry_provenance_written_by_code(
+        self, setup_session, mock_llm, compact_config
+    ):
+        """The frontmatter is written by crow, not asked of the model — a block
+        the model has to reproduce is a block the model gets subtly wrong."""
+        session = setup_session
+        await compact(session, mock_llm, compact_config, logger=MagicMock())
+
+        text = analysis_path(compact_config.config_dir, session.agent_id).read_text()
+        head, body = text.split("---\n\n", 1)
+        for expected in (
+            "kind: analysis",
+            f"session: {session.session_id}",
+            f"agent: {session.agent_id}",
+            "model: test-model",
+            f"cwd: {session.cwd}",
+            "generated: ",
+        ):
+            assert expected in head
+        assert body.startswith("## What worked well")
+
+        ideas = ideas_path(session.cwd, session.agent_id).read_text()
+        assert "kind: ideas" in ideas.split("---\n\n", 1)[0]
+
+    @pytest.mark.asyncio
+    async def test_reflections_never_enter_the_new_session(
+        self, setup_session, mock_llm, compact_config
+    ):
+        """The new agent's history is still exactly [system, summary]. The
+        analysis and the ideas are files, not context — the next generation
+        does not inherit its predecessor's self-criticism."""
+        session = setup_session
+        result = await compact(session, mock_llm, compact_config, logger=MagicMock())
+
+        assert len(result.messages) == 2
+        assert "ANALYSIS BODY" not in result.messages[1]["content"]
+        assert "IDEAS BODY" not in result.messages[1]["content"]
+
+    @pytest.mark.asyncio
+    async def test_a_failing_reflection_pass_does_not_break_compaction(
+        self, setup_session, mock_llm, compact_config
+    ):
+        """Compaction has already succeeded and the db is already authoritative
+        by the time the reflections run. Losing a critique to a provider timeout
+        must not cost the user their summary — so each pass fails alone."""
+        session = setup_session
+        logger = MagicMock()
+
+        def explode_on_analysis(**kwargs):
+            if kwargs["messages"][-1]["content"] == ANALYSIS_PROMPT:
+                raise RuntimeError("provider exploded")
+            return _fake_stream(kwargs["messages"])
+
+        mock_llm.chat.completions.create = AsyncMock(side_effect=explode_on_analysis)
+
+        result = await compact(session, mock_llm, compact_config, logger=logger)
+
+        # The summary still landed, and the ideas pass still ran.
+        assert "COMPACTED SUMMARY" in result.messages[1]["content"]
+        assert not analysis_path(compact_config.config_dir, session.agent_id).exists()
+        assert "IDEAS BODY" in ideas_path(session.cwd, session.agent_id).read_text()
+        assert logger.warning.called
+
+    @pytest.mark.asyncio
+    async def test_an_empty_reflection_response_writes_no_file(
+        self, setup_session, mock_llm, compact_config
+    ):
+        """A pass that streams nothing back is a failed pass, not an empty note.
+        Writing a frontmatter-only file would look like a result and read like
+        nothing."""
+        session = setup_session
+        logger = MagicMock()
+
+        def empty_on_analysis(**kwargs):
+            if kwargs["messages"][-1]["content"] == ANALYSIS_PROMPT:
+                return _stream([_usage_chunk()])
+            return _fake_stream(kwargs["messages"])
+
+        mock_llm.chat.completions.create = AsyncMock(side_effect=empty_on_analysis)
+
+        result = await compact(session, mock_llm, compact_config, logger=logger)
+
+        assert "COMPACTED SUMMARY" in result.messages[1]["content"]
+        assert not analysis_path(compact_config.config_dir, session.agent_id).exists()
+        assert ideas_path(session.cwd, session.agent_id).exists()
+
+    @pytest.mark.asyncio
+    async def test_an_unwritable_reflection_path_does_not_break_compaction(
+        self, setup_session, mock_llm, compact_config, tmp_path
+    ):
+        """A read-only checkout, a file where a directory should be, a project
+        scope that cannot be created — all of those are the user's problem to
+        fix later, not a reason to throw away a compaction."""
+        session = setup_session
+        # config_dir is a FILE, so <config_dir>/ideas/ cannot be created.
+        blocker = tmp_path / "blocker"
+        blocker.write_text("not a directory")
+        compact_config.config_dir = blocker
+
+        result = await compact(session, mock_llm, compact_config, logger=MagicMock())
+
+        assert "COMPACTED SUMMARY" in result.messages[1]["content"]
+        # The ideas pass is independent and still wrote.
+        assert "IDEAS BODY" in ideas_path(session.cwd, session.agent_id).read_text()
+
+    @pytest.mark.asyncio
+    async def test_write_reflections_returns_what_it_wrote(
+        self, setup_session, mock_llm, compact_config
+    ):
+        """The return value is the caller's only view into a function that
+        swallows its own errors: kind -> path, or kind -> None."""
+        session = setup_session
+        written = await write_reflections(
+            session, mock_llm, compact_config, logger=MagicMock()
+        )
+
+        assert written == {
+            "analysis": analysis_path(compact_config.config_dir, session.agent_id),
+            "ideas": ideas_path(session.cwd, session.agent_id),
+        }
+        assert all(p.exists() for p in written.values())
+
+    @pytest.mark.asyncio
+    async def test_write_reflections_overwrites_a_previous_note_for_the_same_agent(
+        self, setup_session, mock_llm, compact_config
+    ):
+        """Same agent_id, same filename — a re-run replaces the note rather than
+        appending a second copy of the same critique to it."""
+        session = setup_session
+        path = analysis_path(compact_config.config_dir, session.agent_id)
+        path.parent.mkdir(parents=True)
+        path.write_text("STALE\n")
+
+        await write_reflections(session, mock_llm, compact_config, logger=MagicMock())
+
+        assert "STALE" not in path.read_text()
+        assert "ANALYSIS BODY" in path.read_text()
+
+    @pytest.mark.asyncio
+    async def test_a_session_rooted_at_home_does_not_clobber_one_note_with_the_other(
+        self, setup_session, mock_llm, compact_config
+    ):
+        """Launched from $HOME, the project scope ``~/.agents/crow`` IS the
+        config dir, so the analysis and the ideas resolve to the same file and
+        the second write silently eats the first.
+
+        The global note keeps the designed name; the project note is suffixed.
+        Neither is lost.
+        """
+        session = setup_session
+        compact_config.config_dir = Path(session.cwd) / ".agents" / "crow"
+        assert analysis_path(compact_config.config_dir, session.agent_id) == ideas_path(
+            session.cwd, session.agent_id
+        )
+
+        written = await write_reflections(
+            session, mock_llm, compact_config, logger=MagicMock()
+        )
+
+        assert written["analysis"] != written["ideas"]
+        assert written["analysis"] == compact_config.config_dir / "ideas" / (
+            f"{session.agent_id}.md"
+        )
+        assert written["ideas"].name == f"{session.agent_id}-project.md"
+        assert "ANALYSIS BODY" in written["analysis"].read_text()
+        assert "IDEAS BODY" in written["ideas"].read_text()
+
+
+class TestReflectionPaths:
+    """The two output locations, without a session or an LLM in sight."""
+
+    def test_analysis_path_is_global(self, tmp_path):
+        assert analysis_path(tmp_path / "crow", "sess-2-1") == (
+            tmp_path / "crow" / "ideas" / "sess-2-1.md"
+        )
+
+    def test_ideas_path_is_project_scoped(self, tmp_path):
+        assert ideas_path(tmp_path / "repo", "sess-2-1") == (
+            tmp_path / "repo" / ".agents" / "crow" / "ideas" / "sess-2-1.md"
+        )
+
+    def test_paths_accept_strings(self):
+        """config_dir is a Path but session.cwd is a str — both have to work."""
+        assert analysis_path("/cfg", "a-1-1").name == "a-1-1.md"
+        assert ideas_path("/proj", "a-1-1").parts[-4:] == (
+            ".agents",
+            "crow",
+            "ideas",
+            "a-1-1.md",
+        )
+

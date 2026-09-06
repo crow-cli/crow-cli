@@ -20,6 +20,7 @@ from types import SimpleNamespace
 from acp.schema import UsageUpdate
 
 from crow_cli.config import LLModel, LLMProvider
+from crow_cli.agent.compact import analysis_path, ideas_path
 from crow_cli.agent.react import react_loop
 from crow_cli.agent.session import AgentSession
 
@@ -44,8 +45,12 @@ class MultiTurnLLM:
 
     Script entries are plain strings — the text the model "says" — and are
     served the way the caller asked for it: as a stream of content chunks when
-    ``stream=True`` (react_loop's send_request AND compact()'s summarization
-    call), as a single completion object otherwise.
+    ``stream=True`` (react_loop's send_request AND all three of compact()'s
+    passes), as a single completion object otherwise.
+
+    The script is popped, not cycled, on purpose: a compaction that silently
+    made an extra LLM call would run the script dry and fail loudly here
+    instead of passing unnoticed.
     """
 
     def __init__(self, script: list):
@@ -307,6 +312,8 @@ async def test_compaction_crossing_threshold_creates_new_agent(tmp_path):
         [
             [content_chunk("working on it "), usage_chunk(100)],  # turn 1: over 50
             "SUMMARY of the big job",  # compact() summarization (streamed)
+            "ANALYSIS of the harness",  # compact() harness-analysis pass
+            "IDEAS for the project",  # compact() project-ideas pass
             [content_chunk("done now"), usage_chunk(10)],  # turn 2: under 50
         ]
     )
@@ -329,14 +336,25 @@ async def test_compaction_crossing_threshold_creates_new_agent(tmp_path):
     events, stop = await drive_react_loop(gen)
     assert stop == "done", events
 
-    # One request per turn plus the compaction summarization — which, like every
-    # other LLM call, must be streamed (a local model needs minutes to produce a
-    # whole summary; unstreamed it trips the client's read timeout).
-    assert len(llm.create_kwargs) == 3
-    assert llm.create_kwargs[1].get("stream") is True
+    # One request per turn plus compaction's THREE passes — all of which, like
+    # every other LLM call, must be streamed (a local model needs minutes to
+    # produce a whole summary; unstreamed it trips the client's read timeout).
+    assert len(llm.create_kwargs) == 5
+    for call in llm.create_kwargs[1:4]:
+        assert call.get("stream") is True
 
     # The loop announced compaction
     assert any(e["type"] == "compaction" for e in events)
+
+    # The threshold path gets the two notes for free — nothing in react.py
+    # knows they exist, they fall out of compact(). Named for the generation
+    # that was compacted, because that is the history they read.
+    analysis = analysis_path(config.config_dir, AGENT_ID).read_text()
+    ideas = ideas_path(session.cwd, AGENT_ID).read_text()
+    assert analysis.endswith("ANALYSIS of the harness\n")
+    assert ideas.endswith("IDEAS for the project\n")
+    assert f"agent: {AGENT_ID}" in analysis
+    assert f"agent: {AGENT_ID}" in ideas
 
     # New agent (idx 2) holds the summary prompt and the final answer
     new_id = f"{SESSION_ID}-2-1"  # v5: next agent_idx, same fork_idx
@@ -377,6 +395,8 @@ async def test_per_model_compact_threshold_overrides_global(tmp_path):
         [
             [content_chunk("working on it "), usage_chunk(100)],  # >50, <1000
             "SUMMARY of the big job",  # compact() summarization (streamed)
+            "ANALYSIS of the harness",  # compact() harness-analysis pass
+            "IDEAS for the project",  # compact() project-ideas pass
             [content_chunk("done now"), usage_chunk(10)],
         ]
     )

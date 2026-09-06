@@ -15,43 +15,76 @@ items are parked at the bottom.
 
 ## Items (unordered)
 
-- [ ] **Three default compaction hooks** — callable hooks (the
-      compact.py/main.py pattern of extension — NOT inheritance), all three
-      fire at compaction, sharing the summary's prefix cache:
-      1. `compact` — the existing summary handoff, promoted to be the FIRST
-         default hook — co-equal with the other two, replaceable/extensible
-         like any of them. Shipping as today's default is NOT protected
-         status: the point of the refactor is that compaction is a hook
-         surface (character of compaction = character of the agent, and
-         project-level agents get to redefine it).
-      2. `analysis` — introspective session critique. Same context as the
-         summary, different task (NOT summary-minded). Evidence-mandatory
-         items (quote/point at the moment in-session), taxonomy of
-         surface-area × quality-type with escape hatches, impact,
-         actionable+proposal. XML items, one file per agent generation
-         (`{session_id}-{agent_idx}-analysis.xml` — compaction already cuts
-         history into addressable agent rows; that is the natural unit,
-         dedupe/incrementality are free).
-      3. `ideas` — PROJECT-LEVEL strategic ideation. Get feedback from a
-         smart model on what the PROJECT should be doing — interrogate the
-         user's deeper desires/goals, NOT surface-level regurgitation of
-         what the user said at every granular level. May run 1-2 forked
-         queries ("how does the user feel about X") against memory to ground
-         itself. Project-scoped: about the project, not crow-cli — unless
-         the project IS crow-cli (likely, lol). Frontmatter on all
-         ideas/critiques/suggestions files so they can be enumerated and
-         regenerated fresh.
-      Hooks are CORE DEFAULTS (like uv_project_hook: `hooks=None →
-      defaults`, scripts opt out with `[]`) — this is too important to be
-      background or opt-in. Promote `on_compact` from single callback to
-      the constructor hook idiom; plumb through TurnCtx like
-      hooks/snapshot_hooks already are.
+- [x] **Three default compaction passes** — **BUILT 2026-09-06, as three
+      passes, NOT as three hooks.** All three fire on every compaction and
+      all three share the summary's prefix cache: `compact()` builds its
+      message prefix through `_history_prefix(session)` and asks through
+      `_ask_over_history(llm, session, config, prompt)`, so the three
+      requests are byte-identical up to the trailing user message. That is
+      the whole requirement — prefix caching is provider-side, so identical
+      bytes are what buys the cache hit, and no hook fabric is needed to get
+      them. Both existing call sites (the react threshold and `/compact`)
+      picked the passes up with zero edits to react.py, slash.py or main.py.
+      1. `compact` — unchanged. Still the summary handoff, still mints the
+         new agent row, still fires `on_compact` exactly once.
+      2. `analysis` — HARNESS-level critique, `ANALYSIS_PROMPT` in
+         compact.py. Four markdown sections (What worked well / What did not
+         work / Bugs / Ideas). Evidence mandatory — the prompt says an item
+         with no evidence gets deleted, not softened. Draws the
+         harness-vs-project line with one example of each, which turned out
+         to be the single most important instruction in it: without it the
+         model writes a project retrospective. Written by code, not asked of
+         the model: YAML frontmatter (kind/session/agent/model/cwd/generated)
+         at `<config_dir>/ideas/{agent-id}.md`.
+      3. `ideas` — PROJECT-level strategic ideation, `IDEAS_PROMPT`. Five
+         sections (Assumptions worth attacking / Prior art you should steal
+         from / Directions nobody has pointed at / What would make this
+         obsolete / Cheapest decisive experiments). Explicitly forbidden from
+         being a summary or a TODO list; every idea must say what would prove
+         it WRONG; the model is told outright to reach into its own weights
+         for prior art, which is what produced named real systems (LSP
+         rootUri negotiation, git's GIT_CEILING_DIRECTORIES, pytest's rootdir
+         algorithm, direnv's .envrc allow-list, Feathers' characterization
+         tests) instead of generic advice. Lands at
+         `<cwd>/.agents/crow/ideas/{agent-id}.md`.
+      Both notes are named for the generation being COMPACTED, not the new
+      one — that is the history they read and the id a reader joins them back
+      to. Both run inline on the same client; neither uses `rlm`/a fork.
+      `write_reflections` NEVER raises: by the time it runs the summary is
+      durable and the new agent row is in the db, so losing a critique to a
+      provider timeout must not cost the user their compaction. Each pass
+      fails alone and is logged.
+      **STILL OPEN — the hook fabric, deliberately not built.** The plan was
+      to promote `on_compact` to `compact_hooks=[...]` and make the summary
+      itself the first co-equal hook, so that project-level agents could
+      redefine compaction. That is five files of plumbing to pass arguments
+      (`session`, `llm`, `config`, `logger`) that are ALREADY in scope inside
+      `compact()`. An attempt was started and reverted on 2026-09-06. Build
+      it only when there is a second consumer that needs to REPLACE a pass —
+      i.e. when project-level agents actually want their own compaction
+      character, not before.
+      **STILL OPEN — the taxonomy.** The plan wanted XML items with a
+      surface × quality-type enum (system_prompt/tool/skill/compaction/
+      memory/config/acp/tui × helpful/friction/bug/suggestion/idea). Shipped
+      as markdown sections instead: enough structure for a human reader, and
+      the learn skill can parse headings if it ever needs to machine-read
+      them. Revisit only if 2.2 turns out to need per-item fields.
+      **COST, stated plainly:** compaction now makes three LLM calls instead
+      of one and takes roughly three times as long — measured live on
+      qwen3.8-max-preview at ~7 minutes for all three over a small history.
+      The react loop emits no keepalive during it. If that hurts, the fix is
+      to background the two reflections, NOT to build the hook fabric.
 - [ ] **Two-layer compaction** — soft compact hook at ~160k: inject "you now
       have ~20k tokens of context and ~15 tool calls of budget remaining"
       and fire off a react loop with existing tools for 5-7 turns where the
       agent chains terminal calls to analyze/ideate/wind down. Hard
       compaction endpoint at 180k (MAX_COMPACT_TOKENS). The analysis/ideas
       forks rely on PROMPT INSTRUCTIONS to stay read-only.
+      **More load-bearing now than it was:** a soft threshold that warns
+      before the hard one means the user sees a budget notice instead of a
+      silent ~3×-longer compaction. Also still blocked on settling the
+      MAX_COMPACT_TOKENS three-way disagreement (190000 in config.py:286 and
+      init_cmd.py:444, 180000 in defaults.py:425) — see PLAN "Where we are".
 - [ ] **Feedback directory** — `~/.agents/crow/feedback/` global +
       project-local `$cwd/.agents/crow/feedback/` following the skill_roots
       resolution pattern (project scopes first, user scope last — already
@@ -60,11 +93,26 @@ items are parked at the bottom.
       (mv = state transition, ls = dashboard). Files carry frontmatter
       (surface, type, impact, evidence pointer, session/agent provenance).
       Rejected items keep a reason file — rejections teach too.
+      **PARTIALLY OVERTAKEN:** the writers already exist and already write
+      frontmatter (kind/session/agent/model/cwd/generated, from
+      `compact._note_header`) — but to `ideas/`, not `feedback/inbox/`, and
+      with no lifecycle at all. A note is written and never moves, so there
+      is no way to tell an untriaged critique from one that already landed.
+      Decide whether this convention REPLACES the shipped paths or wraps
+      them before building the learn skill on top; writer and reader have to
+      agree on the tree.
 - [ ] **Bump web_search** — 1.6% of all tool calls is too low (terminal is
       50.5%, read 18.4%, edit 16.5%; query_memory family 3.3%, web_search
       548 calls total). Research must be a CORE part of learning/rubrics/
       meta-analysis: prompt mutation + an analysis-hook rubric dimension
       ("did the agent research before guessing?").
+      **The prompt half is spent and did not work** — `defaults.py:136-143`
+      already shouts "Use the web search tool for fucking everything / I PITY
+      THE FOOL WHO DON'T USE WEB SEARCH" in every live prompt, and the rate
+      is still 1.6%. **The rubric half is now unblocked and is a concrete
+      edit:** add "did you research before guessing, and where did you guess
+      instead?" to ANALYSIS_PROMPT's *What did not work* section. Re-measure
+      the baseline first.
 - [ ] **session/fork delegation pattern** — fork-of-self for context
       protection: instead of the parent reading a maybe-relevant file
       (always maximally increasing context), fork reads it and reports
@@ -171,6 +219,17 @@ items are parked at the bottom.
       session_id` with min/max created_at answers it instantly. This is
       how the 2026-09-05 brainstorm was recovered after the harness's
       query_memory returned nothing.
+      **UNBLOCKED 2026-09-06 — there is real input now.** Every compaction
+      writes an analysis to `~/.agents/crow/ideas/{agent-id}.md` and ideas to
+      `<cwd>/.agents/crow/ideas/{agent-id}.md` (markdown with code-written
+      YAML frontmatter, NOT the XML/`feedback/inbox/` shape this item
+      describes — see the compaction item above). The first live-verified
+      analysis already contains four actionable harness findings: the edit
+      tool's uniqueness default is rename-hostile, `replace_all` is advertised
+      only through the error string and not the schema, FILE_SYSTEM_GUIDELINES'
+      "consider using sed" is worse advice than edit+replace_all, and the
+      crow-cli skill trigger misfires on ordinary edits to its own source
+      tree. A dry-run triage of those four is the concrete first Verify.
 - [ ] **Maintainer/evaluator agent** — **PARKED 2026-09-06, not now.**
       Nothing to maintain yet: the feedback directories it would triage
       do not exist (no analysis/ideas hooks write them), so a maintainer

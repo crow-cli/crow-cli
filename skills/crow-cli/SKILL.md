@@ -19,7 +19,7 @@ a bootloader and then clones the program:
 ~/.agents/crow/                     the config dir (--config-dir relocates all of it)
 ├── config.yaml  .env  crow.db      config, secrets, memory
 ├── prompts/system_prompt.jinja2    the character
-├── feedback/                       inbox/ validated/ accepted/ rejected/ landed/
+├── ideas/                          harness analysis, one {agent-id}.md per compaction
 └── src/
     ├── crow-cli/                   THE SOURCE. a git checkout of crow-cli/crow-cli
     └── crow-cli.github.io/         the site + skills source (sync-skills.py)
@@ -101,20 +101,58 @@ scope: it fast-forwards both checkouts (leaving a dirty one alone), re-runs
 
 ## The feedback loop
 
-Compaction produces critique; critique lands in files; a maintainer agent
-validates and patches; the patched harness runs the next session.
+Compaction produces critique; critique lands in files; something validates and
+patches; the patched harness runs the next session. **The first half is built.
+Nothing reads the files yet.**
 
-- `feedback/inbox/` — `{ts}_{session_id}-{agent_idx}_analysis.xml` and
-  `..._ideas.xml`, written by the compaction hooks. Global
-  (`~/.agents/crow/feedback/`) and project-local (`<cwd>/.agents/crow/feedback/`).
-- Lifecycle **is** directories: `inbox/ → validated/ → accepted/ | rejected/ →
-  landed/`. `mv` is the state transition, `ls` is the dashboard. Rejected items
-  keep a reason file — rejections teach too.
-- Precedence when triaging: **user corrections** (query the memory db for USER
-  MESSAGES — user feedback outranks agent suggestions absolutely) > recurring
-  friction across N sessions > single-session evidenced items > blue-sky ideas.
-- The `learn` skill drives this. Bench instances come from crow-cli's actual
-  workload distribution (self-development tasks), not SWE-bench shapes.
+Every compaction makes THREE LLM calls over the same history, not one. They
+share a byte-identical message prefix (`compact._history_prefix`) and differ
+only in the trailing prompt, so the provider's prompt-prefix cache pays for
+passes two and three. All in `src/crow_cli/agent/compact.py`:
+
+- **summary** — `COMPACTION_PROMPT`. Becomes the new generation's first
+  message. The only one that touches the conversation.
+- **analysis** — `ANALYSIS_PROMPT`, about **crow-cli itself**: the system
+  prompt, the tools and their schemas, skills, compaction, memory, config,
+  ACP, the TUI. Four sections: What worked well / What did not work / Bugs /
+  Ideas. Evidence is mandatory — an item with no evidence gets deleted, not
+  softened. Written to `~/.agents/crow/ideas/{agent-id}.md`.
+- **ideas** — `IDEAS_PROMPT`, about **the project in cwd**: assumptions worth
+  attacking, prior art to steal (named, real systems), directions nobody
+  pointed at, what would make it obsolete, cheapest decisive experiments.
+  Every idea must say what would prove it wrong. Written to
+  `<cwd>/.agents/crow/ideas/{agent-id}.md`.
+
+`{agent-id}` is the generation being **compacted**, not the new one — that is
+the history the notes describe, and the id that joins them back to it in
+`crow.db`. Each file opens with YAML frontmatter written by code, not by the
+model: `kind`, `session`, `agent`, `model`, `cwd`, `generated`.
+
+`write_reflections` **never raises**. By the time it runs the summary is
+durable and the new agent row is in the db, so a provider timeout on a
+critique must not cost the user their compaction. Each pass fails alone and is
+logged. If a note is missing, look for `Compaction {kind} pass failed` in the
+log — do not go hunting for a crash.
+
+Two things worth knowing before you build on this:
+
+- **Compaction is ~3× slower than it was.** Measured live at ~7 minutes for
+  all three passes on a fast hosted model; a slow local model is worse, and
+  the react loop emits no keepalive during it. If that ever needs fixing, the
+  fix is to background the two reflections — NOT to add a hook fabric.
+- **There is no lifecycle yet.** A note is written and never moves, so nothing
+  distinguishes an untriaged critique from one that already landed. The
+  planned `feedback/inbox/ → validated/ → accepted/ | rejected/ → landed/`
+  tree (mv = state transition, ls = dashboard) is NOT BUILT, and the shipped
+  paths are `ideas/`, not `feedback/`. Whoever builds the reader has to decide
+  whether that convention replaces these paths or wraps them.
+
+Precedence when triaging: **user corrections** (query the memory db for USER
+MESSAGES — user feedback outranks agent suggestions absolutely) > recurring
+friction across N sessions > single-session evidenced items > blue-sky ideas.
+The `learn` skill is supposed to drive this and still needs rewriting; bench
+instances come from crow-cli's actual workload distribution
+(self-development tasks), not SWE-bench shapes.
 
 ## Reading the past
 

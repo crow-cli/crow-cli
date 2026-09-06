@@ -33,7 +33,7 @@ branch's entire git log) is nearly done. The **self-improving loop track**
 
 | Phase | Status | Evidence |
 |---|---|---|
-| 1 — compaction hooks, analysis, ideas | **NOT STARTED** | `compact.py:130` is still `on_compact: callable = None`, fired at `:211`. No `compact_hooks`, no `ANALYSIS_PROMPT`, no `IDEAS_PROMPT`, no soft threshold anywhere in `src/`. |
+| 1 — compaction hooks, analysis, ideas | **1.2/1.3 DONE, differently than planned; 1.1 SUPERSEDED; 1.4 not started** | `compact.py` carries `ANALYSIS_PROMPT`, `IDEAS_PROMPT`, `_history_prefix`, `_ask_over_history`, `write_reflections`. All three compaction call sites get them for free. No hook fabric — see Phase 1 below. |
 | 2 — feedback dir, learn rewrite, web_search | **NOT STARTED** (2.3's prompt half already existed) | `rg -l feedback src/crow_cli` → nothing. `~/.agents/skills/learn` is still the old bench-testing skill. |
 | 3 — memory SQL tool + skill | **3.1 DONE, differently than planned**; 3.2/3.3 not started | Landed as the `memory` SUBTOOL (`tools/memory.py`, mode="sql", real read-only conn, polars), not as an MCP tool next to query_memory. No companion skill. |
 | 4 — ipykernel tool | **DONE** | `mcp/execute/{kernel,main}.py`; EXECUTE_TODO steps 1-9 all `[x]`; `_kernels` session-keyed registry at `main.py:25`. |
@@ -43,11 +43,18 @@ branch's entire git log) is nearly done. The **self-improving loop track**
 
 **The gap that matters:** Phases 1-2 are the actual thesis — compaction
 produces critique, critique lands in files, the patched harness runs the
-next session. Everything built so far is the *instrumentation* (a REPL, a
-memory db you can SQL, forks you can delegate to, a source checkout you can
-patch). None of it yet produces a single byte of self-critique. Phase 1.1
-is the keystone: it is small, it unblocks 1.2, 1.3, 1.4, 2.1 and 2.3, and
-it is the only item that changes what a session LEAVES BEHIND.
+next session. Everything built before 2026-09-06 was *instrumentation* (a
+REPL, a memory db you can SQL, forks you can delegate to, a source checkout
+you can patch) and none of it produced a single byte of self-critique.
+
+**That changed.** Compaction now writes two notes per generation — a
+harness analysis under `<config_dir>/ideas/` and project ideas under
+`<cwd>/.agents/crow/ideas/`. The first half of the loop is closed: a
+session leaves critique behind. What is still missing is the *second* half
+— nothing reads those files. Phase 2 (the feedback directory, the learn
+skill rewrite) is now the keystone, and it has real input to work on.
+
+It was built WITHOUT the 1.1 hook fabric, on purpose — see Phase 1.
 
 **Documented vs not.** Documented: TODO.md (unordered scope), this file
 (ordered), EXECUTE_TODO.md (~1500 lines, the execute track + the B1-B6 bug
@@ -67,8 +74,48 @@ hard endpoint. Two install paths, two ceilings. Pick one before building
 
 ## Phase 1 — compaction hook fabric + the analysis/ideas passes
 
-**Status: NOT STARTED. This is the keystone — everything in Phase 2 depends
-on 1.1/1.2, and nothing in `src/` implements any of it.**
+**Status: 1.2 and 1.3 DONE (2026-09-06), built a simpler way than the steps
+below describe. 1.1 SUPERSEDED — do not build it. 1.4 NOT STARTED.**
+
+What shipped instead, and why: the two passes are ordinary code at the tail
+of `compact()`, not hooks. `compact()` already had everything they need —
+the session, the llm, the config, the logger — so a hook fabric would have
+been five files of plumbing (`AcpAgent.__init__` → `react_loop` → `TurnCtx`
+→ `compact`) to pass arguments that were already in scope. Both existing
+call sites (the react threshold and `/compact`) get the behavior for free
+with zero changes to `react.py`, `slash.py` or `main.py`.
+
+The shape, all in `agent/compact.py`:
+
+- `_history_prefix(session)` — the old steps 1+2 of `compact()` extracted
+  verbatim (fill dangling tool responses, pad a trailing user turn). Every
+  pass rebuilds it from the session, so all three send a **byte-identical**
+  prefix and differ only in the trailing user message. That is what "reuse
+  the warm kv cache" means concretely: prefix caching is provider-side, so
+  identical bytes are the whole requirement.
+- `_stream_completion(...)` — `_stream_summary` renamed; it serves three
+  prompts now, not one.
+- `_ask_over_history(llm, session, config, prompt)` — prefix + prompt +
+  stream. The one function every compaction-time pass goes through.
+- `write_reflections(session, llm, config, logger)` — runs the analysis and
+  ideas passes and writes each to its own markdown file. **Never raises.**
+  By the time it runs the summary is durable and the new agent row is in the
+  db; losing a critique to a provider timeout must not cost the user their
+  compaction. Each pass fails alone and is logged.
+- `analysis_path(config_dir, agent_id)` → `<config_dir>/ideas/{agent-id}.md`
+- `ideas_path(cwd, agent_id)` → `<cwd>/.agents/crow/ideas/{agent-id}.md`
+
+Both are named for the generation being **compacted**, not the new one —
+that is the history they read and the id a reader joins them back to. The
+provenance frontmatter (kind/session/agent/model/cwd/generated) is written
+by code, not asked of the model.
+
+**Cost, stated plainly:** compaction now makes three LLM calls instead of
+one, so it takes roughly three times as long. Measured live on
+`qwen3.8-max-preview`: ~7 minutes for all three passes over a small
+history. On a slow local model that is a lot of waiting, and the react loop
+emits no keepalive during it. If that becomes a problem the fix is to run
+the two reflections as a background task, NOT to build the hook fabric.
 
 1.1 Promote `on_compact` from single callback to the constructor hook
     idiom: `AcpAgent(config, hooks=..., compact_hooks=...)`, plumbed
@@ -76,13 +123,14 @@ on 1.1/1.2, and nothing in `src/` implements any of it.**
     summary pass ITSELF becomes the first default compact_hook, with
     analysis/ideas as sibling hooks — three co-equal callables. The two
     existing call sites (react threshold, /compact) keep working.
-    Verify: existing tests green + unit test asserting multiple hooks fire
-    in order with (old_agent_id, new_session).
-    **Status: NOT STARTED.** Verified shape today: `compact.py:130`
-    `on_compact: callable = None`, fired once at `compact.py:211-212`;
-    callers are `react.py:699/866`, `slash.py:71/89`, and the closure
-    defined at `main.py:933`. Three call sites, not two — `slash.py`'s
-    /compact path is the one the plan text misses.
+    **Status: SUPERSEDED — do not build this.** `on_compact` stays exactly
+    as it was: one callback, fired once, unchanged signature. It is not a
+    hook point for the reflections and does not need to become one. An
+    attempt to build this was started and reverted on 2026-09-06; the
+    passes went in inline instead and all three call sites kept working
+    with no edits. (For the record the plan text was also wrong about the
+    call-site count: there are three — `react.py:699/866`, `slash.py:71/89`,
+    and the closure at `main.py:933`.)
 1.2 `analysis` default hook: same message prefix as the summary pass
     (shared prefix cache, fired alongside it), ANALYSIS_PROMPT appended
     instead of COMPACTION_PROMPT. Output: XML items, each with surface
@@ -91,18 +139,40 @@ on 1.1/1.2, and nothing in `src/` implements any of it.**
     impact, evidence (quote/turn pointer — NO evidence, no item),
     actionable+proposal. One file per agent generation:
     `feedback/inbox/{ts}_{session_id}-{agent_idx}_analysis.xml`.
-    Verify: live compaction (or /compact on a real session) produces a
-    parseable file; unit tests pin the XML schema.
-    **Status: NOT STARTED.** No `ANALYSIS_PROMPT` in the tree. Blocked on
-    1.1 and on 2.1 (it needs somewhere to write).
+    **Status: DONE, differently.** `ANALYSIS_PROMPT` exists and the prefix
+    sharing is exactly as described. The output is **markdown, not XML**,
+    in four fixed sections (What worked well / What did not work / Bugs /
+    Ideas), at `<config_dir>/ideas/{agent-id}.md` — not
+    `feedback/inbox/{ts}_..._analysis.xml`. The evidence rule survived
+    ("NO evidence, no item" is in the prompt verbatim in spirit); the
+    surface/type enums did not, because a markdown section per type turned
+    out to be enough structure for a human reader and Phase 2 can parse
+    headings if it ever needs to machine-read them. The harness-vs-project
+    line is drawn explicitly in the prompt with one example of each, which
+    is the single most important instruction in it — without it the model
+    writes a project retrospective.
+    Verified live: the analysis of a scripted rename session correctly
+    identified the edit tool's uniqueness default as rename-hostile,
+    `replace_all` being advertised only through the error string, the
+    FILE_SYSTEM_GUIDELINES sed advice being worse than edit+replace_all,
+    and the crow-cli skill trigger misfiring on its own source tree.
 1.3 `ideas` default hook: project-level strategic ideation prompt —
     interrogate deeper goals, not surface regurgitation; frontmatter for
     enumeration/regeneration; `{ts}_{session_id}-{agent_idx}_ideas.xml`.
-    Verify: file lands with valid frontmatter; prompt includes the
-    project-not-crow-cli scoping rule.
-    **Status: NOT STARTED.** Same blockers as 1.2. Note this is the hook
-    that would use `rlm` — the fork machinery it needs is already built
-    and dogfooded (Phase 7).
+    **Status: DONE, differently.** `IDEAS_PROMPT` exists; output is
+    markdown at `<cwd>/.agents/crow/ideas/{agent-id}.md`. Five sections:
+    Assumptions worth attacking / Prior art you should steal from /
+    Directions nobody has pointed at / What would make this obsolete /
+    Cheapest decisive experiments. Every idea must say what would prove it
+    WRONG. It explicitly forbids being a summary or a TODO list, and
+    explicitly tells the model to reach into its own weights for prior art
+    — that instruction is what produced named, real prior art (LSP
+    `rootUri` negotiation, git's `GIT_CEILING_DIRECTORIES`, pytest's
+    rootdir algorithm, direnv's `.envrc` allow-list, Feathers'
+    characterization tests) instead of generic advice.
+    Does NOT use `rlm`/a fork — it runs inline on the same client. The
+    fork machinery (Phase 7) is available if this ever needs to become a
+    read-only delegated pass.
 1.4 Two-layer thresholds: soft compact hook at ~160k (budget notice +
     5-7 turn wind-down react loop with existing tools), hard endpoint at
     MAX_COMPACT_TOKENS. Read-only behavior for analysis/ideas forks via
@@ -112,24 +182,60 @@ on 1.1/1.2, and nothing in `src/` implements any of it.**
     **Status: NOT STARTED**, and see the `MAX_COMPACT_TOKENS`
     disagreement in "Where we are" above — settle it first. Per-model
     `max_compact_tokens` resolution already exists (`config.py:215-224`)
-    and must keep winning.
+    and must keep winning. Note this is now more load-bearing than it was:
+    a soft threshold that warns before the hard one means the user sees a
+    budget notice instead of a silent ~3×-longer compaction.
+
+### Found while building Phase 1 (fixed, not just documented)
+
+- **`last_messages()` crashed on `content: None`** — `TypeError: object of
+  type 'NoneType' has no len()`, which took the entire compaction down with
+  it. `None` is not an exotic provider quirk: it is the standard OpenAI
+  shape for an assistant turn that did nothing but call tools, and
+  `AgentSession.add_message` persists whatever dict it is handed without
+  normalizing. The live react loop happens to always store `""`
+  (`session.py:306`), which is the only reason this never fired in
+  production — any other producer of messages (a fork, a migration, an
+  ACP-side reconstruction, `initial_messages`) would have hit it. Fixed in
+  `unroll_content`; regression tests sit beside the earlier list-content
+  one in `tests/unit/test_compact_last_messages_list_content.py`.
+- **The two output paths collide when cwd is `$HOME`.** The project scope
+  `~/.agents/crow` IS the config dir, so the analysis and the ideas resolve
+  to the same file and the second write silently eats the first. `write_
+  reflections` now detects it and suffixes the project note
+  (`{agent-id}-project.md`); the global note keeps the designed name.
+  Neither is lost. Covered by a unit test.
 
 ## Phase 2 — feedback directory + learn skill rewrite
 
-**Status: NOT STARTED. 2.1 is the precondition for 1.2/1.3 having anywhere
-to write, so it is the cheapest useful thing to build next.**
+**Status: NOT STARTED, and no longer blocked. This is now the keystone.**
+Phase 1 shipped without waiting for 2.1: the notes already have a home
+(`<config_dir>/ideas/` and `<cwd>/.agents/crow/ideas/`) and a frontmatter
+schema (`compact._note_header`). So 2.1's job changed — it is no longer
+"give the writers somewhere to write", it is "decide whether the convention
+below replaces the one that shipped, and document whichever wins". 2.2 is
+the valuable half: nothing reads those files yet.
 
 2.1 Feedback dir convention: global `~/.agents/crow/feedback/` +
     project-local resolution copied from skill_roots (project scopes
     first, user scope last). Lifecycle dirs inbox/validated/accepted/
     rejected/landed. Frontmatter schema shared by analysis/ideas files.
     Verify: ls-able tree after a live compaction; schema doc in repo.
-    **Status: NOT STARTED** — `rg -l feedback src/crow_cli` returns
-    nothing. The resolution pattern to copy now has a second working
-    example besides `skill_roots`: `cli/source.project_scope` (6ab86502)
-    walks cwd → git root for `.agents/crow`, which is exactly the shape
-    the feedback dirs want. Reuse `prompt.ancestors` (renamed from
-    `_ancestors` today because it is the shared scope walk now).
+    **Status: NOT STARTED, and now has to reconcile with what shipped.**
+    `rg -l feedback src/crow_cli` returns nothing. Phase 1 writes to
+    `ideas/`, not `feedback/inbox/`, names files `{agent-id}.md`, not
+    `{ts}_{session_id}-{agent_idx}_*.xml`, and already has a frontmatter
+    schema (kind/session/agent/model/cwd/generated) — so the "shared
+    frontmatter schema" half of this step is DONE. What is genuinely still
+    missing is the **lifecycle** (inbox → validated → accepted → rejected
+    → landed): right now a note is written and never moves, so there is no
+    way to tell an untriaged critique from one that already landed. Adding
+    lifecycle dirs means moving files, which means the writer and the
+    reader have to agree on the tree — decide that before 2.2.
+    The resolution pattern to copy now has two working examples besides
+    `skill_roots`: `cli/source.project_scope` (6ab86502) and
+    `compact.ideas_path`, both walking cwd for `.agents/crow`. Reuse
+    `prompt.ancestors`.
 2.2 learn skill rewrite (in ~/.agents/skills/learn, then publish): stupid
     simple — read feedback dirs, precedence stack (user corrections from
     query_memory on USER MESSAGES > recurring friction > evidenced items >
@@ -137,14 +243,20 @@ to write, so it is the cheapest useful thing to build next.**
     instances drawn from the real workload distribution.
     Verify: skill renders in catalog; one dry-run pass over existing
     inbox items produces sensible triage.
-    **Status: NOT STARTED.** `~/.agents/skills/learn/SKILL.md` is still
-    the old bench-testing skill (two incidental "feedback" mentions); the
-    brainstorm's own note stands — "the learn skill, which we've never
-    actually loaded". The precedence stack's top rung now has a concrete
-    shape, written into TODO #12, the memory subtool's docstring and the
-    crow-cli skill: don't keyword-search a long-running agent, pull
-    `role='user'` over the session or a `created_at` window. Blocked on
-    2.1 (there is no inbox to read).
+    **Status: NOT STARTED — and unblocked, this is the next thing.**
+    `~/.agents/skills/learn/SKILL.md` is still the old bench-testing skill
+    (two incidental "feedback" mentions); the brainstorm's own note stands
+    — "the learn skill, which we've never actually loaded". There is now
+    real input: every compaction leaves an analysis and an ideas file, and
+    the live-verified first analysis already contains four actionable
+    harness findings (edit's uniqueness default, `replace_all` only
+    advertised via the error string, the sed guidance in
+    FILE_SYSTEM_GUIDELINES, the crow-cli skill trigger misfiring on its own
+    source tree). A dry-run triage of those four is the concrete Verify.
+    The precedence stack's top rung has a concrete shape, written into
+    TODO #12, the memory subtool's docstring and the crow-cli skill: don't
+    keyword-search a long-running agent, pull `role='user'` over the
+    session or a `created_at` window.
 2.3 Bump web_search: prompt mutation + analysis rubric dimension
     ("did the agent research before guessing?").
     Verify: diff reviewed; next session's tool histogram shows movement
@@ -155,8 +267,11 @@ to write, so it is the cheapest useful thing to build next.**
     fucking everything / I PITY THE FOOL WHO DON'T USE WEB SEARCH", and it
     is in every live prompt right now. web_search is still 1.6%. Shouting
     is a spent lever; the rubric dimension is the untried one, and it is
-    blocked on 1.2. Re-measure the baseline before claiming movement —
-    one SQL query over `subtool_calls`/tool-call args.
+    now UNBLOCKED — 1.2 shipped, so the dimension is a concrete edit: add
+    "did you research before guessing, and where did you guess instead?"
+    to ANALYSIS_PROMPT's *What did not work* section. Re-measure the
+    baseline before claiming movement — one SQL query over
+    `subtool_calls`/tool-call args.
 
 ## Phase 3 — memory SQL tool + skill
 
