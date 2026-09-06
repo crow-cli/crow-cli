@@ -13,6 +13,7 @@ package. The two couple through sqlite, never in-process.
 
 import asyncio
 import contextlib
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -50,6 +51,27 @@ def _parse_mcp_servers(servers: list) -> list:
         else:
             out.append(McpServerStdio.model_validate({"args": [], "env": [], **s}))
     return out
+
+
+def child_config() -> dict:
+    """Config context for a spawned child agent, forwarded from THIS process's
+    env.
+
+    The child loads its OWN config in its own process, so without these it
+    resolves a different config dir — and a different database — than the
+    caller that is about to read the child's transcript out of it.
+
+    Lives here, with the spawn it configures, because both spawners need it
+    (the task tool and rlm) and neither may import the other: task's module
+    registers MCP tools at import time, which a kernel-side tool must never
+    do.
+    """
+    kwargs: dict = {}
+    if f := os.environ.get("CROW_CONFIG_FILE"):
+        kwargs["config_file"] = Path(f)
+    if d := os.environ.get("CROW_CONFIG_DIR"):
+        kwargs["config_dir"] = Path(d)
+    return kwargs
 
 
 async def spawn_agent_process(
@@ -162,6 +184,44 @@ class SubagentDriver:
             session_id=session_id,
             mcp_servers=_parse_mcp_servers(mcp_servers or []),
         )
+
+    async def fork_session(
+        self,
+        session_id: str,
+        cwd: str,
+        mcp_servers: list | None = None,
+        message_offset: int | None = None,
+        rlm_depth: int | None = None,
+    ) -> str:
+        """session/fork (UNSTABLE): ``session_id``'s history under a NEW wire
+        session id, which is the fork's own agent_id — so it is also the key
+        the fork's transcript is stored under, and reading that transcript
+        back needs no handshake.
+
+        ``message_offset``/``rlm_depth`` are not in the schema: they ride the
+        request ``_meta``, and the agent-side router flattens _meta into the
+        handler's kwargs generically (no whitelist), so they arrive as the
+        camelCase names the handler declares. ``start()`` already opts into
+        the unstable protocol — without it the router answers
+        method_not_found.
+
+        The client owns the fork's tool supply exactly as for new/load:
+        an empty ``mcp_servers`` means ZERO tools, which is what an
+        interrogation fork wants and what a delegate that only has to answer
+        a question does not.
+        """
+        meta: dict[str, Any] = {}
+        if message_offset is not None:
+            meta["messageOffset"] = message_offset
+        if rlm_depth is not None:
+            meta["rlmDepth"] = rlm_depth
+        resp = await self.conn.fork_session(
+            session_id=session_id,
+            cwd=cwd,
+            mcp_servers=_parse_mcp_servers(mcp_servers or []),
+            **meta,
+        )
+        return resp.session_id
 
     async def prompt(self, session_id: str, text: str) -> PromptResponse:
         return await self.conn.prompt(

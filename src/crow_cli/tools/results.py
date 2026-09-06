@@ -623,3 +623,85 @@ class MemoryToolError(ToolError):
     """
 
 
+# A delegate's answer is the ONE thing that comes back into the caller's
+# context, so it is the one thing rlm has to bound — a fork that answers at
+# length has spent exactly what the delegation existed to save. Same default
+# as a page: print(r.text) costs about what an MCP tool call used to, and
+# r.answer is the whole thing.
+_RLM_WINDOW = 5000
+
+
+@dataclass
+class RlmResult(ToolResult):
+    """A delegation: what a fork of THIS session answered to one question.
+
+    ``answer`` is the artifact and it is the WHOLE answer — ``.text`` windows
+    it, the object does not, so slicing or grepping it stays Python rather
+    than a pagination protocol.
+
+    ``session_id`` is a handle, not a label. The delegate's transcript is in
+    the same database under that id, so ``memory("list", session_id=...)``
+    reads what it actually did to arrive at the answer — which is how an
+    ``rlm(wait=False)`` delegation gets collected: this same object comes
+    back with ``waited`` False and an empty ``answer``, and the transcript is
+    the mailbox. No delivery table, because a task owner goes idle between
+    launch and completion while an rlm caller is a running cell.
+
+    ``depth`` is how deep this delegation went (1 for the first), which is
+    the number the next one is refused against. ``stop_reason`` is the
+    delegate's own: ``end_turn`` means it finished, and anything else means
+    the answer is whatever it managed before it stopped.
+    """
+
+    session_id: str
+    answer: str
+    prompt: str
+    waited: bool = True
+    depth: int = 1
+    stop_reason: str | None = None
+
+    # get_tool_kind("rlm") matches no substring rule and falls to "other",
+    # but a delegation is the artifact kind "think": reasoning paid for out
+    # of a fork instead of out of the caller's context. Decided by
+    # _KIND_BY_RESULT, by artifact, like every other shape in this module.
+    result_kind = "rlm"
+
+    def acp_payload(self) -> dict:
+        return {
+            "content": "text",
+            "text": self.text,
+            "subject": self.session_id,
+        }
+
+    @property
+    def chars(self) -> int:
+        return len(self.answer)
+
+    @property
+    def text(self) -> str:
+        if not self.waited:
+            return (
+                f"delegate {self.session_id} is working (depth {self.depth}) —"
+                " no answer yet. Its transcript is the mailbox:"
+                f' memory("list", session_id="{self.session_id}").'
+            )
+        head = f"delegate {self.session_id} — depth {self.depth}"
+        if self.stop_reason and self.stop_reason != "end_turn":
+            head += f", stopped: {self.stop_reason}"
+        head += f", {self.chars:,} chars"
+        body = self.answer[:_RLM_WINDOW]
+        more = self.chars - len(body)
+        tail = f"\n… {more:,} more chars — answer[{len(body)}:]" if more else ""
+        return f"{head}\n{body}{tail}"
+
+
+class RlmToolError(ToolError):
+    """A delegation could not be made, or the delegate could not be driven.
+
+    The budget refusals land here too. A delegate that tries to delegate is
+    not a crash — it is the one rule about forks that has to hold, or the
+    mirror is back — so the message states the budget rather than the
+    exception.
+    """
+
+

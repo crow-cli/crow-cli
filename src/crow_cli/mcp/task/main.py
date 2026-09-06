@@ -15,7 +15,6 @@ import asyncio
 import contextlib
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Annotated, Literal, Union
 
 from fastmcp import Context
@@ -23,9 +22,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
 import crow_cli.memory as cm
-from crow_cli.client.subagent import SubagentDriver
+from crow_cli.client.subagent import SubagentDriver, child_config
 from crow_cli.mcp.memory import store
 from crow_cli.mcp.server.app import mcp
+from crow_cli.memory.messages import last_assistant_text
 from crow_cli.memory.reads import (
     count_tasks,
     get_session_mcp_servers,
@@ -89,38 +89,6 @@ def _engine():
     return cm.get_engine(store.db_uri())
 
 
-def _child_config() -> dict:
-    """Config context for spawned subagents, forwarded from THIS process's
-    env. Phase 5.1 injects these where the agent spawns per-session MCP
-    servers, so the child resolves the SAME config (and db) the task tool
-    writes state to."""
-    kwargs: dict = {}
-    if f := os.environ.get("CROW_CONFIG_FILE"):
-        kwargs["config_file"] = Path(f)
-    if d := os.environ.get("CROW_CONFIG_DIR"):
-        kwargs["config_dir"] = Path(d)
-    return kwargs
-
-
-def _last_assistant_text(messages: list[dict]) -> str:
-    """The subagent's final answer: last assistant message with content."""
-    for msg in reversed(messages):
-        if msg.get("role") != "assistant":
-            continue
-        content = msg.get("content")
-        if isinstance(content, str) and content.strip():
-            return content
-        if isinstance(content, list):
-            texts = [
-                b.get("text", "")
-                for b in content
-                if isinstance(b, dict) and b.get("type") == "text"
-            ]
-            if any(t.strip() for t in texts):
-                return " ".join(texts)
-    return "(the subagent produced no final answer)"
-
-
 def _child_answer(engine, sub_session: str) -> str:
     """The child's final answer, read from the shared sqlite — the same
     transcript `query_session` on its session id would see."""
@@ -130,7 +98,10 @@ def _child_answer(engine, sub_session: str) -> str:
     if not trunks:
         return "(the subagent produced no transcript)"
     agent = max(trunks, key=lambda a: a.agent_idx)
-    return _last_assistant_text(load_agent_messages(engine, agent))
+    return last_assistant_text(
+        load_agent_messages(engine, agent),
+        fallback="(the subagent produced no final answer)",
+    )
 
 
 async def _watch(task_id: str, sub: str, text: str, engine) -> None:
@@ -210,7 +181,7 @@ async def _launch(engine, owner: str, item: PromptItem) -> str:
     task_id = _register_task(engine, owner, item)
     driver = SubagentDriver()
     try:
-        await driver.start(cwd, model=item.model, **_child_config())
+        await driver.start(cwd, model=item.model, **child_config())
         sub = await driver.new_session(cwd, mcp_servers=servers)
     except Exception as e:
         finish_task(
@@ -243,7 +214,7 @@ async def _reprompt(engine, owner: str, item: PromptItem) -> str:
     servers = get_session_mcp_servers(engine, owner)
     driver = SubagentDriver()
     try:
-        await driver.start(cwd, model=item.model or row.model, **_child_config())
+        await driver.start(cwd, model=item.model or row.model, **child_config())
         await driver.load_session(sid, cwd, mcp_servers=servers)
     except Exception as e:
         finish_task(

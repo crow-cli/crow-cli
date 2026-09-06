@@ -24,7 +24,8 @@ Module map:
     ids       — agent_id build/parse (v5 three-part format)
     db        — db_uri normalization, engine factories, create_database
     fts       — the full-text-search seam (sqlite FTS5 / postgres tsvector)
-    messages  — image extract/hydrate, searchable text
+    messages  — image extract/hydrate, searchable text, a transcript's
+                final answer
     writes    — add_message, create_agent, set_agent_mcp_servers,
                 launch_task, finish_task, cancel_task, mark_delivered,
                 claim_deliveries, lookup_or_create_prompt
@@ -44,7 +45,7 @@ from .image_store import (
     S3ImageStore,
     resolve_image_store,
 )
-from .messages import extract_images, hydrate_message, message_text
+from .messages import extract_images, hydrate_message, last_assistant_text, message_text
 from .models import (
     Agent,
     Base,
@@ -112,6 +113,7 @@ __all__ = [
     "HybridReadStore",
     "hydrate_message",
     "ImageStore",
+    "last_assistant_text",
     "launch_task",
     "list_agents",
     "list_sessions",

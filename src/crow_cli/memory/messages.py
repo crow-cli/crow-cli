@@ -1,4 +1,4 @@
-"""Message-dict transforms: image extraction/hydration, searchable text.
+"""Message-dict transforms: image extraction/hydration, text out of a message.
 
 Images never live in the database: inline base64 blocks are extracted at
 write time into an :class:`~crow_cli.memory.image_store.ImageStore` keyed
@@ -6,6 +6,11 @@ by ``<sha256hex><ext>`` (content-addressed, so dupes dedupe for free) and
 the stored message carries an ``image_ref`` block with the key. The
 in-memory conversation keeps the original data URL so the LLM always sees
 base64; on load, ``hydrate`` swaps refs back to data URLs.
+
+The text readers are pure — dicts in, string out, no engine — because the
+shape of a stored message is the same everywhere it is read: ``message_text``
+renders ONE message for the search index, ``last_assistant_text`` finds the
+final answer in a whole transcript (a subagent's, a delegate's).
 """
 
 import base64
@@ -94,6 +99,36 @@ def hydrate_message(message: dict, store: ImageStore) -> dict:
     out = dict(message)
     out["content"] = out_blocks
     return out
+
+
+def last_assistant_text(messages: list[dict], fallback: str = "(no final answer)") -> str:
+    """The last assistant message with content — a transcript's final answer.
+
+    Walks backwards, so a turn that ended in tool calls still yields the text
+    the model wrote after them. ``content`` is a plain string or a list of
+    blocks; only text blocks count, and an assistant message carrying nothing
+    but tool_calls is skipped rather than returned as "".
+
+    ``fallback`` is what a transcript with no such message yields. Callers
+    name their own because "the subagent" and "the delegate" are different
+    sentences, and this string is read by a model that has to know which one
+    it is looking at.
+    """
+    for msg in reversed(messages):
+        if msg.get("role") != "assistant":
+            continue
+        content = msg.get("content")
+        if isinstance(content, str) and content.strip():
+            return content
+        if isinstance(content, list):
+            texts = [
+                b.get("text", "")
+                for b in content
+                if isinstance(b, dict) and b.get("type") == "text"
+            ]
+            if any(t.strip() for t in texts):
+                return " ".join(texts)
+    return fallback
 
 
 def message_text(data: dict) -> str:

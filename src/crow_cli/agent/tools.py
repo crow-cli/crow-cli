@@ -783,6 +783,11 @@ _KIND_BY_RESULT: dict[str, ToolKind] = {
     # but get_tool_kind("run") is "other", and a browser loading a URL is
     # the same artifact either way.
     "web": "fetch",
+    # A delegation — a fork of the calling session, asked one question. The
+    # name decides nothing here: get_tool_kind("rlm") matches no substring
+    # rule and falls to "other", but the artifact is reasoning the agent paid
+    # for out of a fork instead of out of its own context, which is "think".
+    "rlm": "think",
 }
 """ACP kind follows the ARTIFACT, not the tool name: a multi-mode tool
 (``fs``) is one name doing read/glob/search, and ``get_tool_kind("fs")`` is
