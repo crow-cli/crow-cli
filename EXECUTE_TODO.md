@@ -406,7 +406,128 @@ it and background work never bleeds into the next cell's drain.
        dedupe free. cv2 runs in asyncio.to_thread (blocking C off the
        kernel's loop). File mode keeps the old MCP tool's 1568px cap +
        re-encode normalization.
-- [ ] 8. web — modes: search, fetch, run (playwright python bindings).
+- [x] 8a. web search + fetch — `crow_cli.tools.web`, modes "search" and
+       "fetch". Ports mcp/web_search and mcp/web_fetch; NO new dependency
+       (httpx, readabilipy and markdownify are already deps). Decisions:
+       * ONE query per call, not `queries: list[str]`. The MCP tool looped
+         over queries SEQUENTIALLY; in the kernel the model writes
+         `await asyncio.gather(*[web("search", q) for q in qs])` and gets
+         real parallelism plus one result object per query. Same reasoning
+         that killed pagination.
+       * PAGINATION DIES. `start_index`/`max_length` existed only because an
+         MCP tool must return one string; here `.markdown` is the whole page
+         and the model slices it in Python. `.text` is a WINDOWED rendering
+         (first N chars + how many are left) so `print(r.text)` cannot flood
+         the context, while `r.markdown` stays the truth — the same
+         content/text split FileResult already draws.
+       * `raw=True` is deleted, not fixed: the MCP flag never worked (the
+         content variable was already overwritten with the extraction) and
+         `.html` is simply always there.
+       * A page is not a file, so `result_kind = "web"` and NOT "read": the
+         read branch stamps `locations=[path]`, and a URL in a path field is
+         a lie. kind still comes out "fetch" for free —
+         get_tool_kind("fetch") hits the fetch/download rule, so no
+         _KIND_BY_RESULT entry is needed (unlike "sub", the mode name here
+         is exactly what the substring rules were built for).
+       * The drain's generic else branch grows one honest line: a payload
+         may carry `"subject"` (a URL, a query) and the title becomes
+         "web/fetch: https://…". Not `path` — a subject is displayed, never
+         claimed as a location.
+       BUGS IN THE CODE BEING PORTED (all six fixed here, all pinned):
+       (a) web_search leaks an AsyncClient per call (no `async with`).
+       (b) `if i == limit - 1: break` returns EVERYTHING when limit=0.
+       (c) the docstring says `limit: int = 5`, the signature says 10.
+       (d) `is_html` treats a MISSING content-type as HTML, so a JSON API
+           that omits the header gets fed to readability and comes back
+           mangled. Fixed: a declared type is believed; only an undeclared
+           body is sniffed for "<html".
+       (e) `except Exception: return f"Error fetching {url}: {e}"` — the MCP
+           wire convention. Here it raises WebError.
+       (f) `response.raise_for_status()` inside the try becomes a bare
+           "Error fetching" string, so a 404 and a DNS failure are
+           indistinguishable; WebError carries the status.
+       SearXNG at $SEARXNG_URL (default http://localhost:2946, verified UP).
+       Down is an error that names the URL, not an empty result — web search
+       is not optional equipment (see the searxng skill).
+       LANDED, and the probe found five more (letters continue the run):
+       (S) THE FACADE, not web.py: `pkg.web` handed back the MODULE.
+           reload()'s import-if-absent loop reads the RUNNING module's _LAZY,
+           while the binding loop at the bottom reads the freshly reloaded
+           one — so a tool just added to _LAZY is first imported down there,
+           and a first import makes importlib setattr(parent, child, module)
+           AFTER the purge had already run. The bare name worked (it is bound
+           from getattr on the submodule), only attribute access broke, which
+           is why it survived until the first live probe of a new tool. Fix:
+           purge LAST. Pinned by test_reload_purges_a_tool_that_is_new_to_the
+           _facade, which re-creates the trigger in a real kernel; verified
+           to fail on the old ordering.
+       (T) `answers=[str(a) for a in …]` — a SearXNG answer is a dict
+           {url, engine, parsed_url, template, answer}, so str() buried the
+           one field worth reading under four rendering fields. Answers are
+           the most valuable part of a search response (a direct answer beats
+           ten links), so _answer() takes `answer`, and for the answer types
+           that have no such key (Translations, WeatherAnswer — see
+           searx/result_types/answer.py) emits JSON minus the boilerplate.
+       (U) A blank query was accepted, and SearXNG answers one with a
+           plugin's clock reading instead of an error: q="  " comes back with
+           answers=[{"engine": "plugin: time_zone", "answer": "Sep 6, 2026,
+           8:24:44 AM"}] and no hits. A nonsense success hides a caller bug,
+           so target is stripped and a blank one raises.
+       (V) The non-text error's own example leaked a client —
+           `r = await httpx.AsyncClient().get(url)`, the exact shape of bug
+           (a) this module exists to fix, being taught to the model in an
+           error message. Now `async with`.
+       (W) `_engine_down(["brave"])` returned "['brave']" — str() of the LIST
+           on the no-reason branch, so a bare-name entry rendered as Python
+           syntax in the one line that explains a degraded backend.
+       Extraction: readabilipy's node mode is ~0.8s and visibly cleaner
+       (3609 chars, no nav chrome, no raw <p> surviving markdownify) vs
+       ~0.08s and 3466 chars with "Skip to main content" in it. So prefer
+       node, fall back to pure Python, and DECIDE availability here —
+       readabilipy's own have_node() spawns `node -v` per call and runs
+       `npm install` when its node_modules is missing, and npm install chdirs
+       the whole process. NOTE: the first live probe of extraction DID
+       trigger that npm install (40 packages into
+       .venv/…/readabilipy/javascript/node_modules). Benign and one-time —
+       production would have done the same on first use — but it is exactly
+       why _use_readability() exists, and node here is an fnm multishell
+       path, so availability depends on the shell the server was launched
+       from. Tests assert only what both modes agree on.
+       Live: search 1.0-1.4s, fetch of a 43KB page 0.95s, an 11MB body
+       refused in 17ms, gather of 3 searches 1.3x sequential (SearXNG itself
+       is the bottleneck), a 132k-char page renders a 5098-char .text whose
+       tail slice `markdown[5000:]` continues exactly where the window stops.
+       Tests: 39 new in tests/unit/test_tools_web.py (hermetic — a local
+       ThreadingHTTPServer stands in for both the web and SearXNG, real httpx
+       and real readability, no mocks, no internet) + 1 drain test for
+       `subject`. Sweep 689 -> 730 passed.
+- [ ] 8b. web run — playwright-python (USER RULED: playwright-python, not
+       the playwright-cli skill, not selenium). Modes "run" and "close".
+       * async_api ONLY. The sync API greenlet-switches into its own event
+         loop (_sync_base.py: `self._loop.create_task` + dispatcher fiber)
+         and a cell already runs inside ipykernel's running loop — the same
+         wall that made pytest.main() need asyncio.to_thread.
+       * Heavy, so LAZY: the wheel is 47MB because it bundles the Node
+         driver (playwright-python is JSON-RPC to a node subprocess, not an
+         FFI binding), plus `playwright install chromium` puts ~170MB in
+         ~/.cache/ms-playwright. Optional extra + lazy import with a clear
+         WebError, exactly how ast-grep is handled — a kernel that never
+         browses never pays.
+       * What the wrapper earns over "just use playwright in a cell":
+         (1) LIFECYCLE — one browser/context/page for the kernel's lifetime
+         instead of a 1s launch per cell and leaked processes;
+         (2) EMISSION — a browser action becomes an ACP sibling call the
+         client can watch, which plain playwright in a cell never does;
+         (3) ARTIFACTS — a screenshot goes to the ImageStore and rides
+         llm_images(), so a vision model can SEE the page. That third one is
+         the real reason: bytes on disk are invisible to the model.
+       * `.page` is exposed on the result, so clicking/typing/framing stays
+         raw playwright in the kernel rather than a bad reimplementation of
+         the playwright API. The tool does goto/evaluate/screenshot and then
+         gets out of the way.
+       * "run" returns the RENDERED page as the same PageResult shape fetch
+         returns — that is the distinction a model cares about (static HTML
+         vs. JS-executed DOM), and it means one result type for both.
 - [ ] 9. memory — modes: list, search, sql (read-only conn -> polars
        DataFrame). Python objects, not LLM-markdown strings.
 - [ ] 10. rlm — delegate rebuilt on session/fork (+load): relative offset

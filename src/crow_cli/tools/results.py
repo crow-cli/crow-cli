@@ -24,7 +24,7 @@ them is the return value:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 class ToolError(Exception):
@@ -308,5 +308,157 @@ class RewriteResult(ToolResult):
             f"{verb} {self.changed} of {self.scanned} {noun} file(s), "
             f"{self.matches} match(es){overlap}: {self.pattern} -> {self.rewrite}"
         )
+
+
+# A printed page is windowed; the object is not. 5000 chars is what the MCP
+# fetch tool returned per call, kept as the default so print(r.text) costs
+# about what it used to — but r.markdown is the whole page and slicing it is
+# Python, not a pagination protocol.
+_PAGE_WINDOW = 5000
+
+
+@dataclass
+class WebHit:
+    """One search result — a plain record, not a channel of its own.
+
+    ``score`` is SearXNG's aggregate relevance and ``engines`` the engines
+    that returned this URL, which is how one engine's opinion is told apart
+    from five engines agreeing.
+    """
+
+    url: str
+    title: str
+    content: str
+    score: float = 0.0
+    engines: list[str] = field(default_factory=list)
+    published: str = ""
+
+
+@dataclass
+class WebInfobox:
+    """An entity card — SearXNG's encyclopaedic answer to "python"."""
+
+    topic: str
+    url: str
+    content: str
+
+
+@dataclass
+class WebSearchResult(ToolResult):
+    """One query's hits, structured for code and rendered for print.
+
+    ONE query per call: the MCP tool took a list and looped over it
+    SEQUENTIALLY, because it had to return one string. Here the model writes
+    ``await asyncio.gather(*[web("search", q) for q in queries])`` and gets
+    real parallelism plus one of these per query.
+
+    ``answers``, ``infoboxes``, ``suggestions``, ``corrections`` and
+    ``unresponsive`` are the parts of SearXNG's response the MCP tool threw
+    away. ``unresponsive`` is the important one: ``["duckduckgo (CAPTCHA)"]``
+    is the difference between "thin results, refine the query" and "thin
+    results, the backend is degraded" — and web search is not optional
+    equipment, so a degraded backend must not be able to hide behind an
+    empty result list.
+    """
+
+    query: str
+    hits: list[WebHit]
+    total: int = 0  # hits SearXNG returned, before the limit
+    answers: list[str] = field(default_factory=list)
+    infoboxes: list[WebInfobox] = field(default_factory=list)
+    suggestions: list[str] = field(default_factory=list)
+    corrections: list[str] = field(default_factory=list)
+    unresponsive: list[str] = field(default_factory=list)
+
+    result_kind = "search"
+
+    def acp_payload(self) -> dict:
+        return {
+            "content": "text",
+            "text": self.text,
+            "subject": self.query,
+        }
+
+    @property
+    def truncated(self) -> bool:
+        return len(self.hits) < self.total
+
+    @property
+    def urls(self) -> list[str]:
+        return [h.url for h in self.hits]
+
+    @property
+    def text(self) -> str:
+        blocks = [f"ANSWER: {a}" for a in self.answers]
+        blocks += [f"{ib.topic} — {ib.url}\n{ib.content}" for ib in self.infoboxes]
+        blocks += [
+            f"{i}. {h.title}\n   {h.url}\n   {h.content}"
+            for i, h in enumerate(self.hits, 1)
+        ]
+        notes = []
+        if self.corrections:
+            notes.append(f"corrections: {', '.join(self.corrections)}")
+        if self.suggestions:
+            notes.append(f"suggestions: {', '.join(self.suggestions)}")
+        if self.unresponsive:
+            notes.append(f"ENGINES DOWN: {', '.join(self.unresponsive)}")
+        head = f"{self.query} — {len(self.hits)} of {self.total} hits"
+        return "\n".join([head, *blocks, *notes])
+
+
+@dataclass
+class PageResult(ToolResult):
+    """One fetched page: the WHOLE thing for code, a window for print.
+
+    ``markdown`` is the extraction and ``html`` the raw body, both complete —
+    there is no start_index/max_length, because those existed only to slice
+    one string across several MCP calls, and ``r.markdown[5000:9000]`` is
+    Python. ``text`` is the windowed rendering (a header line, the first
+    characters, and how many are left plus how to get them) so ``print(r)``'s
+    output cannot flood the context: the same content/text split FileResult
+    draws.
+
+    ``extracted`` says whether readability produced an article. False means
+    ``markdown`` IS the body — a JSON response, a text file, or a JS shell
+    with nothing to extract — which is honest where the MCP tool returned
+    the string "<error>Failed to parse HTML</error>" and lost the page.
+    """
+
+    url: str  # the FINAL url, after redirects
+    title: str
+    status: int
+    content_type: str
+    markdown: str
+    html: str
+    extracted: bool = False
+
+    # Not "read": a page is not a file, and the read branch of the drain
+    # stamps locations=[path] — a URL in a path field is a lie. kind still
+    # comes out "fetch", because get_tool_kind("fetch") hits the
+    # fetch/download rule on the MODE name.
+    result_kind = "web"
+
+    def acp_payload(self) -> dict:
+        return {"content": "text", "text": self.text, "subject": self.url}
+
+    @property
+    def chars(self) -> int:
+        return len(self.markdown)
+
+    @property
+    def text(self) -> str:
+        head = (
+            f"{self.url} — {self.status} {self.content_type.split(';')[0].strip()}"
+            f", {self.chars:,} chars"
+            + ("" if self.extracted else ", unextracted")
+        )
+        body = self.markdown[:_PAGE_WINDOW]
+        more = self.chars - len(body)
+        tail = f"\n… {more:,} more chars — markdown[{len(body)}:]" if more else ""
+        return f"{head}\n{body}{tail}"
+
+
+class WebError(ToolError):
+    pass
 
 

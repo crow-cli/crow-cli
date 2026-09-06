@@ -21,6 +21,7 @@ _LAZY = {
     "edit": ("crow_cli.tools.edit", "edit"),
     "fs": ("crow_cli.tools.fs", "fs"),
     "vision": ("crow_cli.tools.vision", "vision"),
+    "web": ("crow_cli.tools.web", "web"),
     "write": ("crow_cli.tools.write", "write"),
 }
 
@@ -42,7 +43,9 @@ def reload() -> None:
     * the facade is LAZY, so a fresh kernel has imported nothing but this
       package — each submodule is imported if absent, reloaded if present;
     * reload re-executes a module in its EXISTING dict, so this package's
-      cached facade functions would survive it — they are purged;
+      cached facade functions would survive it, and a FIRST import of a
+      submodule sets the parent attribute to the module object — both would
+      shadow ``__getattr__``, so both are purged (after the binding below);
     * names are re-resolved from the fresh submodules and bound into the
       CALLER's globals (the kernel's user namespace), including ``reload``
       itself, so the next call runs the new one;
@@ -82,12 +85,22 @@ def reload() -> None:
             importlib.reload(module)
 
     package = importlib.reload(sys.modules[__name__])
-    for key in [k for k in list(package.__dict__) if k in package._LAZY]:
-        del package.__dict__[key]  # reload kept the stale cache — purge it
 
     for name, (module_name, attr) in package._LAZY.items():
         caller[name] = getattr(importlib.import_module(module_name), attr)
     caller["reload"] = package.reload
+
+    # Purge LAST. Two things put a stale value in this dict under a _LAZY
+    # name: reload re-executes the package in its EXISTING dict, so a cached
+    # facade function survives it; and importing a submodule for the FIRST
+    # time makes the import machinery setattr(parent, child, module). The
+    # second one is why this runs after the binding loop above — that loop
+    # reads the FRESH _LAZY, while the import-if-absent loop at the top read
+    # the running one, so a tool just added to _LAZY is first imported down
+    # there. Purging before it left pkg.<new_tool> holding the MODULE, which
+    # shadows __getattr__ and hands callers an uncallable object.
+    for key in [k for k in list(package.__dict__) if k in package._LAZY]:
+        del package.__dict__[key]
 
     cell, sink_uri, images_dir = identity or (None, None, None)
     if cell is not None:

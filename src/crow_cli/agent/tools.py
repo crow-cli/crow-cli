@@ -968,11 +968,16 @@ async def _emit_subtool_calls(ctx: TurnCtx, parent_acp_id: str) -> list[dict]:
             text = payload.get("text") or (
                 f"{title} failed: {row.error}" if row.status == "failed" else ""
             )
+            # A result may name its own SUBJECT — a URL, a query — and the
+            # title reads better carrying it. Deliberately not "path": a
+            # subject is displayed, never claimed as a location, because a
+            # page is not a file.
+            subject = payload.get("subject")
             await _emit_subtool_call(
                 ctx,
                 _subtool_id(ctx, row.id),
                 row,
-                title=title,
+                title=f"{title}: {subject}" if subject else title,
                 kind=kind,
                 content=[tool_content(text_block(text))] if text else None,
             )

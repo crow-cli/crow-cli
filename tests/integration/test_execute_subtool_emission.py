@@ -327,6 +327,78 @@ async def test_drain_emits_search_subtool_as_text(tmp_path):
     await session.close()
 
 
+async def test_drain_titles_a_web_row_with_its_subject(tmp_path):
+    """A page is not a file, so a web row carries `subject` (a URL, a query)
+    instead of `path`: the title reads "web/fetch: https://…" and locations
+    stays None, because a URL claimed as a filesystem location is a lie the
+    client renders as a clickable file. A payload with no subject still gets
+    the bare title (test_drain_renders_text_and_failed_rows).
+
+    Kind follows the artifact as ever: "search" for the hits via
+    _KIND_BY_RESULT, and "fetch" for result_kind "web" via get_tool_kind's
+    rule on the MODE — there is deliberately no _KIND_BY_RESULT["web"], since
+    the payload is plain text and only the title needed changing."""
+    config, session = await make_test_session(tmp_path)
+    search_id = _seed_row(
+        config.db_uri,
+        parent_tool_call_id="turn-1/call_w",
+        tool="web",
+        mode="search",
+        args={"mode": "search", "target": "playwright python"},
+        result_kind="search",
+        acp_payload={
+            "content": "text",
+            "text": "playwright python — 10 of 37 hits",
+            "subject": "playwright python",
+        },
+    )
+    fetch_id = _seed_row(
+        config.db_uri,
+        parent_tool_call_id="turn-1/call_w",
+        tool="web",
+        mode="fetch",
+        args={"mode": "fetch", "target": "https://playwright.dev/python/"},
+        result_kind="web",
+        acp_payload={
+            "content": "text",
+            "text": "https://playwright.dev/python/ — 200 text/html, 3,609 chars",
+            "subject": "https://playwright.dev/python/",
+        },
+    )
+    conn = FakeConn()
+    ctx = await _make_ctx(config, session, conn)
+
+    from crow_cli.agent.tools import _emit_subtool_calls
+
+    assert await _emit_subtool_calls(ctx, "turn-1/call_w") == []
+
+    for row_id, kind, title, target, text in [
+        (
+            search_id,
+            "search",
+            "web/search: playwright python",
+            "playwright python",
+            "playwright python — 10 of 37 hits",
+        ),
+        (
+            fetch_id,
+            "fetch",
+            "web/fetch: https://playwright.dev/python/",
+            "https://playwright.dev/python/",
+            "https://playwright.dev/python/ — 200 text/html, 3,609 chars",
+        ),
+    ]:
+        start, progress, done = _by_id(conn, f"turn-1/call_sub{row_id}")
+        assert start.kind == kind
+        assert start.title == title
+        assert start.locations is None
+        assert start.raw_input["target"] == target
+        assert progress.content[0].content.type == "text"
+        assert progress.content[0].content.text == text
+        assert done.status == "completed"
+    await session.close()
+
+
 async def test_drain_failed_fs_row_keeps_the_mode_kind(tmp_path):
     """A failed row's result_kind is "error", so kind falls back to the MODE:
     a read that raised still arrives as a read call, not "other"."""

@@ -233,6 +233,35 @@ async def test_reload_re_executes_and_purges_the_facade_cache(mcp_app):
     ]
 
 
+async def test_reload_purges_a_tool_that_is_new_to_the_facade(mcp_app):
+    """The purge has to run AFTER the names are bound, not before.
+
+    A tool just added to _LAZY is invisible to the import-if-absent loop at
+    the top of reload() — that one reads the RUNNING module's _LAZY — so the
+    binding loop at the bottom, which reads the freshly reloaded one, is what
+    imports it for the first time. And a first import makes importlib
+    setattr(parent, child, module), repopulating the package dict with the
+    MODULE object, which shadows __getattr__: pkg.web handed back something
+    uncallable while the bare name worked, so only attribute access broke.
+    """
+    code = (
+        "import sys\n"
+        "import crow_cli.tools as T\n"
+        "del sys.modules['crow_cli.tools.web']\n"
+        "T.__dict__.pop('web', None)\n"
+        "T._LAZY = {k: v for k, v in T._LAZY.items() if k != 'web'}\n"
+        "reload()\n"
+        "print('web' in T.__dict__, type(T.web).__name__)\n"
+        "print(callable(T.web), getattr(T.web, '__module__', None),"
+        " web is T.web)\n"
+    )
+    out = await _call(mcp_app, code)
+    assert out.strip().splitlines() == [
+        "False function",
+        "True crow_cli.tools.web True",
+    ]
+
+
 async def test_reload_preserves_the_identity_rail(mcp_app, tmp_path):
     """Reloading register re-creates its identity contextvar and drops the
     sink and images_dir the per-cell prologue just set. Without capture-and-
