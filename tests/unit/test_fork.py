@@ -13,8 +13,14 @@ Fork semantics under test (see notes/dev/crow-fork-design.md):
 
 import pytest
 
-from crow_cli.agent.session import AgentSession, lookup_or_create_prompt, snap_turn_cut
-from crow_cli.memory import build_agent_id
+from crow_cli.agent.session import (
+    AgentSession,
+    lookup_or_create_prompt,
+    snap_offset_cut,
+    snap_turn_cut,
+)
+from crow_cli.memory import build_agent_id, delegation_tool_call_ids, get_engine
+from crow_cli.memory.models import SubtoolCall
 
 
 # ---- snap_turn_cut: pure boundary logic ----
@@ -55,6 +61,104 @@ def test_snap_turn_cut_last_turn_and_overflow_are_head():
 def test_snap_turn_cut_negative_clamps_and_no_user_msgs():
     assert snap_turn_cut(_turny_messages(), -3) == 5
     assert snap_turn_cut([{"role": "system", "content": "x"}], 0) is None
+
+
+# ---- snap_offset_cut: message-granular, and it snaps ----
+
+
+def _delegating_messages():
+    """A trunk whose TAIL is a delegation group: an execute call whose id the
+    subtool register recorded as an rlm call, then its result. This is the
+    shape rlm forks from when the parent has already delegated once."""
+    return [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "is F relevant?"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_exec1",
+                    "type": "function",
+                    "function": {"name": "execute", "arguments": '{"code": "await rlm(...)"}'},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_exec1", "content": "the delegate said: yes"},
+    ]
+
+
+def test_snap_offset_cut_zero_keeps_head_when_the_tail_is_complete():
+    msgs = _turny_messages()
+    assert snap_offset_cut(msgs, 0) == len(msgs)
+
+
+def test_snap_offset_cut_reaches_cuts_a_turn_boundary_cannot():
+    """turn_idx only lands on 5, 7 or None for this history; the offset is
+    the finer instrument, which is the reason it exists."""
+    msgs = _turny_messages()
+    assert snap_offset_cut(msgs, 1) == 8
+    assert snap_offset_cut(msgs, 2) == 7
+    assert snap_offset_cut(msgs, 3) == 6
+    assert set(snap_turn_cut(msgs, i) for i in range(9)) == {5, 7, None}
+
+
+def test_snap_offset_cut_steps_over_a_dangling_tool_calls_group():
+    """Cutting between an assistant tool_calls message and its results leaves
+    a group with nothing answering it — not ugly, rejected: every
+    tool_call_id must be followed by a tool message."""
+    msgs = _turny_messages()
+    # offset 5 lands on the tool result (a complete group, kept)...
+    assert snap_offset_cut(msgs, 5) == 4
+    # ...offset 6 lands on the assistant tool_calls itself, and snaps back
+    assert snap_offset_cut(msgs, 6) == 2
+
+
+def test_snap_offset_cut_steps_over_a_delegation_at_the_boundary():
+    """A fork whose history ENDS in "I delegated this and here is what came
+    back" is a fork that delegates instead of answering — the infinity
+    mirror. The result goes, then the assistant message above it, so the
+    whole group goes."""
+    msgs = _delegating_messages()
+    assert snap_offset_cut(msgs, 0, {"call_exec1"}) == 2
+    # without the register's ids there is nothing to distinguish it from any
+    # other tool roundtrip, and the group survives
+    assert snap_offset_cut(msgs, 0) == 4
+    assert snap_offset_cut(msgs, 0, {"some_other_call"}) == 4
+
+
+def test_snap_offset_cut_keeps_an_ordinary_tool_group_at_the_boundary():
+    """Only a DELEGATION is stepped over. A read at the tail is a complete
+    group and legitimate context; dropping it would be throwing history
+    away for nothing."""
+    msgs = _turny_messages()
+    assert snap_offset_cut(msgs, 5, {"unrelated"}) == 4
+    # ...but name c1 a delegation and the same cut snaps past it
+    assert snap_offset_cut(msgs, 5, {"c1"}) == 2
+
+
+def test_snap_offset_cut_leaves_a_delegation_deeper_in_the_prefix():
+    """The snap is a BOUNDARY rule. Removing a delegation from the middle of
+    the kept prefix would mean rewriting rows the fork shares with its trunk
+    (they are never copied) or discarding everything since the first one —
+    see EXECUTE_TODO 10e(i)."""
+    msgs = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "q"},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "d1"}]},
+        {"role": "tool", "tool_call_id": "d1", "content": "delegate said yes"},
+        {"role": "assistant", "content": "noted"},
+        {"role": "user", "content": "next"},
+    ]
+    assert snap_offset_cut(msgs, 0, {"d1"}) == 6
+
+
+def test_snap_offset_cut_clamps_and_can_reach_zero():
+    msgs = _turny_messages()
+    assert snap_offset_cut(msgs, -3) == len(msgs)
+    assert snap_offset_cut(msgs, len(msgs)) == 0
+    assert snap_offset_cut(msgs, 999) == 0
+    assert snap_offset_cut([], 0) == 0
 
 
 # ---- AgentSession.fork against a real sqlite tmp db ----
@@ -216,3 +320,163 @@ async def test_fork_explicit_agent_idx(fork_env):
     assert fork.agent_id == build_agent_id(session.session_id, 1, 2)
     assert [m.get("content") for m in fork.messages][-1] == "turn one done"
     await fork.close()
+
+
+# ---- the offset path against a real sqlite db, with a real register row ----
+
+
+@pytest.fixture
+async def delegating_env(tmp_path):
+    """A trunk whose HEAD is a delegation group, plus the subtool_calls row
+    that makes it identifiable — the shape rlm forks from.
+
+    The register row is written the way the kernel's write-through writes it:
+    parent_tool_call_id is TurnCtx.tcid's "<turn_id>/<llm id>", and the
+    message history carries only the bare llm id. That gap is the whole
+    reason delegation_tool_call_ids exists.
+    """
+    memory_path = f"sqlite:///{tmp_path / 'delegating.db'}"
+    prompt_id = await lookup_or_create_prompt(
+        "You are {{name}}.", name="fork-test", memory_path=memory_path
+    )
+    session = await AgentSession.create(
+        prompt_id=prompt_id,
+        prompt_args={"name": "Crow"},
+        tool_definitions=[{"type": "function", "function": {"name": "execute"}}],
+        request_params={"temperature": 0.2},
+        model_identifier="test-model",
+        memory_path=memory_path,
+        cwd="/tmp",
+        session_id="delegating-session",
+    )
+    await session.add_message({"role": "user", "content": "is F relevant?"})
+    await session.add_message(
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_exec1",
+                    "type": "function",
+                    "function": {
+                        "name": "execute",
+                        "arguments": '{"code": "print(await rlm(\'is F relevant?\'))"}',
+                    },
+                }
+            ],
+        }
+    )
+    await session.add_message(
+        {"role": "tool", "tool_call_id": "call_exec1", "content": "the delegate said: yes"}
+    )
+    await session.close()
+
+    engine = get_engine(memory_path)
+    with engine.begin() as conn:
+        conn.execute(
+            SubtoolCall.__table__.insert().values(
+                session_id=session.session_id,
+                agent_id=session.agent_id,
+                parent_tool_call_id="turn-1/call_exec1",
+                cell_seq=3,
+                tool="rlm",
+                args={"prompt": "is F relevant?"},
+                status="completed",
+            )
+        )
+    engine.dispose()
+    return session, memory_path
+
+
+def test_delegation_tool_call_ids_strips_the_turn_prefix(delegating_env):
+    """The register stores "<turn_id>/<llm id>"; the history stores the bare
+    llm id. Without the strip the two never meet and the snap never fires."""
+    session, memory_path = delegating_env
+    engine = get_engine(memory_path)
+    try:
+        assert delegation_tool_call_ids(engine, session.session_id) == {"call_exec1"}
+        # a fork's wire id is its agent_id, and the row carries the trunk's
+        # bare session id — both have to resolve to the same set
+        assert delegation_tool_call_ids(engine, session.agent_id) == {"call_exec1"}
+        # only delegations: an edit or a read in the same cell is not one
+        assert delegation_tool_call_ids(engine, session.session_id, tools=("nope",)) == set()
+        assert delegation_tool_call_ids(engine, "some-other-session") == set()
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_fork_at_offset_zero_keeps_the_whole_trunk(delegating_env):
+    """No ids, no snap: offset 0 is HEAD, same as forking without an offset."""
+    session, memory_path = delegating_env
+    fork = await AgentSession.fork(
+        session.session_id, memory_path=memory_path, message_offset=0
+    )
+    assert [m.get("content") for m in fork.messages] == [
+        m.get("content") for m in session.messages
+    ]
+    await fork.close()
+
+
+@pytest.mark.asyncio
+async def test_fork_snaps_the_delegation_group_out_of_the_forks_history(delegating_env):
+    """The point of the whole step: the delegate must not inherit a history
+    that ends in the parent delegating."""
+    session, memory_path = delegating_env
+    engine = get_engine(memory_path)
+    try:
+        ids = delegation_tool_call_ids(engine, session.session_id)
+    finally:
+        engine.dispose()
+    fork = await AgentSession.fork(
+        session.session_id,
+        memory_path=memory_path,
+        message_offset=0,
+        delegation_ids=ids,
+    )
+    contents = [m.get("content") for m in fork.messages]
+    assert contents == ["You are Crow.", "is F relevant?"]
+    assert "the delegate said: yes" not in contents
+    assert all("tool_calls" not in m for m in fork.messages)
+
+    # and the trunk is untouched — the rows are shared, never rewritten
+    trunk = await AgentSession.load(session.agent_id, memory_path=memory_path)
+    assert [m.get("content") for m in trunk.messages][-1] == "the delegate said: yes"
+    await trunk.close()
+    await fork.close()
+
+
+@pytest.mark.asyncio
+async def test_fork_offset_counts_back_a_single_message(delegating_env):
+    session, memory_path = delegating_env
+    fork = await AgentSession.fork(
+        session.session_id, memory_path=memory_path, message_offset=1
+    )
+    # drops the tool result; the assistant tool_calls above it is then
+    # dangling, so the snap takes that too
+    assert [m.get("content") for m in fork.messages] == ["You are Crow.", "is F relevant?"]
+    await fork.close()
+
+
+@pytest.mark.asyncio
+async def test_fork_offset_that_leaves_nothing_raises(delegating_env):
+    """cut == 0 used to index records[-1] — "keep nothing" silently became
+    "fork at HEAD", the one outcome the offset exists to prevent."""
+    session, memory_path = delegating_env
+    with pytest.raises(ValueError, match="leaves no history to fork"):
+        await AgentSession.fork(
+            session.session_id, memory_path=memory_path, message_offset=99
+        )
+
+
+@pytest.mark.asyncio
+async def test_fork_refuses_both_policies_at_once(delegating_env):
+    session, memory_path = delegating_env
+    with pytest.raises(ValueError, match="not both"):
+        await AgentSession.fork(
+            session.session_id,
+            memory_path=memory_path,
+            turn_idx=0,
+            message_offset=1,
+        )
+

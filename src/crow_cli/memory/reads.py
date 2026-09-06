@@ -7,7 +7,7 @@ from . import fts
 from .ids import build_agent_id, parse_agent_id
 from .image_store import ImageStore
 from .messages import hydrate_message
-from .models import Agent, Message, Prompt, Task, TaskDelivery
+from .models import Agent, Message, Prompt, SubtoolCall, Task, TaskDelivery
 
 
 def get_agent(engine, agent_id: str) -> Agent | None:
@@ -63,6 +63,40 @@ def get_session_mcp_servers(engine, wire_id: str) -> list:
             if row.mcp_servers is not None:
                 return list(row.mcp_servers)
         return []
+
+
+def delegation_tool_call_ids(
+    engine, wire_id: str, tools: tuple[str, ...] = ("rlm",)
+) -> set[str]:
+    """The LLM tool-call ids of every in-cell delegation this session made.
+
+    A delegation made INSIDE an execute cell does not appear in the message
+    history as a call named "rlm" — the history holds one ``execute`` call
+    and whatever the cell printed. What links the two is the subtool
+    register: one subtool_calls row per in-cell tool call, carrying the
+    PARENT execute call's ACP id. TurnCtx.tcid is ``f"{turn_id}/{llm_id}"``,
+    so the last path segment is the LLM's own tool_call_id — exactly what
+    the persisted assistant message carries in ``tool_calls[].id``. Matching
+    on that is precise; grepping the cell's source for "rlm(" is not (it
+    hits comments, strings, and this docstring).
+
+    ``wire_id`` is a trunk's bare session_id or a fork's full agent_id; both
+    are matched, because the register stores whichever the agent injected.
+    """
+    try:
+        bare, _, _ = parse_agent_id(wire_id)
+    except ValueError:
+        bare = wire_id
+    with Session(engine) as db:
+        rows = (
+            db.query(SubtoolCall.parent_tool_call_id)
+            .filter(
+                SubtoolCall.session_id.in_({wire_id, bare}),
+                SubtoolCall.tool.in_(tools),
+            )
+            .all()
+        )
+    return {r[0].rsplit("/", 1)[-1] for r in rows if r[0]}
 
 
 def get_task(engine, task_id: str) -> Task | None:

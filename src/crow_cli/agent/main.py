@@ -112,6 +112,7 @@ from crow_cli.agent.mcp_client import create_mcp_client_from_acp, get_tools
 from crow_cli.agent.prompt import normalize_prompt, get_directory_tree
 from crow_cli.memory import (
     build_agent_id,
+    delegation_tool_call_ids,
     get_engine,
     parse_agent_id,
     wire_session_id,
@@ -651,33 +652,53 @@ class AcpAgent(Agent):
         additional_directories: list[str] | None = None,
         agentIdx: int | None = None,
         turnIdx: int | None = None,
+        messageOffset: int | None = None,
         **kwargs: Any,
     ) -> ForkSessionResponse:
         """Fork an existing session (UNSTABLE session/fork).
 
-        ``agentIdx``/``turnIdx`` ride the request ``_meta`` and arrive
-        flattened into kwargs by the SDK router. Defaults fork at HEAD: the
-        newest trunk agent, all messages. turnIdx snaps to turn boundaries —
-        an assistant tool_calls group is never split from its tool results.
+        ``agentIdx``/``turnIdx``/``messageOffset`` ride the request ``_meta``
+        and arrive flattened into kwargs by the SDK router. Defaults fork at
+        HEAD: the newest trunk agent, all messages. turnIdx snaps to turn
+        boundaries — an assistant tool_calls group is never split from its
+        tool results. messageOffset is the finer instrument: N messages back
+        from HEAD, then snapped off any group that must not end a fork's
+        history, which is how a delegate's own fork call stays out of the
+        delegate's view. The two are mutually exclusive.
         The fork's wire sessionId is its own agent_id; the client owns tool
         supply exactly like new/load_session (empty mcpServers = zero tools,
         which is what an interrogation fork wants).
         """
         self._logger.info(
-            "FORK_SESSION: %s agentIdx=%s turnIdx=%s cwd=%s mcp_servers=%s",
+            "FORK_SESSION: %s agentIdx=%s turnIdx=%s messageOffset=%s cwd=%s mcp_servers=%s",
             session_id,
             agentIdx,
             turnIdx,
+            messageOffset,
             cwd,
             mcp_servers,
         )
         try:
+            # The delegation ids come from the subtool register, not from the
+            # caller: the model cannot be trusted to declare which of its own
+            # calls were delegations, and it does not have to — the rail
+            # already recorded them. get_engine builds a fresh pool per call,
+            # so this one is ours to close.
+            delegation_ids = None
+            if messageOffset is not None:
+                engine = get_engine(self._memory_db_uri)
+                try:
+                    delegation_ids = delegation_tool_call_ids(engine, session_id)
+                finally:
+                    engine.dispose()
             session = await AgentSession.fork(
                 session_id,
                 memory_path=self._memory_db_uri,
                 cwd=cwd,
                 agent_idx=agentIdx,
                 turn_idx=turnIdx,
+                message_offset=messageOffset,
+                delegation_ids=delegation_ids,
             )
         except Exception as e:
             self._logger.error("Failed to fork session %s: %s", session_id, e)

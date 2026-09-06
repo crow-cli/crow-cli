@@ -968,12 +968,177 @@ it and background work never bleeds into the next cell's drain.
        is probably sound, but it is the one remaining place where the
        reasoning is "probably" rather than measured.
 
-- [ ] 10. rlm — delegate rebuilt on session/fork (+load): relative offset
-       (fork N messages back so history doesn't end in the fork call — no
-       infinity mirror), fork call redacted from forked history, depth
-       budget in session meta, blocking (response = last content block after
-       final tool call) + async (handle; memory(session_id=...) to collect).
-       Code tool, not MCP.
+- [ ] 10. rlm — DECOMPOSED into 10a-10e after reading the code. Original
+       text preserved verbatim under 10e. Two findings reshaped it:
+       (AF) THE FORK CALL IS NOT IN THE DATABASE WHEN rlm RUNS. react.py
+       persists the assistant message and its tool results AFTER the tools
+       execute (:928 execute_tool_calls, THEN :957 add_assistant_response
+       and :964 add_tool_response); execute_tool_calls writes nothing
+       itself, and the user message went in at main.py:860 before the loop
+       started. So at rlm time the trunk's HEAD is the message BEFORE this
+       turn's assistant tool_calls: history CANNOT "end in the fork call",
+       and a fork at HEAD has no dangling tool_calls group. The plan's
+       stated rationale for the offset is void as written. The offset still
+       earns its place, for a different reason — PREVIOUS delegations. A
+       parent that already called rlm in an earlier loop iteration or an
+       earlier turn HAS persisted that assistant tool_calls + tool result,
+       and forking at HEAD then hands the child a history in which it
+       delegated. THAT is the infinity mirror.
+       (AG) FORK-OF-FORK DOES NOT EXIST. AgentSession.fork hardcodes its
+       source to fork_idx=1 (`build_agent_id(session_id, agent_idx, 1)`) and
+       load_agent_messages only knows "trunk prefix (id <= forked_at) + my
+       own rows". forked_at is a bare message id, so the source agent is not
+       recoverable, and create_database is create_all — additive TABLES, no
+       ALTER — so a fork_source column means a migration against the live
+       1.3GB db. A delegate therefore cannot delegate from its own branch:
+       the grandchild would get the trunk's history and lose everything the
+       child found. Depth > 1 is a piece of work, not a constant, so the
+       budget ships at 1 and is plumbed as a real number.
+       THE PRECISE DELEGATION FINDER (no string matching). subtool_calls
+       already records one row per in-cell tool call with tool="rlm" and
+       parent_tool_call_id = the execute call's ACP id, and TurnCtx.tcid is
+       `f"{turn_id}/{llm_id}"` — invertible by rsplit("/", 1)[-1] to the
+       LLM's own tool_call_id, which is what the persisted assistant
+       message carries in tool_calls[].id. So "which groups in this
+       history are delegations" is a join against the rail that already
+       exists, not a grep for "rlm(" inside execute arguments.
+
+- [x] 10a. THE CUT — message-granular fork offset, and the snap that makes
+       it safe. snap_offset_cut(messages, offset, delegation_ids): cut =
+       len - offset, then walk back while the message at cut-1 is an
+       assistant with tool_calls (a dangling group — defensive, per AF the
+       db never has one at rlm time, but a crash between :957 and :964
+       would) or a delegation group (per AF the real case). Wire it through
+       AgentSession.fork(message_offset=...) and fork_session's _meta, so
+       turn_idx and message_offset are two policies over one anchor.
+       LATENT BUG TO FIX WHILE IN THERE: `anchor = records[-1].id if cut is
+       None else records[cut - 1].id` — cut == 0 indexes records[-1], the
+       LAST message, so "keep nothing" silently became "fork at HEAD".
+       Unreachable from snap_turn_cut today (it returns None or
+       user_idxs[turn_idx+1] >= 1) but a message offset makes it reachable.
+       An empty prefix is not a fork; raise and say so.
+       Tests: real sqlite via AgentSession, no mocks — offset 0 at HEAD,
+       offset past a delegation group, snap past a dangling group, snap
+       past a delegation group at the boundary, offset larger than the
+       history, cut == 0 raises, turn_idx still behaves (test_fork.py's
+       existing cases must not move).
+       LANDED — snap_offset_cut in agent/session.py beside snap_turn_cut;
+       AgentSession.fork(message_offset=, delegation_ids=);
+       memory.reads.delegation_tool_call_ids (exported from crow_cli.memory);
+       fork_session(messageOffset=) in agent/main.py. 13 new tests in
+       tests/unit/test_fork.py (11 -> 24), no mocks.
+       THE SNAP IS A BOUNDARY RULE, and that is a deliberate limit. It walks
+       back only while the LAST KEPT message is (a) an assistant carrying
+       tool_calls — its results are on the far side of the cut, so the group
+       is dangling and a dangling group is not ugly but REJECTED, every
+       tool_call_id must be followed by a tool message answering it — or
+       (b) a tool result answering one of delegation_ids, which then takes
+       the assistant message above it on the next pass, so the whole
+       delegation group goes. A delegation deeper in the kept prefix stays:
+       removing it means either rewriting rows a fork SHARES with its trunk
+       ("never copied") or discarding everything since the first one. That
+       is 10e(i), written up rather than written.
+       ONLY THE OFFSET PATH SNAPS. turn_idx keeps exactly the behaviour it
+       has always had, so the CLI's --fork and every interrogation fork are
+       untouched — all 11 pre-existing fork tests pass unmodified. The two
+       policies are mutually exclusive and say so ("fork on turn_idx OR
+       message_offset, not both"), because an anchor is one number and two
+       policies over it would need a precedence rule nobody could remember.
+       THE IDS COME FROM THE SERVER, NOT THE MODEL. fork_session computes
+       delegation_ids itself from the subtool register; a fork request never
+       supplies them. The model cannot be trusted to declare which of its
+       own calls were delegations, and it does not have to — the rail
+       already recorded them, with the parent execute call's ACP id, and
+       TurnCtx.tcid's "<turn_id>/<llm_id>" is invertible to the bare id the
+       persisted assistant message carries. delegation_tool_call_ids matches
+       BOTH the bare session_id and the wire agent_id, because the register
+       stores whichever the agent injected (a trunk's wire id IS its bare
+       session id; a fork's is its agent_id).
+       WIRE VERIFIED, not assumed: acp/router.py's _make_func does
+       `params = {k: getattr(model_obj, k) for k in model.model_fields if k
+       != "field_meta"}` then `params.update(meta)` — a GENERIC flatten with
+       no whitelist, so a new _meta key arrives as a kwarg with no SDK
+       change. Client side is `field_meta=kwargs or None`, and
+       {"messageOffset": 0} is a non-empty dict, so offset 0 still travels
+       (a falsy VALUE inside a truthy dict — the trap would have been
+       `kwargs.get(...) or None`).
+       get_engine builds a FRESH pool per call (no cache), so fork_session's
+       engine is disposed in a finally; the fixture and the ids test dispose
+       theirs too. react_loop leaks one per turn and always has — not this
+       step's business, but noted.
+       MUTATION-CHECKED: deleting the delegation branch of the snap fails
+       exactly the three delegation tests (boundary pure, ordinary-group
+       pure, and the sqlite fork) and leaves the other 21 green, so the ids
+       are load-bearing rather than decorative.
+       SWEEP: tests/unit + tests/memory 597 passed in 35.8s.
+
+
+- [ ] 10b. DEPTH BUDGET on the identity rail — the same channel as
+       session_id/db_uri, so the kernel still reads NO config and the model
+       cannot forge it. rlmDepth rides session/fork's _meta (ForkSessionRequest
+       has field_meta aliased _meta, and fork_session already flattens
+       agentIdx/turnIdx out of kwargs); the agent stores it per wire id;
+       execute_acp_execute injects it; begin_cell(rlm_depth=) stamps it;
+       register.rlm_depth() reads it. Default 0 for anything that did not
+       arrive by fork — a trunk, a CLI fork, a load. Budget 1: a delegate
+       that tries to delegate gets an RlmToolError naming the budget and
+       pointing at AG, not a silent mirror.
+
+- [ ] 10c. crow_cli/tools/rlm.py — THE TOOL. SubagentDriver grows
+       fork_session (it already sets use_unstable_protocol=True for exactly
+       this). Child tool supply comes from get_session_mcp_servers on the
+       parent's wire id, the way task/_launch does it, so the [] cascade
+       regression stays fixed. BLOCKING: await driver.prompt, then read the
+       answer from the shared db — task/_child_answer's shape but
+       fork-aware, since it filters fork_idx == 1 and the delegate IS a
+       fork; "last content block after the final tool call" is
+       _last_assistant_text over load_agent_messages of the fork's agent_id.
+       ASYNC: return the handle (the fork's wire id) and let the model
+       collect with memory("list", session_id=...) — the transcript is
+       already observable through the same db, which is why no mailbox is
+       needed here (task's task_deliveries exists because its owner goes
+       idle; an rlm caller is a running cell). RlmResult + RlmToolError in
+       results.py, _KIND_BY_RESULT entry, @subtool("rlm") so the call
+       writes through and the client sees a sibling, _LAZY wiring. The
+       child's prompt carries the depth and an explicit "you are a
+       delegate, answer the question" instruction — TODO.md's house idiom
+       for fork behaviour is PROMPT INSTRUCTIONS ("the analysis/ideas forks
+       rely on PROMPT INSTRUCTIONS to stay read-only").
+
+- [ ] 10d. e2e — a real child agent subprocess, the
+       tests/e2e/test_execute_acp_client.py tier: fork created with the
+       right anchor, the child answers, the delegation group is ABSENT from
+       the child's own view of its history, the register row wrote through,
+       and a delegate that calls rlm is refused with the budget in the
+       message. In-process tests cannot catch deployment-shaped failures
+       here either (a stale agent with no rlmDepth plumbing forks at HEAD
+       and everything still "passes").
+
+- [ ] 10e. BUG HUNT + sweep, and the two pieces DEFERRED with their designs
+       recorded so the plan person can overrule:
+       (i) VIEW-SIDE REDACTION of delegations deeper in the prefix than the
+       cut. 10a only handles a delegation group AT THE BOUNDARY. Rows are
+       shared ("never copied"), so redaction cannot mutate them; it would
+       have to be a pass in load_agent_messages for fork_idx != 1,
+       rewriting an rlm-bearing execute cell's arguments and its tool
+       result to a marker. That is the most load-bearing read in the memory
+       layer — every session load, every fork, every query — on the live
+       1.3GB db, for a benefit that 10a's snap plus 10c's prompt
+       instruction may already cover. Same risk class as 9b, so same
+       treatment: written up, not written.
+       (ii) FORK-OF-FORK, per AG. Design that avoids a migration: forked_at
+       is Text, so extend the format to "{source_agent_id}:{message_id}"
+       with a bare int meaning the legacy trunk-anchored form;
+       load_agent_messages then chains (source's view up to the anchor,
+       plus own rows) instead of assuming fork_idx=1. Touches the same read
+       path as (i), and it is what would let the depth budget rise above 1.
+       ORIGINAL TEXT, verbatim: rlm — delegate rebuilt on session/fork
+       (+load): relative offset (fork N messages back so history doesn't end
+       in the fork call — no infinity mirror), fork call redacted from
+       forked history, depth budget in session meta, blocking (response =
+       last content block after final tool call) + async (handle;
+       memory(session_id=...) to collect). Code tool, not MCP.
+
 - [ ] 11. `!`/shebang lines -> terminal backend directly (pty, caps,
        logging, register entry as tool="terminal") — extracted pre-kernel;
        IPython never sees them. NOT system_raw (no pty/caps/telemetry).

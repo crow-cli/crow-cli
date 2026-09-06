@@ -56,6 +56,7 @@ from .models import (
 )
 from .reads import (
     agent_index,
+    delegation_tool_call_ids,
     get_agent,
     get_max_agent_idx,
     get_max_fork_idx,
@@ -96,6 +97,7 @@ __all__ = [
     "claim_deliveries",
     "create_agent",
     "create_database",
+    "delegation_tool_call_ids",
     "extract_images",
     "finish_task",
     "FsImageStore",

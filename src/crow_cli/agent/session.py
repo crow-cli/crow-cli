@@ -138,6 +138,53 @@ def snap_turn_cut(messages: list[dict], turn_idx: int | None) -> int | None:
     return user_idxs[turn_idx + 1]
 
 
+def snap_offset_cut(
+    messages: list[dict],
+    offset: int,
+    delegation_ids: set[str] | None = None,
+) -> int:
+    """Compute the fork cut point for a message offset.
+
+    ``offset`` is how many messages back from HEAD to fork: 0 keeps
+    everything, N drops the last N. Unlike :func:`snap_turn_cut` this is
+    message-granular — a turn boundary is too coarse when the point is to
+    step back over ONE call.
+
+    The raw cut is then SNAPPED back past anything that must not end a
+    fork's history:
+
+    * an assistant message carrying ``tool_calls``. Its results follow it,
+      so they are on the far side of the cut and the group is left
+      dangling — and a dangling group is not merely ugly, it is rejected:
+      every tool_call_id in an assistant message must be followed by a tool
+      message answering it.
+    * a tool result answering one of ``delegation_ids``. A fork whose
+      history ENDS in "I delegated this and here is what came back" is a
+      fork that delegates instead of answering — the infinity mirror. The
+      snap then takes the assistant message above it on the next pass, so
+      the whole delegation group goes.
+
+    A delegation deeper in the kept prefix is NOT removed — that would mean
+    either rewriting rows a fork shares with its trunk or discarding
+    everything since the first one. See EXECUTE_TODO 10e(i).
+
+    Returns the number of messages to keep. 0 means nothing survives, which
+    is not a fork but a new session; callers raise.
+    """
+    ids = delegation_ids or set()
+    cut = max(len(messages) - max(offset, 0), 0)
+    while cut > 0:
+        msg = messages[cut - 1]
+        role = msg.get("role")
+        if role == "assistant" and msg.get("tool_calls"):
+            cut -= 1
+        elif role == "tool" and msg.get("tool_call_id") in ids:
+            cut -= 1
+        else:
+            break
+    return cut
+
+
 async def lookup_or_create_prompt(
     template: str,
     name: str,
@@ -408,15 +455,33 @@ class AgentSession:
         cwd: str = "/tmp",
         agent_idx: int | None = None,
         turn_idx: int | None = None,
+        message_offset: int | None = None,
+        delegation_ids: set[str] | None = None,
     ) -> "AgentSession":
         """Fork a TRUNK agent of the session (default: HEAD = max agent_idx).
 
         The fork shares (session_id, agent_idx) with its source and gets the
-        next fork_idx. Its context is the trunk's prefix rows up to the turn
+        next fork_idx. Its context is the trunk's prefix rows up to the
         anchor (stored as forked_at, a message-id POSITION) — shared rows,
         never copied. The fork inherits the source's prompt, tools, request
         params and model.
+
+        Two policies pick the anchor, and they are mutually exclusive:
+        ``turn_idx`` counts whole turns and cuts on user-message boundaries
+        (:func:`snap_turn_cut`); ``message_offset`` counts single messages
+        back from HEAD and then snaps off anything that must not end a
+        fork's history (:func:`snap_offset_cut`). Only the offset path
+        snaps, so a turn fork — the CLI's ``--fork``, an interrogation fork
+        — keeps exactly the behaviour it has always had.
+
+        ``delegation_ids`` are the LLM tool-call ids of delegations the
+        source already made (see
+        :func:`crow_cli.memory.delegation_tool_call_ids`); the offset snap
+        steps over a trailing one so the fork's history does not end in "I
+        delegated this".
         """
+        if turn_idx is not None and message_offset is not None:
+            raise ValueError("fork on turn_idx OR message_offset, not both")
         client = MemoryClient(memory_path)
         try:
             if agent_idx is None:
@@ -426,7 +491,20 @@ class AgentSession:
             records = await client.query_messages(agent_id=source_id)
             if not records:
                 raise ValueError(f"source agent '{source_id}' has no messages to fork")
-            cut = snap_turn_cut([r.data for r in records], turn_idx)
+            messages = [r.data for r in records]
+            if message_offset is not None:
+                cut = snap_offset_cut(messages, message_offset, delegation_ids)
+                # cut == 0 used to fall through to records[cut - 1] ==
+                # records[-1], i.e. "keep nothing" silently became "fork at
+                # HEAD" — the one outcome the offset exists to prevent.
+                if cut == 0:
+                    raise ValueError(
+                        f"forking '{source_id}' {message_offset} messages back leaves "
+                        "no history to fork: everything at the tail is part of the "
+                        "group being stepped over"
+                    )
+            else:
+                cut = snap_turn_cut(messages, turn_idx)
             anchor = records[-1].id if cut is None else records[cut - 1].id
             fork_idx = await client.get_max_fork_idx(session_id, agent_idx) + 1
             fork_id = build_agent_id(session_id, agent_idx, fork_idx)
