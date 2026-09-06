@@ -401,6 +401,73 @@ async def test_drain_titles_a_web_row_with_its_subject(tmp_path):
     await session.close()
 
 
+async def test_drain_files_every_memory_mode_under_read(tmp_path):
+    """Rows out of the agent's own history. The MODE cannot decide the kind —
+    get_tool_kind("list") is "read", ("search") is "search" and ("sql") is
+    "other", but all three are the same artifact, so _KIND_BY_RESULT files
+    result_kind "memory" under read. The subject (a session id, a query, a
+    statement) rides the title, and locations stays None: a frame of rows is
+    not a file, and claiming one would render as a clickable path to
+    something that does not exist."""
+    config, session = await make_test_session(tmp_path)
+    parent = "turn-1/call_mem"
+    cases = [
+        (
+            "list",
+            {"mode": "list", "session_id": "alpha-one", "limit": 2},
+            "alpha-one",
+            "alpha-one — 2 row(s) of 7 matching\nshape: (2, 8)",
+            "memory/list: alpha-one",
+        ),
+        (
+            "search",
+            {"mode": "search", "target": "polars"},
+            "polars",
+            "polars — 3 row(s)\nshape: (3, 8)",
+            "memory/search: polars",
+        ),
+        (
+            "sql",
+            {"mode": "sql", "target": "select role, count(*) n from messages"},
+            "select role, count(*) n from messages",
+            "select role, count(*) n from messages — 4 row(s)",
+            "memory/sql: select role, count(*) n from messages",
+        ),
+    ]
+    row_ids = [
+        _seed_row(
+            config.db_uri,
+            parent_tool_call_id=parent,
+            tool="memory",
+            mode=mode,
+            args=args,
+            result_kind="memory",
+            acp_payload={"content": "text", "text": text, "subject": subject},
+        )
+        for mode, args, subject, text, _ in cases
+    ]
+    conn = FakeConn()
+    ctx = await _make_ctx(config, session, conn)
+
+    from crow_cli.agent.tools import _emit_subtool_calls
+
+    # Rows are never pictures: no llm_blocks come back out of the drain.
+    assert await _emit_subtool_calls(ctx, parent) == []
+    assert _sub_ids_in_order(conn) == [f"turn-1/call_sub{i}" for i in row_ids]
+
+    for row_id, (mode, args, subject, text, title) in zip(row_ids, cases):
+        start, progress, done = _by_id(conn, f"turn-1/call_sub{row_id}")
+        assert start.kind == "read"
+        assert start.title == title
+        assert start.locations is None
+        assert start.raw_input == args
+        assert len(progress.content) == 1
+        assert progress.content[0].content.type == "text"
+        assert progress.content[0].content.text == text
+        assert done.status == "completed"
+    await session.close()
+
+
 async def test_drain_one_run_call_carries_text_and_screenshot(tmp_path):
     """A browser call is ONE call with TWO artifacts: the rendered page as
     text and the screenshot as an image. Hydration is hoisted out of the

@@ -138,6 +138,17 @@ def image_store():
     return FsImageStore(Path(_images_dir))
 
 
+def db_uri() -> str | None:
+    """The crow.db URI the sink writes rows to — the same database the
+    memory tool reads, so the kernel still reads NO config: the server
+    resolved it and injected it on the identity rail.
+
+    None outside a cell (plain Python use, tests) — call begin_cell(db_uri=…)
+    first, which is exactly what execute's prologue does.
+    """
+    return _sink_uri
+
+
 def configure_sink(db_uri: str | None) -> None:
     global _sink_uri, _sink_engine
     db_uri = db_uri or None

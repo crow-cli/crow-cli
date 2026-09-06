@@ -322,5 +322,88 @@ async def test_reload_preserves_the_identity_rail(mcp_app, tmp_path):
     assert rows[0].tool == "edit" and rows[0].status == "completed"
 
 
+async def test_memory_is_ambient_and_reads_the_injected_database(mcp_app, tmp_path):
+    """The kernel reads NO config: crow.db arrives on the identity rail
+    execute's prologue sets, and memory() is the tool that consumes it — the
+    same database its own call records are written through to, on a second
+    (read-write) engine, without the read-only one noticing.
+
+    The engine is cached in a mutable CELL (globals().setdefault) because
+    importlib.reload re-executes the source in the existing module dict: a
+    module-level `_engine = None` would drop the handle on every mid-cell
+    reload() and leak its pool.
+    """
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import sessionmaker
+
+    from crow_cli.memory import add_message, create_agent, create_database, get_engine
+    from crow_cli.memory.models import SubtoolCall
+
+    db_uri = f"sqlite:///{tmp_path}/crow.db"
+    create_database(db_uri)
+    engine = get_engine(db_uri)
+    create_agent(
+        engine,
+        agent_id="sess-mem-1-1",
+        session_id="sess-mem",
+        agent_idx=1,
+        cwd=str(tmp_path),
+        model_identifier="m",
+        tool_definitions=[],
+        request_params={},
+    )
+    add_message(engine, "sess-mem-1-1", {"role": "user", "content": "polars in the kernel"})
+    engine.dispose()
+
+    code = (
+        "print(memory.__module__)\n"
+        "import sys\n"
+        "M = sys.modules['crow_cli.tools.memory']\n"
+        "r = await memory('list')\n"
+        "print(r.subject, r.rows, r.total, r.df['session_id'].to_list())\n"
+        "engine = M._engine()\n"
+        "reload()\n"  # mid-cell: the cached handle must survive it
+        "print(M._engine() is engine, M._state['uri'] is not None)\n"
+        "s = await memory('search', 'polars')\n"
+        "print(s.rows, s.df['role'].to_list(), s.df['excerpt'].to_list())\n"
+        "q = await memory('sql', 'select count(*) n from messages')\n"
+        "print(q.df['n'].to_list())\n"
+        "print(repr(q.df['n'].dtype))"
+    )
+    async with Client(mcp_app) as client:
+        result = await client.call_tool(
+            "execute",
+            {"code": code},
+            meta={
+                "cwd": str(tmp_path),
+                "session_id": "sess-mem",
+                "tool_call_id": "turn-1/call_mem",
+                "db_uri": db_uri,
+            },
+        )
+    assert result.is_error is False, result.content
+    assert result.content[0].text.strip().splitlines() == [
+        "crow_cli.tools.memory",
+        "sessions 1 1 ['sess-mem']",
+        "True True",
+        "1 ['user'] ['polars in the kernel']",
+        "[1]",
+        "Int64",
+    ]
+
+    # Three calls, three rows, in the database the tool was reading: the
+    # read-only engine and the write-through sink coexist on one file.
+    engine = create_engine(db_uri)
+    with sessionmaker(engine)() as session:
+        rows = session.execute(select(SubtoolCall)).scalars().all()
+        session.expunge_all()
+    engine.dispose()
+    assert [r.mode for r in rows] == ["list", "search", "sql"]
+    assert all(r.tool == "memory" and r.status == "completed" for r in rows)
+    assert all(r.parent_tool_call_id == "turn-1/call_mem" for r in rows)
+    assert rows[0].result_kind == "memory"
+    assert rows[1].acp_payload["subject"] == "polars"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

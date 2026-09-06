@@ -248,49 +248,27 @@ def search_messages(
     session_id: str | None = None,
     agent_idx: int | None = None,
     agent_ids: set[str] | None = None,
+    roles: list[str] | None = None,
+    include_forks: bool = True,
 ) -> list[dict]:
     """Keyword search over message text (FTS5/bm25 on sqlite,
     tsvector/ts_rank on postgres — see memory/fts.py). Returns
     {message fields + session_id/agent_idx + score} dicts, best match first.
-    ``score`` is lower = better on both backends."""
-    idx = {}
-    with Session(engine) as db:
-        # Mapping columns only — full agent rows carry each agent's system
-        # prompt and tool definitions (hundreds of MB across the table).
-        for a in db.query(
-            Agent.agent_id, Agent.session_id, Agent.agent_idx, Agent.fork_idx
-        ).all():
-            idx[a.agent_id] = (a.session_id, a.agent_idx, a.fork_idx)
+    ``score`` is lower = better on both backends.
+
+    Filters are pushed INTO the query (fts.search_rows joins messages and
+    agents), so ``limit`` is the number of matches returned rather than the
+    number of global top hits that happened to survive a Python-side filter.
+    """
     with engine.connect() as conn:
-        hits = fts.search_fts(conn, engine, query, limit * 4)
-    with Session(engine) as db:
-        rows = db.query(Message).filter(Message.id.in_([h[0] for h in hits])).all()
-    by_id = {r.id: r for r in rows}
-    out = []
-    for rid, rank in hits:
-        row = by_id.get(rid)
-        if row is None:
-            continue
-        sid, aidx, fidx = idx.get(row.agent_id, ("", 0, 1))
-        if session_id is not None and sid != session_id:
-            continue
-        if agent_idx is not None and aidx != agent_idx:
-            continue
-        if agent_ids is not None and row.agent_id not in agent_ids:
-            continue
-        out.append(
-            {
-                "id": row.id,
-                "agent_id": row.agent_id,
-                "session_id": sid,
-                "agent_idx": aidx,
-                "fork_idx": fidx,
-                "role": row.role,
-                "created_at": row.created_at,
-                "data": dict(row.data),
-                "score": rank,
-            }
+        return fts.search_rows(
+            conn,
+            engine,
+            query,
+            limit,
+            roles=roles,
+            session_id=session_id,
+            agent_idx=agent_idx,
+            agent_ids=agent_ids,
+            include_forks=include_forks,
         )
-        if len(out) >= limit:
-            break
-    return out

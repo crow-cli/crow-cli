@@ -513,3 +513,113 @@ class WebError(ToolError):
     pass
 
 
+# Rows are cheap, message JSON is not: the live crow.db averages 6KB per
+# message and holds 499MB of it, with a single 12.8MB outlier. The cap is
+# set above the biggest legitimate read — one whole session's transcript,
+# 32.3MB for the largest of 2695 sessions — so it only ever fires on a
+# query that was going to take the kernel's RAM with it.
+_MEMORY_BYTES = 64 * 1024 * 1024
+_SUBJECT_MAX = 100
+
+
+@dataclass
+class MemoryResult(ToolResult):
+    """Rows out of the agent's own memory, as a polars DataFrame.
+
+    ``df`` is the artifact and it is a real DataFrame: filter it, group it,
+    join it, print one column. polars' own repr is bounded in all three
+    dimensions — 5 rows from each end, 4 columns from each end, ~30 chars
+    per cell — so ``print(r.df)`` is a readable table of ANY result and can
+    never flood the context, which is why there is no windowing here (the
+    ``_PAGE_WINDOW`` a page needs) and no pagination (the ``offset`` a
+    string-returning tool needs). Eight columns per mode, chosen so the repr
+    elides nothing.
+
+    ``sql`` is the statement that ran, even for the list and search modes
+    that build it for you: reading it is how the schema gets learned without
+    a second round trip, and it is the honest answer to "what did this
+    actually ask for".
+
+    ``total`` is the rows that matched before the limit, when that is cheap
+    to know, so ``50 of 2695`` says "raise the limit" where ``50`` alone
+    would not. ``truncated`` means the byte cap fired and the frame is a
+    prefix of the answer — never silent, because a DataFrame that looks
+    complete is indistinguishable from one that is.
+    """
+
+    df: Any  # polars DataFrame — duck-typed so this module imports no polars
+    subject: str  # what was asked: the query, the session id, the SQL
+    sql: str = ""
+    total: int = 0
+    truncated: bool = False
+
+    # Not "read" by name: the drain files it under read by ARTIFACT
+    # (_KIND_BY_RESULT), because the mode cannot decide it —
+    # get_tool_kind("list") is "read" and get_tool_kind("search") is
+    # "search", but all three modes are the same thing, rows read from a
+    # connection that is read-only at the OS level.
+    result_kind = "memory"
+
+    def acp_payload(self) -> dict:
+        return {
+            "content": "text",
+            "text": self.text,
+            "subject": self.subject[:_SUBJECT_MAX],
+        }
+
+    @property
+    def rows(self) -> int:
+        return self.df.height
+
+    @property
+    def text(self) -> str:
+        head = f"{self.subject} — {self.rows:,} row(s)"
+        if self.total > self.rows:
+            head += f" of {self.total:,} matching"
+        lines = [head, repr(_compact(self.df))]
+        if self.truncated:
+            lines.append(
+                f"… TRUNCATED at {_MEMORY_BYTES // (1024 * 1024)}MB — the frame"
+                " is a prefix of the answer; narrow the query, select fewer"
+                " columns, or add a LIMIT"
+            )
+        return "\n".join(lines)
+
+
+def _compact(df: Any) -> Any:
+    """The frame as ``.text`` renders it: ISO timestamps cut to the second.
+
+    polars wraps a cell to the width its column got, and a full stamp
+    (``2026-09-06T10:17:44.233789+00:00``) spends that width on microseconds
+    and an offset the model cannot use — at a 100-char table budget it
+    renders as ``2026-09-06T10`` / ``:17:44.233789`` / ``+00:…``, three lines
+    whose readable content is the same 19 characters. Trimming is noise
+    reduction first. The height it saves depends on the width budget AND on
+    whether the stamp is the tallest cell in its row: measured on a 10-row
+    messages frame, 27 lines -> 17 at 150 chars and nothing at 100 or 200. It
+    never costs height, and ``id`` already carries the true order.
+
+    ``.df`` keeps the whole stamp (and its lexicographic comparisons); this
+    is the rendering, which is what ``.text`` is for.
+    """
+    import polars as pl
+
+    stamps = [
+        c
+        for c in ("created_at", "last_activity")
+        if c in df.columns and df.schema[c] == pl.String
+    ]
+    if not stamps:
+        return df
+    return df.with_columns([pl.col(c).str.slice(0, 19) for c in stamps])
+
+
+class MemoryToolError(ToolError):
+    """The memory tool failed.
+
+    Not ``MemoryError``: that builtin means the process ran out of RAM, and a
+    traceback reading "MemoryError: unknown memory mode 'lst'" would send the
+    model hunting for a leak instead of a typo.
+    """
+
+

@@ -763,6 +763,11 @@ _KIND_BY_RESULT: dict[str, ToolKind] = {
     "diff": "edit",
     "read": "read",
     "search": "search",
+    # Rows read out of the agent's own memory. The mode cannot decide this
+    # one either: get_tool_kind("list") is "read" and get_tool_kind("search")
+    # is "search", but all three modes are the same artifact — rows from a
+    # connection that is read-only at the OS level.
+    "memory": "read",
     # A multi-file replace modifies files, so it is an edit-kind call even
     # though its own payload is the summary text (the per-file diffs ride
     # their own rows). Decided here rather than by get_tool_kind's substring

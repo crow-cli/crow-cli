@@ -631,8 +631,226 @@ it and background work never bleeds into the next cell's drain.
        every test), /js and /hang routes, 11 browser tests and 5 guard tests
        that need no browser. Plus 1 drain test for the two-artifact row.
        Sweep 730 -> 746 passed.
-- [ ] 9. memory — modes: list, search, sql (read-only conn -> polars
+- [x] 9. memory — modes: list, search, sql (read-only conn -> polars
        DataFrame). Python objects, not LLM-markdown strings.
+       LANDED — `crow_cli/tools/memory.py` (~700 lines, half of them the
+       docstring that IS the schema documentation), MemoryResult +
+       MemoryToolError + _compact in results.py, `register.db_uri()` as the
+       rail accessor, `_KIND_BY_RESULT["memory"] = "read"`, and a pushdown
+       fix in the memory package that the three MCP query tools inherit.
+       DEPENDENCY: polars HARD (1.44.1) — meta wheel 0.9MB plus
+       polars-runtime-32 58.6MB (55.8 MiB downloaded). The 8b ruling
+       applies unchanged: ast-grep-py (43MB) and cv2 (72MB) are hard deps,
+       there is no [project.optional-dependencies] table in this repo to be
+       consistent with, and here the frame IS the result object — an extra
+       would make `.df` a documented attribute that raises ImportError. The
+       IMPORT stays lazy inside `_frame()` (measured 98ms, 43MB RSS) because
+       reload() imports every _LAZY module at kernel start, so a module-level
+       import would charge that to every kernel whether or not it ever reads
+       memory.
+       THE SHAPE. One tool, three modes, `ls` semantics for list: no
+       session_id lists the database's entries (sessions, most-recently-active
+       first, with msgs/agents/cwd/model and a 200-char last_text so a
+       session is recognizable), session_id= lists THAT session's entries
+       (its messages, oldest first). search is bm25, best-first. sql is the
+       model's own statement, verbatim, over a read-only connection — and the
+       function docstring carries the v5 schema plus four worked queries,
+       because `help(memory)` is the just-in-time schema and a round trip to
+       discover what `agents` holds costs a turn.
+       Frames are EXACTLY eight columns each, and that is not a coincidence:
+       polars' repr elides the middle of a wider frame (first four, last
+       four), and print(r.df) is the LLM's entire view of the result. Eight
+       columns means the repr shows every column, five rows from each end,
+       ~30 chars a cell — a legible table of a 10,000-row result that cannot
+       flood the context. That boundedness is why there is no windowing here
+       (the _PAGE_WINDOW a page needs) and no pagination.
+       `total` is computed where it is cheap (an indexed count for list) and
+       NOT for search (a second expensive query; top-N is the point) nor sql
+       (the statement is the whole answer). "50 of 2695" says raise the
+       limit; "50" does not. Messages come back as the LAST N in
+       CHRONOLOGICAL order (ORDER BY m.id DESC LIMIT, then rows.reverse()) —
+       DESC+LIMIT is how you ask for a tail, and a transcript that arrives
+       newest-first is wrong everywhere it is used. An unknown session_id
+       RAISES: a typo and a session that said nothing look identical in an
+       empty frame, and the first one is a caller bug. `roles` accepts a
+       string (normalized to a 1-tuple, because a string is a sequence of
+       characters, not of roles).
+       THE PUSHDOWN FIX (memory/fts.py `search_rows`, reads.py
+       `search_messages` now delegates to it). The old path fetched the
+       GLOBAL top-80 and filtered in Python, so a session-scoped search for a
+       common term returned the intersection of "best 80 in the database"
+       with "in this session" — usually empty. Measured on this very session
+       (global hits / in-session hits / what the OLD code returned):
+       `config` 9614 / 199 / 3; `test` 16451 / 818 / 1; `the` 51986 / 1562 /
+       1; `file` 15449 / 678 / 2; `prompt` 11644 / 141 / 0. The new path
+       returns the true top-20 in 24–91ms. Dialect SQL stays in the seam
+       (_SEARCH_ROWS: sqlite bm25(), postgres -ts_rank + plainto_tsquery),
+       and it also deleted a load-the-whole-agents-table plus an
+       overfetch-4x from reads.py. The sessions query is 4 statements
+       (aggregate, count, one detail query, one row_number() window for the
+       last message) replacing the MCP store's N+1. 103 tests in tests/memory
+       + tests/mcp/test_memory*.py passed on the refactor before a line of
+       the new tool existed.
+       KILLED KNOBS — every one is a Python expression over the frame, which
+       is the whole argument for returning a DataFrame instead of a string:
+       mode=conversation|with_thinking|with_tools|full (a display filter for
+       a transcript → `.filter()` on the role column), order=asc|desc
+       (`.reverse()/.head()/.tail()`), offset (pagination dies wherever it
+       appears), context=N (the frame carries the message `id`;
+       list(session_id=…) carries the messages around it), after/before
+       (created_at is a column of ISO strings, which compare
+       lexicographically), search_type=semantic|keyword|both ("semantic" was
+       bm25 all along and "keyword" was a substring scan in Python — sql does
+       substring scans in sqlite's C, over columns FTS cannot see). KEPT:
+       limit (top-N is a property of the QUERY), and roles / include_forks /
+       session_id, which have to be INSIDE a ranked query for limit to mean
+       "this many matches" rather than "this many rows scanned".
+       Read-only at the CONNECTION level (get_ro_engine: sqlite mode=ro so
+       the OS refuses, postgres READ ONLY characteristics so the server
+       refuses). Verified live: insert/update/delete/create/drop all raise
+       "attempt to write a readonly database"; `pragma journal_mode=wal` is a
+       harmless no-op; ATTACH a fresh file and writing to it IS allowed — so
+       the docstring says plainly that this is a guarantee about crow.db, not
+       a sandbox (the kernel has write(), fs() and the filesystem anyway).
+       The engine lives in `_state = globals().setdefault("_state", {})`
+       keyed by uri, for the 8b reason: importlib.reload re-executes the
+       source in the EXISTING module dict, so a module-level `_engine = None`
+       would drop the handle on every reload() and leak its pool — fds on
+       sqlite, a server session each on postgres. `_run` =
+       asyncio.to_thread, for the vision/cv2 reason: a cell is already inside
+       ipykernel's loop and a 500ms full scan on it stalls the kernel's
+       heartbeats. QueuePool + 6 concurrent to_thread queries on one ro
+       engine: no check_same_thread error.
+       THE BYTE CAP STREAMS. `_fetch` iterates the result instead of
+       fetchall() and breaks out of the loop, which stops sqlite stepping the
+       query — measured on the live db: a 1MB cap on `select id, data from
+       messages` returns 316 rows in 1ms where the same query aggregated to
+       completion takes 511ms. That is what makes the 64MB cap a guard rather
+       than a decoration: 499MB of message JSON never has to fit in the
+       kernel to be refused. At the real cap, `select id, data from messages`
+       over the live 1.3GB db returned 8567 rows, truncated=True, in 0.102s
+       (RSS 242.9 → 286.7MB). The FIRST ROW IS ALWAYS KEPT, whatever it
+       costs: one 12.8MB message (the live db's largest) must make a frame
+       with one row in it, not an empty one that reads as "no matches".
+       `truncated` is never silent, because a DataFrame that looks complete
+       is indistinguishable from one that is.
+       BUGS FOUND (letters continue the run):
+       (Z) `lim` BINDPARAM REUSE. _q_messages built one params dict and
+           reused it for the count statement, which has no `:lim` →
+           "This text() construct doesn't define a bound parameter named
+           'lim'". The count uses params, the paged query
+           {**params, "lim": limit}.
+       (AA) `roles=` SILENTLY IGNORED on a sessions list — an argument the
+           caller cared about, quietly dropped, which is the (U)-class bug
+           from 6d. A sessions list has no role column to filter, so it now
+           raises and names the fix (pass session_id=).
+       (AB) A FALSE CLAIM, written then disproved: I asserted text() would
+           break on a colon inside a string literal. Tested — text() handles
+           '%a:b%', `-- why: because` and `/* note: x */` fine (it skips
+           quoted literals and comments). The real difference, and the reason
+           sql mode uses exec_driver_sql, is WHO COMPLAINS: on
+           `where role = :role`, text() blames SQLAlchemy ("A value is
+           required for bind parameter 'role'") while the driver lets the
+           database speak ("Incorrect number of bindings supplied"). This
+           mode's contract is that what you wrote is what runs, so the
+           database should be the one to say what is wrong with it. Both
+           messages are pinned by tests.
+       (AC) A SECOND FALSE CLAIM, this one about _compact: the docstring said
+           a full ISO stamp is three wrapped repr lines and ten rows print as
+           36 lines instead of 16. Measured across width budgets on a 10-row
+           messages frame: 27 → 17 lines at 150 chars, and NO CHANGE at 100
+           (both wrap; the row height is set by the tallest cell, which is
+           `calls`) or at 200 (both fit). So the honest justification is
+           noise, not height — a full stamp spends its column's width on
+           microseconds and an offset nobody can use, rendering as
+           `2026-09-06T10` / `:17:44.233789` / `+00:…` where the readable
+           content is the same 19 characters. Kept (it never costs height,
+           .df stays lossless and its ISO strings still compare
+           lexicographically), docstring rewritten to the measurement, and
+           the test pins the trim rather than a line count that only exists
+           at one width.
+       (AD) A THIRD FALSE CLAIM, about _cell: I had recorded "polars Struct
+           inference RAISES on heterogeneous dicts". Measured on 1.44.1, it
+           does not — it infers the Struct from the FIRST row and SILENTLY
+           DROPS every key that row lacked (`tool_calls` vanishes, no error),
+           and raises TypeError only when the same key changes TYPE, which is
+           the shape a real messages table actually has (content is a str in
+           a user row and a list of blocks in an assistant one). The silent
+           loss is worse than the raise, so _cell stands on stronger evidence
+           than it had — but the docstring said the wrong thing, and a test
+           now pins both behaviours.
+       LIVE MEASUREMENTS (crow.db, 1274.3MB): 83,241 → 83,355 messages, 2,899
+       agents, 2,695 sessions; roles tool 35,107 / assistant 34,536 / user
+       10,713 / system 2,885; `data` averages 6.0KB, max 12.8MB, 499.3MB
+       total. list 50 of 2695 sessions in 0.236s (500 in 0.569s); the biggest
+       session (caped-academic-fulmar-of-endurance, 6716 msgs / 32.3MB) at
+       the default limit=1000 in 0.258s, and limit=10000 → all 6716 rows
+       (25.6MB of text) in 0.401s with an RSS peak of 409.6MB. Every guard
+       was fired live before the tests were written: bad mode, missing/blank
+       target on sql and search, target on list, each of the four forbidden
+       sql args, bad role, roles as a str, roles without session_id, negative
+       limit, limit 99999, unknown session, blank session_id, bad SQL
+       (`near "selct": syntax error`), a write attempt, no such table, no
+       rail, a missing db file, engine caching and rebuild-on-uri-change,
+       include_forks on search (0 trunk vs 1 fork at fork_idx=2), limit=0,
+       and the register row (kind memory, subject polars).
+       TESTS: 56 in tests/unit/test_tools_memory.py (no mocks — a real crow.db
+       built through create_database/create_agent/add_message so the FTS
+       index is the one the product maintains, read through the real
+       read-only engine; timestamps stamped explicitly because
+       most-recently-active is the sort under test and now_iso() would hand
+       it to the clock), + 1 drain test (all three modes file under kind
+       "read" via _KIND_BY_RESULT, subject rides the title, locations stays
+       None because a frame of rows is not a file) + 1 real-kernel test in
+       test_execute_prelude.py (memory is ambient on start, reads the db the
+       prologue injected, the cached engine survives a mid-cell reload(), and
+       the three calls write through into the SAME database the tool was
+       reading — ro engine and rw sink coexisting on one file).
+       Sweep 746 -> 804 passed (136s, -p no:randomly).
+- [ ] 9b. THE INDEX HOLE — messages_fts indexes message_text(), which is
+       content + reasoning_content and NOT tool_calls. Measured on the live
+       db: 29,499 assistant rows carry tool_calls and 17,208 of them have
+       empty content, so bm25 cannot see them AT ALL — 21% of the database.
+       For the path `crow-cli-jupyter/EXECUTE_TODO.md`: 121 messages contain
+       it in `data` (assistant 70, tool 50, user 2) but FTS finds 53
+       (assistant 1, tool 50, user 2) — the 69 missing ones mention it only
+       inside an edit's arguments. Tool RESULTS are indexed (a tool message's
+       content is the result), which is why the hole is easy to miss: a
+       search for a file you edited returns the result rows and looks like it
+       works. memory's docstring documents the hole and the workaround
+       (`sql` with `data LIKE '%…%'`, a 0.5s full scan over 499MB that sees
+       everything), and two tests pin both sides of it.
+       THE FIX IS NOT WRITTEN because it mutates the user's real memory:
+       message_text() would have to render tool_calls into the searchable
+       text (name + arguments, probably truncated), and then a reindex script
+       has to rewrite 83k rows of messages_fts over a 1.3GB live database —
+       plus the same change on the postgres side, where the tsvector is
+       maintained from Python in the insert transaction. Per "propose a new
+       plan and confirm with the user before proceeding" on anything that
+       touches real data, the measurements are recorded here for the plan
+       person to rule on. Open questions for that ruling: does an edit's
+       arguments belong in a KEYWORD index at all (they are JSON, and
+       bm25-ranking a blob of escaped quotes will surface it above prose for
+       almost any query), or is the honest answer a separate
+       `tool_calls_text` column indexed with its own weight, or no index and
+       a documented LIKE scan?
+- [ ] 9c. PRE-EXISTING FLAKE, found by the step-9 sweep and NOT caused by it:
+       tests/integration/test_cancel_under_load.py HANGS (no failure, no
+       output, forever) roughly one run in six. Reproduced 3× with step 9 in
+       the tree and 1× in 8 runs with every step-9 source change stashed away
+       at 5ff2bcac, so it predates this work; it also hangs when that file is
+       the ONLY thing collected, so it is not an interaction with tests/unit.
+       Shape of the hang: `-v -s` shows the previous test's PASSED and then
+       nothing, and the next item's name is never printed — pytest prints the
+       name in pytest_runtest_logstart, before setup, so the hang is in the
+       TEARDOWN of the test that just passed, i.e. exiting
+       `async with app.run_test(size=(120, 40))` after a stream was
+       cancelled mid-flight (the mock agent / ACP connection / Textual app
+       not always shutting down). It cost a 1500s sweep timeout and makes the
+       full-sweep gate unreliable, which is why it is on the list rather than
+       in a footnote: a gate that flakes 1-in-6 gets re-run until it passes,
+       and that is how a real regression walks through.
+
 - [ ] 10. rlm — delegate rebuilt on session/fork (+load): relative offset
        (fork N messages back so history doesn't end in the fork call — no
        infinity mirror), fork call redacted from forked history, depth
