@@ -274,6 +274,11 @@ def clear() -> None:
     _entries.clear()
     _images_dir = None
     configure_sink(None)
+    # Reset the identity ContextVar too: begin_cell sets it, and a clear()
+    # that left it standing leaked one test's cell (session_id present, sink
+    # gone) into the next module — a later test sailed past _identity() and
+    # died in _engine() with "no database" instead of "no session identity".
+    _current_cell.set(None)
 
 
 def _json_safe(value: Any) -> Any:

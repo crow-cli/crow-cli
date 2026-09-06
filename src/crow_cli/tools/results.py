@@ -639,9 +639,11 @@ class RlmResult(ToolResult):
     it, the object does not, so slicing or grepping it stays Python rather
     than a pagination protocol.
 
-    ``session_id`` is a handle, not a label. The delegate's transcript is in
-    the same database under that id, so ``memory("list", session_id=...)``
-    reads what it actually did to arrive at the answer — which is how an
+    ``session_id`` is a handle, not a label — and it is the fork's WIRE id,
+    which for a fork is its ``agent_id`` (``{session}-{agent}-{fork}``; a
+    trunk's wire id is its bare session id). ``memory("list",
+    session_id=...)`` resolves a bare session id OR a wire agent id, so the
+    delegate's transcript is readable under that id — which is how an
     ``rlm(wait=False)`` delegation gets collected: this same object comes
     back with ``waited`` False and an empty ``answer``, and the transcript is
     the mailbox. No delivery table, because a task owner goes idle between

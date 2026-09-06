@@ -1404,3 +1404,92 @@ keep #3 and #4 as recommended, and ratify all four deviations (the three in
 4. `_emit_subtool_call`'s three beats (pending / in_progress / completed) —
    KEPT at three where two would do: byte-for-byte the shape crow sends for
    a real edit call, and the client merges them.
+
+## Bugs found dogfooding rlm + the execute kernel (2026-09-06) — ALL FIXED
+
+Found by actually driving `rlm()` from inside a live execute kernel against a
+slow local model (unsloth/Qwen3.8-Flash). The delegation itself WORKS end to
+end — the fork inherits history, calls `execute("!date")` itself, and its
+answer persists to the fork's transcript (~6.5 min, all of it the local model
+chewing the forked prefix). What's broken is the seams around it. B2/B3/B4
+share ONE root cause: `CrowKernel.execute()` has a hard 30s timeout it never
+handles, and the model can't raise it.
+
+STATUS — all six fixed and under test. B1: `memory._q_messages` resolves a
+session_id OR a wire agent_id (tests/unit/test_tools_memory.py, + a new
+`test_list_messages_resolves_a_wire_agent_id`). B6: `register.clear()` resets
+the `_current_cell` ContextVar (test_tools_rlm.py now passes in the SAME
+invocation as the memory suite — it was ordering-dependent leakage). B2–B5:
+`CrowKernel.execute` filters every message on `parent_header.msg_id`, returns
+an honest "(kernel busy: …)" on timeout instead of raising `queue.Empty`, and
+takes `timeout: float | None`; the MCP `execute` tool exposes and forwards
+`timeout`; `main.py` names the exception type when `str(e)` is blank
+(tests/mcp/test_execute_kernel_timeout.py). RESTART vs RESET: B2–B5 live in
+the execute MCP tool/driver (the server process) so they need a crow RESTART
+to take effect live; B1/B6 are subtools, live on a kernel RESET.
+
+- [x] B1. `RlmResult.session_id` is the fork's WIRE ID = its `agent_id`, but
+       both docstrings (rlm.py + results.py) say to collect with
+       `memory("list", session_id=r.session_id)`, and `memory._q_messages`
+       validates `WHERE session_id = :sid` only — so the documented happy path
+       raises `MemoryToolError("no session 'aloof-…-1-3'")`. This contradicts
+       the dual-identity convention 10a already relies on:
+       "delegation_tool_call_ids matches BOTH the bare session_id and the wire
+       agent_id … a trunk's wire id IS its bare session id; a fork's is its
+       agent_id."
+       FIX: make `_q_messages` resolve the id as session_id OR wire agent_id
+       (when it's an agent_id, scope to that single fork), mirroring
+       delegation_tool_call_ids. Then the rlm docstring is true as written and
+       an async delegation is collectable the documented way.
+
+- [x] B2. `execute`'s timeout is NOT a tool argument. `CrowKernel.execute(code,
+       timeout=30)` has the knob, but `main.py`'s `@mcp.tool execute(ctx, code,
+       reset)` never exposes or forwards it — so ANY cell that runs longer than
+       30s (a blocking `rlm(wait=True)` on a local model, a build, a big query,
+       even `time.sleep(60)`) always times out, and the model has no way to
+       raise the ceiling for a long-running process.
+       FIX: add `timeout: float | None` to the MCP execute tool and forward it
+       to `kernel.execute`; `None` = wait forever (mirror rlm's own timeout
+       convention). Keep a sane default for the bare call.
+
+- [x] B3. `wait=True` (or any long cell) monopolizes the kernel and the caller
+       gets a bare `Error:` for the whole duration. IPython is single-threaded
+       and busy — not a deadlock — but there is zero feedback: the model can't
+       tell "still working" from "broken," so it (correctly-looking, wrongly)
+       concludes the kernel is wedged and resets it, killing the delegation.
+       FIX: on timeout, `kernel.execute` returns a clear "(kernel busy: cell
+       did not finish within Ns — it is still running; re-call to collect its
+       output)" instead of raising. B2's timeout arg is the real remedy for
+       legitimately-long cells; this is the honest signal for the rest.
+
+- [x] B4. A timed-out cell desyncs stdout attribution by one, PERMANENTLY.
+       `get_shell_msg(timeout=30)` raises `queue.Empty` (whose `str()` is "")
+       when the cell is still running; the abandoned cell keeps going and its
+       iopub messages — including its final `status:idle` — stay queued. The
+       NEXT `execute`'s drain loop consumes those STALE messages and breaks on
+       the STALE idle, so it returns the PREVIOUS cell's output. Every later
+       call is offset by one until a kernel reset re-syncs it.
+       FIX: in `CrowKernel.execute`, capture `msg_id = client.execute(code)`
+       and filter BOTH the shell reply and the iopub drain on
+       `parent_header.msg_id == msg_id`, discarding stale messages. The stream
+       then re-syncs on its own once the busy cell finishes — no reset needed.
+
+- [x] B5. Bare `Error:` with no traceback. `main.py`'s catch-all
+       `return f"Error: {e}"` flattens an empty-`str()` exception
+       (`queue.Empty`) to the two-character useless "Error: ".
+       FIX: when `str(e)` is blank, render the exception TYPE
+       (`f"Error: {type(e).__name__}: {e}"`), so an empty message is never
+       invisible. (B3/B4 remove the common source; this is the backstop.)
+
+- [x] B6. `register.clear()` never reset the `_current_cell` ContextVar — it
+       cleared `_entries`, `_images_dir` and the sink, but left the cell
+       standing. `begin_cell()` sets it, so one test module's cell
+       (session_id present, sink already cleared) leaked into the next:
+       `test_tools_rlm.py::test_outside_a_cell_there_is_nothing_to_fork`
+       sailed past `_identity()` on the stale session_id and died in
+       `_engine()` with "no database" instead of "no session identity".
+       Passes in isolation (11/11), fails only when `test_tools_memory.py`
+       runs first — pure ordering-dependent leakage in the subtool rail.
+       Found by the B1 test run, not by the rlm dogfood.
+       FIX: `_current_cell.set(None)` in `clear()`, so test hygiene actually
+       clears the identity it stamped.

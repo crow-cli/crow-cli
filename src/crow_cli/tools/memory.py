@@ -388,21 +388,38 @@ def _q_messages(
     session_id: str, roles: tuple[str, ...] | None, limit: int, include_forks: bool
 ) -> MemoryResult:
     engine = _engine()
-    # A typo'd session id and a session that said nothing look identical in an
-    # empty frame, and the first one is a caller bug — so it is an error, the
-    # same ruling as a blank web query.
-    if not _scalar(
-        engine, _stmt("SELECT count(*) FROM agents WHERE session_id = :sid", {"sid": session_id})
-    ):
-        raise MemoryToolError(
-            f"no session {session_id!r} in the database — memory('list')"
-            " lists the ones there are"
+    # The id is a session_id OR a fork's wire agent_id — the same dual
+    # identity delegation_tool_call_ids matches, because rlm hands back the
+    # fork's wire id (a trunk's wire id IS its bare session id; a fork's is
+    # its agent_id) and memory("list", session_id=…) is the documented way to
+    # collect an async delegation. A typo'd id and a session that said nothing
+    # look identical in an empty frame, and the first is a caller bug — so
+    # neither matching is an error, the same ruling as a blank web query.
+    is_session = bool(
+        _scalar(
+            engine,
+            _stmt("SELECT count(*) FROM agents WHERE session_id = :sid", {"sid": session_id}),
         )
-    clauses = ["a.session_id = :sid"]
+    )
+    is_agent = not is_session and bool(
+        _scalar(
+            engine,
+            _stmt("SELECT count(*) FROM agents WHERE agent_id = :sid", {"sid": session_id}),
+        )
+    )
+    if not is_session and not is_agent:
+        raise MemoryToolError(
+            f"no session or fork {session_id!r} in the database —"
+            " memory('list') lists the sessions there are"
+        )
+    # A bare session_id scopes to the trunk (fork_idx=1) unless include_forks
+    # folds the whole session in; a wire agent_id IS one fork, so it scopes to
+    # exactly that agent and include_forks is moot.
+    clauses = ["a.agent_id = :sid"] if is_agent else ["a.session_id = :sid"]
+    if is_session and not include_forks:
+        clauses.append("a.fork_idx = 1")
     params: dict[str, Any] = {"sid": session_id}
     expanding: tuple[str, ...] = ()
-    if not include_forks:
-        clauses.append("a.fork_idx = 1")
     if roles:
         clauses.append("m.role IN :roles")
         params["roles"] = roles

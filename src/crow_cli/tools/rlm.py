@@ -170,10 +170,12 @@ async def rlm(
 
     The delegate starts with everything you already know (it is forked from
     your history), answers, and stops. ``print(r.text)`` is the display
-    channel: ``r.answer`` is the whole answer for slicing and grepping,
-    ``r.session_id`` is the delegate's id, and its transcript is readable
-    with ``memory("list", session_id=...)`` — which is also how an async
-    delegation gets collected.
+    channel: ``r.answer`` is the whole answer for slicing and grepping, and
+    ``r.session_id`` is the delegate's WIRE id — for a fork, its ``agent_id``
+    (``{session}-{agent}-{fork}``). ``memory("list", session_id=...)``
+    resolves a bare session id or a wire agent id, so the transcript is
+    readable under that id — which is also how an async delegation gets
+    collected.
 
     Args:
         prompt: the ONE question. Put in it everything the delegate needs

@@ -10,6 +10,7 @@ Unlike the terminal tool, there is no ``!`` shell escape: bash belongs to
 ``terminal``. This tool runs Python only.
 """
 
+import queue
 import re
 import time
 from logging import getLogger
@@ -55,7 +56,7 @@ class CrowKernel:
             logger.warning("kernel wait_for_ready timed out; sleeping to settle")
             time.sleep(2)
 
-    def execute(self, code: str, timeout: float = 30) -> str:
+    def execute(self, code: str, timeout: float | None = 30) -> str:
         """Execute Python code and return what the cell PRINTED.
 
         stdout + stderr, or the ANSI-stripped traceback on error. The
@@ -65,37 +66,94 @@ class CrowKernel:
         output — plus image blocks the server prepends when vision ran.
         Code talks to the model with print(); values talk to later code by
         being values.
+
+        ``timeout`` bounds the wait for THIS cell (seconds); ``None`` waits
+        forever, for a long-running process the caller is deliberately
+        blocking on. On timeout the cell is NOT killed — IPython keeps
+        running it — so this returns a "kernel busy" notice rather than
+        raising, and the cell's output stays collectable on a later call.
+
+        Every message is filtered on ``parent_header.msg_id == msg_id`` for
+        this cell. A previous cell that timed out and kept running leaves its
+        own shell reply and iopub messages queued; without the filter the
+        drain consumes those STALE messages and breaks on the stale idle,
+        returning the previous cell's output and desyncing attribution by one
+        until a reset. With it, stale messages are discarded and the stream
+        re-syncs on its own once the busy cell finishes.
         """
-        self.client.execute(code)
-        reply = self.client.get_shell_msg(timeout=timeout)
+        msg_id = self.client.execute(code)
+
+        reply = self._await_shell_reply(msg_id, timeout)
+        if reply is None:
+            return self._busy(timeout)
 
         stdout: list[str] = []
         stderr: list[str] = []
         error = None
 
-        # Drain iopub messages until the kernel reports idle for this cell.
+        # The cell is done (we hold its execute_reply), so its iopub messages
+        # are already buffered — drain them, skipping any stale ones, and stop
+        # at THIS cell's idle.
         while True:
             try:
                 msg = self.client.get_iopub_msg(timeout=timeout)
-                msg_type = msg["msg_type"]
-                content = msg["content"]
+            except queue.Empty:
+                break
+            if msg.get("parent_header", {}).get("msg_id") != msg_id:
+                continue
 
-                if msg_type == "stream":
-                    if content["name"] == "stdout":
-                        stdout.append(content["text"])
-                    else:
-                        stderr.append(content["text"])
-                elif msg_type == "error":
-                    error = content
-                elif msg_type == "status" and content["execution_state"] == "idle":
-                    break
-            except Exception:
+            msg_type = msg["msg_type"]
+            content = msg["content"]
+            if msg_type == "stream":
+                if content["name"] == "stdout":
+                    stdout.append(content["text"])
+                else:
+                    stderr.append(content["text"])
+            elif msg_type == "error":
+                error = content
+            elif msg_type == "status" and content["execution_state"] == "idle":
                 break
 
         return self._format_output(
             stdout="".join(stdout),
             stderr="".join(stderr),
             error=error,
+        )
+
+    def _await_shell_reply(self, msg_id: str, timeout: float | None):
+        """This cell's execute_reply, or None on timeout.
+
+        Skips stale replies left by a previous cell that timed out and kept
+        running, so the wait is bounded by ``timeout`` overall rather than
+        restarting it per discarded message. ``timeout=None`` blocks until the
+        cell finishes.
+        """
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                return None
+            try:
+                reply = self.client.get_shell_msg(timeout=remaining)
+            except queue.Empty:
+                return None
+            if reply.get("parent_header", {}).get("msg_id") == msg_id:
+                return reply
+            # A previous cell's reply — discard and keep waiting for ours.
+
+    @staticmethod
+    def _busy(timeout: float | None) -> str:
+        """The honest signal for a cell still running past its timeout.
+
+        Replaces the bare ``Error:`` an unhandled ``queue.Empty`` used to
+        surface as (its ``str()`` is empty), which read as "broken" and sent
+        the caller to reset a kernel that was merely busy.
+        """
+        return (
+            f"(kernel busy: the cell did not finish within {timeout}s and is"
+            " still running — its output was not captured this call. Re-call"
+            " execute to collect it once it completes, and pass a longer"
+            " timeout= — or timeout=None to wait — for a long-running cell.)"
         )
 
     def _format_output(

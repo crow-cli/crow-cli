@@ -41,12 +41,18 @@ async def _call(mcp_app, code, session_id="test-session", cwd=None, reset=False)
 
 
 async def test_schema_hides_context(mcp_app):
-    """The LLM sees only code/reset — ctx (and the session_id/cwd riding the
-    call meta) is filtered out of the schema."""
+    """The LLM sees only the model-facing args — code/reset/timeout. ctx (and
+    the session_id/cwd/db_uri riding the call meta) is filtered out of the
+    schema; timeout is deliberately visible (B2: the caller raises the ceiling
+    for a long-running cell)."""
     async with Client(mcp_app) as client:
         tools = await client.list_tools()
     [tool] = [t for t in tools if t.name == "execute"]
-    assert set(tool.inputSchema.get("properties", {}).keys()) == {"code", "reset"}
+    assert set(tool.inputSchema.get("properties", {}).keys()) == {
+        "code",
+        "reset",
+        "timeout",
+    }
 
 
 async def test_no_out_n_in_output(mcp_app):

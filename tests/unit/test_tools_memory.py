@@ -467,9 +467,22 @@ async def test_list_messages_unknown_session_raises(db):
     an empty frame, and the first one is a caller bug."""
     with pytest.raises(MemoryToolError) as exc:
         await memory("list", session_id="alpha-1")
-    assert "no session 'alpha-1'" in str(exc.value)
+    assert "no session or fork 'alpha-1'" in str(exc.value)
     # ...and the way out is named in the same breath.
     assert "memory('list')" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_list_messages_resolves_a_wire_agent_id(db):
+    """A fork's wire id IS its agent_id, and rlm hands that back as
+    RlmResult.session_id — so memory("list", session_id=…) resolves it and
+    scopes to exactly that fork. This is the documented async-delegation
+    collection path; before the dual-identity fix it raised "no session …"."""
+    r = await memory("list", session_id="alpha-one-1-2")
+    assert r.total == 1 and r.rows == 1
+    row = r.df.row(0, named=True)
+    assert row["fork_idx"] == 2
+    assert "forked question about zebras" in row["text"]
 
 
 @pytest.mark.asyncio

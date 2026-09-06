@@ -139,6 +139,7 @@ async def execute(
     ctx: Context,
     code: str,
     reset: bool = False,
+    timeout: float | None = 30.0,
 ) -> str:
     """Execute Python code in a persistent IPython kernel (a REPL).
 
@@ -158,6 +159,13 @@ async def execute(
                all state (variables, imports). Use if the kernel is in a bad
                state. With empty code, just resets. Cannot clear a single
                variable — reset clears everything.
+        timeout: seconds to wait for the cell to finish (default 30). The cell
+               is NOT killed on timeout — IPython keeps running it — so a
+               long-running process returns a "(kernel busy: …)" notice and
+               its output stays collectable on a later call. Pass a larger
+               value, or None to wait indefinitely, for a cell you know runs
+               long: a blocking rlm() delegation (slow on a local model), a
+               build, a big query, a sleep.
 
     Returns:
         The program's output: stdout and stderr, or a traceback on error.
@@ -187,9 +195,13 @@ async def execute(
         kernel = get_kernel(key, cwd)
         if code.strip():
             code = _prologue(session_id, parent_tcid, db_uri, images_dir, rlm_depth) + code
-        output = kernel.execute(code)
+        output = kernel.execute(code, timeout=timeout)
         return _cap(output) if output else "[no output]"
 
     except Exception as e:
         logger.error(f"Execute error: {e}", exc_info=True)
-        return f"Error: {e}"
+        # An empty str(e) — queue.Empty from a timed-out get_shell_msg, the
+        # bare "Error:" that read as "broken" — names its type instead, so the
+        # failure is never invisible.
+        detail = str(e).strip() or type(e).__name__
+        return f"Error: {detail}"
