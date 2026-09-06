@@ -63,7 +63,8 @@ def this_repo_as_the_remote(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
 
     site = tmp_path / "remotes" / "crow-cli.github.io"
     site.mkdir(parents=True)
-    _git(["init", "-b", "main"], site)
+    # BRANCH is global to bootstrap, so the stub site repo carries it too
+    _git(["init", "-b", branch], site)
     (site / "README.md").write_text("# the site\n")
     _git(["add", "-A"], site)
     _git(["commit", "-m", "init"], site)

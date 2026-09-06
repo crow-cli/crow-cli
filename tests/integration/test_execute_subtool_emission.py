@@ -155,6 +155,31 @@ def _sub_ids_in_order(conn):
     return seen
 
 
+def _assert_cell_on_the_wire(updates, code: str, *printed: str) -> None:
+    """execute's own updates carry the cell's CODE, then what it printed.
+
+    The code goes out fenced as python at `pending`, so the user sees what
+    will run before the cell finishes, and again at completion because the
+    client merges update fields over the start. It is the ONLY thing on
+    execute's own content: diffs, reads and images are emitted as their own
+    synthetic tool calls, never folded into the parent.
+    """
+    pending, done = updates[0], updates[-1]
+    fenced = f"```python\n{code}\n```"
+
+    assert pending.status == "pending"
+    assert [c.type for c in pending.content] == ["content"]
+    assert pending.content[0].content.text == fenced
+
+    assert done.status == "completed"
+    assert [c.type for c in done.content] == ["content"] * (1 + len(printed))
+    assert done.content[0].content.type == "text"
+    assert done.content[0].content.text == fenced
+    for block, expected in zip(done.content[1:], printed):
+        assert block.content.type == "text"
+        assert expected in block.content.text
+
+
 async def test_drain_emits_diff_subtool_and_flips(tmp_path):
     config, session = await make_test_session(tmp_path)
     row_id = _seed_row(config.db_uri)
@@ -777,11 +802,9 @@ async def test_parallel_gather_e2e_kernel_to_client(tmp_path):
     assert len(exec_updates) == 3  # pending, in_progress, completed
     done = exec_updates[-1]
     assert done.status == "completed"
-    # execute's own completion carries ONLY its printed output — the diffs
-    # went out as their own tool calls.
-    assert [c.type for c in done.content] == ["content"]
-    assert done.content[0].content.type == "text"
-    assert "2 32" in done.content[0].content.text
+    # execute's own content is the cell's code plus its printed output — the
+    # diffs went out as their own tool calls.
+    _assert_cell_on_the_wire(exec_updates, code, "2 32")
 
     sub_ids = [i for i in _sub_ids_in_order(conn) if i != parent]
     assert len(sub_ids) == 3
@@ -993,8 +1016,7 @@ async def test_execute_e2e_kernel_writes_and_loop_emits(tmp_path):
     assert len(exec_updates) == 3  # pending, in_progress, completed
     done = exec_updates[-1]
     assert done.status == "completed"
-    assert [c.type for c in done.content] == ["content"]
-    assert "1 1" in done.content[0].content.text
+    _assert_cell_on_the_wire(exec_updates, code, "1 1")
 
     # The in-cell edit is its own call on the wire — a real edit tool call
     # as far as the client is concerned.
@@ -1094,11 +1116,9 @@ async def test_vision_e2e_kernel_stores_and_loop_hydrates(tmp_path):
     assert len(exec_updates) == 3
     done = exec_updates[-1]
     assert done.status == "completed"
-    # execute's own content is just the printed text — the image went out
-    # on the vision call.
-    assert [c.type for c in done.content] == ["content"]
-    assert done.content[0].content.type == "text"
-    assert "image/png 64 48" in done.content[0].content.text
+    # execute's own content is the cell's code and the printed text — the
+    # image went out on the vision call.
+    _assert_cell_on_the_wire(exec_updates, code, "image/png 64 48")
 
     rows = _fetch_rows(config.db_uri)
     assert len(rows) == 1
@@ -1223,12 +1243,10 @@ async def test_fs_e2e_kernel_reads_and_loop_emits(tmp_path):
     assert progress.content[0].content.text == str(target)
     assert final.status == "completed"
 
-    # execute's own completion carries only what the cell printed.
-    done = _by_id(conn, parent)[-1]
-    assert done.status == "completed"
-    assert [c.type for c in done.content] == ["content"]
-    assert "2 2" in done.content[0].content.text
-    assert "1" in done.content[0].content.text
+    # execute's own completion carries the cell's code and what it printed.
+    exec_updates = _by_id(conn, parent)
+    _assert_cell_on_the_wire(exec_updates, code, "2 2")
+    assert "1" in exec_updates[-1].content[1].content.text
 
     await session.close()
     loaded = await AgentSession.load(AGENT_ID, memory_path=config.db_uri)
