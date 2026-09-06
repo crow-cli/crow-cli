@@ -205,6 +205,7 @@ class Agent(AgentBase):
         self._pending_chars = 0
         self._flush_handle: asyncio.TimerHandle | None = None
         self._log_buffer: list[str] = []
+        self._log_task: asyncio.Task | None = None
 
     @property
     def command(self) -> str | None:
@@ -259,10 +260,39 @@ class Agent(AgentBase):
         await asyncio.to_thread(write, self._log_file_path, lines)
 
     async def _log_writer(self) -> None:
-        """Background task: periodically flush the wire log."""
+        """Background task: periodically flush the wire log.
+
+        CancelledError is deliberately NOT suppressed here. A task that eats
+        its own cancellation never finishes, and asyncio's loop shutdown
+        (``_cancel_all_tasks``) cancels each task ONCE and then waits for it —
+        so one cancel swallowed inside a flush is a process that hangs on
+        exit, not a dropped log line. Losing log lines to a failing disk is
+        what the suppress is for, and that is ``Exception``.
+        """
         while True:
             await asyncio.sleep(_LOG_FLUSH_INTERVAL)
-            with suppress(asyncio.CancelledError, Exception):
+            with suppress(Exception):
+                await self._flush_log()
+
+    async def _stop_log_writer(self) -> None:
+        """Cancel the wire-log writer and write out what it had not got to.
+
+        The task is this object's to stop: leaving it running leaks one per
+        agent (the loop's shutdown then has to cancel it, which is where the
+        swallowed-cancel hang used to bite), and the drain is why cancelling
+        it is not a regression — the last 200ms of wire log is exactly the
+        part you want when an agent has just died.
+        """
+        task, self._log_task = self._log_task, None
+        if task is not None:
+            task.cancel()
+            # gather(return_exceptions=True) rather than `await task`: the
+            # task's CancelledError is the expected result here, and awaiting
+            # it directly would make it indistinguishable from a cancellation
+            # of stop() itself.
+            await asyncio.gather(task, return_exceptions=True)
+        with suppress(Exception):
+            while self._log_buffer:
                 await self._flush_log()
 
     def get_info(self) -> Content:
@@ -753,33 +783,40 @@ class Agent(AgentBase):
 
     async def stop(self) -> None:
         """Gracefully stop the process — but never wait on it forever."""
-        if self.session_pk is not None:
-            db = DB()
-            await db.session_update_last_used(self.session_pk)
+        try:
+            if self.session_pk is not None:
+                db = DB()
+                await db.session_update_last_used(self.session_pk)
 
-        if (process := self._process) is not None:
-            # Closing stdin first gives an agent blocked writing a full stdout
-            # pipe something to fail on; it cannot be drained any more.
-            if process.stdin is not None:
+            if (process := self._process) is not None:
+                # Closing stdin first gives an agent blocked writing a full
+                # stdout pipe something to fail on; it cannot be drained any
+                # more.
+                if process.stdin is not None:
+                    try:
+                        process.stdin.close()
+                    except Exception:
+                        pass
                 try:
-                    process.stdin.close()
-                except Exception:
-                    pass
-            try:
-                process.terminate()
-            except OSError:
-                return
-            # SIGTERM is only a request — an agent that traps it, or one still
-            # streaming into a pipe nobody reads, must not outlive the TUI. The
-            # event loop waits on its children at shutdown, so a survivor here
-            # is a hang later.
-            try:
-                await asyncio.wait_for(process.wait(), timeout=2.0)
-            except TimeoutError:
-                process.kill()
-            except asyncio.CancelledError:
-                process.kill()
-                raise
+                    process.terminate()
+                except OSError:
+                    return
+                # SIGTERM is only a request — an agent that traps it, or one
+                # still streaming into a pipe nobody reads, must not outlive
+                # the TUI. The event loop waits on its children at shutdown,
+                # so a survivor here is a hang later.
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=2.0)
+                except TimeoutError:
+                    process.kill()
+                except asyncio.CancelledError:
+                    process.kill()
+                    raise
+        finally:
+            # Last, so the wire log still captures whatever the agent said on
+            # its way out — and on every path, including the OSError return
+            # above, because a leaked writer is a hang at loop shutdown.
+            await self._stop_log_writer()
 
     async def run(self) -> None:
         """The main logic of the Agent."""

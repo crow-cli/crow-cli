@@ -834,7 +834,7 @@ it and background work never bleeds into the next cell's drain.
        almost any query), or is the honest answer a separate
        `tool_calls_text` column indexed with its own weight, or no index and
        a documented LIKE scan?
-- [ ] 9c. PRE-EXISTING FLAKE, found by the step-9 sweep and NOT caused by it:
+- [x] 9c. PRE-EXISTING FLAKE, found by the step-9 sweep and NOT caused by it:
        tests/integration/test_cancel_under_load.py HANGS (no failure, no
        output, forever) roughly one run in six. Reproduced 3× with step 9 in
        the tree and 1× in 8 runs with every step-9 source change stashed away
@@ -850,6 +850,123 @@ it and background work never bleeds into the next cell's drain.
        full-sweep gate unreliable, which is why it is on the list rather than
        in a footnote: a gate that flakes 1-in-6 gets re-run until it passes,
        and that is how a real regression walks through.
+       LANDED — FIXED, and the diagnosis above was wrong about WHERE it lived.
+       Not the Textual app, not the ACP connection: `Agent._log_writer` in
+       src/crow_cli/tui/acp/agent.py, a background task that ate its own
+       cancellation.
+       THE STACK. `-o faulthandler_timeout=110` dumps the main thread at
+       pytest_asyncio/plugin.py:817 `_scoped_runner` -> asyncio/runners.py:63
+       `Runner.__exit__` -> :71 `close` -> :215 `_cancel_all_tasks` ->
+       `run_until_complete` -> `run_forever` -> `selectors.select`. The test
+       had already finished; the LOOP'S OWN SHUTDOWN was wedged waiting on a
+       task that would not die. `_cancel_all_tasks` cancels every remaining
+       task exactly ONCE and then waits for all of them.
+       THE LEAK. A temporary autouse async fixture dumping
+       `asyncio.all_tasks()` after each test showed every test in that file
+       leaks 2-3 tasks: `tui/shell.py:251 Shell.run` (the pty reader's
+       `while True: data = await shell_read(...)`), `acp/agent.py:264
+       _log_writer`, and textual's `_markdown.py:98 _run`. WHICH test hung
+       moved run to run (once after the 2nd, once after the 6th) — it is not
+       tied to a test, it is tied to whichever leaked task happens to eat its
+       cancel.
+       ROOT CAUSE, verbatim:
+           async def _log_writer(self) -> None:
+               while True:
+                   await asyncio.sleep(_LOG_FLUSH_INTERVAL)   # 0.2s
+                   with suppress(asyncio.CancelledError, Exception):
+                       await self._flush_log()                # to_thread(write)
+       A cancel landing inside `_flush_log` is swallowed, the `while True`
+       goes back to sleep, and the task is alive forever. CancelledError
+       inherits BaseException since 3.8, so listing it next to Exception is
+       not harmless belt-and-braces — it IS the bug.
+       WHY ONLY UNDER LOAD. `_flush_log` returns immediately on an empty
+       buffer, so the vulnerable window is flush_duration / (interval +
+       flush_duration) and it is only wide while the wire log is busy. The
+       flood test pushes 60k chunks x 40 chars with no pacing, which is
+       exactly that condition; an idle agent almost never hits it. That is the
+       whole reason this presented as a cancel-under-load bug instead of a
+       log-writer bug.
+       ALSO: `self._log_task = asyncio.create_task(self._log_writer())` in
+       `start()` was the ONLY reference — never cancelled, never awaited.
+       `stop()` handled the subprocess and nothing else.
+       THE FIX (agent.py, +65/-28):
+       - `_log_writer` suppresses `Exception` only, docstring naming the
+         mechanism: loop shutdown cancels ONCE then waits, so one swallowed
+         cancel is a hung process, not a dropped log line. Losing lines to a
+         failing disk is what the suppress is for, and that is `Exception`.
+       - NEW `_stop_log_writer()`: swap the task out (`task, self._log_task =
+         self._log_task, None`), `task.cancel()`, then `await
+         asyncio.gather(task, return_exceptions=True)` — deliberately NOT
+         `await task`, whose CancelledError would be indistinguishable from a
+         cancellation of `stop()` itself — then drain `while
+         self._log_buffer: await self._flush_log()` under `suppress(Exception)`.
+         The drain is why cancelling the writer is not a regression: the last
+         200ms of wire log is exactly what you want when an agent has just
+         died, and `_flush_log` writes only `_LOG_WRITE_CHUNK` (5000) lines a
+         call, so ONE flush would leave most of a busy log behind.
+       - `stop()`'s body is now `try: ... finally: await
+         self._stop_log_writer()` — finally so it also runs on the `except
+         OSError: return` path, and LAST so the wire log still captures what
+         the agent said on its way out. The existing `except
+         asyncio.CancelledError: process.kill(); raise` is preserved.
+       SWEEP: no `suppress(...CancelledError...)` remains anywhere in src/.
+       The other `except asyncio.CancelledError` sites (react.py:310/573/784/
+       908/934, main.py:969/987, tui/directory.py:128, acp/agent.py:812) are
+       request-scoped graceful-cancel paths that TERMINATE — clean up and
+       re-raise or return, never loop. See 9d for what was left alone.
+       BUG AE — MY FIRST TEST FOR THIS FIX PASSED ON THE BUGGY CODE. It
+       widened the window by TIMING (interval 0.0, a filler task appending so
+       the buffer is never empty, `sleep(0.05)`, then cancel) and all 4 tests
+       passed with `suppress(asyncio.CancelledError, Exception)` restored.
+       Whether the cancel lands inside the suppress block or in the
+       bare-yield `sleep(0)` before it decides everything: a bare yield leaves
+       the task with no `_fut_waiter`, so `Task.cancel()` sets `_must_cancel`
+       and throws at the NEXT step — outside the suppress, where it kills the
+       task and the test passes for the wrong reason. Replaced with a
+       `GatedAgent` subclass whose `_flush_log` sets an `in_flush` event and
+       awaits a `release` event before calling `super()`. Not a stub — the
+       flush really runs — but the cancel can be AIMED at the inside of the
+       flush instead of raced for. Verified in both directions: 4/4 FAIL
+       against HEAD's agent.py, 4/4 pass with the fix, and reverting ONLY the
+       suppress line fails exactly `test_the_writer_dies_when_cancelled_mid_
+       flush` with `<Task cancelling ... running at agent.py:273>` — the
+       `while True` back at its sleep.
+       TESTS — tests/unit/tui/test_agent_log_writer.py (NEW, 4 tests, no
+       mocks: a real Agent against a real CROW_LOG file, no subprocess because
+       start() is never called). The writer dies when cancelled mid-flush
+       (cancel ONCE then `asyncio.wait`, mirroring `_cancel_all_tasks`);
+       stop() cancels the writer AND writes the tail; the drain writes the
+       WHOLE buffer (`_LOG_WRITE_CHUNK` pinned to 2, 5 lines queued); stop()
+       is clean on a never-started agent (no task, no drain, no log file —
+       `__init__` unlinks, only `start()` mkdirs).
+       VERIFIED — test_cancel_under_load.py 15/15 consecutive clean runs at
+       ~20.8s each (at 1-in-6, fifteen clean runs is a ~6.5% coincidence);
+       tests/integration 3/3 clean at ~35.7s; full sweep 804 -> 808 passed in
+       143.6s.
+       CORRECTION TO THE HANDOFF: pytest-randomly is NOT installed in this
+       venv (plugins: typeguard-4.6.0, anyio-4.12.1, asyncio-1.3.0), so test
+       order is FIXED here and `-p no:randomly` is a no-op. Any "passes in
+       shuffled order" claim about this tree was measured somewhere else.
+
+- [ ] 9d. LEAKED TASKS THAT DO NOT (YET) HANG — surfaced by the 9c task dump,
+       left alone because 9c made the gate reliable again. Every test in
+       tests/integration/test_cancel_under_load.py STILL leaks 2-3 tasks at
+       teardown: `tui/shell.py:251 Shell.run` (the pty reader's `while True:
+       data = await shell_read(...)`) and textual's `_markdown.py:98 _run`.
+       They are cancellable today, so `_cancel_all_tasks` reaps them and
+       nothing hangs — but that is luck, not design. Any future
+       `suppress(CancelledError)` or un-awaited `to_thread` on that path
+       reproduces 9c exactly, and the symptom will again be "a random
+       integration test hangs 1-in-N" with no failure message and no
+       traceback. Two pieces of work: (a) find who owns the Shell task and
+       give it a stop() the way `_stop_log_writer` now is; (b) consider a
+       repo-wide autouse fixture that FAILS a test which leaves tasks behind,
+       so this class of bug is caught at the leak rather than at the hang.
+       Note `shell_read.py` wraps `asyncio.timeout(...)` in
+       `suppress(asyncio.TimeoutError)` — on 3.11+ an external cancel is
+       re-raised as CancelledError and not converted to TimeoutError, so this
+       is probably sound, but it is the one remaining place where the
+       reasoning is "probably" rather than measured.
 
 - [ ] 10. rlm — delegate rebuilt on session/fork (+load): relative offset
        (fork N messages back so history doesn't end in the fork call — no
