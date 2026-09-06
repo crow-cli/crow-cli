@@ -72,8 +72,19 @@ items are parked at the bottom.
       **COST, stated plainly:** compaction now makes three LLM calls instead
       of one and takes roughly three times as long — measured live on
       qwen3.8-max-preview at ~7 minutes for all three over a small history.
-      The react loop emits no keepalive during it. If that hurts, the fix is
-      to background the two reflections, NOT to build the hook fabric.
+      The react loop emits no keepalive during it.
+      **Do NOT background or concurrentize the passes to "fix" that.** There
+      is nothing to gain: a single call is ALREADY the batch — the tokens are
+      the batch dimension, prefill saturates the device, decode is already
+      streaming weights at maximum memory bandwidth. Three concurrent passes
+      each run at a third of the rate and land at the same wall clock, and
+      this is llama.cpp, not vLLM — no continuous-batching scheduler is going
+      to merge three independent requests into one efficient batch. Zero gain,
+      and it costs a task lifecycle, a cancellation story, and notes that
+      silently never get written when the process exits. If 3× ever genuinely
+      hurts the lever is FEWER CALLS: the three passes share one prefix and
+      one context, so all three questions could go out in a single call and
+      the output be split. See PLAN Phase 1 for the trade.
 - [ ] **Two-layer compaction** — soft compact hook at ~160k: inject "you now
       have ~20k tokens of context and ~15 tool calls of budget remaining"
       and fire off a react loop with existing tools for 5-7 turns where the

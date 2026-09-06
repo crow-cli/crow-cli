@@ -20,8 +20,10 @@ Commit at each green checkpoint with the Session-Id trailer.
 - Compaction is a hook surface: the existing summary pass becomes the
   FIRST default hook, co-equal and replaceable like the rest —
   extensible, never sclerotic.
-- Analysis/ideas output is FOREGROUND (never background — too important),
-  files over db rows (ls is the interface), evidence mandatory.
+- Analysis/ideas output is FOREGROUND (never background — and not merely
+  because it is "too important": backgrounding buys literally zero latency,
+  see Phase 1's cost note for the mechanism), files over db rows (ls is the
+  interface), evidence mandatory.
 - User corrections outrank agent suggestions absolutely.
 
 ## Where we are (2026-09-06, verified against the code, not the docs)
@@ -112,10 +114,29 @@ by code, not asked of the model.
 
 **Cost, stated plainly:** compaction now makes three LLM calls instead of
 one, so it takes roughly three times as long. Measured live on
-`qwen3.8-max-preview`: ~7 minutes for all three passes over a small
-history. On a slow local model that is a lot of waiting, and the react loop
-emits no keepalive during it. If that becomes a problem the fix is to run
-the two reflections as a background task, NOT to build the hook fabric.
+`qwen3.8-max-preview`: ~7 minutes for all three passes over a small history.
+On a slow local model that is worse, and the react loop emits no keepalive
+during it.
+
+**Do not "fix" that by backgrounding or concurrentizing the passes.** The
+ground rule above already says foreground, and "too important" undersells
+why. There is nothing to gain: a single call is ALREADY the batch. The tokens
+are the batch dimension, prefill saturates the device, and decode is already
+streaming weights at maximum memory bandwidth — there is no idle parallelism
+left for a second concurrent request to exploit. Three concurrent passes each
+run at a third of the rate and land at the same wall clock. This is
+llama.cpp, not vLLM: no continuous-batching scheduler is going to merge three
+independent requests into one efficient batch. Backgrounding also costs real
+correctness for that zero gain — a task lifecycle, a cancellation story, and
+notes that silently never get written when the process exits.
+
+If 3× ever genuinely hurts, the lever is **fewer calls, not more
+concurrency**: the three passes share one prefix and one context, so all
+three questions could go out in a SINGLE call and the output be split. That
+pays for the history once instead of three times. The trade — one failure
+loses all three notes, and a runaway analysis can eat the summary's token
+budget — is why it is not the default. The other lever is cadence: don't
+reflect on every compaction.
 
 1.1 Promote `on_compact` from single callback to the constructor hook
     idiom: `AcpAgent(config, hooks=..., compact_hooks=...)`, plumbed

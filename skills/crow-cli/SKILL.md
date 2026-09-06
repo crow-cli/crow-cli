@@ -138,8 +138,15 @@ Two things worth knowing before you build on this:
 
 - **Compaction is ~3× slower than it was.** Measured live at ~7 minutes for
   all three passes on a fast hosted model; a slow local model is worse, and
-  the react loop emits no keepalive during it. If that ever needs fixing, the
-  fix is to background the two reflections — NOT to add a hook fabric.
+  the react loop emits no keepalive during it. **Do not background or
+  concurrentize the passes to fix that** — there is nothing to gain. A single
+  call is already the batch: prefill saturates the device and decode is
+  already streaming weights at maximum memory bandwidth, so three concurrent
+  passes each run at a third of the rate and land at the same wall clock.
+  This is llama.cpp, not vLLM; nothing is going to merge three independent
+  requests into one efficient batch. If the 3× ever genuinely hurts, the lever
+  is FEWER CALLS — one request asking all three questions over the shared
+  prefix, output split afterwards — not more concurrency.
 - **There is no lifecycle yet.** A note is written and never moves, so nothing
   distinguishes an untriaged critique from one that already landed. The
   planned `feedback/inbox/ → validated/ → accepted/ | rejected/ → landed/`
