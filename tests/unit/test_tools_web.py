@@ -25,7 +25,13 @@ import pytest
 
 from crow_cli.tools import web
 from crow_cli.tools.register import begin_cell, clear, pending
-from crow_cli.tools.results import PageResult, WebError, WebSearchResult
+from crow_cli.tools.results import (
+    BrowserClosed,
+    PageResult,
+    VisionResult,
+    WebError,
+    WebSearchResult,
+)
 
 # from-import of internals IS safe; `import crow_cli.tools.web as m` is not —
 # the facade resolves that name to the FUNCTION.
@@ -41,6 +47,14 @@ PAGE = (
 )
 HUGE = "line of text\n" * 4000  # 52k chars — past the 5k print window
 OVER_CAP = b"x" * (11 * 1024 * 1024)
+# The page that does not exist until JavaScript builds it — the whole reason
+# mode="run" exists. fetch sees "before", run sees "built by JS".
+JS_PAGE = (
+    "<html><head><title>Static Title</title></head><body><div id='app'>"
+    "before</div><script>document.title='Rendered Title';"
+    "document.getElementById('app').textContent='built by JS';"
+    "</script></body></html>"
+)
 
 # Captured live from SearXNG 2026.9: every top-level key it returns, of which
 # the MCP tool kept exactly one (`results`).
@@ -169,6 +183,13 @@ class _Handler(BaseHTTPRequestHandler):
 
             time.sleep(1.0)
             self._send(200, b"late", "text/plain")
+        elif route == "/js":
+            self._send(200, JS_PAGE.encode(), "text/html; charset=utf-8")
+        elif route == "/hang":
+            import time
+
+            time.sleep(6.0)
+            self._send(200, b"late", "text/html")
         else:
             self._send(404, b"unknown route", "text/plain")
 
@@ -201,6 +222,37 @@ def _clean(base, monkeypatch):
     clear()
     yield
     clear()
+
+
+@pytest.fixture(scope="module")
+def chromium():
+    """A real chromium, or skip. run is the one mode that cannot be exercised
+    without a browser, and a 170MB download is not a test dependency — the
+    binary lives in the shared ~/.cache/ms-playwright when playwright install
+    has put it there."""
+    from playwright.async_api import async_playwright
+
+    async def _probe():
+        pw = await async_playwright().start()
+        try:
+            browser = await pw.chromium.launch()
+            await browser.close()
+        finally:
+            await pw.stop()
+
+    try:
+        asyncio.run(_probe())
+    except Exception as e:
+        pytest.skip(f"no chromium for playwright: {type(e).__name__}: {e}")
+    return True
+
+
+@pytest.fixture(autouse=True)
+async def _browser_down():
+    """No test may leave a browser behind for the next one: the singleton is
+    process-wide, and a leaked chromium is 200MB of someone else's machine."""
+    yield
+    await MOD._shutdown()
 
 
 # --- search ----------------------------------------------------------------
@@ -447,6 +499,162 @@ async def test_page_text_has_no_tail_when_the_page_fits(base):
     )
 
 
+# --- run / close (a real chromium, skipped without one) ---------------------
+
+
+@pytest.mark.asyncio
+async def test_run_renders_what_fetch_cannot(chromium, base):
+    """The distinction the mode exists for: fetch reads the bytes the server
+    sent, run reads the DOM after the page's JavaScript ran. Same route, same
+    request — different pages."""
+    f = await web("fetch", f"{base}/js")
+    r = await web("run", f"{base}/js", screenshot=False)
+    assert (f.title, f.markdown, f.rendered) == ("Static Title", "before", False)
+    assert isinstance(r, PageResult) and r
+    assert r.rendered and r.status == 200
+    assert r.title == "Rendered Title"
+    assert r.markdown == "built by JS"
+    assert "built by JS" in r.html
+    assert r.url == f"{base}/js"
+    assert ", rendered" in r.text.splitlines()[0]
+    assert r.screenshot is None and "screenshot" not in r.text
+
+
+@pytest.mark.asyncio
+async def test_run_screenshot_rides_the_row(chromium, base, tmp_path):
+    """The artifact that earns the wrapper its place: bytes on disk are
+    invisible to the model, so the PNG goes to the ImageStore and its ref
+    rides the row — the drain hydrates it into an image_url block."""
+    begin_cell(session_id="s1", parent_tool_call_id="t/c", images_dir=str(tmp_path / "img"))
+    r = await web("run", f"{base}/js")
+    assert isinstance(r.screenshot, VisionResult)
+    assert r.screenshot.mime == "image/png"
+    assert (r.screenshot.width, r.screenshot.height) == (1280, 720)
+    assert r.screenshot.source == f"{base}/js"
+    blobs = [p for p in (tmp_path / "img").rglob("*.png")]
+    assert len(blobs) == 1
+    assert blobs[0].read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    assert r.screenshot.image.size == (1280, 720)
+    assert r.llm_images() == [{"key": r.screenshot.key, "mime": "image/png"}]
+    entry = pending()[0]
+    assert (entry.tool, entry.mode, entry.result_kind) == ("web", "run", "web")
+    assert entry.llm_images == r.llm_images()
+    assert ", screenshot" in entry.acp_payload["text"]
+
+
+@pytest.mark.asyncio
+async def test_run_screenshot_is_capped_like_vision(chromium, base, tmp_path, monkeypatch):
+    """The viewport is 1280x720 by default but r.page.set_viewport_size is
+    ambient, so a screenshot goes through vision's cap: a 3000px shot is
+    bytes no vision model wants."""
+    vision_mod = sys.modules["crow_cli.tools.vision"]
+    monkeypatch.setattr(vision_mod, "_MAX_DIM", 100)
+    begin_cell(session_id="s1", parent_tool_call_id="t/c", images_dir=str(tmp_path / "img"))
+    r = await web("run", f"{base}/js")
+    assert (r.screenshot.width, r.screenshot.height) == (100, 56)
+
+
+@pytest.mark.asyncio
+async def test_run_page_is_live_then_stale(chromium, base):
+    """`.page` is raw playwright in the kernel — and the NEXT run closes it,
+    so a stale one raises instead of silently pointing at a different
+    navigation (verified live: a shared page made cell 1's r.page click the
+    wrong thing by cell 3)."""
+    first = await web("run", f"{base}/js", screenshot=False)
+    page = first.page
+    assert not page.is_closed()
+    handle = await page.wait_for_selector("#app")
+    assert await handle.text_content() == "built by JS"
+
+    second = await web("run", f"{base}/page.html", screenshot=False)
+    assert second.page is not page and page.is_closed()
+    with pytest.raises(Exception, match="closed"):
+        await page.title()
+
+
+@pytest.mark.asyncio
+async def test_run_context_survives_across_runs(chromium, base):
+    """Cookies and storage live on the context, which is created once: a new
+    page per run must not mean a new identity per run."""
+    await web("run", f"{base}/js", screenshot=False)
+    first_context = MOD._state["context"]
+    await web("run", f"{base}/page.html", screenshot=False)
+    assert MOD._state["context"] is first_context
+
+
+@pytest.mark.asyncio
+async def test_run_gather_is_serialized_and_each_result_is_its_own(chromium, base):
+    """One page at a time, so two gotos cannot race on it — but gather still
+    returns one correct result per URL, each with its own page."""
+    rs = await asyncio.gather(
+        *[web("run", f"{base}{u}", screenshot=False) for u in ("/js", "/page.html")]
+    )
+    assert [r.title for r in rs] == ["Rendered Title", "Tiny Page"]
+    assert rs[0].page is not rs[1].page
+    assert rs[0].page.is_closed() and not rs[1].page.is_closed()
+
+
+@pytest.mark.asyncio
+async def test_run_http_error_raises_like_fetch(chromium, base):
+    """A PageResult is a page that was RETRIEVED: fetch raises on >= 400 and
+    so does run, or .status would mean two different things in two modes."""
+    with pytest.raises(WebError, match=rf"404 Not Found for {base}/missing"):
+        await web("run", f"{base}/missing", screenshot=False)
+
+
+@pytest.mark.asyncio
+async def test_run_timeout_is_seconds(chromium, base):
+    """The server sleeps 6s; 0.5s of patience must raise, in seconds, not in
+    playwright's milliseconds."""
+    with pytest.raises(WebError, match=r"failed on .*hang"):
+        await web("run", f"{base}/hang", screenshot=False, timeout=0.5)
+
+
+@pytest.mark.asyncio
+async def test_run_without_an_image_store(chromium, base, monkeypatch):
+    """Checked BEFORE launching anything: a browser with nowhere to put the
+    artifact is a wasted launch and a confusing failure, and the error says
+    how to proceed either way."""
+    monkeypatch.setattr(MOD, "image_store", lambda: None)
+    with pytest.raises(WebError, match="screenshot=False"):
+        await web("run", f"{base}/js")
+    r = await web("run", f"{base}/js", screenshot=False)
+    assert r.screenshot is None
+
+
+@pytest.mark.asyncio
+async def test_close_is_idempotent_and_run_restarts(chromium, base):
+    first = await web("close")
+    assert isinstance(first, BrowserClosed) and not first.was_running
+    assert first.text == "no browser was running"
+
+    await web("run", f"{base}/js", screenshot=False)
+    assert MOD._state["browser"] is not None
+    closed = await web("close")
+    assert closed.was_running and closed.text == "browser closed"
+    assert MOD._state == {**MOD._state, "pw": None, "browser": None, "context": None, "page": None}
+
+    again = await web("close")
+    assert not again.was_running
+
+    restarted = await web("run", f"{base}/js", screenshot=False)
+    assert restarted.status == 200
+
+
+@pytest.mark.asyncio
+async def test_close_records_a_row():
+    begin_cell(session_id="s1", parent_tool_call_id="t/c")
+    await web("close")
+    entry = pending()[0]
+    assert (entry.tool, entry.mode, entry.status, entry.result_kind) == (
+        "web",
+        "close",
+        "completed",
+        "text",
+    )
+    assert entry.acp_payload["text"] == "no browser was running"
+
+
 # --- guards ----------------------------------------------------------------
 
 
@@ -482,6 +690,37 @@ async def test_arguments_are_not_silently_ignored_on_the_wrong_mode(base):
 async def test_negative_limit():
     with pytest.raises(WebError, match="limit must be >= 0, got -1"):
         await web("search", "anything", limit=-1)
+
+
+@pytest.mark.asyncio
+async def test_run_arguments_are_rejected_elsewhere(base):
+    """wait_until/timeout/screenshot are browser vocabulary; passing them to
+    fetch or search must not be silently dropped."""
+    with pytest.raises(WebError, match=r"screenshot= is for mode='run'"):
+        await web("fetch", f"{base}/plain.txt", screenshot=True)
+    with pytest.raises(WebError, match=r"wait_until= is for mode='run'"):
+        await web("fetch", f"{base}/plain.txt", wait_until="load")
+    with pytest.raises(WebError, match=r"timeout= is for mode='run'"):
+        await web("search", "anything", timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_wait_until_is_playwrights_vocabulary():
+    with pytest.raises(WebError, match=r"unknown wait_until 'whenever'"):
+        await web("run", "https://example.com/", wait_until="whenever")
+
+
+@pytest.mark.asyncio
+async def test_timeout_must_be_positive():
+    for bad in (0, -1):
+        with pytest.raises(WebError, match=rf"timeout must be > 0 seconds, got {bad}"):
+            await web("run", "https://example.com/", timeout=bad)
+
+
+@pytest.mark.asyncio
+async def test_close_takes_no_target():
+    with pytest.raises(WebError, match=r"mode='close' takes no target="):
+        await web("close", "https://example.com/")
 
 
 # --- internals -------------------------------------------------------------

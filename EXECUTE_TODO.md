@@ -501,7 +501,7 @@ it and background work never bleeds into the next cell's drain.
        ThreadingHTTPServer stands in for both the web and SearXNG, real httpx
        and real readability, no mocks, no internet) + 1 drain test for
        `subject`. Sweep 689 -> 730 passed.
-- [ ] 8b. web run — playwright-python (USER RULED: playwright-python, not
+- [x] 8b. web run — playwright-python (USER RULED: playwright-python, not
        the playwright-cli skill, not selenium). Modes "run" and "close".
        * async_api ONLY. The sync API greenlet-switches into its own event
          loop (_sync_base.py: `self._loop.create_task` + dispatcher fiber)
@@ -528,6 +528,109 @@ it and background work never bleeds into the next cell's drain.
        * "run" returns the RENDERED page as the same PageResult shape fetch
          returns — that is the distinction a model cares about (static HTML
          vs. JS-executed DOM), and it means one result type for both.
+       LANDED — playwright 1.62.0, and the probe found two more (letters
+       continue the run):
+       DEPENDENCY: HARD, not the optional extra the bullet above promised.
+       The bullet's own reasoning is what overruled its wording: it said
+       "exactly how ast-grep is handled", and ast-grep-py (43MB) and cv2
+       (72MB) are both plain hard deps — there is no
+       [project.optional-dependencies] table anywhere in this repo to be
+       consistent with. An extra buys nothing here and costs a documented
+       mode that cannot run: `web("run", …)` is in help() either way, so the
+       only difference is whether the model gets a working browser or an
+       install instruction. The 47MB wheel is the cheap half anyway — the
+       ~170MB chromium is RUNTIME DATA in ~/.cache/ms-playwright, which no
+       packaging scheme puts in a wheel. Lazy import stays, so a kernel that
+       never browses never starts the node driver.
+       Browser: 1.62 wants chromium-1234; the shared cache (3.3GB) had
+       1012/1194/1217, so `uv --project . run playwright install chromium`
+       — 114.7 MiB, one-time, into the shared cache. chromium-1234 and
+       chromium_headless_shell-1234 now present.
+       (X) THE SHARED-PAGE TRAP. The first cut kept ONE page for the
+           kernel's lifetime, which made `r.page` a time bomb: a result from
+           an earlier cell silently pointed at whatever the LATEST run had
+           navigated to. Found live as a 30s timeout clicking a selector
+           that was absent from the new page — and the worse version is a
+           selector present on BOTH, which clicks the wrong thing and
+           reports success. Fix: a FRESH page per run, previous page closed,
+           so a stale `.page` raises playwright's TargetClosedError loudly
+           instead of acting on the wrong document. The CONTEXT still
+           survives (cookies/storage persist across runs), which is the part
+           that actually needed to be shared.
+       (Y) 404-AS-SUCCESS. `run` returned a 404 page as a completed
+           PageResult while `fetch` raises on the same status — `.status`
+           would have meant two different things in two modes of ONE tool.
+           Now run raises WebError(f"{status} {status_text} for {url}") on
+           >= 400. A browser renders an error page beautifully, which is
+           exactly why the wrapper has to look at the number.
+       Lifecycle handles live in `_state = globals().setdefault("_state",
+       {})` + `_state.setdefault("lock", asyncio.Lock())` — a mutable CELL,
+       not module globals, because importlib.reload re-executes the module
+       source in the EXISTING module dict: a plain `_page = None` at module
+       level would be re-assigned on every reload() and orphan a running
+       chromium (and its node driver) with no way to reach it. setdefault
+       makes the source line a no-op when the state already exists.
+       One chromium + one context for the kernel's lifetime, started on the
+       first run; `close` -> BrowserClosed(was_running) (new dataclass,
+       result_kind "text", payload "browser closed" / "no browser was
+       running"), idempotent, and a later run just starts a new one.
+       Args: wait_until (playwright's four literals, default "load"),
+       timeout (SECONDS, default 30, converted to ms — every other knob in
+       this module speaks seconds), screenshot (default True). All three
+       run-only and guarded; user_agent= stays fetch-only, limit=
+       search-only, target= forbidden on close.
+       REJECTED, with reasons (each was a real candidate):
+       * `evaluate=` — `.page` is ambient; a JS return value is data the
+         model handles better in Python than through a string parameter.
+       * `full_page=` — with vision's 1568px cap a full-page shot of a long
+         page is unreadable mush. The model scrolls and re-shoots.
+       * `headless=` — a kernel is a server; there is no display to head
+         toward and no user to watch the window.
+       * `user_agent=` on run — the browser's own UA is the point of
+         rendering; `r.page.context` is ambient for anyone who disagrees.
+       Emission changed shape, and it corrects an 8a note: a browser call is
+       ONE row carrying TWO artifacts (the rendered page as text AND the
+       screenshot as an image), so image hydration is hoisted out of the
+       drain's image branch into _hydrate_images(ctx, row, llm_blocks,
+       store) and ANY row with llm_images now prepends hydrated image_url
+       blocks — the else branch emits content=(text_blocks + image_blocks).
+       And _KIND_BY_RESULT["web"] = "fetch" is now REQUIRED, contra 8a's
+       "no _KIND_BY_RESULT entry is needed": that was true while the only
+       web mode was named "fetch" (get_tool_kind matched on the MODE), but
+       get_tool_kind("run") falls through to "other". A page is a fetch
+       artifact whatever the mode is called. The 8a drain test's docstring
+       claimed otherwise and was corrected.
+       Screenshot reuses vision's _cap_resolution/_encode/_store, so the
+       ImageStore keys dedupe with vision's — the same page shot twice is
+       one blob.
+       VERIFIED, not assumed:
+       * Kernel reset takes the browser with it — after reset=True the node
+         driver pid and all 7 chromium pids were gone (checked by pid with
+         kill -0, because `pgrep -f` matches its own shell). No orphans, so
+         no atexit hook.
+       * The distinction the mode exists for, on one page: fetch -> title
+         "Static Title", markdown "before"; run -> "Rendered Title",
+         "built by JS".
+       * Screenshot viewed with read_image_file: a real 1280x720 render
+         (nav links, "The Heading", "Body one.", "Body two.");
+         .screenshot.image -> PIL 1280x720 RGB.
+       * Speed: driver start 0.28s, browser launch 0.05s, a full
+         launch+goto+title+evaluate+screenshot+content+close 0.61s. First
+         run 1.39s, warm 0.69s, gather of 3 runs 0.88s — serialized by the
+         lock, each result correct with its own page.
+       * Rows: run -> tool=web mode=run kind=web, llm_images=[{key, mime}],
+         payload subject=<url>; close -> kind=text, "browser closed".
+       * Guards all fire: 404, no-scheme, dead host (net::ERR_UNSAFE_PORT),
+         timeout=0.5 on a 6s hang, bad wait_until, timeout<=0, run-only args
+         on other modes, target= on close, and no-ImageStore (raises BEFORE
+         launching a browser, message says screenshot=False).
+       Tests: 39 -> 54 in tests/unit/test_tools_web.py — a module-scoped
+       `chromium` fixture that launches once and pytest.skip's when the
+       browser is missing (a 170MB download is not a test dependency), an
+       autouse async _browser_down fixture (await MOD._shutdown() after
+       every test), /js and /hang routes, 11 browser tests and 5 guard tests
+       that need no browser. Plus 1 drain test for the two-artifact row.
+       Sweep 730 -> 746 passed.
 - [ ] 9. memory — modes: list, search, sql (read-only conn -> polars
        DataFrame). Python objects, not LLM-markdown strings.
 - [ ] 10. rlm — delegate rebuilt on session/fork (+load): relative offset

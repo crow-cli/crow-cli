@@ -769,6 +769,11 @@ _KIND_BY_RESULT: dict[str, ToolKind] = {
     # rules: those classify "rewrite" as an edit only because it happens to
     # contain "write", and "sub" does not.
     "rewrite": "edit",
+    # A page read, whether httpx fetched it or a browser rendered it. The
+    # mode name cannot decide this one: get_tool_kind("fetch") is "fetch"
+    # but get_tool_kind("run") is "other", and a browser loading a URL is
+    # the same artifact either way.
+    "web": "fetch",
 }
 """ACP kind follows the ARTIFACT, not the tool name: a multi-mode tool
 (``fs``) is one name doing read/glob/search, and ``get_tool_kind("fs")`` is
@@ -832,6 +837,46 @@ async def _emit_subtool_call(
         )
     except Exception:
         ctx.logger.warning(f"subtool emission failed: {sub_id}", exc_info=True)
+
+
+def _hydrate_images(ctx: TurnCtx, row, llm_blocks: list[dict], store: Any):
+    """(ACP image content, store) for one row's llm_images refs.
+
+    Hoisted out of the image branch because images are orthogonal to the
+    payload's shape: a vision call is ALL image, while a browser call is the
+    rendered page PLUS a screenshot — one call, one row, two artifacts. The
+    LLM's image_url blocks are appended to ``llm_blocks`` either way, since
+    that prepend is the only channel a vision model can see through.
+    """
+    if not row.llm_images:
+        return [], store
+    import base64
+
+    if store is None:
+        from pathlib import Path
+
+        from crow_cli.memory.image_store import resolve_image_store
+
+        store = resolve_image_store(
+            ctx.config.image_store.get("s3"),
+            Path(_images_dir(ctx.config)),
+        )
+    blocks = []
+    for ref in row.llm_images:
+        data = store.get(ref.get("key", ""))
+        if data is None:
+            ctx.logger.warning(f"image blob missing: {ref.get('key')}")
+            continue
+        mime = ref.get("mime", "image/png")
+        b64 = base64.b64encode(data).decode()
+        blocks.append(tool_content(image_block(data=b64, mime_type=mime)))
+        llm_blocks.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{mime};base64,{b64}"},
+            }
+        )
+    return blocks, store
 
 
 async def _emit_subtool_calls(ctx: TurnCtx, parent_acp_id: str) -> list[dict]:
@@ -898,6 +943,7 @@ async def _emit_subtool_calls(ctx: TurnCtx, parent_acp_id: str) -> list[dict]:
             row.mode or row.tool
         )
         title = f"{row.tool}/{row.mode}" if row.mode else row.tool
+        blocks, store = _hydrate_images(ctx, row, llm_blocks, store)
         if row.result_kind == "diff":
             path = payload.get("path", "")
             await _emit_subtool_call(
@@ -930,32 +976,6 @@ async def _emit_subtool_calls(ctx: TurnCtx, parent_acp_id: str) -> list[dict]:
                 content=[tool_content(text_block(text))] if text else None,
             )
         elif row.result_kind == "image":
-            import base64
-
-            if store is None:
-                from pathlib import Path
-
-                from crow_cli.memory.image_store import resolve_image_store
-
-                store = resolve_image_store(
-                    ctx.config.image_store.get("s3"),
-                    Path(_images_dir(ctx.config)),
-                )
-            blocks = []
-            for ref in row.llm_images or []:
-                data = store.get(ref.get("key", ""))
-                if data is None:
-                    ctx.logger.warning(f"image blob missing: {ref.get('key')}")
-                    continue
-                mime = ref.get("mime", "image/png")
-                b64 = base64.b64encode(data).decode()
-                blocks.append(tool_content(image_block(data=b64, mime_type=mime)))
-                llm_blocks.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:{mime};base64,{b64}"},
-                    }
-                )
             await _emit_subtool_call(
                 ctx,
                 _subtool_id(ctx, row.id),
@@ -973,13 +993,14 @@ async def _emit_subtool_calls(ctx: TurnCtx, parent_acp_id: str) -> list[dict]:
             # subject is displayed, never claimed as a location, because a
             # page is not a file.
             subject = payload.get("subject")
+            content = [tool_content(text_block(text))] if text else []
             await _emit_subtool_call(
                 ctx,
                 _subtool_id(ctx, row.id),
                 row,
                 title=f"{title}: {subject}" if subject else title,
                 kind=kind,
-                content=[tool_content(text_block(text))] if text else None,
+                content=(content + blocks) or None,
             )
     return llm_blocks
 

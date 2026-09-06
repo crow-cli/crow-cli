@@ -335,9 +335,11 @@ async def test_drain_titles_a_web_row_with_its_subject(tmp_path):
     the bare title (test_drain_renders_text_and_failed_rows).
 
     Kind follows the artifact as ever: "search" for the hits via
-    _KIND_BY_RESULT, and "fetch" for result_kind "web" via get_tool_kind's
-    rule on the MODE — there is deliberately no _KIND_BY_RESULT["web"], since
-    the payload is plain text and only the title needed changing."""
+    _KIND_BY_RESULT, and "fetch" for result_kind "web" — also via
+    _KIND_BY_RESULT, because the mode name only happens to work for one of
+    the two modes that produce a page (get_tool_kind("run") is "other").
+    A payload with no subject still gets the bare title
+    (test_drain_renders_text_and_failed_rows)."""
     config, session = await make_test_session(tmp_path)
     search_id = _seed_row(
         config.db_uri,
@@ -396,6 +398,69 @@ async def test_drain_titles_a_web_row_with_its_subject(tmp_path):
         assert progress.content[0].content.type == "text"
         assert progress.content[0].content.text == text
         assert done.status == "completed"
+    await session.close()
+
+
+async def test_drain_one_run_call_carries_text_and_screenshot(tmp_path):
+    """A browser call is ONE call with TWO artifacts: the rendered page as
+    text and the screenshot as an image. Hydration is hoisted out of the
+    image branch precisely so a text-kind row can carry images — the
+    alternative is a second row for the screenshot, and a screenshot is not
+    a call the code made."""
+    import base64
+
+    from crow_cli.memory.image_store import FsImageStore
+    from crow_cli.memory.messages import image_key
+
+    config, session = await make_test_session(tmp_path)
+    store = FsImageStore(tmp_path / "images")
+    raw = b"\x89PNG-rendered-page"
+    key = image_key(raw, "image/png")
+    store.put(key, raw)
+
+    row_id = _seed_row(
+        config.db_uri,
+        parent_tool_call_id="turn-1/call_r",
+        tool="web",
+        mode="run",
+        args={"mode": "run", "target": "https://app.example/", "screenshot": True},
+        result_kind="web",
+        acp_payload={
+            "content": "text",
+            "text": "https://app.example/ — 200 text/html, 412 chars,"
+            " rendered, screenshot",
+            "subject": "https://app.example/",
+        },
+        llm_images=[{"key": key, "mime": "image/png"}],
+    )
+    conn = FakeConn()
+    ctx = await _make_ctx(config, session, conn)
+
+    from crow_cli.agent.tools import _emit_subtool_calls
+
+    llm_blocks = await _emit_subtool_calls(ctx, "turn-1/call_r")
+
+    start, progress, done = _by_id(conn, f"turn-1/call_sub{row_id}")
+    assert start.kind == "fetch"  # the artifact, not the mode name
+    assert start.title == "web/run: https://app.example/"
+    assert start.locations is None
+    text, image = progress.content
+    assert text.content.type == "text"
+    assert text.content.text.startswith("https://app.example/ — 200")
+    assert image.content.type == "image"
+    assert base64.b64decode(image.content.data) == raw
+    assert done.status == "completed"
+
+    # And the LLM channel gets the image too — the only way a vision model
+    # sees what the browser saw.
+    assert llm_blocks == [
+        {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/png;base64,{base64.b64encode(raw).decode()}"
+            },
+        }
+    ]
     await session.close()
 
 

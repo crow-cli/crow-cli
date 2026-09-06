@@ -49,6 +49,7 @@ dependencies = [
     "xdg-base-dirs>=6.0.2",
     "pillow>=12.3.0",
     "ast-grep-py>=0.45.3",
+    "playwright>=1.62.0",
 ]
 
 [project.urls]

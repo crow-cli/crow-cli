@@ -25,6 +25,7 @@ them is the return value:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 
 class ToolError(Exception):
@@ -408,7 +409,7 @@ class WebSearchResult(ToolResult):
 
 @dataclass
 class PageResult(ToolResult):
-    """One fetched page: the WHOLE thing for code, a window for print.
+    """One page: the WHOLE thing for code, a window for print.
 
     ``markdown`` is the extraction and ``html`` the raw body, both complete —
     there is no start_index/max_length, because those existed only to slice
@@ -422,6 +423,20 @@ class PageResult(ToolResult):
     ``markdown`` IS the body — a JSON response, a text file, or a JS shell
     with nothing to extract — which is honest where the MCP tool returned
     the string "<error>Failed to parse HTML</error>" and lost the page.
+
+    ``rendered`` is the distinction a browser buys: True means a real
+    chromium executed the page's JavaScript and ``html`` is the DOM it
+    produced, not the bytes the server sent. Same shape for both modes
+    because it is the same artifact — one page read.
+
+    ``screenshot`` composes a VisionResult rather than duplicating its
+    fields, so ``r.screenshot.image`` is a PIL Image and its ``llm_images()``
+    ref rides this row: the drain hydrates it into an image_url block and a
+    vision model SEES the page. ``page`` is the live playwright Page (run
+    only) — clicking, typing and framing stay raw playwright in the kernel
+    instead of a bad reimplementation of the playwright API here. It stays
+    live across cells until the NEXT run closes it, so a stale one raises
+    rather than quietly pointing at a different navigation.
     """
 
     url: str  # the FINAL url, after redirects
@@ -431,15 +446,23 @@ class PageResult(ToolResult):
     markdown: str
     html: str
     extracted: bool = False
+    rendered: bool = False
+    screenshot: VisionResult | None = None
+    page: Any = None
 
     # Not "read": a page is not a file, and the read branch of the drain
-    # stamps locations=[path] — a URL in a path field is a lie. kind still
-    # comes out "fetch", because get_tool_kind("fetch") hits the
-    # fetch/download rule on the MODE name.
+    # stamps locations=[path] — a URL in a path field is a lie. The drain
+    # files "web" under fetch by ARTIFACT (_KIND_BY_RESULT), because the
+    # mode name only happens to work for one of the two modes that produce
+    # this: get_tool_kind("fetch") is "fetch", get_tool_kind("run") is
+    # "other", and a browser loading a page is a fetch either way.
     result_kind = "web"
 
     def acp_payload(self) -> dict:
         return {"content": "text", "text": self.text, "subject": self.url}
+
+    def llm_images(self) -> list[dict]:
+        return self.screenshot.llm_images() if self.screenshot else []
 
     @property
     def chars(self) -> int:
@@ -447,15 +470,43 @@ class PageResult(ToolResult):
 
     @property
     def text(self) -> str:
+        flags = []
+        if not self.extracted:
+            flags.append("unextracted")
+        if self.rendered:
+            flags.append("rendered")
+        if self.screenshot is not None:
+            flags.append("screenshot")
         head = (
             f"{self.url} — {self.status} {self.content_type.split(';')[0].strip()}"
             f", {self.chars:,} chars"
-            + ("" if self.extracted else ", unextracted")
+            + (f", {', '.join(flags)}" if flags else "")
         )
         body = self.markdown[:_PAGE_WINDOW]
         more = self.chars - len(body)
         tail = f"\n… {more:,} more chars — markdown[{len(body)}:]" if more else ""
         return f"{head}\n{body}{tail}"
+
+
+@dataclass
+class BrowserClosed(ToolResult):
+    """web(mode="close") — the kernel's browser, shut down.
+
+    ``was_running`` because closing twice is not an error and the two states
+    are worth telling apart: False means the browser was never started, or
+    something already tore it down.
+    """
+
+    was_running: bool
+
+    result_kind = "text"
+
+    def acp_payload(self) -> dict:
+        return {"content": "text", "text": self.text}
+
+    @property
+    def text(self) -> str:
+        return "browser closed" if self.was_running else "no browser was running"
 
 
 class WebError(ToolError):
