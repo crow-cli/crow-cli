@@ -42,6 +42,7 @@ class CellContext:
     parent_tool_call_id: str | None = None
     cell_seq: int | None = None
     agent_id: str | None = None
+    rlm_depth: int = 0
 
 
 _current_cell: ContextVar[CellContext | None] = ContextVar(
@@ -56,6 +57,7 @@ def begin_cell(
     agent_id: str | None = None,
     db_uri: str | None = None,
     images_dir: str | None = None,
+    rlm_depth: int = 0,
 ) -> None:
     """Set the identity for the cell about to run (execute's prologue).
 
@@ -64,6 +66,9 @@ def begin_cell(
     points the image sink at the session's ImageStore directory (same
     derivation server-side: db parent / "images"). ``cell_seq`` defaults
     to IPython's execution_count when running inside a kernel.
+    ``rlm_depth`` is how many delegations deep the calling session is,
+    resolved server-side from the session's own persisted row — like the
+    rest of the rail, a value the model never derived and cannot forge.
     """
     global _images_dir
     if db_uri is not None:
@@ -73,7 +78,7 @@ def begin_cell(
     if cell_seq is None:
         cell_seq = _ipython_execution_count()
     _current_cell.set(
-        CellContext(session_id, parent_tool_call_id, cell_seq, agent_id)
+        CellContext(session_id, parent_tool_call_id, cell_seq, agent_id, rlm_depth)
     )
 
 
@@ -147,6 +152,18 @@ def db_uri() -> str | None:
     first, which is exactly what execute's prologue does.
     """
     return _sink_uri
+
+
+def rlm_depth() -> int:
+    """How many delegations deep this cell's session is: 0 for a trunk.
+
+    Read from the cell identity, which execute's prologue injected after the
+    server resolved it off the session's own persisted row — so a delegate
+    cannot argue its way into a deeper budget, and the model never supplies
+    it. A plain-Python caller that never ran begin_cell is depth 0.
+    """
+    cell = _current_cell.get()
+    return cell.rlm_depth if cell is not None else 0
 
 
 def configure_sink(db_uri: str | None) -> None:

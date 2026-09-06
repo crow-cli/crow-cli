@@ -231,6 +231,28 @@ class AgentSession:
         self.messages: list[dict] = []
         self._client = None
         self.model_identifier = None
+        self.prompt_args: dict[str, Any] | None = None
+
+    @property
+    def rlm_depth(self) -> int:
+        """How many delegations deep this session is: 0 for a trunk, N for a
+        delegate N forks down.
+
+        Persisted inside prompt_args rather than in a column of its own
+        because prompt_args is JSON, is copied by :meth:`fork`, and
+        create_database is create_all — additive TABLES, no ALTER, so a new
+        column means a migration against the live db (EXECUTE_TODO 10/AG).
+        Jinja2 ignores template variables the template does not use, so the
+        extra key costs nothing at render time.
+
+        It rides the wire as session/fork's ``_meta`` rlmDepth and lands
+        here, which is what makes it survive a load in a DIFFERENT process —
+        a budget held in memory would reset the moment a delegate was
+        re-prompted, and a delegate that forgets its depth is the mirror
+        again.
+        """
+        depth = (self.prompt_args or {}).get("rlm_depth", 0)
+        return depth if isinstance(depth, int) and depth > 0 else 0
 
     @property
     def client(self) -> MemoryClient:
@@ -457,6 +479,7 @@ class AgentSession:
         turn_idx: int | None = None,
         message_offset: int | None = None,
         delegation_ids: set[str] | None = None,
+        rlm_depth: int | None = None,
     ) -> "AgentSession":
         """Fork a TRUNK agent of the session (default: HEAD = max agent_idx).
 
@@ -479,6 +502,11 @@ class AgentSession:
         :func:`crow_cli.memory.delegation_tool_call_ids`); the offset snap
         steps over a trailing one so the fork's history does not end in "I
         delegated this".
+
+        ``rlm_depth`` marks the fork as a delegate that many levels down. It
+        is persisted in prompt_args, so it survives a load in a different
+        process; None means "not a delegation fork" and leaves the source's
+        args exactly as they were.
         """
         if turn_idx is not None and message_offset is not None:
             raise ValueError("fork on turn_idx OR message_offset, not both")
@@ -508,6 +536,12 @@ class AgentSession:
             anchor = records[-1].id if cut is None else records[cut - 1].id
             fork_idx = await client.get_max_fork_idx(session_id, agent_idx) + 1
             fork_id = build_agent_id(session_id, agent_idx, fork_idx)
+            # The depth rides prompt_args so it is durable and survives a
+            # load in another process; None means "not a delegation fork"
+            # and leaves the source's args exactly as they were.
+            prompt_args = source.prompt_args
+            if rlm_depth is not None:
+                prompt_args = {**(prompt_args or {}), "rlm_depth": rlm_depth}
             await client.create_agent(
                 agent_id=fork_id,
                 session_id=session_id,
@@ -516,7 +550,7 @@ class AgentSession:
                 forked_at=str(anchor),
                 cwd=cwd,
                 prompt_id=source.prompt_id,
-                prompt_args=source.prompt_args,
+                prompt_args=prompt_args,
                 system_prompt=source.system_prompt,
                 tool_definitions=source.tool_definitions,
                 request_params=source.request_params,

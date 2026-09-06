@@ -480,3 +480,80 @@ async def test_fork_refuses_both_policies_at_once(delegating_env):
             message_offset=1,
         )
 
+
+# ---- the depth budget: durable, because a delegate that forgets its depth
+#      is the infinity mirror again ----
+
+
+def test_rlm_depth_reads_prompt_args_and_refuses_garbage():
+    """prompt_args is JSON out of a db column, so it is not trusted: a
+    string, a negative, or a missing key all mean depth 0."""
+    session = AgentSession(agent_id="s-1-1", session_id="s")
+    assert session.rlm_depth == 0  # never set at all
+    session.prompt_args = {"rlm_depth": 2}
+    assert session.rlm_depth == 2
+    session.prompt_args = {"rlm_depth": "3"}
+    assert session.rlm_depth == 0
+    session.prompt_args = {"rlm_depth": -1}
+    assert session.rlm_depth == 0
+    session.prompt_args = {}
+    assert session.rlm_depth == 0
+
+
+@pytest.mark.asyncio
+async def test_fork_records_the_delegation_depth(fork_env):
+    session, memory_path = fork_env
+    assert session.rlm_depth == 0  # a trunk is depth 0
+    fork = await AgentSession.fork(
+        session.session_id, memory_path=memory_path, rlm_depth=1
+    )
+    assert fork.rlm_depth == 1
+    await fork.close()
+
+
+@pytest.mark.asyncio
+async def test_depth_survives_a_load_in_another_process(fork_env):
+    """The budget lives on the agent row, not in the process that set it: a
+    delegate re-prompted by a fresh agent process must still know it is a
+    delegate, or the budget is decorative."""
+    session, memory_path = fork_env
+    fork = await AgentSession.fork(
+        session.session_id, memory_path=memory_path, rlm_depth=1
+    )
+    fork_id = fork.agent_id
+    await fork.close()
+
+    reloaded = await AgentSession.load(fork_id, memory_path=memory_path)
+    assert reloaded.rlm_depth == 1
+    await reloaded.close()
+
+
+@pytest.mark.asyncio
+async def test_a_plain_fork_carries_no_depth(fork_env):
+    """The CLI's --fork and every interrogation fork pass no depth, and must
+    not grow the key: their prompt_args render a system prompt, and a
+    surprise key in there is a surprise in every template."""
+    session, memory_path = fork_env
+    fork = await AgentSession.fork(session.session_id, memory_path=memory_path)
+    assert fork.rlm_depth == 0
+    assert "rlm_depth" not in (fork.prompt_args or {})
+    assert fork.prompt_args == session.prompt_args
+    await fork.close()
+
+
+@pytest.mark.asyncio
+async def test_depth_does_not_disturb_the_rendered_system_prompt(fork_env):
+    """fork() copies the source's system_prompt verbatim rather than
+    re-rendering, so the extra prompt_args key cannot change what the
+    delegate is told — but the fork's own args must still render if anything
+    ever does re-render them."""
+    from crow_cli.agent.prompt import render_template
+
+    session, memory_path = fork_env
+    fork = await AgentSession.fork(
+        session.session_id, memory_path=memory_path, rlm_depth=1
+    )
+    assert fork.messages[0]["content"] == session.messages[0]["content"]
+    assert render_template("You are {{name}}.", **fork.prompt_args) == "You are Crow."
+    await fork.close()
+

@@ -163,6 +163,32 @@ class TestForkSessionPersists:
             _mcp_servers_to_wire([STDIO])
         )
 
+    async def test_fork_carries_the_delegation_depth_from_meta(
+        self, agent, memory_service, saved_session, no_transport
+    ):
+        """rlmDepth rides _meta and lands on the fork's session, so an
+        execute call inside the delegate injects depth 1 and that delegate's
+        own rlm can be refused. Durability across a load in another process
+        is test_fork.py's job (real sqlite); this is the handler wiring."""
+        resp = await agent.fork_session(
+            session_id=saved_session.session_id,
+            cwd="/tmp",
+            mcp_servers=[],
+            rlmDepth=1,
+        )
+        assert agent._sessions[resp.session_id].rlm_depth == 1
+
+    async def test_a_plain_fork_is_depth_zero(
+        self, agent, memory_service, saved_session, no_transport
+    ):
+        """The CLI's --fork and every interrogation fork send no depth, and
+        must come out at 0 — that is the end of the budget that says "may
+        delegate"."""
+        resp = await agent.fork_session(
+            session_id=saved_session.session_id, cwd="/tmp", mcp_servers=[]
+        )
+        assert agent._sessions[resp.session_id].rlm_depth == 0
+
 
 class TestMemoryClientRealDb:
     """The wrapper itself against real sqlite, two clients = two processes."""

@@ -112,6 +112,7 @@ def reload() -> None:
             agent_id=cell.agent_id,
             db_uri=sink_uri,
             images_dir=images_dir,
+            rlm_depth=cell.rlm_depth,
         )
 
 

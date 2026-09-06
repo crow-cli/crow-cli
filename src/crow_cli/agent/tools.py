@@ -706,6 +706,10 @@ async def execute_acp_execute(
                 "tool_call_id": acp_tool_call_id,
                 "db_uri": ctx.config.db_uri,
                 "images_dir": _images_dir(ctx.config),
+                # Delegation depth, so an in-cell rlm knows whether it is
+                # allowed to delegate at all. Derived from the session's own
+                # persisted prompt_args, never from the model's arguments.
+                "rlm_depth": ctx.session.rlm_depth,
             },
         )
 

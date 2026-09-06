@@ -186,3 +186,28 @@ async def test_drain_clears_memory_but_rows_persist(tmp_path, db):
     assert len(entries) == 1
     assert pending() == []
     assert len(_rows(db)) == 1  # rows are the server's queue, not ours
+
+
+# --- the delegation depth, riding the same rail as session_id and db_uri ---
+
+
+@pytest.mark.asyncio
+async def test_rlm_depth_is_zero_without_a_cell():
+    """Plain Python use: no begin_cell, no identity, no budget consumed.
+    Async so the contextvar lives in this test's own task context — a sync
+    test would set it in the main context and hand it to every test after."""
+    assert register.rlm_depth() == 0
+
+
+@pytest.mark.asyncio
+async def test_rlm_depth_comes_from_the_cell_identity():
+    begin_cell(session_id="s1", parent_tool_call_id="t/c", rlm_depth=2)
+    assert register.rlm_depth() == 2
+    assert register.current_cell().rlm_depth == 2
+
+
+@pytest.mark.asyncio
+async def test_rlm_depth_defaults_to_zero_for_a_trunk():
+    begin_cell(session_id="s1", parent_tool_call_id="t/c", db_uri=None)
+    assert register.rlm_depth() == 0
+

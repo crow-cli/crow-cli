@@ -653,28 +653,33 @@ class AcpAgent(Agent):
         agentIdx: int | None = None,
         turnIdx: int | None = None,
         messageOffset: int | None = None,
+        rlmDepth: int | None = None,
         **kwargs: Any,
     ) -> ForkSessionResponse:
         """Fork an existing session (UNSTABLE session/fork).
 
-        ``agentIdx``/``turnIdx``/``messageOffset`` ride the request ``_meta``
-        and arrive flattened into kwargs by the SDK router. Defaults fork at
-        HEAD: the newest trunk agent, all messages. turnIdx snaps to turn
-        boundaries — an assistant tool_calls group is never split from its
-        tool results. messageOffset is the finer instrument: N messages back
-        from HEAD, then snapped off any group that must not end a fork's
-        history, which is how a delegate's own fork call stays out of the
-        delegate's view. The two are mutually exclusive.
+        ``agentIdx``/``turnIdx``/``messageOffset``/``rlmDepth`` ride the
+        request ``_meta`` and arrive flattened into kwargs by the SDK router.
+        Defaults fork at HEAD: the newest trunk agent, all messages. turnIdx
+        snaps to turn boundaries — an assistant tool_calls group is never
+        split from its tool results. messageOffset is the finer instrument: N
+        messages back from HEAD, then snapped off any group that must not end
+        a fork's history, which is how a delegate's own fork call stays out
+        of the delegate's view. The two are mutually exclusive. rlmDepth
+        marks the fork as a delegate that many levels down and is persisted
+        on its agent row, so the budget survives a load in another process.
         The fork's wire sessionId is its own agent_id; the client owns tool
         supply exactly like new/load_session (empty mcpServers = zero tools,
         which is what an interrogation fork wants).
         """
         self._logger.info(
-            "FORK_SESSION: %s agentIdx=%s turnIdx=%s messageOffset=%s cwd=%s mcp_servers=%s",
+            "FORK_SESSION: %s agentIdx=%s turnIdx=%s messageOffset=%s rlmDepth=%s"
+            " cwd=%s mcp_servers=%s",
             session_id,
             agentIdx,
             turnIdx,
             messageOffset,
+            rlmDepth,
             cwd,
             mcp_servers,
         )
@@ -699,6 +704,7 @@ class AcpAgent(Agent):
                 turn_idx=turnIdx,
                 message_offset=messageOffset,
                 delegation_ids=delegation_ids,
+                rlm_depth=rlmDepth,
             )
         except Exception as e:
             self._logger.error("Failed to fork session %s: %s", session_id, e)

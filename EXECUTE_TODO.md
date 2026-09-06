@@ -1073,7 +1073,7 @@ it and background work never bleeds into the next cell's drain.
        SWEEP: tests/unit + tests/memory 597 passed in 35.8s.
 
 
-- [ ] 10b. DEPTH BUDGET on the identity rail — the same channel as
+- [x] 10b. DEPTH BUDGET on the identity rail — the same channel as
        session_id/db_uri, so the kernel still reads NO config and the model
        cannot forge it. rlmDepth rides session/fork's _meta (ForkSessionRequest
        has field_meta aliased _meta, and fork_session already flattens
@@ -1083,6 +1083,55 @@ it and background work never bleeds into the next cell's drain.
        arrive by fork — a trunk, a CLI fork, a load. Budget 1: a delegate
        that tries to delegate gets an RlmToolError naming the budget and
        pointing at AG, not a silent mirror.
+       LANDED — the number is plumbed end to end; ENFORCING it is 10c (there
+       is no rlm yet to refuse). AgentSession.rlm_depth property,
+       fork(rlm_depth=), fork_session(rlmDepth=), execute_acp_execute's meta,
+       _kernel_context/_prologue, begin_cell(rlm_depth=) + CellContext field
+       + register.rlm_depth(), and reload()'s re-apply. 13 new tests; sweep
+       808 -> 834.
+       IT LIVES IN prompt_args, NOT IN A COLUMN, and that is AG's fault:
+       create_database is create_all — additive TABLES, no ALTER — so a
+       depth column means a migration against the live 1.3GB db. prompt_args
+       is JSON, is already copied by fork(), and is already read back by
+       BOTH factories (create sets it, load sets it from the agent row), so
+       the budget is durable for free. Jinja2 ignores template variables the
+       template does not use, so the extra key costs nothing at render — and
+       fork() copies system_prompt verbatim rather than re-rendering, so the
+       delegate is told exactly what its source was told. A test pins both
+       halves (the rendered prompt is unchanged AND the args still render).
+       DURABLE IS THE POINT, not a nicety. A budget held in the agent
+       process resets the moment a delegate is re-prompted by a fresh one,
+       and a delegate that has forgotten its depth is the infinity mirror
+       again — async rlm hands out a handle precisely so the child can be
+       re-prompted later, possibly elsewhere. test_depth_survives_a_load_in_
+       another_process closes a session, reloads it by agent_id, and reads
+       the depth back.
+       THE MODEL NEVER SUPPLIES IT. fork_session takes rlmDepth from the
+       fork request's _meta (the CALLER is the parent's own rlm, running
+       server-side plumbing, not the model's arguments), stores it on the
+       row, and execute_acp_execute then resolves it from
+       ctx.session.rlm_depth — the session's own persisted state. Same
+       cannot-forge property as session_id and db_uri.
+       GARBAGE IS COERCED AT BOTH TRUST BOUNDARIES: the property (a value
+       out of a JSON column) and _kernel_context (a value off the wire) each
+       accept only a positive int and fall to 0. `__init__` grew
+       `self.prompt_args = None` so the property cannot AttributeError
+       before the factories assign it.
+       ONE EXISTING TEST HAD TO MOVE, which is it doing its job:
+       test_execute_meta_injects_session_and_cwd asserts the meta dict
+       EXACTLY, so it grew `"rlm_depth": 0`. A test that pins a whole dict
+       catches an unplanned key; that is why it is written that way.
+       TESTS — 5 in test_fork.py (property + garbage, fork records the
+       depth, depth survives a reload, a plain fork carries none and leaves
+       prompt_args byte-identical, the system prompt is undisturbed and the
+       args still render); 3 in test_tools_register_db.py (0 with no cell —
+       async so the contextvar stays in the test's own task context, from
+       the cell identity, default 0 for a trunk); 2 in
+       tests/mcp/test_execute_prelude.py through a REAL kernel (injected
+       depth survives a mid-cell reload(); absent -> 0); 1 in
+       test_react_loop_execute_tool.py (prompt_args depth 2 arrives on the
+       meta); 2 in test_session_mcp_servers_wiring.py (rlmDepth off _meta
+       reaches the stored session; a plain fork is 0).
 
 - [ ] 10c. crow_cli/tools/rlm.py — THE TOOL. SubagentDriver grows
        fork_session (it already sets use_unstable_protocol=True for exactly

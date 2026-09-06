@@ -405,5 +405,47 @@ async def test_memory_is_ambient_and_reads_the_injected_database(mcp_app, tmp_pa
     assert rows[1].acp_payload["subject"] == "polars"
 
 
+async def test_rlm_depth_rides_the_prologue_and_survives_a_reload(mcp_app, tmp_path):
+    """The depth is INJECTED, not derived: the kernel reads no config and the
+    model supplies no argument, so this rail is the only way an in-cell rlm
+    can know whether it is allowed to delegate. And it has to survive
+    reload(), which re-creates the register's identity contextvar."""
+    from crow_cli.memory.db import create_database
+
+    db_uri = f"sqlite:///{tmp_path}/crow.db"
+    create_database(db_uri)
+
+    code = (
+        "from crow_cli.tools import register\n"
+        "before = register.rlm_depth()\n"
+        "reload()\n"  # mid-cell: the prologue already stamped identity
+        "print(before, register.rlm_depth(), register.current_cell().rlm_depth)\n"
+    )
+    async with Client(mcp_app) as client:
+        result = await client.call_tool(
+            "execute",
+            {"code": code},
+            meta={
+                "cwd": str(tmp_path),
+                "session_id": "sess-depth",
+                "tool_call_id": "turn-1/call_d",
+                "db_uri": db_uri,
+                "rlm_depth": 1,
+            },
+        )
+    assert result.is_error is False, result.content
+    assert result.content[0].text.strip() == "1 1 1"
+
+
+async def test_a_caller_that_sends_no_depth_is_depth_zero(mcp_app):
+    """No rlm_depth in _meta — a trunk, or a script driving the server
+    directly. Zero is the only safe default: it means "may delegate"."""
+    out = await _call(
+        mcp_app,
+        "from crow_cli.tools import register\nprint(register.rlm_depth())",
+    )
+    assert out.strip() == "0"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

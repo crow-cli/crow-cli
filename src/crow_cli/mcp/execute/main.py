@@ -27,9 +27,9 @@ _kernels: dict[str, CrowKernel] = {}
 
 def _kernel_context(
     ctx: Context,
-) -> tuple[str, str, str | None, str | None, str | None, str | None]:
-    """Return ``(key, cwd, session_id, parent_tcid, db_uri, images_dir)``
-    from the caller-injected ``_meta``.
+) -> tuple[str, str, str | None, str | None, str | None, str | None, int]:
+    """Return ``(key, cwd, session_id, parent_tcid, db_uri, images_dir,
+    rlm_depth)`` from the caller-injected ``_meta``.
 
     The agent injects these (``execute_acp_execute``) so the kernel is keyed
     per session and starts in the session's working directory. The Context
@@ -42,7 +42,9 @@ def _kernel_context(
     entries and point the write-through sink at crow.db so the server-side
     drain can re-emit in-cell tool calls to the ACP client. ``images_dir``
     points the kernel's image sink at the session's ImageStore directory so
-    vision bytes land where the server's drain hydrates them.
+    vision bytes land where the server's drain hydrates them. ``rlm_depth``
+    is how many delegations deep the calling session is, so an in-cell rlm
+    can enforce its budget; a bare caller is depth 0.
     """
     meta = ctx.request_context.meta if ctx.request_context else None
     cwd = getattr(meta, "cwd", None) or os.getcwd()
@@ -50,7 +52,16 @@ def _kernel_context(
     parent_tcid = getattr(meta, "tool_call_id", None)
     db_uri = getattr(meta, "db_uri", None)
     images_dir = getattr(meta, "images_dir", None)
-    return (session_id or cwd, cwd, session_id, parent_tcid, db_uri, images_dir)
+    depth = getattr(meta, "rlm_depth", None)
+    return (
+        session_id or cwd,
+        cwd,
+        session_id,
+        parent_tcid,
+        db_uri,
+        images_dir,
+        depth if isinstance(depth, int) and depth > 0 else 0,
+    )
 
 
 # ~5k tokens — the same discipline as terminal's MAX_CMD_OUTPUT_SIZE.
@@ -72,6 +83,7 @@ def _prologue(
     parent_tcid: str | None,
     db_uri: str | None,
     images_dir: str | None,
+    rlm_depth: int = 0,
 ) -> str:
     """Identity injection prepended to every non-empty cell: stamps the
     subtool register before the model's code runs. Fail-open — a broken
@@ -82,7 +94,7 @@ def _prologue(
         "    from crow_cli.tools.register import begin_cell as _crow_begin\n"
         f"    _crow_begin(session_id={session_id!r},"
         f" parent_tool_call_id={parent_tcid!r}, db_uri={db_uri!r},"
-        f" images_dir={images_dir!r})\n"
+        f" images_dir={images_dir!r}, rlm_depth={rlm_depth!r})\n"
         "except Exception as _crow_e:\n"
         "    import sys as _crow_sys\n"
         "    print(f'crow prologue: {_crow_e}', file=_crow_sys.stderr)\n"
@@ -160,7 +172,9 @@ async def execute(
         execute("", reset=True)           # fresh kernel, all state cleared
     """
     try:
-        key, cwd, session_id, parent_tcid, db_uri, images_dir = _kernel_context(ctx)
+        key, cwd, session_id, parent_tcid, db_uri, images_dir, rlm_depth = (
+            _kernel_context(ctx)
+        )
 
         if reset:
             old = _kernels.pop(key, None)
@@ -172,7 +186,7 @@ async def execute(
 
         kernel = get_kernel(key, cwd)
         if code.strip():
-            code = _prologue(session_id, parent_tcid, db_uri, images_dir) + code
+            code = _prologue(session_id, parent_tcid, db_uri, images_dir, rlm_depth) + code
         output = kernel.execute(code)
         return _cap(output) if output else "[no output]"
 

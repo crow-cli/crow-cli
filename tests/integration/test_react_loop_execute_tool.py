@@ -155,5 +155,42 @@ async def test_execute_meta_injects_session_and_cwd(tmp_path):
         "tool_call_id": "turn-meta/call_x",
         "db_uri": config.db_uri,
         "images_dir": str(tmp_path / "images"),
+        "rlm_depth": 0,
     }
+    await session.close()
+
+
+async def test_execute_meta_injects_the_delegation_depth(tmp_path):
+    """A delegate's depth rides the same rail, resolved from the session's
+    own persisted prompt_args — the model never supplies it, so it cannot
+    talk its way into a deeper budget."""
+    from crow_cli.agent.tools import execute_acp_execute
+    from crow_cli.agent.context import TurnCtx
+
+    config, session = await make_test_session(tmp_path)
+    session.prompt_args = {**(session.prompt_args or {}), "rlm_depth": 2}
+    assert session.rlm_depth == 2
+
+    captured = {}
+
+    class SpyMCP:
+        async def call_tool(self, name, args, meta=None):
+            from mcp.types import TextContent
+            from types import SimpleNamespace
+
+            captured["meta"] = meta
+            return SimpleNamespace(
+                content=[TextContent(type="text", text="ok")], isError=False
+            )
+
+    ctx = TurnCtx(
+        conn=FakeConn(),
+        config=config,
+        session=session,
+        turn_id="turn-depth",
+        logger=logger,
+    )
+    await execute_acp_execute(ctx, {SESSION_ID: SpyMCP()}, "call_d", {"code": "1"})
+
+    assert captured["meta"]["rlm_depth"] == 2
     await session.close()
