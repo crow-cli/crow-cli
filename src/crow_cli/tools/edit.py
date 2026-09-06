@@ -20,6 +20,27 @@ from .register import subtool
 from .results import EditError, EditResult
 
 
+def _in_file_endings(text: str, old_string: str, new_string: str):
+    """The caller's strings, in the file's own line endings.
+
+    The model saw this file through ``read``, which normalizes endings for
+    display, so its old_string arrives with bare ``\\n`` even when the file is
+    CRLF. Matching that against a faithful read needs the translation — and
+    the replacement needs it too, or the edit splices LF lines into a CRLF
+    file. Only the dominant ending is considered: a file that is mostly CRLF
+    is a CRLF file. A caller who sends CRLF explicitly is already speaking
+    the file's language and is left alone.
+    """
+    if "\r\n" in text and "\r\n" not in old_string:
+        # Normalize first, so a mixed-ending replacement cannot double up
+        # into \r\r\n.
+        return (
+            old_string.replace("\r\n", "\n").replace("\n", "\r\n"),
+            new_string.replace("\r\n", "\n").replace("\n", "\r\n"),
+        )
+    return old_string, new_string
+
+
 @subtool(tool="edit")
 async def edit(
     file_path: str,
@@ -59,19 +80,25 @@ async def edit(
         raise EditError(f"Path is a directory: {path}")
 
     try:
-        old_text = path.read_text(encoding="utf-8")
+        # newline="": read the file as it is. The default translates every
+        # \r\n to \n, and the write below used to hand that back — so ONE
+        # edit to a CRLF file silently reformatted all of it, with a diff
+        # that showed a single changed line (unified_diff is fed
+        # splitlines(), which strips \r from both sides).
+        old_text = path.read_text(encoding="utf-8", newline="")
     except PermissionError:
         raise EditError(f"Permission denied: {path}") from None
     except OSError as e:
         raise EditError(f"Failed to read file: {e}") from None
 
+    old_string, new_string = _in_file_endings(old_text, old_string, new_string)
     try:
         new_text = replace(old_text, old_string, new_string, replace_all)
     except ValueError as e:
         raise EditError(str(e)) from None
 
     try:
-        path.write_text(new_text, encoding="utf-8")
+        path.write_text(new_text, encoding="utf-8", newline="")
     except PermissionError:
         raise EditError(f"Permission denied: {path}") from None
     except OSError as e:

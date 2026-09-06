@@ -52,7 +52,11 @@ async def write(file_path: str, content: str) -> EditResult:
     old_text = ""
     if path.exists():
         try:
-            old_text = path.read_text(encoding="utf-8")
+            # newline="": the preimage is the undo log, so it has to be the
+            # bytes that were actually there. The default translation turns
+            # every \r\n into \n, and restoring that "undo" would silently
+            # reformat the whole file.
+            old_text = path.read_text(encoding="utf-8", newline="")
         except UnicodeDecodeError:
             old_text = ""  # binary-ish file: diff against empty
         except OSError:
@@ -66,7 +70,10 @@ async def write(file_path: str, content: str) -> EditResult:
         raise WriteError(f"Failed to create directory: {e}") from None
 
     try:
-        path.write_text(content, encoding="utf-8")
+        # newline="": write the string the caller passed, byte for byte. The
+        # default translates every \n to os.linesep, which on Windows turns a
+        # CRLF file's endings into \r\r\n.
+        path.write_text(content, encoding="utf-8", newline="")
     except PermissionError:
         raise WriteError(f"Permission denied: {path}") from None
     except OSError as e:

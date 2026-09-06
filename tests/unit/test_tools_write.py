@@ -110,3 +110,30 @@ async def test_write_through_row(tmp_path):
     assert row.parent_tool_call_id == "turn-2/call_w"
     assert row.acp_payload["new_text"] == "content\n"
     assert row.emitted == 0
+
+
+@pytest.mark.asyncio
+async def test_write_preserves_crlf_and_records_a_faithful_preimage(tmp_path):
+    """newline="" both ways. The write used to translate every \\n to
+    os.linesep (which on Windows turns a CRLF file's endings into \\r\\r\\n),
+    and the preimage read used the default translation, so crow.db's undo log
+    held an LF-normalized copy of a CRLF file — restoring it would reformat
+    the very file it claims to undo."""
+    target = tmp_path / "f.toml"
+    target.write_bytes(b'x = "OLD"\r\ny = 2\r\n')
+
+    r = await write(str(target), 'x = "NEW"\r\ny = 2\r\n')
+
+    assert target.read_bytes() == b'x = "NEW"\r\ny = 2\r\n'
+    assert r.old_text == 'x = "OLD"\r\ny = 2\r\n'
+    assert r.new_text == 'x = "NEW"\r\ny = 2\r\n'
+    # The diff renders identically either way — splitlines() strips the \r —
+    # so the diff was never going to catch this.
+    assert r.diff.splitlines() == [
+        "--- a/f.toml",
+        "+++ b/f.toml",
+        "@@ -1,2 +1,2 @@",
+        '-x = "OLD"',
+        '+x = "NEW"',
+        " y = 2",
+    ]

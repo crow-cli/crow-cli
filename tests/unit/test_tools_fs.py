@@ -1,4 +1,4 @@
-"""fs — read/glob/search/ast/rewrite, Python-shaped: real result objects,
+"""fs — read/glob/search/ast/rewrite/sub, Python-shaped: real result objects,
 FsError raised on failure, register + write-through like every subtool.
 
 No mocks: real files on disk, the real ripgrep binary and the real ast-grep
@@ -433,7 +433,7 @@ async def test_rewrite_transforms_every_matching_file(tmp_path):
     assert "${name}" in (root / "app.js").read_text()
     assert "os.path.join(a, b)" in (root / "app.js").read_text()
 
-    assert r.result_kind == "text"
+    assert r.result_kind == "rewrite"
     assert r.acp_payload() == {"content": "text", "text": r.summary}
     assert "rewrote 2 of 3 parsed file(s), 2 match(es)" in r.summary
     assert f"{JOIN} -> Path($A) / $B" in r.summary
@@ -499,7 +499,7 @@ async def test_rewrite_records_one_write_row_per_file_plus_the_operation(tmp_pat
     assert [(e.tool, e.mode, e.status, e.result_kind) for e in pending()] == [
         ("write", None, "completed", "diff"),
         ("write", None, "completed", "diff"),
-        ("fs", "rewrite", "completed", "text"),
+        ("fs", "rewrite", "completed", "rewrite"),
     ]
 
 
@@ -533,6 +533,236 @@ async def test_rewrite_bad_pattern_writes_nothing(tmp_path):
     assert (root / "a.py").read_text() == "os.path.join(a, b)\n"
 
 
+# --- sub -------------------------------------------------------------------
+
+
+def _grammarless_tree(root):
+    """The quadrant ast cannot reach: toml, sql and ini have no tree-sitter
+    grammar, so rewrite= cannot parse them and edit= is one file at a time.
+    Plus a lowercase near-miss (re is case-sensitive) and a binary carrying
+    the same bytes (skipped, not scanned)."""
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "config").mkdir()
+    (root / "config" / "prod.toml").write_text(
+        '[server]\nenv_name = "OLD_ENV"\nfallback = "OLD_ENV_local"\n'
+    )
+    (root / "config" / "dev.toml").write_text('env_name = "OLD_ENV"\n')
+    (root / "schema.sql").write_text("CREATE TABLE t (env TEXT DEFAULT 'OLD_ENV');\n")
+    (root / "notes.ini").write_text("[a]\nkey = old_env\n")
+    (root / "blob.bin").write_bytes(b"OLD_ENV\x00\xff" * 40)
+    return root
+
+
+@pytest.mark.asyncio
+async def test_sub_replaces_across_files_ast_cannot_parse(tmp_path):
+    root = _grammarless_tree(tmp_path / "proj")
+
+    r = await fs("sub", str(root), pattern="OLD_ENV", rewrite="NEW_ENV")
+
+    assert isinstance(r, RewriteResult) and r
+    assert (r.changed, r.scanned, r.matches) == (3, 4, 4)
+    assert (root / "config" / "prod.toml").read_text() == (
+        '[server]\nenv_name = "NEW_ENV"\nfallback = "NEW_ENV_local"\n'
+    )
+    assert "DEFAULT 'NEW_ENV'" in (root / "schema.sql").read_text()
+    # Case-sensitive: the lowercase near-miss is scanned and left alone.
+    assert (root / "notes.ini").read_text() == "[a]\nkey = old_env\n"
+    assert r.syntax == "regex" and r.dry_run is False and r.skipped == 0
+    assert r.result_kind == "rewrite"
+    assert r.acp_payload() == {"content": "text", "text": r.summary}
+    # "scanned", not "parsed" — nothing was parsed.
+    assert "rewrote 3 of 4 scanned file(s), 4 match(es)" in r.summary
+    assert "OLD_ENV -> NEW_ENV" in r.summary
+
+
+@pytest.mark.asyncio
+async def test_sub_respects_gitignore_and_file_pattern(tmp_path):
+    root = _grammarless_tree(tmp_path / "proj")
+    (root / ".gitignore").write_text("ignored/\n")
+    (root / "ignored").mkdir()
+    (root / "ignored" / "skip.toml").write_text('env_name = "OLD_ENV"\n')
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+
+    r = await fs(
+        "sub", str(root), "OLD_ENV", rewrite="NEW_ENV", file_pattern="*.toml"
+    )
+
+    assert sorted(Path(p).name for p in r.paths) == ["dev.toml", "prod.toml"]
+    assert (root / "ignored" / "skip.toml").read_text() == 'env_name = "OLD_ENV"\n'
+    assert "OLD_ENV" in (root / "schema.sql").read_text()
+
+
+@pytest.mark.asyncio
+async def test_sub_expands_python_replacement_templates(tmp_path):
+    """sub's replacement is re's, not ast-grep's — inventing a second metavar
+    syntax next to $A would be one more thing to remember and one more way to
+    be wrong."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    numeric, named = root / "a.toml", root / "b.toml"
+    numeric.write_text('who = "OLD_ENV"\n')
+    named.write_text('who = "OLD_ENV"\n')
+
+    await fs("sub", str(root), r"(\w+) = \"(OLD_ENV)\"", rewrite=r"\2 for \1",
+             file_pattern="a.toml")
+    await fs("sub", str(root), r"(?P<k>\w+) = \"(?P<v>OLD_ENV)\"",
+             rewrite=r"\g<v>/\g<k>", file_pattern="b.toml")
+
+    assert numeric.read_text() == 'OLD_ENV for who\n'
+    assert named.read_text() == 'OLD_ENV/who\n'
+
+
+@pytest.mark.asyncio
+async def test_sub_records_one_write_row_per_file_plus_the_operation(tmp_path):
+    begin_cell(session_id="s1", parent_tool_call_id="t/c")
+    root = _grammarless_tree(tmp_path / "proj")
+
+    await fs("sub", str(root), "OLD_ENV", rewrite="NEW_ENV")
+
+    assert [(e.tool, e.mode, e.status, e.result_kind) for e in pending()] == [
+        ("write", None, "completed", "diff"),
+        ("write", None, "completed", "diff"),
+        ("write", None, "completed", "diff"),
+        ("fs", "sub", "completed", "rewrite"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sub_no_match_changes_nothing_but_still_reports(tmp_path):
+    root = _grammarless_tree(tmp_path / "proj")
+
+    r = await fs("sub", str(root), "NOT_PRESENT", rewrite="x")
+
+    assert (r.changed, r.matches, r.scanned) == (0, 0, 4)
+    assert r.files == [] and r.diff == "" and r
+    assert [(e.tool, e.status) for e in pending()] == [("fs", "completed")]
+
+
+@pytest.mark.asyncio
+async def test_sub_bad_regex_raises_and_writes_nothing(tmp_path):
+    root = _grammarless_tree(tmp_path / "proj")
+
+    with pytest.raises(FsError, match="cannot compile pattern"):
+        await fs("sub", str(root), "OLD_ENV[", rewrite="x")
+
+    assert 'env_name = "OLD_ENV"' in (root / "config" / "dev.toml").read_text()
+
+
+@pytest.mark.asyncio
+async def test_sub_bad_replacement_template_is_an_fserror(tmp_path):
+    """re raises PatternError for \\9 and a bare IndexError for \\g<nope> —
+    from inside a thread, deep in a loop over the caller's tree. The template
+    is parsed even when nothing matches, so one probe on "" validates it
+    before a single file is read."""
+    root = _grammarless_tree(tmp_path / "proj")
+
+    with pytest.raises(FsError, match=r"cannot apply replacement.*group reference 9"):
+        await fs("sub", str(root), r"(OLD)_ENV", rewrite=r"\9")
+    with pytest.raises(FsError, match=r"cannot apply replacement.*unknown group name"):
+        await fs("sub", str(root), r"(OLD)_ENV", rewrite=r"\g<nope>")
+    assert 'env_name = "OLD_ENV"' in (root / "config" / "dev.toml").read_text()
+
+
+@pytest.mark.asyncio
+async def test_sub_refuses_a_grammar(tmp_path):
+    root = _grammarless_tree(tmp_path / "proj")
+
+    with pytest.raises(FsError, match="takes a regex, not a grammar"):
+        await fs("sub", str(root), "OLD_ENV", rewrite="x", lang="python")
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+@pytest.mark.asyncio
+async def test_sub_refuses_an_unwritable_file_before_writing_any(tmp_path):
+    root = tmp_path / "proj"
+    root.mkdir()
+    a, b = root / "a.toml", root / "b.toml"
+    a.write_text('x = "OLD"\n')
+    b.write_text('y = "OLD"\n')
+    b.chmod(0o444)
+    try:
+        with pytest.raises(FsError, match="permission denied.*nothing was written"):
+            await fs("sub", str(root), "OLD", rewrite="NEW")
+        assert a.read_text() == 'x = "OLD"\n'
+        # The plan failed, so no write() ran: one failed row and nothing else.
+        assert [(e.tool, e.status) for e in pending()] == [("fs", "failed")]
+    finally:
+        b.chmod(0o644)
+
+
+# --- dry_run ---------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dry_run_plans_a_sub_and_writes_nothing(tmp_path):
+    root = _grammarless_tree(tmp_path / "proj")
+    before = {p: p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
+
+    r = await fs("sub", str(root), "OLD_ENV", rewrite="NEW_ENV", dry_run=True)
+
+    assert r.dry_run is True and (r.changed, r.matches, r.scanned) == (3, 4, 4)
+    assert r.summary.startswith("[DRY RUN] would rewrite")
+    assert '-env_name = "OLD_ENV"' in r.diff and '+env_name = "NEW_ENV"' in r.diff
+    assert all(f.result_kind == "diff" for f in r.files)
+    assert {p: p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()} == before
+    # Nothing changed, so no diff goes to the client — a diff view over an
+    # untouched file is a lie. Only the operation's own row exists.
+    assert [(e.tool, e.mode, e.status) for e in pending()] == [
+        ("fs", "sub", "completed")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_dry_run_plans_a_rewrite_and_writes_nothing(tmp_path):
+    root = _ast_tree(tmp_path / "proj")
+    before = (root / "pkg" / "one.py").read_text()
+
+    r = await fs(
+        "rewrite", str(root), JOIN, rewrite="Path($A) / $B", lang="python",
+        dry_run=True,
+    )
+
+    assert r.dry_run is True and r.syntax == "ast" and (r.changed, r.matches) == (2, 2)
+    assert r.summary.startswith("[DRY RUN] would rewrite 2 of 3 parsed file(s)")
+    assert '-    return os.path.join(x, "a")' in r.diff
+    assert (root / "pkg" / "one.py").read_text() == before
+    assert [(e.tool, e.mode, e.status) for e in pending()] == [
+        ("fs", "rewrite", "completed")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_dry_run_diff_is_the_diff_the_real_run_produces(tmp_path):
+    """_planned_edit renders exactly what write() renders — same difflib call,
+    same a/ b/ prefixes — so dry_run is a preview, not an approximation."""
+    root = _grammarless_tree(tmp_path / "proj")
+
+    dry = await fs("sub", str(root), "OLD_ENV", rewrite="NEW_ENV", dry_run=True)
+    real = await fs("sub", str(root), "OLD_ENV", rewrite="NEW_ENV")
+
+    assert dry.diff == real.diff
+    assert [f.path for f in dry.files] == [f.path for f in real.files]
+    assert dry.summary.removeprefix("[DRY RUN] would rewrite") == (
+        real.summary.removeprefix("rewrote")
+    )
+
+
+@pytest.mark.asyncio
+async def test_dry_run_is_refused_by_the_modes_that_do_not_write(tmp_path):
+    """Checked before any mode runs, so read cannot quietly ignore it: the
+    guard used to live inside the walk branch and mode='read' never saw it."""
+    root = _grammarless_tree(tmp_path / "proj")
+
+    with pytest.raises(FsError, match=r"dry_run= is for the modes that write, not 'read'"):
+        await fs("read", str(root / "notes.ini"), dry_run=True)
+    with pytest.raises(FsError, match=r"not 'glob'"):
+        await fs("glob", str(root), "**/*.toml", dry_run=True)
+    with pytest.raises(FsError, match=r"not 'search'"):
+        await fs("search", str(root), "OLD", dry_run=True)
+    with pytest.raises(FsError, match=r"not 'ast'"):
+        await fs("ast", str(root), JOIN, dry_run=True)
+
+
 # --- dispatch --------------------------------------------------------------
 
 
@@ -548,10 +778,16 @@ async def test_mode_dispatch_errors(tmp_path):
         await fs("search", str(tmp_path))
     with pytest.raises(FsError, match="requires pattern"):
         await fs("ast", str(tmp_path))
+    with pytest.raises(FsError, match="requires pattern"):
+        await fs("sub", str(tmp_path))
     with pytest.raises(FsError, match="requires rewrite"):
         await fs("rewrite", str(tmp_path), "os.path.join($A, $B)")
+    with pytest.raises(FsError, match="requires rewrite"):
+        await fs("sub", str(tmp_path), "OLD")
     with pytest.raises(FsError, match="not a directory"):
         await fs("search", str(tmp_path / "f.txt"), "x")
+    with pytest.raises(FsError, match="unknown fs mode 'stat'"):
+        await fs("stat", str(tmp_path), dry_run=True)
 
 
 # --- edge cases found by probing a live kernel ------------------------------
@@ -945,3 +1181,94 @@ async def test_ast_and_rewrite_survive_a_syntax_error(tmp_path):
     w = await fs("rewrite", str(root), JOIN, rewrite="Path($A) / $B")
     assert (w.changed, w.matches) == (2, 2)
     assert broken.read_text() == "def f(:\n    Path(a) / b\n"
+
+
+# --- edge cases found by probing sub and dry_run in a live kernel -----------
+
+
+@pytest.mark.asyncio
+async def test_sub_preserves_crlf_line_endings(tmp_path):
+    """THE SILENT ONE. _read_text used the default newline= translation, so a
+    CRLF file came back with EVERY line ending flipped to LF — and the diff
+    HID it, because unified_diff is fed splitlines(), which strips \\r from
+    both sides. One word replaced, whole file reformatted, nothing to show
+    it. write() re-read the preimage with the same default, so crow.db's undo
+    log could not have restored the original either."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    target = root / "a.toml"
+    target.write_bytes(b'x = "OLD"\r\ny = 2\r\nz = 3\r\n')
+
+    r = await fs("sub", str(root), "OLD", rewrite="NEW")
+
+    assert target.read_bytes() == b'x = "NEW"\r\ny = 2\r\nz = 3\r\n'
+    assert r.files[0].new_text == 'x = "NEW"\r\ny = 2\r\nz = 3\r\n'
+    assert r.files[0].old_text == 'x = "OLD"\r\ny = 2\r\nz = 3\r\n'
+    # The diff looked exactly this clean before the fix too — which is why
+    # the bug shipped: the one view anyone checks was the one that hid it.
+    assert r.files[0].diff.splitlines() == [
+        "--- a/a.toml",
+        "+++ b/a.toml",
+        "@@ -1,3 +1,3 @@",
+        '-x = "OLD"',
+        '+x = "NEW"',
+        " y = 2",
+        " z = 3",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rewrite_preserves_crlf_including_a_multiline_match(tmp_path):
+    """The ast path shares _read_text, so it had the same flip — and a
+    $$$BODY match SPANS the line endings, which is the case where a
+    translation would show up inside the replacement rather than around it."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    one = root / "m.py"
+    one.write_bytes(b"import os\r\n\r\np = os.path.join(a, b)\r\nq = 2\r\n")
+    spanning = root / "n.py"
+    spanning.write_bytes(b"def f(a, b):\r\n    return os.path.join(a, b)\r\n")
+
+    single = await fs("rewrite", str(root), JOIN, rewrite="Path($A) / $B",
+                      lang="python", file_pattern="m.py")
+    multi = await fs("rewrite", str(root), "def $F($$$ARGS): $$$BODY",
+                     rewrite="# $F", lang="python", file_pattern="n.py")
+
+    assert one.read_bytes() == b"import os\r\n\r\np = Path(a) / b\r\nq = 2\r\n"
+    assert spanning.read_bytes() == b"# f\r\n"
+    assert (single.matches, multi.matches) == (1, 1)
+
+
+@pytest.mark.asyncio
+async def test_an_empty_rewrite_deletes_instead_of_being_refused(tmp_path):
+    """``rewrite=""`` is sed's s/x//g. The guard used to test falsiness, so
+    the one legitimate empty replacement was reported as a missing argument —
+    and `rewrite is None` is the only check that can tell them apart."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "a.toml").write_text("# TODO: fix this\nx = 1\n")
+    (root / "b.py").write_text("import os\np = os.path.join(a, b)\n")
+
+    deleted = await fs("sub", str(root), "TODO: ", rewrite="", file_pattern="*.toml")
+    node = await fs("rewrite", str(root), JOIN, rewrite="", file_pattern="*.py")
+
+    assert (root / "a.toml").read_text() == "# fix this\nx = 1\n"
+    # The node's range starts at "os", so deleting it leaves the space that
+    # preceded it — a dry run shows exactly this before it happens.
+    assert (root / "b.py").read_text() == "import os\np = \n"
+    assert (deleted.changed, deleted.matches) == (1, 1)
+    assert (node.changed, node.matches) == (1, 1)
+
+
+@pytest.mark.asyncio
+async def test_sub_no_op_replacement_counts_a_match_and_changes_no_file(tmp_path):
+    """Same reading the ast path gives: the pattern hit, the replacement
+    reproduced the source, so nothing was written and no write() row exists —
+    but matches > 0 with changed == 0 says that plainly."""
+    root = _grammarless_tree(tmp_path / "proj")
+
+    r = await fs("sub", str(root), r"(OLD_ENV)", rewrite=r"\1")
+
+    assert (r.changed, r.matches, r.scanned) == (0, 4, 4)
+    assert r.files == [] and r.diff == "" and r
+    assert [(e.tool, e.status) for e in pending()] == [("fs", "completed")]

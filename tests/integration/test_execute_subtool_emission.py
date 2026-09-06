@@ -358,10 +358,13 @@ async def test_drain_failed_fs_row_keeps_the_mode_kind(tmp_path):
 
 
 async def test_drain_rewrite_summary_row_is_an_edit_kind_call(tmp_path):
-    """A rewrite's own row is a text summary, so kind falls back to the MODE
-    — and get_tool_kind("rewrite") is "edit", because "write" is a substring
-    of it. Pinned deliberately: the per-file diffs arrive as their own edit
-    calls, and the operation that caused them must not look like "other"."""
+    """A rewrite's own row is a text summary, but the operation MODIFIED
+    files, so kind comes from _KIND_BY_RESULT["rewrite"] — decided by the
+    artifact, not the name. get_tool_kind's substring rules would have got
+    "rewrite" right by accident (it contains "write") and its sibling mode
+    "sub" wrong ("other"), which is the point of keying on result_kind. The
+    per-file diffs arrive as their own edit calls; the operation that caused
+    them must not look like "other"."""
     config, session = await make_test_session(tmp_path)
     summary = "rewrote 2 of 3 parsed file(s), 2 match(es): join($A, $B) -> Path($A) / $B"
     row_id = _seed_row(
@@ -375,7 +378,7 @@ async def test_drain_rewrite_summary_row_is_an_edit_kind_call(tmp_path):
             "pattern": "join($A, $B)",
             "rewrite": "Path($A) / $B",
         },
-        result_kind="text",
+        result_kind="rewrite",
         acp_payload={"content": "text", "text": summary},
     )
     conn = FakeConn()
@@ -390,6 +393,43 @@ async def test_drain_rewrite_summary_row_is_an_edit_kind_call(tmp_path):
     assert start.title == "fs/rewrite"
     assert start.locations is None
     assert start.raw_input["rewrite"] == "Path($A) / $B"
+    assert progress.content[0].content.text == summary
+    assert done.status == "completed"
+    await session.close()
+
+
+async def test_drain_sub_row_is_an_edit_kind_call_too(tmp_path):
+    """The case that proves kind follows the artifact: "sub" contains no
+    substring get_tool_kind recognises, so the name-based rule files a
+    multi-file replace under "other" — while its sibling "rewrite" lands on
+    "edit" purely because it happens to contain "write". Same result_kind,
+    same kind, no accident involved."""
+    from crow_cli.agent.tools import get_tool_kind
+
+    assert get_tool_kind("sub") == "other"
+
+    config, session = await make_test_session(tmp_path)
+    summary = "rewrote 3 of 4 scanned file(s), 4 match(es): OLD_ENV -> NEW_ENV"
+    row_id = _seed_row(
+        config.db_uri,
+        parent_tool_call_id="turn-1/call_sub",
+        tool="fs",
+        mode="sub",
+        args={"mode": "sub", "path": "/tmp/proj", "pattern": "OLD_ENV",
+              "rewrite": "NEW_ENV"},
+        result_kind="rewrite",
+        acp_payload={"content": "text", "text": summary},
+    )
+    conn = FakeConn()
+    ctx = await _make_ctx(config, session, conn)
+
+    from crow_cli.agent.tools import _emit_subtool_calls
+
+    await _emit_subtool_calls(ctx, "turn-1/call_sub")
+
+    start, progress, done = _by_id(conn, f"turn-1/call_sub{row_id}")
+    assert start.kind == "edit"
+    assert start.title == "fs/sub"
     assert progress.content[0].content.text == summary
     assert done.status == "completed"
     await session.close()

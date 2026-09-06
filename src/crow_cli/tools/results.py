@@ -229,7 +229,7 @@ class FsError(ToolError):
 
 @dataclass
 class RewriteResult(ToolResult):
-    """A structural rewrite across files.
+    """A multi-file replace — by syntax (``rewrite``) or by regex (``sub``).
 
     Each changed file was written through ``write()``, so every one of them
     is its OWN subtool row and its own diff on the client — this result is
@@ -247,17 +247,35 @@ class RewriteResult(ToolResult):
     A rewrite that reproduces the source counts as a match and changes no
     file, so ``changed == 0`` with ``matches > 0`` reads as what it is: the
     pattern hit, the rewrite was a no-op.
+
+    ``syntax`` says which engine ran: ``"ast"`` (an ast-grep pattern, whose
+    own metavariables expand in the replacement) or ``"regex"`` (Python
+    ``re``, so the replacement is a Python replacement template — ``\\1``,
+    ``\\g<name>``). ``skipped`` only means anything for ``"ast"``: re.sub is
+    non-overlapping by definition.
+
+    ``dry_run`` planned everything and wrote nothing. ``.files`` still holds
+    real EditResults with real diffs, so ``print(r.diff)`` shows exactly what
+    WOULD change — and no diff reaches the client, because nothing happened
+    to the files and a diff view over an untouched file is a lie.
     """
 
     pattern: str
     rewrite: str
     root: str
     files: list  # EditResult per changed file
-    scanned: int  # files parsed
-    matches: int  # structural matches APPLIED
+    scanned: int  # files parsed (ast) or read (regex)
+    matches: int  # matches APPLIED
     skipped: int = 0  # matches dropped for overlapping an applied one
+    syntax: str = "ast"  # "ast" | "regex"
+    dry_run: bool = False
 
-    result_kind = "text"
+    # Not "text": a rewrite MODIFIES files, so the client shows it as an
+    # edit-kind call even though its payload is the summary. Keyed here
+    # rather than left to get_tool_kind's substring rules, which classify
+    # "rewrite" as an edit only because it happens to contain "write" — and
+    # "sub" does not.
+    result_kind = "rewrite"
 
     def acp_payload(self) -> dict:
         return {"content": "text", "text": self.summary}
@@ -271,10 +289,23 @@ class RewriteResult(ToolResult):
         return [f.path for f in self.files]
 
     @property
+    def diff(self) -> str:
+        """Every changed file's unified diff, concatenated.
+
+        This is the LLM's half of a multi-file replace: the per-file diffs
+        go to the CLIENT on their own calls, and the model sees only what the
+        cell printed — so ``print(r.diff)`` is how it sees what it did (or,
+        with dry_run=True, what it is about to do).
+        """
+        return "\n".join(f.diff for f in self.files if f.diff)
+
+    @property
     def summary(self) -> str:
         overlap = f", {self.skipped} overlapping skipped" if self.skipped else ""
+        noun = "parsed" if self.syntax == "ast" else "scanned"
+        verb = "[DRY RUN] would rewrite" if self.dry_run else "rewrote"
         return (
-            f"rewrote {self.changed} of {self.scanned} parsed file(s), "
+            f"{verb} {self.changed} of {self.scanned} {noun} file(s), "
             f"{self.matches} match(es){overlap}: {self.pattern} -> {self.rewrite}"
         )
 

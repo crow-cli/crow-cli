@@ -763,6 +763,12 @@ _KIND_BY_RESULT: dict[str, ToolKind] = {
     "diff": "edit",
     "read": "read",
     "search": "search",
+    # A multi-file replace modifies files, so it is an edit-kind call even
+    # though its own payload is the summary text (the per-file diffs ride
+    # their own rows). Decided here rather than by get_tool_kind's substring
+    # rules: those classify "rewrite" as an edit only because it happens to
+    # contain "write", and "sub" does not.
+    "rewrite": "edit",
 }
 """ACP kind follows the ARTIFACT, not the tool name: a multi-mode tool
 (``fs``) is one name doing read/glob/search, and ``get_tool_kind("fs")`` is

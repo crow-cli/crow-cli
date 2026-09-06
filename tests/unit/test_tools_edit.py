@@ -113,5 +113,55 @@ async def test_usable_without_cell_context(tmp_path):
     assert e.session_id is None and e.parent_tool_call_id is None
 
 
+async def test_a_crlf_file_keeps_its_line_endings(tmp_path):
+    """The read used the default newline= translation and the write handed the
+    result back, so ONE edit to a CRLF file silently reformatted all of it —
+    with a diff showing a single changed line, because unified_diff is fed
+    splitlines(), which strips \\r from both sides. The model's old_string
+    arrives with bare \\n (it saw the file through read, which normalizes for
+    display), so the match and the replacement are translated into the file's
+    own endings rather than the file being translated into theirs."""
+    f = tmp_path / "f.toml"
+    f.write_bytes(b'x = "OLD"\r\ny = 2\r\nz = 3\r\n')
+
+    r = await edit(str(f), 'x = "OLD"', 'x = "NEW"')
+
+    assert f.read_bytes() == b'x = "NEW"\r\ny = 2\r\nz = 3\r\n'
+    assert r.old_text == 'x = "OLD"\r\ny = 2\r\nz = 3\r\n'
+    assert r.new_text == 'x = "NEW"\r\ny = 2\r\nz = 3\r\n'
+
+
+async def test_a_multiline_crlf_edit_inserts_crlf_lines(tmp_path):
+    """The replacement needs the same translation as the match, or the edit
+    splices LF lines into a CRLF file and leaves it mixed."""
+    f = tmp_path / "f.toml"
+    f.write_bytes(b"x = 1\r\ny = 2\r\nz = 3\r\n")
+
+    await edit(str(f), "x = 1\ny = 2", "x = 9\ny = 8\nw = 7")
+
+    assert f.read_bytes() == b"x = 9\r\ny = 8\r\nw = 7\r\nz = 3\r\n"
+
+
+async def test_a_mixed_ending_replacement_does_not_double_up(tmp_path):
+    """The translation normalizes before it converts, so a new_string that
+    already carries some CRLF cannot come out as \\r\\r\\n."""
+    f = tmp_path / "f.toml"
+    f.write_bytes(b"x = 1\r\ny = 2\r\n")
+
+    await edit(str(f), "x = 1", "a = 1\r\nb = 2")
+
+    assert f.read_bytes() == b"a = 1\r\nb = 2\r\ny = 2\r\n"
+
+
+async def test_an_lf_file_is_untouched_by_the_ending_translation(tmp_path):
+    f = tmp_path / "f.toml"
+    f.write_bytes(b"a = OLD\nb = 2\n")
+
+    r = await edit(str(f), "a = OLD", "a = NEW", replace_all=True)
+
+    assert f.read_bytes() == b"a = NEW\nb = 2\n"
+    assert r.old_text == "a = OLD\nb = 2\n"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

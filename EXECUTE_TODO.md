@@ -18,12 +18,15 @@ non-paging: ipykernel pydoc falls to plain stdout).
   recorded by `@subtool`, rendered server-side by the drain into ONE
   SYNTHETIC TOOL CALL PER ROW — the pretty face. Each goes out shaped like
   a call the LLM made: `start_tool_call(<turn>/call_sub<row>, title,
-  kind=get_tool_kind(tool), status="pending", locations=[path],
+  kind=_KIND_BY_RESULT[result_kind] or get_tool_kind(mode or tool),
+  status="pending", locations=[path],
   raw_input=row.args)` -> in_progress carrying the artifact (diff via
   tool_diff_content, image via tool_content(image_block), failure text via
-  tool_content(text_block)) -> completed/failed. ONE ROW IS ONE CALL: a tool
-  that touches N files records N rows (fs rewrite does exactly that, via
-  write()), so there is no "many artifacts in one row" payload shape — it
+  tool_content(text_block)) -> completed/failed. Kind follows the ARTIFACT
+  (result_kind) first, because one name doing read/glob/search/rewrite/sub
+  cannot be classified by name — see 6d. ONE ROW IS ONE CALL: a tool
+  that touches N files records N rows (fs rewrite and sub do exactly that,
+  via write()), so there is no "many artifacts in one row" payload shape — it
   was built as `multi-diff`, never gained a producer, and is now deleted.
   Why siblings, not a union list on execute's own call (that was built, then
   reversed): the client renders ONE ToolCall widget per toolCallId
@@ -211,7 +214,9 @@ it and background work never bleeds into the next cell's drain.
        leaves the tree untouched.
        Tests: 14 more unit (36 total in test_tools_fs.py), 1 drain (the
        rewrite summary row is kind="edit" — get_tool_kind("rewrite") hits
-       the "write" substring rule; pinned so a change there is a decision),
+       the "write" substring rule; pinned so a change there is a decision.
+       SUPERSEDED BY 6d: kind now comes from _KIND_BY_RESULT["rewrite"], and
+       the substring rule would file its sibling "sub" under "other"),
        1 kernel-level (the native extension loads in the kernel SUBPROCESS —
        the packaging-shaped failure in-process tests cannot see).
        pyproject.toml + uv.lock (ast-grep-py>=0.45.3) commit with this step.
@@ -283,6 +288,92 @@ it and background work never bleeds into the next cell's drain.
        Also observed live: reload() does NOT pick up a change to a module the
        tools import (see the mid-session caveat, corrected).
        Sweep: 666 passed.
+- [x] 6d. fs sub + dry_run — "make it a whole lot better". The modes were a
+       2x2 with a hole in it:
+                            find        replace
+           by regex         search      — nothing —
+           by syntax        ast         rewrite
+       No multi-file TEXT replace, so "rename this env var across every
+       .toml" was impossible: edit is one file and needs an exact string,
+       rewrite needs a grammar, and toml/sql/ini/vue/svelte/zig/r/erlang/qml
+       have none. LANDED:
+       (a) `fs(mode="sub", pattern=<python regex>, rewrite=<replacement
+           template>)` — the missing quadrant. Deliberately NOT
+           `_candidates()`: the point of sub is the files ast-grep cannot
+           parse, so the walk is narrowed only by file_pattern. The
+           replacement is re's own template (\1, \g<name>) — inventing a
+           second metavar syntax next to ast-grep's $A would be one more
+           thing to remember and one more way to be wrong.
+       (b) `dry_run=` on BOTH replace modes — plan every file, report what
+           would change, write nothing. `.files` holds real EditResults with
+           real diffs (`_planned_edit` renders byte-identically to write(),
+           pinned by a test that diffs a dry run against the real run), and
+           NO diff reaches the client: nothing happened to the files, and a
+           diff view over an untouched file is a lie.
+       (c) `RewriteResult.diff` — every changed file's unified diff,
+           concatenated. The LLM's half of a multi-file replace: the
+           per-file diffs go to the CLIENT on their own calls and the model
+           sees only what the cell printed, so `print(r.diff)` is how it sees
+           what it did (or, with dry_run, what it is about to do).
+       (d) `RewriteResult.result_kind = "rewrite"` (was "text") plus
+           `_KIND_BY_RESULT["rewrite"] = "edit"`. Kind follows the ARTIFACT,
+           not the name: get_tool_kind's substring rules file "rewrite"
+           under edit only because it happens to contain "write", and "sub"
+           under "other". Adding "sub" to that shared list is not an option —
+           "subagent"/"task_submit" would become edits. Both replace modes
+           also grew `.syntax` ("ast"|"regex"), and the summary says
+           "parsed" vs "scanned" accordingly.
+       BUGS FOUND BY PROBING THE NEW CODE (all fixed, all pinned):
+       (N) `dry_run=True` on mode="read" was silently ignored — the guard
+           lived inside the walk-mode branch, so read never saw it. The mode
+           is now validated once up front (`_MODES`), the cross-cutting
+           dry_run rule is checked before any mode runs, and the walk branch
+           lost its wrapper (an unknown mode + dry_run reports the mode,
+           which is the more useful complaint).
+       (O) A bad replacement template escaped as a raw `re.PatternError`
+           (\9) or a bare `IndexError` (\g<nope>) from inside a thread, deep
+           in a loop over the caller's tree. re parses the template even
+           when nothing matches, so one probe on "" validates it before a
+           single file is read -> FsError("cannot apply replacement ...").
+       (P) `rewrite=""` — sed's s/x//g, a legitimate deletion — was refused
+           as a missing argument, because the guard tested falsiness. Now
+           `rewrite is None`, the only check that can tell them apart.
+       (Q) THE SILENT ONE, and it was not new: `_read_text` used the default
+           newline= translation, so a CRLF file came back with EVERY line
+           ending flipped to LF — and the diff HID it, because unified_diff
+           is fed splitlines(), which strips \r from both sides. One word
+           replaced, whole file reformatted, nothing to show it. Affects sub
+           AND rewrite (shared reader). Fixed with newline=""; a
+           multi-line-spanning ast match ($$$BODY across CRLF) is pinned too.
+       (R) The same class one level up, in tools earlier steps shipped:
+           write() read its preimage with the default translation, so
+           crow.db's undo log held an LF copy of a CRLF file (restoring it
+           would reformat the very file it claims to undo), and it wrote
+           with the default translation, which on Windows turns \r\n into
+           \r\r\n. Both now newline="". edit() was worse — ONE edit to a
+           CRLF file reformatted all of it (verified live: b'x = "NEW"\ny =
+           2\n' out of a b'...\r\n' file). It now reads faithfully and
+           translates the CALLER's strings into the file's dominant ending
+           (`_in_file_endings`), which is what has to happen because the
+           model saw the file through read, which normalizes for display.
+           The legacy mcp/editor/main.py has the same bug and is deleted in
+           step 13 — left alone on purpose.
+       REJECTED, with reasons (do not re-litigate):
+       - Sequence protocol / "chainable" results (__len__/__getitem__/
+         __iter__): vetoed — "it's python! it's like a million times more
+         chainable than grep".
+       - `fs(mode="tree")`: ASCII art is aesthetics. A flat gitignore-aware
+         glob list is what a model actually wants, and
+         directory_tree.DisplayTree in agent/prompt.py already feeds the
+         system prompt at depth 3.
+       - `context=` on search (grep -C): real, but cost > value right now —
+         rg --json interleaves `context` records BEFORE their match, which
+         fights the streaming parser. Future candidate.
+       Scale, live: 585 files / 923 matches planned in 0.14s on a dry run
+       over this repo.
+       Tests: fs 57 -> 74, plus 3 in test_tools_edit, 1 in test_tools_write
+       and a drain test proving a sub row emits kind="edit" while
+       get_tool_kind("sub") says "other". Sweep: 688 passed.
 - [x] 7. vision — modes: file, webcam (the robotics door — first class,
        never dropped), video later (video-frames skill as a mode: frame
        extraction -> N file results). Bytes -> ImageStore at call time;
