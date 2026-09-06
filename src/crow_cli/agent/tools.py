@@ -677,6 +677,12 @@ async def execute_acp_execute(
     conn, logger = ctx.conn, ctx.logger
     session_id = ctx.session_id
     acp_tool_call_id = ctx.tcid(tool_call_id)
+    # The code the LLM sent, fenced for markdown rendering — attached at start
+    # so the user sees what will run before the cell finishes. The client
+    # merges update fields over the start, so the completion update must
+    # re-include it or its content would clobber this one.
+    code = str(args.get("code", ""))
+    code_block = tool_content(text_block(f"```python\n{code}\n```"))
     try:
         await conn.session_update(
             session_id=session_id,
@@ -686,6 +692,7 @@ async def execute_acp_execute(
                 title="execute",
                 kind="execute",
                 status="pending",
+                content=[code_block],
             ),
         )
         await conn.session_update(
@@ -734,7 +741,7 @@ async def execute_acp_execute(
             update=update_tool_call(
                 acp_tool_call_id,
                 status=status,
-                content=acp_content_blocks,
+                content=[code_block, *acp_content_blocks],
             ),
         )
 
