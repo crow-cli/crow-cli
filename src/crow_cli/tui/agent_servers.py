@@ -23,11 +23,15 @@ already consumes (agent_schema.Agent), so nothing downstream changes.
 
 from __future__ import annotations
 
+import logging
 import shlex
+from pathlib import Path
 from typing import Any, Literal, NotRequired, TypedDict
 
 from crow_cli.cli.source import spawn_command
 from crow_cli.tui.agent_schema import Agent
+
+logger = logging.getLogger(__name__)
 
 
 class AgentServerSpec(TypedDict, total=False):
@@ -166,6 +170,31 @@ def resolve_agent_server(
     if display := spec.get("name"):
         agent["name"] = str(display)
     return agent
+
+
+def resolved_agent_servers(config_dir: str | None = None) -> dict[str, Agent]:
+    """Every launchable agent: crow's own plus each configured entry.
+
+    Keyed by identity — what the launcher and LaunchAgent messages carry. A
+    `custom` entry's identity is its config name; crow's own is
+    ``crow-ai.dev``. Entries that fail to resolve are logged and skipped:
+    one broken entry must not take down the whole home screen.
+    """
+    from crow_cli.config import Config
+
+    config = Config.load(config_dir=Path(config_dir) if config_dir else None)
+    agents: dict[str, Agent] = {}
+    default = crow_agent()
+    agents[default["identity"]] = default
+    for name in config.agent_servers:
+        try:
+            agent = resolve_agent_server(name, config.agent_servers, config_dir=config_dir)
+        except AgentServerError as error:
+            logger.warning("agent_servers %r: %s", name, error)
+            continue
+        if (identity := agent["identity"]) not in agents:
+            agents[identity] = agent
+    return agents
 
 
 def _agent(

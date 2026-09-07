@@ -2,7 +2,6 @@ from contextlib import suppress
 from dataclasses import dataclass
 from itertools import zip_longest
 from pathlib import Path
-from random import shuffle
 from typing import Literal, Self
 
 from textual.binding import Binding
@@ -25,11 +24,10 @@ from crow_cli.tui.format_path import format_path
 from crow_cli.tui.pill import pill
 from crow_cli.tui import messages
 from crow_cli.tui.widgets.directory_input import DirectoryInput
-from crow_cli.tui.widgets.mandelbrot import Mandelbrot
 from crow_cli.tui.widgets.condensed_path import CondensedPath
 from crow_cli.tui.widgets.grid_select import GridSelect
 from crow_cli.tui.agent_schema import Agent
-from crow_cli.tui.agents import read_agents
+from crow_cli.tui.agent_servers import resolved_agent_servers
 
 
 QR = """\
@@ -380,7 +378,6 @@ class StoreScreen(Screen):
     def compose(self) -> ComposeResult:
         with containers.VerticalGroup(id="title-container"):
             with containers.Grid(id="title-grid"):
-                yield Mandelbrot()
                 yield widgets.Label(self.get_info(), id="info")
         yield DirectoryDisplay(self.project_dir).data_bind(
             project_dir=StoreScreen.project_dir
@@ -394,12 +391,6 @@ class StoreScreen(Screen):
             Content.from_markup("🐦‍⬛ Crow"),
             pill(f"v{crow_version}", "$primary-muted", "$text-primary"),
             ("\nThe universal interface for AI in your terminal", "$text-success"),
-            "\n",
-            (
-                Content.from_markup(
-                    "\nClick and hold to zoom the fractal, [b dim]ctrl+click[/] to zoom out."
-                )
-            ),
             "\n\n",
             (
                 Content.from_markup(
@@ -424,44 +415,14 @@ class StoreScreen(Screen):
         ordered_agents = sorted(
             agents.values(), key=lambda agent: agent["name"].casefold()
         )
-
-        recommended_agents = [
-            agent for agent in ordered_agents if agent.get("recommended", False)
-        ]
-        # Shuffle reccomended agents so none has priority
-        shuffle(recommended_agents)
-        if recommended_agents:
-            with containers.VerticalGroup(id="recommended-agents", classes="recommended"):
-                yield widgets.Static(
-                    "[$text-warning u]Recommended[/] [$text-secondary 100% i]Best of the bunch",
-                    classes="heading",
-                )
-                with AgentGridSelect(classes="agents-picker", min_column_width=40):
-                    for agent in recommended_agents:
-                        yield AgentItem(agent)
-
-        chat_bots = [
-            agent for agent in ordered_agents if agent["type"] in {"chat", "assistant"}
-        ]
-        if chat_bots:
+        if ordered_agents:
             yield widgets.Static(
-                "[$text-warning u]Chat & Assistants[/] [$text-secondary 100% i]Biddi-biddi-biddi",
+                "[$text-warning u]Agent servers[/] [$text-secondary 100% i]Launch an ACP agent",
                 classes="heading",
             )
             with containers.VerticalGroup():
                 with AgentGridSelect(classes="agents-picker", min_column_width=40):
-                    for agent in chat_bots:
-                        yield AgentItem(agent)
-
-        coding_agents = [agent for agent in ordered_agents if agent["type"] == "coding"]
-        if coding_agents:
-            yield widgets.Static(
-                "[$text-warning u]Coding agents[/] [$text-secondary i]Build software with AI",
-                classes="heading",
-            )
-            with containers.VerticalGroup():
-                with AgentGridSelect(classes="agents-picker", min_column_width=40):
-                    for agent in coding_agents:
+                    for agent in ordered_agents:
                         yield AgentItem(agent)
 
     def move_focus(self, direction: Literal[-1] | Literal[+1]) -> None:
@@ -537,11 +498,11 @@ class StoreScreen(Screen):
     async def on_mount(self) -> None:
         self.app.settings_changed_signal.subscribe(self, self.setting_updated)
         try:
-            self._agents = await read_agents()
+            self._agents = resolved_agent_servers()
         except Exception as error:
             self.notify(
-                f"Failed to read agents data ({error})",
-                title="Agents data",
+                f"Failed to resolve agent servers ({error})",
+                title="Agent servers",
                 severity="error",
             )
         else:

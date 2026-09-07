@@ -843,7 +843,7 @@ class CrowApp(App, inherit_bindings=False):
     ) -> None:
         from crow_cli.tui.screens.main import MainScreen
         from crow_cli.tui.agent_schema import Agent
-        from crow_cli.tui.agents import read_agents
+        from crow_cli.tui.agent_servers import resolved_agent_servers
 
         agent: Agent | None = None
         if session_pk is not None:
@@ -859,7 +859,7 @@ class CrowApp(App, inherit_bindings=False):
                 agent = self.agent_data
 
         if agent is None:
-            agents = await read_agents()
+            agents = resolved_agent_servers()
             try:
                 agent = agents[agent_identity]
             except KeyError:
