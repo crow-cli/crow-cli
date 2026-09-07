@@ -135,13 +135,47 @@ def run_mcp(
     ),
     host: str = typer.Option("127.0.0.1", "--host", help="bind address for the HTTP transport"),
     port: int = typer.Option(2769, "--port", help="port for the HTTP transport"),
+    include_tools: list[str] = typer.Option(
+        None,
+        "--include-tools",
+        metavar="TOOLS",
+        help="Allowlist of tools to serve, comma-separated and/or repeated. "
+        "Defaults to ALL of them — exclude a tool by not listing it.",
+    ),
+    list_tools: bool = typer.Option(
+        False,
+        "--list-tools",
+        help="Print the tool names --include-tools accepts and exit.",
+    ),
 ):
-    """Serve Crow's MCP tools — stdio child (default) or streamable HTTP."""
-    # Lazy import: registering the tools pulls in every tool module (incl.
-    # opencv); don't pay that for unrelated commands.
-    from crow_cli.mcp.server.main import serve
+    """Serve Crow's MCP tools — stdio child (default) or streamable HTTP.
 
-    serve(transport, host, port)
+    Spawn it several times with different --include-tools to get several
+    servers out of this one codebase.
+    """
+    # Lazy import: this module is cheap (it imports no tool group), but the
+    # tools it registers are not — vision pulls opencv. register_tools() only
+    # imports the modules that own the tools actually selected.
+    from crow_cli.mcp import tool_names
+    from crow_cli.mcp.server.main import (
+        ToolSelectionError,
+        resolve_tool_selection,
+        serve,
+    )
+
+    if list_tools:
+        for name in tool_names():
+            typer.echo(name)
+        raise typer.Exit(0)
+
+    try:
+        include = resolve_tool_selection(include_tools)
+    except ToolSelectionError as exc:
+        # Loud and on stderr: stdout is the JSON-RPC stream on stdio transport.
+        typer.secho(f"crow-cli mcp: {exc}", fg="yellow", err=True)
+        raise typer.Exit(2)
+
+    serve(transport, host, port, include_tools=include)
 
 
 @app.command("init")

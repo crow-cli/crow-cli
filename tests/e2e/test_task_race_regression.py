@@ -52,8 +52,8 @@ from crow_cli.memory.reads import get_task
 
 logger = logging.getLogger(__name__)
 
-MODEL = "qwen3.8-max-preview"
-WORKTREE = "/home/thomas/src/crow-team/crow-cli-taskmaster"
+MODEL = "qwen3.8-flash-next"
+WORKTREE = "/home/thomas/src/crow-term/crow-cli-jupyter"
 WINDOW_S = 300.0  # launch + fast child + parent web-search turns + reaction
 DIRECTIVE = (
     "do two things. first use the task tool to launch a background "

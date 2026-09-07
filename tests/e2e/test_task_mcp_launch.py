@@ -38,7 +38,7 @@ from crow_cli.memory.reads import get_task, pending_deliveries
 from crow_cli.memory.writes import create_agent, set_agent_mcp_servers
 
 MODEL = "qwen3.8-max-preview"
-WORKTREE = "/home/thomas/src/crow-team/crow-cli-taskmaster"
+WORKTREE = "/home/thomas/src/crow-term/crow-cli-jupyter"
 OWNER = "owner-e2e"
 
 pytestmark = pytest.mark.asyncio

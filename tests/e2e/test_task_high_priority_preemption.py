@@ -42,8 +42,8 @@ from crow_cli.memory.reads import get_task
 
 logger = logging.getLogger(__name__)
 
-MODEL = "qwen3.8-max-preview"
-WORKTREE = "/home/thomas/src/crow-team/crow-cli-taskmaster"
+MODEL = "qwen3.8-flash-next"
+WORKTREE = "/home/thomas/src/crow-term/crow-cli-jupyter"
 WINDOW_S = 300.0
 # Priority is forced HIGH and the parent is told to stay busy with several
 # slow tool batches, so the fast child finishes MID-TURN — that is the only
