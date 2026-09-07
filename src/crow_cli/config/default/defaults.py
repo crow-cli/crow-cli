@@ -382,6 +382,28 @@ skills_dir: ~/.agents/skills
 # remove the key to fall back to the built-in prompt.
 system_prompt_path: ~/.agents/crow/prompts/system_prompt.jinja2
 
+# Named ACP servers the TUI can launch with -a/--agent-server <name>
+# (bare `crow-cli` only). Two kinds:
+#   registry — crow's own agent, spawned from <config-dir>/src/crow-cli;
+#              `default_config_options.model` seeds its --model flag.
+#   custom   — an explicit command + args; pin everything yourself.
+# Prompt/tooling overlays live in ~/.agents/crow/configs/*.yaml and are
+# passed with `crow-cli acp --config-file <path>`: they override the base
+# config (system_prompt_path, mcpServers, db_uri, ...) while secrets stay
+# in ~/.agents/crow/.env. Prompt variants live in ~/.agents/crow/prompts/.
+# agent_servers:
+#   crow-execute:
+#     type: custom
+#     command: uv
+#     args:
+#       - --project
+#       - /home/you/.agents/crow/src/crow-cli
+#       - run
+#       - crow-cli
+#       - acp
+#       - --config-file
+#       - ~/.agents/crow/configs/execute.yaml
+
 # EXAMPLE PROVIDER
 # providers:
 #   placeholder-provider:
