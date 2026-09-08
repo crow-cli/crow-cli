@@ -25,14 +25,16 @@ the error says what to do instead: httpx is ambient, so two lines of cell
 code download the bytes with nothing lost.
 
 Extraction prefers Mozilla's Readability.js, which readabilipy drives through
-``node`` — measurably better than its pure-Python mode (no nav chrome, no raw
-``<p>`` surviving into the markdown) at ~0.8s instead of ~0.1s. Availability
-is decided HERE, with shutil.which and a directory stat, rather than by
-readabilipy's own ``have_node()``: that function runs ``npm install`` when its
-node_modules is missing, and npm install does a PROCESS-WIDE chdir — a network
-install and a cwd race, triggered lazily by a fetch, in a kernel where other
-cells resolve relative paths. Without node, extraction falls back to pure
-Python and ``.extracted`` still tells the truth about what ran.
+``node`` — measurably better than its pure-Python mode at ~0.8s instead of
+~0.1s. Availability is decided HERE, with shutil.which and a directory stat,
+rather than by readabilipy's own ``have_node()``: that function runs ``npm
+install`` when its node_modules is missing, and npm install does a
+PROCESS-WIDE chdir — a network install and a cwd race, triggered lazily by a
+fetch, in a kernel where other cells resolve relative paths. Without node,
+extraction falls back to pure Python; crow strips the ``<title>`` that mode
+leaks into content (markdownify would pass it through as raw HTML) so both
+paths produce clean markdown, and ``.extracted`` still tells the truth about
+what ran.
 
 The browser is ONE chromium and ONE context for the kernel's lifetime,
 started on the first ``run`` — a launch per cell costs ~0.3s and leaks
@@ -291,6 +293,7 @@ def _extract(body: str, content_type: str) -> tuple[str, str, bool]:
         return body.strip(), "", False
 
     import markdownify
+    from bs4 import BeautifulSoup
     import readabilipy.simple_json
 
     try:
@@ -304,6 +307,16 @@ def _extract(body: str, content_type: str) -> tuple[str, str, bool]:
     title = str(parsed.get("title") or "")
     article = parsed.get("content") or ""
     if not article:
+        return body.strip(), title, False
+    # readabilipy's pure-Python mode (no node) leaves the <title> element in
+    # content — markdownify then passes it through as raw HTML, so a page's
+    # title text rode into the markdown wrapped in literal <p> tags. The title
+    # is already reported separately; it does not belong in the body.
+    soup = BeautifulSoup(article, "html.parser")
+    for junk in soup.find_all("title"):
+        junk.decompose()
+    article = str(soup)
+    if not article.strip():
         return body.strip(), title, False
     markdown = markdownify.markdownify(article, heading_style=markdownify.ATX)
     return markdown.strip(), title, True
