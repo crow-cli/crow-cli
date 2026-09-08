@@ -69,6 +69,27 @@ def is_checkout(path: Path | str) -> bool:
     return (path / "pyproject.toml").is_file()
 
 
+def default_agent_server_entry(config_dir: Path | str | None = None) -> dict:
+    """The ``agent_servers`` entry init writes for the checkout, as data.
+
+    The explicit route for what used to be implicit: bare `crow-cli` launches
+    the TOP entry, so init leaves one named ``crow-cli`` that runs
+    ``uv --project <checkout> run crow-cli acp``. An absolute path, because
+    the TUI shell-quotes argv and a quoted ``~`` would never expand.
+    """
+    return {
+        "type": "custom",
+        "command": "uv",
+        "args": [
+            "--project",
+            str(global_checkout(config_dir)),
+            "run",
+            "crow-cli",
+            "acp",
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Crow's own spawn string
 # ---------------------------------------------------------------------------

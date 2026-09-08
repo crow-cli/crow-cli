@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from crow_cli.cli import source
+from crow_cli.tui.agent_servers import resolve_agent_server
 
 
 def _checkout(path: Path) -> Path:
@@ -80,6 +81,26 @@ def test_spawn_command_ignores_a_checkout(config_dir: Path):
     assert "uv" not in command
     assert str(source.global_checkout(config_dir)) not in command
     assert kind == ("binary" if getattr(sys, "frozen", False) else "module")
+
+
+def test_default_agent_server_entry_points_at_the_checkout(config_dir: Path):
+    """The entry init writes — and it resolves through the TUI's machinery."""
+    entry = source.default_agent_server_entry(config_dir)
+    assert entry == {
+        "type": "custom",
+        "command": "uv",
+        "args": [
+            "--project",
+            str(config_dir / "src" / "crow-cli"),
+            "run",
+            "crow-cli",
+            "acp",
+        ],
+    }
+
+    agent = resolve_agent_server("crow-cli", {"crow-cli": entry})
+    assert f"--project {config_dir / 'src' / 'crow-cli'}" in agent["run_command"]["*"]
+    assert agent["identity"] == "crow-cli"
 
 
 # ---------------------------------------------------------------------------

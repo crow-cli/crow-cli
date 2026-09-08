@@ -2,9 +2,10 @@
 crow-cli init - Interactive configuration setup wizard.
 
 Builds config.yaml and .env in ~/.agents/crow (or --config-dir), then clones
-the source checkout into <config-dir>/src and installs the crow-cli skill
-globally. Crow is source-first: the installed tool is the bootloader, the
-checkout is the program the TUI spawns (see crow_cli.cli.source).
+the source checkout into <config-dir>/src, installs the crow-cli skill
+globally, and writes the default `agent_servers` entry pointing at the
+checkout — bare `crow-cli` launches the TOP entry, so there is always one.
+See crow_cli.cli.source.
 
 Configuration priority (highest to lowest):
 1. LLM_*_API_KEY / LLM_*_BASE_URL env vars
@@ -30,7 +31,12 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
-from crow_cli.cli.source import bootstrap as source_bootstrap
+from crow_cli.cli.source import (
+    bootstrap as source_bootstrap,
+    default_agent_server_entry,
+    global_checkout,
+    is_checkout,
+)
 from crow_cli.config.default import (
     COMPOSE_YAML,
     SEARXNG_SETTINGS_YML,
@@ -139,6 +145,35 @@ def is_dashscope_url(base_url: str) -> bool:
     return "coding-intl.dashscope.aliyuncs.com" in base_url
 
 
+def add_default_agent_server(config_dir: Path) -> bool:
+    """Write the default ``crow-cli`` agent_servers entry into config.yaml.
+
+    Bare `crow-cli` launches the TOP agent_servers entry, so init leaves one
+    pointing at the source checkout — the explicit route for what used to be
+    an implicit override. Never steps on an existing ``crow-cli`` entry, and
+    writes nothing when there is no checkout (a dangling entry would break
+    the bare launch). Returns True when the file gained the entry.
+    """
+    checkout = global_checkout(config_dir)
+    if not is_checkout(checkout):
+        return False
+
+    config_file = config_dir / "config.yaml"
+    config: dict[str, Any] = yaml.safe_load(config_file.read_text()) or {}
+    servers = config.get("agent_servers") or {}
+    if "crow-cli" in servers:
+        return False
+    servers["crow-cli"] = default_agent_server_entry(config_dir)
+    config["agent_servers"] = servers
+    with open(config_file, "w") as f:
+        yaml.dump(
+            config,
+            f,
+            default_flow_style=False,
+            sort_keys=False,
+            allow_unicode=True,
+        )
+    return True
 
 
 def run_init(config_dir: Path, yes: bool = False, source: bool = True):
@@ -535,6 +570,21 @@ def run_init(config_dir: Path, yes: bool = False, source: bool = True):
         console.print(
             "\n[dim]--no-source: skipping the source checkout; the TUI will run "
             "the installed crow-cli.[/dim]"
+        )
+
+    # The default agent server, written down: bare `crow-cli` launches the TOP
+    # agent_servers entry, so init leaves one pointing at the checkout — the
+    # explicit route for what used to be implicit. Only when the checkout
+    # exists; an entry pointing at nothing would break the launch.
+    if add_default_agent_server(config_dir):
+        console.print(
+            f"[green]✓[/green] agent_servers crow-cli → "
+            f"[cyan]{global_checkout(config_dir)}[/cyan]"
+        )
+    elif not source:
+        console.print(
+            "[dim]--no-source: no checkout, so no agent_servers entry — bare "
+            "`crow-cli` runs the installed crow-cli.[/dim]"
         )
 
     # =========================================================================

@@ -12,8 +12,10 @@ from pathlib import Path
 
 import pytest
 
+import yaml
+
 from crow_cli.cli import source
-from crow_cli.cli.init_cmd import run_init
+from crow_cli.cli.init_cmd import add_default_agent_server, run_init
 
 MINIMAL_PYPROJECT = """\
 [project]
@@ -234,6 +236,21 @@ def test_run_init_clones_the_source_checkout(
     assert (source.global_checkout(config_dir) / ".venv").is_dir()
     assert (tmp_path / "skills" / "crow-cli" / "SKILL.md").is_file()
 
+    # ... and the default agent server is written down: bare `crow-cli` has a
+    # TOP entry pointing at the checkout, honored exactly by the resolver
+    config = yaml.safe_load((config_dir / "config.yaml").read_text())
+    assert config["agent_servers"]["crow-cli"] == {
+        "type": "custom",
+        "command": "uv",
+        "args": [
+            "--project",
+            str(source.global_checkout(config_dir)),
+            "run",
+            "crow-cli",
+            "acp",
+        ],
+    }
+
 
 def test_run_init_no_source_skips_the_clone(
     tmp_path: Path, remotes: dict[str, Path], quiet_env: None
@@ -245,3 +262,53 @@ def test_run_init_no_source_skips_the_clone(
     assert (config_dir / "config.yaml").is_file()
     assert not (config_dir / "src").exists()
     assert not (tmp_path / "skills").exists()
+    # no checkout, so no entry: bare `crow-cli` falls back to crow itself
+    config = yaml.safe_load((config_dir / "config.yaml").read_text())
+    assert "agent_servers" not in config
+
+
+# ---------------------------------------------------------------------------
+# add_default_agent_server
+# ---------------------------------------------------------------------------
+
+
+def _bare_checkout(path: Path) -> Path:
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "pyproject.toml").write_text('[project]\nname = "crow-cli"\n')
+    return path
+
+
+def test_add_default_agent_server_writes_the_entry_once_the_checkout_exists(tmp_path: Path):
+    config_dir = tmp_path / "crow"
+    config_dir.mkdir()
+    (config_dir / "config.yaml").write_text("providers: {}\n")
+
+    # no checkout yet: nothing written — a dangling entry would break the
+    # bare `crow-cli` launch, so there is nothing to write
+    assert add_default_agent_server(config_dir) is False
+    config = yaml.safe_load((config_dir / "config.yaml").read_text())
+    assert "agent_servers" not in config
+
+    _bare_checkout(config_dir / "src" / "crow-cli")
+    assert add_default_agent_server(config_dir) is True
+    config = yaml.safe_load((config_dir / "config.yaml").read_text())
+    assert config["agent_servers"]["crow-cli"]["args"][:2] == [
+        "--project",
+        str(config_dir / "src" / "crow-cli"),
+    ]
+    # existing keys survive the rewrite
+    assert config["providers"] == {}
+
+
+def test_add_default_agent_server_never_steps_on_an_existing_entry(tmp_path: Path):
+    config_dir = tmp_path / "crow"
+    config_dir.mkdir()
+    theirs = {"type": "custom", "command": "/usr/bin/blast", "args": ["--fast"]}
+    (config_dir / "config.yaml").write_text(
+        yaml.safe_dump({"providers": {}, "agent_servers": {"crow-cli": theirs}})
+    )
+    _bare_checkout(config_dir / "src" / "crow-cli")
+
+    assert add_default_agent_server(config_dir) is False
+    config = yaml.safe_load((config_dir / "config.yaml").read_text())
+    assert config["agent_servers"]["crow-cli"] == theirs
