@@ -383,10 +383,10 @@ skills_dir: ~/.agents/skills
 system_prompt_path: ~/.agents/crow/prompts/system_prompt.jinja2
 
 # Named ACP servers the TUI can launch with -a/--agent-server <name>
-# (bare `crow-cli` only). Two kinds:
-#   registry — crow's own agent, spawned from <config-dir>/src/crow-cli;
-#              `default_config_options.model` seeds its --model flag.
-#   custom   — an explicit command + args; pin everything yourself.
+# (bare `crow-cli` only). Every entry is a command, honored exactly as
+# written; with no -a the TOP entry is the default, the same way the top
+# model in config.yaml is the default model. Nothing configured → crow's
+# own agent.
 # Prompt/tooling overlays live in ~/.agents/crow/configs/*.yaml and are
 # passed with `crow-cli acp --config-file <path>`: they override the base
 # config (system_prompt_path, mcpServers, db_uri, ...) while secrets stay

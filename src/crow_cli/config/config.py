@@ -276,8 +276,8 @@ class Config:
     skills_dir: str = str(SKILLS_DIR)
     mcp_servers: dict[str, Any] = field(default_factory=dict)
     # Named agent servers the TUI can launch (Zed-style `agent_servers`):
-    # registry entries point at a published agent, custom entries at an
-    # arbitrary command. See crow_cli.tui.agent_servers.
+    # every entry is a command, honored exactly as written; with no -a the
+    # top entry is the default. See crow_cli.tui.agent_servers.
     agent_servers: dict[str, Any] = field(default_factory=dict)
     # image_store.s3 block (endpoint/bucket/access_key/secret_key) — when
     # present and reachable, images go to S3; else filesystem. Empty = FS.

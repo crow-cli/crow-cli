@@ -1,29 +1,19 @@
-"""Source-first distribution: crow-cli clones itself, then runs from the clone.
+"""Source helpers: `crow-cli init` clones crow; spawn strings for crow's agent.
 
-There is no non-source distribution. ``uv tool install crow-cli && crow-cli
-init`` leaves a checkout of the repo at ``<config_dir>/src/crow-cli``, and from
-then on the TUI spawns ``uv --project <checkout> run crow-cli acp``. A
-``git pull`` in the checkout IS the upgrade and pure-Python changes are live
-with no reinstall: the installed tool is the bootloader, the checkout is the
-program.
+``crow-cli init`` leaves a checkout of the repo at
+``<config_dir>/src/crow-cli`` (plus the site repo and the global skill), so a
+``git pull`` there is an upgrade. The checkout is never loaded implicitly: it
+is just a directory an ``agent_servers`` entry may point at (see
+crow_cli.tui.agent_servers) — one of potentially many agents, nothing special.
 
-Three scopes, resolved project-first the way :func:`crow_cli.agent.prompt.
-skill_roots` resolves skills — nearest project scope wins, the user scope is
-the fallback:
-
-    <cwd>/.agents/crow/agent.py       a project's own agent (repl-agent pattern)
-    <cwd>/.agents/crow/src/crow-cli   a project's own checkout -> re-exec into it
-    <config_dir>/src/crow-cli         the global checkout -> the TUI's default
-
-``crow-cli acp`` re-execs into the project scope when there is one, so the
-agent that answers is the one the repo ships. :data:`REEXEC_ENV` is the
-sentinel that stops the re-exec'd child from re-exec'ing again; ``--system``
-opts out of the whole thing and runs the code you actually invoked.
+:func:`spawn_command` builds the launch string for crow's OWN agent, and it is
+always the code that is actually running: a frozen build's ``acp``
+subcommand, or this interpreter via ``-m crow_cli.agent.main``. No checkout
+preference, no re-exec, no behind-the-scenes redirection.
 """
 
 from __future__ import annotations
 
-import os
 import shlex
 import shutil
 import subprocess
@@ -31,33 +21,21 @@ import sys
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
-from crow_cli.agent.prompt import ancestors
 from crow_cli.config.config import get_default_config_dir
 
 CROW_REPO = "https://github.com/crow-cli/crow-cli"
 SITE_REPO = "https://github.com/crow-cli/crow-cli.github.io"
 BRANCH = "main"
 
-#: Set on the child before exec'ing into a project scope. Its presence means
-#: "this process IS the re-exec", so it must not look for another one.
-REEXEC_ENV = "CROW_ACP_REEXEC"
-
 #: The map skill, versioned in the repo at ``skills/crow-cli`` and installed
-#: globally by init. Global because it is the BIOS: when a project-level spawn
-#: is broken, the agent that fixes it cannot fetch the skill from the broken
-#: thing it is repairing.
+#: globally by init. Global because it is the BIOS: when a spawn is broken,
+#: the agent that fixes it cannot fetch the skill from the broken thing it
+#: is repairing.
 SKILL_NAME = "crow-cli"
-
-PROJECT_SCOPE = Path(".agents") / "crow"
 
 
 class SourceError(Exception):
     """A git/uv step failed. Callers report it; init does not abort on it."""
-
-
-def _warn(message: str) -> None:
-    """A fallback is about to happen. Say so — never degrade silently."""
-    print(f"crow-cli: {message}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -91,45 +69,8 @@ def is_checkout(path: Path | str) -> bool:
     return (path / "pyproject.toml").is_file()
 
 
-def project_scope(cwd: Path | str) -> Path | None:
-    """The nearest ``.agents/crow`` from ``cwd`` up to the git root, if any.
-
-    Same walk as :func:`crow_cli.agent.prompt.skill_roots`: a project scope
-    travels with the repo, and running crow from a subdirectory of that repo
-    still finds it.
-    """
-    for directory in ancestors(Path(cwd)):
-        scope = directory / PROJECT_SCOPE
-        if scope.is_dir():
-            return scope
-    return None
-
-
-def project_agent_script(cwd: Path | str) -> Path | None:
-    """``<cwd>/.agents/crow/agent.py`` — a project's own agent, if it has one.
-
-    The repl-agent pattern: a script that imports ``crow_cli``, mutates
-    ``Config``, wires its own hooks and calls ``run_agent``. Different
-    compaction is a different creature, and this is how a repo gets one.
-    """
-    scope = project_scope(cwd)
-    if scope is None:
-        return None
-    script = scope / "agent.py"
-    return script if script.is_file() else None
-
-
-def project_checkout(cwd: Path | str) -> Path | None:
-    """``<cwd>/.agents/crow/src/crow-cli`` when it is a usable source tree."""
-    scope = project_scope(cwd)
-    if scope is None:
-        return None
-    checkout = scope / "src" / "crow-cli"
-    return checkout if is_checkout(checkout) else None
-
-
 # ---------------------------------------------------------------------------
-# Spawning from a checkout
+# Crow's own spawn string
 # ---------------------------------------------------------------------------
 
 
@@ -137,103 +78,22 @@ def uv_available() -> bool:
     return shutil.which("uv") is not None
 
 
-def uv_argv(checkout: Path | str, args: Iterable[str] = ()) -> list[str]:
-    """``uv --project <checkout> run crow-cli <args>`` as an argv list."""
-    return ["uv", "--project", str(checkout), "run", "crow-cli", *args]
+def spawn_command(flags: Iterable[str] = ()) -> tuple[str, str]:
+    """Crow's own agent subprocess launch string, given its ``acp`` flags.
 
-
-def spawn_command(
-    flags: Iterable[str] = (),
-    *,
-    config_dir: Path | str | None = None,
-    system: bool = False,
-) -> tuple[str, str]:
-    """How the TUI should launch crow's agent, given its ``acp`` flags.
-
-    Returns ``(command, kind)`` where ``kind`` is ``"source"`` (spawned from
-    the global checkout via uv), ``"binary"`` (a frozen build's own ``acp``
-    subcommand) or ``"module"`` (this interpreter, ``-m crow_cli.agent.main``,
-    which is the agent's argparse entry and takes no subcommand).
-
-    The checkout wins by default — that is the whole point of a source-first
-    distribution. ``system=True``, a missing checkout, or no ``uv`` on PATH
-    falls back to the code that is actually running, and every fallback is
-    reported on stderr rather than silent.
+    Returns ``(command, kind)`` where ``kind`` is ``"binary"`` (a frozen
+    build's own ``acp`` subcommand) or ``"module"`` (this interpreter,
+    ``-m crow_cli.agent.main``, which is the agent's argparse entry and takes
+    no subcommand). Always the code that is actually running: pointing at a
+    source checkout is an ``agent_servers`` entry the user writes, never
+    something crow does behind their back.
     """
     flags = [str(a) for a in flags]
     quoted = (" " + " ".join(shlex.quote(a) for a in flags)) if flags else ""
 
-    if not system:
-        checkout = global_checkout(config_dir)
-        if is_checkout(checkout):
-            if uv_available():
-                return (
-                    " ".join(shlex.quote(a) for a in uv_argv(checkout, ["acp", *flags])),
-                    "source",
-                )
-            _warn(
-                f"{checkout} is a source checkout but `uv` is not on PATH — "
-                "falling back to the installed crow-cli. Install uv, or pass "
-                "--system to make this the intended behaviour."
-            )
-        else:
-            _warn(
-                f"No source checkout at {checkout} — running the installed "
-                "crow-cli. `crow-cli init` clones it; --system silences this."
-            )
-
     if getattr(sys, "frozen", False):
         return f"{shlex.quote(sys.executable)} acp{quoted}", "binary"
     return f"{shlex.quote(sys.executable)} -m crow_cli.agent.main{quoted}", "module"
-
-
-def reexec_into_project(cwd: Path | str, argv: list[str]) -> bool:
-    """Re-exec ``crow-cli acp`` into the project's own agent, if it has one.
-
-    ``argv`` is ``sys.argv[1:]`` — it starts with ``acp``. Returns False when
-    there is nothing to re-exec into, when this process is already a re-exec,
-    or when the attempt failed (loudly, on stderr) so the caller carries on
-    in-process. A successful exec replaces this process and never returns.
-    """
-    if os.environ.get(REEXEC_ENV):
-        return False
-
-    script = project_agent_script(cwd)
-    checkout = project_checkout(cwd)
-    if script is None and checkout is None:
-        return False
-
-    if script is not None and checkout is not None:
-        # The project's agent, running inside the project's own environment.
-        target = ["uv", "--project", str(checkout), "run", "python", str(script), *argv[1:]]
-    elif checkout is not None:
-        target = uv_argv(checkout, argv)
-    else:
-        # A bare agent.py with no checkout: run it with this interpreter, which
-        # can already import crow_cli because it is running it.
-        target = [sys.executable, str(script), *argv[1:]]
-
-    if target[0] == "uv" and not uv_available():
-        _warn(
-            f"Project agent at {script or checkout} needs `uv`, which is not on "
-            "PATH — running the installed crow-cli instead. Pass --system to "
-            "make that the intended behaviour."
-        )
-        return False
-
-    os.environ[REEXEC_ENV] = "1"
-    try:
-        os.execvp(target[0], target)
-    except OSError as error:
-        # We did not exec, so we are not a re-exec: do not leave the sentinel
-        # behind to stop the caller from trying anything else.
-        del os.environ[REEXEC_ENV]
-        _warn(
-            f"Could not re-exec into the project agent ({' '.join(target)}): "
-            f"{error}. Running the installed crow-cli instead."
-        )
-        return False
-    raise AssertionError("execvp returned")  # unreachable
 
 
 # ---------------------------------------------------------------------------

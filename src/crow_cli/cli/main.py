@@ -21,7 +21,6 @@ from crow_cli.agent.memory import MemoryClient, MemoryServiceError
 from crow_cli.agent.session import AgentSession
 from crow_cli.cli.init_cmd import init_command
 from crow_cli.cli.install import app as install_app
-from crow_cli.cli.source import reexec_into_project
 from crow_cli.client.main import CrowClient, connect_client
 
 app = typer.Typer(
@@ -94,23 +93,8 @@ def run_agentmain(
         "--port",
         help="Port with --http (default 2769)",
     ),
-    system: bool = typer.Option(
-        False,
-        "--system",
-        help=(
-            "Run THIS crow-cli instead of re-exec'ing into a project-level agent "
-            "at <cwd>/.agents/crow (agent.py and/or src/crow-cli)."
-        ),
-    ),
 ):
     """Main entry point for the crow-cli agent."""
-    # A project can ship its own agent. Re-exec into it before anything else:
-    # the child owns stdio, and there is no point loading config in a process
-    # that is about to be replaced. CROW_ACP_REEXEC in the environment stops
-    # the child from looking for yet another one.
-    if not system and reexec_into_project(Path.cwd(), sys.argv[1:]):
-        return  # unreachable — execvp replaced this process
-
     if config_dir is None:
         config_dir = Path.home() / ".agents" / "crow"
 
@@ -1000,14 +984,6 @@ def global_callback(
         "--config-file",
         help="Config file (bare `crow-cli` TUI only).",
     ),
-    system: bool = typer.Option(
-        False,
-        "--system",
-        help=(
-            "Run the installed crow-cli agent instead of the source checkout at "
-            "<config-dir>/src/crow-cli (bare `crow-cli` TUI only)."
-        ),
-    ),
 ):
     """Crow ACP Client - Transparent, observable agent client.
 
@@ -1016,9 +992,7 @@ def global_callback(
     if ctx.invoked_subcommand is None:
         from crow_cli.cli.tui_cmd import launch_tui
 
-        launch_tui(
-            directory, session, model, config_dir, config_file, agent_server, system
-        )
+        launch_tui(directory, session, model, config_dir, config_file, agent_server)
 
 
 def main():

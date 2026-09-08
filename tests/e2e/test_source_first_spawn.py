@@ -1,12 +1,13 @@
-"""E2E: the source-first distribution, from `init` to a talking agent.
+"""E2E: from `crow-cli init` to a talking agent.
 
-The whole claim in one test — there is no non-source distribution:
+The whole claim in one test:
 
   1. ``bootstrap`` really clones the repo and really runs ``uv sync``, leaving
      a runnable checkout at ``<config_dir>/src/crow-cli``.
   2. That checkout runs ITS OWN code, not the tree the test was launched from.
-  3. ``crow_agent`` — the function that builds the TUI's launch string —
-     produces ``uv --project <checkout> run crow-cli acp``.
+  3. Crow's own agent never reaches for the checkout implicitly — pointing at
+     it is an ``agent_servers`` entry the user writes, so the test builds that
+     entry's launch string explicitly (what `crow-cli init` writes for them).
   4. That exact string, handed to a shell the way the TUI hands it, produces a
      live ACP agent that completes an ``initialize`` handshake.
 
@@ -14,8 +15,7 @@ The "remote" is this repository at its current branch, so what gets cloned and
 spawned is the code under test. Nothing is mocked and no LLM is called: the
 handshake is the assertion surface, and it needs no provider.
 
-Live: needs ``git`` and ``uv`` on PATH, and a committed branch that carries
-``crow_cli/cli/source.py``; skips otherwise.
+Live: needs ``git`` and ``uv`` on PATH; skips otherwise.
 """
 
 import asyncio
@@ -72,7 +72,6 @@ def this_repo_as_the_remote(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setattr(source, "CROW_REPO", str(REPO))
     monkeypatch.setattr(source, "BRANCH", branch)
     monkeypatch.setattr(source, "SITE_REPO", str(site))
-    monkeypatch.delenv(source.REEXEC_ENV, raising=False)
     return REPO
 
 
@@ -91,10 +90,7 @@ async def test_init_clone_spawn_handshake(
     assert source.is_checkout(checkout)
     assert report["synced"] is True
     if not (checkout / "src" / "crow_cli" / "cli" / "source.py").is_file():
-        pytest.skip(
-            f"the checked-out branch predates the source-first distribution "
-            f"({checkout} has no crow_cli/cli/source.py)"
-        )
+        pytest.skip(f"the checked-out branch predates the current layout ({checkout})")
 
     # 2. the checkout's venv runs the CHECKOUT's code, not this tree's
     probe = subprocess.run(
@@ -112,10 +108,11 @@ async def test_init_clone_spawn_handshake(
     assert executable.startswith(str(checkout)), executable
     assert str(REPO) not in module_file
 
-    # 3. the TUI's launch string is the uv one
+    # 3. crow's own agent does NOT reach for the checkout implicitly; the
+    #    launch that reaches it is an agent_servers entry, written explicitly.
     agent = crow_agent(config_dir=str(config_dir))
-    command = agent["run_command"]["*"]
-    assert command.startswith(f"uv --project {checkout} run crow-cli acp"), command
+    assert "uv" not in agent["run_command"]["*"]
+    command = f"uv --project {checkout} run crow-cli acp --config-dir {config_dir}"
 
     # 4. and that string, handed to a shell, is a live ACP agent
     proc = await asyncio.create_subprocess_shell(

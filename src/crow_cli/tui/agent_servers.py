@@ -4,21 +4,20 @@ Mirrors Zed's `agent_servers` settings block so an arbitrary ACP agent can be
 selected without touching code:
 
     agent_servers:
-      crow-cli:
-        type: registry
-        default_config_options:
-          model: alibaba:qwen3.8-max-preview
+      crow-execute:
+        command: uv
+        args: ["--project", "~/.agents/crow/src/crow-cli", "run", "crow-cli", "acp"]
       blast:
-        type: custom
         command: /usr/bin/python3
         args: ["mock_acp_agent.py"]
         env:
           CROW_MOCK_CHUNKS: "50000"
 
-`registry` entries launch an agent crow-cli knows about (currently crow itself),
-optionally pinning config options. `custom` entries launch any command that
-speaks ACP over stdio. Both resolve to the same `Agent` definition the TUI
-already consumes (agent_schema.Agent), so nothing downstream changes.
+Every entry is a command, honored exactly as written — crow never substitutes
+its own agent for a configured one. Crow's own agent exists only as the
+fallback when nothing is configured (see :func:`crow_agent`). Entries resolve
+to the same `Agent` definition the TUI already consumes (agent_schema.Agent),
+so nothing downstream changes.
 """
 
 from __future__ import annotations
@@ -26,7 +25,7 @@ from __future__ import annotations
 import logging
 import shlex
 from pathlib import Path
-from typing import Any, Literal, NotRequired, TypedDict
+from typing import Any, Literal, TypedDict
 
 from crow_cli.cli.source import spawn_command
 from crow_cli.tui.agent_schema import Agent
@@ -37,16 +36,16 @@ logger = logging.getLogger(__name__)
 class AgentServerSpec(TypedDict, total=False):
     """One `agent_servers` entry, as written in config."""
 
-    type: Literal["registry", "custom"]
-    """`registry` (default) launches a known agent; `custom` a command."""
+    type: Literal["custom"]
+    """Optional — an entry is a command; ``custom`` is the only kind now."""
     command: str
-    """Executable to spawn (`custom`)."""
+    """Executable to spawn."""
     args: list[str]
-    """Arguments for the executable (`custom`)."""
+    """Arguments for the executable."""
     env: dict[str, str]
-    """Extra environment for the agent subprocess (`custom`)."""
-    default_config_options: dict[str, Any]
-    """Options applied to the agent, e.g. `model`."""
+    """Extra environment for the agent subprocess."""
+    name: str
+    """Optional display name; the config key stays the identity either way."""
 
 
 class AgentServerError(Exception):
@@ -57,16 +56,12 @@ def crow_agent(
     model: str | None = None,
     config_dir: str | None = None,
     config_file: str | None = None,
-    system: bool = False,
 ) -> Agent:
-    """The crow-cli agent definition, flags embedded in the launch command.
+    """Crow's own agent definition, flags embedded in the launch command.
 
-    Launches from the source checkout at ``<config_dir>/src/crow-cli`` when
-    there is one (``uv --project <checkout> run crow-cli acp``) so a
-    ``git pull`` there is an upgrade and pure-Python changes are live with no
-    reinstall. ``system=True`` runs the installed crow-cli instead; with no
-    checkout, frozen builds call the binary's ``acp`` subcommand and dev runs
-    call the module. See :mod:`crow_cli.cli.source`.
+    The fallback when nothing is configured: always the code that is actually
+    running (see :func:`crow_cli.cli.source.spawn_command`). Pointing at a
+    source checkout is an ``agent_servers`` entry the user writes instead.
     """
     args: list[str] = []
     if config_dir is not None:
@@ -77,7 +72,7 @@ def crow_agent(
         args += ["--model", model]
 
     # spawn_command shell-quotes; hand it raw values.
-    command, kind = spawn_command(args, config_dir=config_dir, system=system)
+    command, kind = spawn_command(args)
 
     return _agent(
         identity="crow-ai.dev",
@@ -86,7 +81,7 @@ def crow_agent(
         description="The Crow agent — transparent, observable, self-orchestrating.",
         help=(
             "crow-cli's own ACP agent.\n\n"
-            f"Launching from: {'the source checkout' if kind == 'source' else 'the installed crow-cli'}."
+            f"Launching from: {'the frozen build' if kind == 'binary' else 'this crow-cli install'}."
         ),
         run_command={"*": command},
     )
@@ -96,9 +91,7 @@ def custom_agent(name: str, spec: AgentServerSpec) -> Agent:
     """Build an Agent definition from a `custom` agent_servers entry."""
     command = spec.get("command")
     if not command:
-        raise AgentServerError(
-            f"agent_servers {name!r}: type 'custom' requires a 'command'."
-        )
+        raise AgentServerError(f"agent_servers {name!r}: requires a 'command'.")
     args = spec.get("args") or []
     if not isinstance(args, list):
         raise AgentServerError(f"agent_servers {name!r}: 'args' must be a list.")
@@ -119,20 +112,12 @@ def custom_agent(name: str, spec: AgentServerSpec) -> Agent:
     )
 
 
-def resolve_agent_server(
-    name: str,
-    agent_servers: dict[str, Any],
-    config_dir: str | None = None,
-    config_file: str | None = None,
-    model: str | None = None,
-    system: bool = False,
-) -> Agent:
+def resolve_agent_server(name: str, agent_servers: dict[str, Any]) -> Agent:
     """Resolve a configured agent server name into an Agent definition.
 
-    `model` (from -m) overrides the entry's `default_config_options.model`;
-    it applies to `registry` entries only — a `custom` entry owns its argv.
-    `system` likewise only affects `registry` entries: a `custom` entry is
-    already an explicit command.
+    The entry is honored exactly as written: its command, args and env ARE
+    the launch. Crow never substitutes its own agent for a configured one —
+    that is what ``-a NAME`` means.
 
     Raises:
         AgentServerError: The name is not configured, or its entry is invalid.
@@ -146,25 +131,14 @@ def resolve_agent_server(
     if not isinstance(spec, dict):
         raise AgentServerError(f"agent_servers.{name!r} must be a mapping.")
 
-    kind = spec.get("type", "registry")
-    options = spec.get("default_config_options") or {}
-    if not isinstance(options, dict):
+    kind = spec.get("type", "custom")
+    if kind != "custom":
         raise AgentServerError(
-            f"agent_servers {name!r}: 'default_config_options' must be a mapping."
+            f"agent_servers {name!r}: unknown type {kind!r}; an agent server "
+            "is a command (type 'custom' or none at all)."
         )
-    if kind == "custom":
-        agent = custom_agent(name, spec)
-    elif kind == "registry":
-        agent = crow_agent(
-            model=model or options.get("model"),
-            config_dir=config_dir,
-            config_file=config_file,
-            system=system,
-        )
-    else:
-        raise AgentServerError(
-            f"agent_servers {name!r}: unknown type {kind!r}; use 'registry' or 'custom'."
-        )
+
+    agent = custom_agent(name, spec)
 
     # A configured display name wins over the derived one.
     if display := spec.get("name"):
@@ -188,7 +162,7 @@ def resolved_agent_servers(config_dir: str | None = None) -> dict[str, Agent]:
     agents[default["identity"]] = default
     for name in config.agent_servers:
         try:
-            agent = resolve_agent_server(name, config.agent_servers, config_dir=config_dir)
+            agent = resolve_agent_server(name, config.agent_servers)
         except AgentServerError as error:
             logger.warning("agent_servers %r: %s", name, error)
             continue

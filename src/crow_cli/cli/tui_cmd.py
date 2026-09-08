@@ -1,13 +1,14 @@
 """The TUI entry point — bare `crow-cli` launches the interactive client.
 
-The TUI is derived from Toad (see src/crow_cli/tui/NOTICE) and drives
-`crow-cli acp` exactly like any other ACP agent: it spawns the agent
-subprocess and speaks ACP over stdio. Which agent to spawn comes from the
-`agent_servers` config block (see crow_cli.tui.agent_servers); with nothing
-configured it launches crow's own agent — from the source checkout at
-`<config_dir>/src/crow-cli` when `crow-cli init` put one there, and from the
-installed crow-cli otherwise (`--system` forces the latter). See
-crow_cli.cli.source.
+The TUI is derived from Toad (see src/crow_cli/tui/NOTICE) and drives an ACP
+agent over stdio exactly like any other ACP client: it spawns the agent
+subprocess and speaks ACP. Which agent to spawn comes from the
+`agent_servers` config block (see crow_cli.tui.agent_servers):
+
+  * ``-a NAME`` launches exactly that entry — its command, honored as written.
+  * no ``-a`` launches the TOP entry, the same way the top model in config.yaml
+    is the default model when no ``-m`` is passed.
+  * nothing configured launches crow's own agent (:func:`crow_agent`).
 """
 
 from pathlib import Path
@@ -24,13 +25,8 @@ def launch_tui(
     config_dir: Path | None = None,
     config_file: Path | None = None,
     agent_server: str | None = None,
-    system: bool = False,
 ) -> None:
-    """Launch the TUI against the given project directory.
-
-    `system` runs the installed crow-cli agent instead of the source checkout
-    at `<config_dir>/src/crow-cli` (see crow_cli.cli.source).
-    """
+    """Launch the TUI against the given project directory."""
     try:
         from crow_cli.tui.app import CrowApp
     except ImportError:
@@ -46,21 +42,19 @@ def launch_tui(
         typer.echo(f"Not a directory: {directory}", err=True)
         raise typer.Exit(1)
 
-    if agent_server is None:
-        agent_data = crow_agent(model, config_dir, config_file, system)
-    else:
-        from crow_cli.config import Config
+    from crow_cli.config import Config
 
-        config = Config.load(config_dir=config_dir)
+    config = Config.load(config_dir=config_dir)
+    if agent_server is None:
+        # No -a: the top entry wins — same rule as models, where the top model
+        # in config.yaml is what you get when no -m is passed.
+        agent_server = next(iter(config.agent_servers), None)
+
+    if agent_server is None:
+        agent_data = crow_agent(model, config_dir, config_file)
+    else:
         try:
-            agent_data = resolve_agent_server(
-                agent_server,
-                config.agent_servers,
-                config_dir=str(config_dir) if config_dir else None,
-                config_file=str(config_file) if config_file else None,
-                model=model,
-                system=system,
-            )
+            agent_data = resolve_agent_server(agent_server, config.agent_servers)
         except AgentServerError as error:
             typer.echo(str(error), err=True)
             raise typer.Exit(1) from error
