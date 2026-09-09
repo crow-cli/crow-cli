@@ -157,7 +157,7 @@ class AcpAgent(Agent):
     No wrapper, no nesting - just one clean implementation.
     """
 
-    _conn: Client
+    _conn: Client | None = None
     _client_capabilities: ClientCapabilities | None = None
     _logger: Logger
 
