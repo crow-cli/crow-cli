@@ -517,24 +517,30 @@ class AcpAgent(Agent):
 
         config_options = self._get_config_options(session.session_id)
 
-        # Send available commands update asynchronously
-        if self._conn is not None:
-            available_commands = [
-                AvailableCommand(name=cmd["name"], description=cmd["description"])
-                for cmd in _SLASH_COMMANDS
-            ]
-            asyncio.create_task(
-                self._conn.session_update(
-                    session_id=session.session_id,
-                    update=AvailableCommandsUpdate(
-                        session_update="available_commands_update",
-                        available_commands=available_commands,
-                    ),
-                )
-            )
+        await self._send_available_commands(session.session_id)
 
         return NewSessionResponse(
             session_id=session.session_id, config_options=config_options
+        )
+
+    async def _send_available_commands(self, session_id: str) -> None:
+        """Advertise this wire session's slash commands (new/load/fork).
+
+        Every path that attaches a session to the wire must call this: a
+        resumed or forked session otherwise comes up with no agent-side
+        slash commands in the client.
+        """
+        if self._conn is None:
+            return
+        await self._conn.session_update(
+            session_id=session_id,
+            update=AvailableCommandsUpdate(
+                session_update="available_commands_update",
+                available_commands=[
+                    AvailableCommand(name=cmd["name"], description=cmd["description"])
+                    for cmd in _SLASH_COMMANDS
+                ],
+            ),
         )
 
     async def load_session(
@@ -638,6 +644,7 @@ class AcpAgent(Agent):
 
             # TODO: Replay conversation history to client
 
+            await self._send_available_commands(session_id)
             config_options = self._get_config_options(session_id)
             return LoadSessionResponse(config_options=config_options)
         except Exception as e:
@@ -767,6 +774,7 @@ class AcpAgent(Agent):
             len(session.messages),
             len(tools),
         )
+        await self._send_available_commands(wire_id)
         return ForkSessionResponse(
             session_id=wire_id,
             config_options=self._get_config_options(wire_id),
