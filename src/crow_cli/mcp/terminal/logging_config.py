@@ -16,7 +16,7 @@ def setup_terminal_logging(log_level: int = logging.DEBUG) -> logging.Logger:
         Configured logger for terminal module
     """
     # Create logs directory
-    log_dir = Path.home() / ".cache" / "crow-mcp" / "logs"
+    log_dir = Path.home() / ".agents" / "crow" / "logs" / "crow-mcp"
     log_dir.mkdir(parents=True, exist_ok=True)
     
     # Create timestamped log file
@@ -53,7 +53,7 @@ def setup_terminal_logging(log_level: int = logging.DEBUG) -> logging.Logger:
 
 def get_log_file_path() -> Path:
     """Get the most recent terminal log file path."""
-    log_dir = Path.home() / ".cache" / "crow-mcp" / "logs"
+    log_dir = Path.home() / ".agents" / "crow" / "logs" / "crow-mcp"
     if not log_dir.exists():
         return None
     
