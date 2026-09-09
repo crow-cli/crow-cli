@@ -39,6 +39,7 @@ from crow_cli.cli.source import (
 )
 from crow_cli.config.default import (
     COMPOSE_YAML,
+    EXECUTE_PROMPT,
     SEARXNG_SETTINGS_YML,
     SYSTEM_PROMPT,
 )
@@ -463,6 +464,10 @@ def run_init(config_dir: Path, yes: bool = False, source: bool = True):
         console.print(f"[green]✓[/green] Wrote prompt template to {prompt_file}")
     else:
         console.print(f"[yellow]⊘[/yellow] Prompt template already exists, skipping")
+    execute_file = dest_prompts / "execute_prompt.jinja2"
+    if not execute_file.exists():
+        execute_file.write_text(EXECUTE_PROMPT)
+        console.print(f"[green]✓[/green] Wrote execute prompt template to {execute_file}")
 
     # config.yaml — single source of truth for crow-cli config
     config_data: dict[str, Any] = {
@@ -606,6 +611,7 @@ def run_init(config_dir: Path, yes: bool = False, source: bool = True):
         memory_line,
         f"Logs:     [cyan]{config_logs}[/cyan]",
         f"Prompt:   [cyan]{system_prompt_dir}/system_prompt.jinja2[/cyan]",
+        f"Execute:  [cyan]{system_prompt_dir}/execute_prompt.jinja2[/cyan]",
         f"Secrets:  [cyan]{env_file}[/cyan]",
     ]
     if active_services:
