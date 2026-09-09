@@ -51,6 +51,7 @@ dependencies = [
     "ast-grep-py>=0.45.3",
     "playwright>=1.62.0",
     "polars>=1.44.1",
+    "ripgrep-rs>=0.4.2",
 ]
 
 [project.urls]
