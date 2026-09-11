@@ -52,6 +52,8 @@ dependencies = [
     "playwright>=1.62.0",
     "polars>=1.44.1",
     "ripgrep-rs>=0.4.2",
+    "celery>=5.6.3",
+    "tenacity>=9.1.4",
 ]
 
 [project.urls]

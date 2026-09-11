@@ -55,6 +55,23 @@ async def test_schema_hides_context(mcp_app):
     }
 
 
+async def test_execute_description_explains_persistent_cell_semantics(mcp_app):
+    async with Client(mcp_app) as client:
+        tools = await client.list_tools()
+    [tool] = [t for t in tools if t.name == "execute"]
+    description = tool.description or ""
+    for phrase in (
+        "persistent IPython kernel",
+        "not a fresh Python process per call",
+        "reuse names already defined",
+        "Do not re-import",
+        "reset=True",
+        "discards all state",
+        "reload()",
+    ):
+        assert phrase in description, description
+
+
 async def test_no_out_n_in_output(mcp_app):
     """The REPL's display of the last expression is NOT a channel: a bare
     expression produces no output. print() is how code talks back."""

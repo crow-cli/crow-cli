@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from textual import on
+from textual import on, work
 from textual.app import ComposeResult
 from textual import lazy
 from textual import containers
@@ -220,9 +220,11 @@ class SettingsScreen(ModalScreen):
             self.app.settings.set(event.checkbox.name, event.checkbox.value)
 
     @on(Select.Changed)
-    def on_select_changed(self, event: Select.Changed) -> None:
-        if event.select.name is not None:
-            self.app.settings.set(event.select.name, event.select.value)
+    @work
+    async def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.name is not None and event.value is not Select.BLANK:
+            self.app.settings.set(event.select.name, event.value)
+            await self.app.save_settings()
 
     def filter_settings(self, search_term: str) -> None:
         if search_term:

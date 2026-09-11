@@ -249,12 +249,12 @@ async def _ask_over_history(
 
 
 def analysis_path(config_dir: Path | str, agent_id: str) -> Path:
-    """Where a session's harness analysis lands: ``<config_dir>/ideas/<agent>.md``.
+    """Where a session's harness analysis lands: ``<config_dir>/analysis/<agent>.md``.
 
     Global on purpose — the analysis is about crow-cli, not about the repo the
     session happened to be sitting in, so it has to survive leaving that repo.
     """
-    return Path(config_dir) / "ideas" / f"{agent_id}.md"
+    return Path(config_dir) / "analysis" / f"{agent_id}.md"
 
 
 def ideas_path(cwd: Path | str, agent_id: str) -> Path:
@@ -418,7 +418,7 @@ async def compact(
         on_compact(session.agent_id, new_session)
 
     # Two more passes over the same warm history: a harness-level analysis
-    # (global, <config_dir>/ideas/) and project-level ideas (in the working
+    # (global, <config_dir>/analysis/) and project-level ideas (in the working
     # tree, <cwd>/.agents/crow/ideas/). Both are named for the generation
     # being compacted, because that is the history they read. Best-effort —
     # write_reflections logs and swallows, it never raises.

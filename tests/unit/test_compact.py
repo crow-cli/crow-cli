@@ -98,7 +98,7 @@ class TestCompaction:
         """Real config; persistence AND the config dir are redirected.
 
         ``config_dir`` has to move: the harness analysis is written to
-        ``<config_dir>/ideas/``, and a unit test must not leave files in the
+        ``<config_dir>/analysis/``, and a unit test must not leave files in the
         developer's real ``~/.agents/crow``.
         """
         config = Config.load()
@@ -346,7 +346,7 @@ class TestCompaction:
     async def test_compact_writes_analysis_globally_and_ideas_into_the_project(
         self, setup_session, mock_llm, compact_config
     ):
-        """Analysis -> <config_dir>/ideas/<agent-id>.md (it is about crow-cli, so
+        """Analysis -> <config_dir>/analysis/<agent-id>.md (it is about crow-cli, so
         it has to outlive the repo). Ideas -> <cwd>/.agents/crow/ideas/<agent-id>.md
         (they are about this repo, so they belong in its tree).
 
@@ -358,7 +358,7 @@ class TestCompaction:
 
         analysis = analysis_path(compact_config.config_dir, session.agent_id)
         ideas = ideas_path(session.cwd, session.agent_id)
-        assert analysis == compact_config.config_dir / "ideas" / f"{session.agent_id}.md"
+        assert analysis == compact_config.config_dir / "analysis" / f"{session.agent_id}.md"
         assert ideas.read_text().endswith("IDEAS BODY\n")
         assert "ANALYSIS BODY" in analysis.read_text()
         assert "IDEAS BODY" not in analysis.read_text()
@@ -459,7 +459,7 @@ class TestCompaction:
         scope that cannot be created — all of those are the user's problem to
         fix later, not a reason to throw away a compaction."""
         session = setup_session
-        # config_dir is a FILE, so <config_dir>/ideas/ cannot be created.
+        # config_dir is a FILE, so <config_dir>/analysis/ cannot be created.
         blocker = tmp_path / "blocker"
         blocker.write_text("not a directory")
         compact_config.config_dir = blocker
@@ -504,19 +504,15 @@ class TestCompaction:
         assert "ANALYSIS BODY" in path.read_text()
 
     @pytest.mark.asyncio
-    async def test_a_session_rooted_at_home_does_not_clobber_one_note_with_the_other(
+    async def test_a_session_rooted_at_home_keeps_analysis_and_ideas_separate(
         self, setup_session, mock_llm, compact_config
     ):
-        """Launched from $HOME, the project scope ``~/.agents/crow`` IS the
-        config dir, so the analysis and the ideas resolve to the same file and
-        the second write silently eats the first.
-
-        The global note keeps the designed name; the project note is suffixed.
-        Neither is lost.
+        """Global analysis and project ideas use separate directories even when
+        the session runs from the config directory itself.
         """
         session = setup_session
         compact_config.config_dir = Path(session.cwd) / ".agents" / "crow"
-        assert analysis_path(compact_config.config_dir, session.agent_id) == ideas_path(
+        assert analysis_path(compact_config.config_dir, session.agent_id) != ideas_path(
             session.cwd, session.agent_id
         )
 
@@ -525,10 +521,10 @@ class TestCompaction:
         )
 
         assert written["analysis"] != written["ideas"]
-        assert written["analysis"] == compact_config.config_dir / "ideas" / (
+        assert written["analysis"] == compact_config.config_dir / "analysis" / (
             f"{session.agent_id}.md"
         )
-        assert written["ideas"].name == f"{session.agent_id}-project.md"
+        assert written["ideas"].name == f"{session.agent_id}.md"
         assert "ANALYSIS BODY" in written["analysis"].read_text()
         assert "IDEAS BODY" in written["ideas"].read_text()
 
@@ -538,7 +534,7 @@ class TestReflectionPaths:
 
     def test_analysis_path_is_global(self, tmp_path):
         assert analysis_path(tmp_path / "crow", "sess-2-1") == (
-            tmp_path / "crow" / "ideas" / "sess-2-1.md"
+            tmp_path / "crow" / "analysis" / "sess-2-1.md"
         )
 
     def test_ideas_path_is_project_scoped(self, tmp_path):

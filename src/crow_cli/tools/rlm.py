@@ -100,16 +100,16 @@ def _delegate_prompt(prompt: str, depth: int) -> str:
     """
     return (
         "You are a delegate: a copy of the agent above, forked from its own"
-        " history to answer ONE question without spending its context."
+        " history to carry out a delegated task without spending its context."
         " Everything you need is already in the history you were forked"
         " with.\n\n"
-        "Answer the question and stop. Do not start new work, and do not ask"
+        "Handle the request and stop. Do not start unrelated work, and do not ask"
         " for clarification — nobody is listening; the agent that sent you is"
-        " blocked on this answer.\n\n"
+        " blocked on this response.\n\n"
         f"Do not delegate again: you are delegation {depth} of a maximum"
         f" {MAX_RLM_DEPTH}, the budget is spent, and rlm() will refuse you."
         "\n\n"
-        "Unless the question asks you to change something, change nothing:"
+        "Unless the request asks you to change something, change nothing:"
         " you inherited your source's tools, and an edit you make is an edit"
         " it never hears about.\n\n"
         "---\n\n" + prompt
@@ -164,8 +164,8 @@ async def rlm(
     model: str | None = None,
     timeout: float | None = _RLM_TIMEOUT,
 ) -> RlmResult:
-    """Fork this session and have the copy answer ONE question, so the
-    answer — not the reading it took to find it — is what lands in your
+    """Fork this session and have the copy handle a delegated request, so the
+    response — not the reading it took to find it — is what lands in your
     context.
 
     The delegate starts with everything you already know (it is forked from
@@ -178,8 +178,8 @@ async def rlm(
     collected.
 
     Args:
-        prompt: the ONE question. Put in it everything the delegate needs
-          that is not already in your history.
+        prompt: the request for the delegate. Put in it everything the delegate
+          needs that is not already in your history.
         offset: messages back from HEAD to fork (default 1 — the delegate
           never sees the moment you chose to delegate, or it would wonder
           why "it" did not work and try again). The server snaps the cut

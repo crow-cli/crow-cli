@@ -77,7 +77,7 @@ def test_the_delegates_prompt_carries_its_depth_and_the_rule():
     p = _delegate_prompt("Is src/x.py relevant?", 1)
     assert f"delegation 1 of a maximum {MAX_RLM_DEPTH}" in p
     assert "rlm() will refuse you" in p
-    assert "Do not start new work" in p
+    assert "Do not start unrelated work" in p
     assert "change nothing" in p
     assert p.endswith("Is src/x.py relevant?")
 

@@ -141,10 +141,24 @@ async def execute(
     reset: bool = False,
     timeout: float | None = 30.0,
 ) -> str:
-    """Execute Python code in a persistent IPython kernel (a REPL).
+    """Execute one cell in this session's persistent IPython kernel.
 
-    Unlike the terminal tool (a fresh bash shell each call), this kernel keeps
-    state across calls: variables, imports, and the working directory persist.
+    This is a Jupyter-style REPL, not a fresh Python process per call. Every
+    non-reset call runs in the same kernel for this session, so variables,
+    imports, function definitions, open handles, and the working directory
+    survive from one call to the next. Write multi-step work as successive
+    cells and reuse names already defined. Do not re-import or redefine setup
+    merely because this is a new tool call; inspect ``dir()`` if unsure what
+    the kernel already contains. The kernel is isolated per session id, so
+    state does not leak between sessions.
+
+    A fresh kernel starts with Crow's async helpers (``fs``, ``memory``,
+    ``rlm``, ``vision``, ``web``, ``write``, ``edit``, and ``reload``) already
+    available. They are async: call them with ``await``. ``reload()`` refreshes
+    Crow's tool modules in the current kernel without clearing your variables,
+    imports, or cwd. Use ``reset=True`` only when you intentionally want a
+    completely new kernel; it discards all state and starts the prelude again.
+
     It runs with crow-cli's own Python interpreter, so crow's libraries are
     available and you can interrogate crow.db. Use it for multi-step Python
     work where you want to build on previous results. For bash/shell commands,
