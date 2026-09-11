@@ -12,6 +12,12 @@ Simplified approach:
 
 Nothing is ever deleted.
 
+If the recent assistant turns collapsed into one character repeated over and
+over — a local model that has gone insane — none of those passes run: asking
+the broken model to summarize produces more of the same. Compaction then skips
+every LLM call and hands the next generation a pointer to the previous session
+instead (``degenerate_repeat``, ``DEGENERATE_RUN``).
+
 Compaction is also the one moment when the whole session is in front of the
 model at once, so it is the natural place to ask for more than a summary. Two
 extra passes run over the SAME history with a different trailing prompt (see
@@ -21,6 +27,7 @@ byte-identical message prefix, which is what makes the provider's prompt-prefix
 cache pay for passes two and three.
 """
 
+from itertools import groupby
 from logging import Logger
 from pathlib import Path
 
@@ -339,6 +346,52 @@ async def write_reflections(
     return written
 
 
+DEGENERATE_RUN = 64
+
+
+def degenerate_repeat(session: AgentSession) -> str | None:
+    """Describe degenerate single-character repetition in recent assistant turns.
+
+    A local model that has gone insane repeats one token until the context
+    window fills — crow's own observed failure was reasoning_content of nothing
+    but slashes. The compaction fast path keys off this: asking a broken model
+    to summarize produces more of the same, so compaction skips every LLM pass
+    and hands the next generation a pointer instead.
+
+    Scans the last few assistant messages' content AND reasoning_content for
+    one character repeated over and over. A run of ``DEGENERATE_RUN`` or more
+    identical characters that also dominates the message (half its text) is a
+    loop; legitimate runs (code-block rulers, separators) sit inside real text
+    and never dominate it. Returns a short description for logs and the
+    handoff, or None when nothing looks degenerate.
+    """
+    assistants = [m for m in session.messages if m.get("role") == "assistant"]
+    for msg in reversed(assistants[-4:]):
+        texts = [unroll_content(msg.get("content"))]
+        reasoning = msg.get("reasoning_content")
+        if isinstance(reasoning, str):
+            texts.append(reasoning)
+        for text in texts:
+            if not text:
+                continue
+            run_char, run_len = max(
+                ((ch, sum(1 for _ in group)) for ch, group in groupby(text)),
+                key=lambda pair: pair[1],
+            )
+            if run_len >= DEGENERATE_RUN and run_len >= len(text) / 2:
+                return f"{run_char!r} repeated {run_len} times in a row"
+    return None
+
+
+def _last_user_text(session: AgentSession, max_chars: int = 500) -> str:
+    """The most recent user message, flattened and truncated — the one piece
+    of orientation the degenerate handoff carries."""
+    for msg in reversed(session.messages):
+        if msg.get("role") == "user":
+            return unroll_content(msg.get("content", ""))[:max_chars]
+    return ""
+
+
 async def compact(
     session: AgentSession,
     llm: AsyncOpenAI,
@@ -374,19 +427,33 @@ async def compact(
             f"Compacting agent {session.agent_id} ({len(session.messages)} messages)..."
         )
 
-    # 1-4. Repair the history, append the compaction prompt, and stream the
-    # summary. Same per-model sampling rule as the react loop: the model's
-    # reasoning_effort XOR temperature. Never the provider default (temp 1.0
-    # makes the model ramble instead of compress) and never the session's
-    # request_params temperature.
-    #
-    # Streaming is not cosmetic here: a non-streaming request must produce the
-    # ENTIRE summary before the client's read timeout fires, which kills
-    # compaction outright on slow local models (the summary can be tens of
-    # thousands of tokens). Streamed, the timeout only applies between chunks.
-    summary, usage = await _ask_over_history(llm, session, config, COMPACTION_PROMPT)
-    if logger:
-        logger.info(f"Compact usage: {usage}")
+    # Degenerate fast path. If the recent assistant turns collapsed into one
+    # character on repeat, the model is broken: a summary request would either
+    # hang or come back as more of the same, and the reflection passes would
+    # write garbage files. Skip every LLM call and hand the next generation a
+    # pointer to the previous session instead (see degenerate_repeat).
+    degenerate = degenerate_repeat(session)
+    if degenerate:
+        if logger:
+            logger.info(
+                f"Degenerate generation detected ({degenerate}) — compacting "
+                "without a summary or reflections"
+            )
+        summary = None
+    else:
+        # 1-4. Repair the history, append the compaction prompt, and stream the
+        # summary. Same per-model sampling rule as the react loop: the model's
+        # reasoning_effort XOR temperature. Never the provider default (temp 1.0
+        # makes the model ramble instead of compress) and never the session's
+        # request_params temperature.
+        #
+        # Streaming is not cosmetic here: a non-streaming request must produce the
+        # ENTIRE summary before the client's read timeout fires, which kills
+        # compaction outright on slow local models (the summary can be tens of
+        # thousands of tokens). Streamed, the timeout only applies between chunks.
+        summary, usage = await _ask_over_history(llm, session, config, COMPACTION_PROMPT)
+        if logger:
+            logger.info(f"Compact usage: {usage}")
 
     # 5. Create new agent record: same session_id AND fork, next agent_idx
     new_agent_idx = original_agent_idx + 1
@@ -401,8 +468,22 @@ async def compact(
         fork_idx=session.fork_idx,
     )
 
-    last_msgs = last_messages(session)
-    new_agent_prompt = f"{summary}\n\nLast messages:\n\n{last_msgs}"
+    if summary is not None:
+        last_msgs = last_messages(session)
+        new_agent_prompt = f"{summary}\n\nLast messages:\n\n{last_msgs}"
+    else:
+        new_agent_prompt = (
+            f"The previous generation of this session ({session.agent_id}) went "
+            f"degenerate: its output collapsed into {degenerate} and it never produced "
+            "usable work. That is a model/server failure, not anything you did. It was "
+            "compacted WITHOUT a summary — asking the broken model to summarize would "
+            "only produce more of the same — so this generation starts with no "
+            "conversation context.\n"
+            "Do not try to reconstruct the full history. If you need context, look at "
+            f"previous session '{original_session_id}' with the memory tools "
+            "(memory('search', ...) then read that generation's messages).\n"
+            f"Last user message before the failure: {_last_user_text(session)}"
+        )
     await new_session.add_message(
         {"role": "user", "content": new_agent_prompt},
     )
@@ -421,8 +502,10 @@ async def compact(
     # (global, <config_dir>/analysis/) and project-level ideas (in the working
     # tree, <cwd>/.agents/crow/ideas/). Both are named for the generation
     # being compacted, because that is the history they read. Best-effort —
-    # write_reflections logs and swallows, it never raises.
-    await write_reflections(session, llm, config, logger=logger)
+    # write_reflections logs and swallows, it never raises. Skipped entirely on
+    # the degenerate fast path: the model that would write them is the broken one.
+    if not degenerate:
+        await write_reflections(session, llm, config, logger=logger)
 
     return new_session
 
