@@ -25,9 +25,11 @@ import pytest
 from crow_cli.agent.compact import (
     ANALYSIS_PROMPT,
     COMPACTION_PROMPT,
+    DEGENERATE_RUN,
     IDEAS_PROMPT,
     analysis_path,
     compact,
+    degenerate_repeat,
     ideas_path,
     write_reflections,
 )
@@ -533,6 +535,122 @@ class TestCompaction:
         assert "IDEAS BODY" in written["ideas"].read_text()
 
 
+    # ---------------------------------------------------------------------
+    # Degenerate fast path: a model that has gone insane must not be
+    # asked to summarize itself. The real failure this encodes: a local
+    # llama.cpp model started emitting nothing but "/" in its
+    # reasoning_content until the context filled, crow hit the compaction
+    # threshold, and compaction then asked THAT broken model to summarize
+    # the session. Skips every LLM call and hands the next generation a
+    # pointer instead.
+    # ---------------------------------------------------------------------
+    @pytest.fixture
+    async def degenerate_session(self, setup_session):
+        """A healthy 20-turn conversation that ends in the failure shape: an
+        assistant turn whose reasoning is one character on repeat (content empty,
+        exactly like the persisted rows crow.db holds for that session), then a
+        user nudge."""
+        session = setup_session
+        await session.add_message(
+            {"role": "assistant", "content": "", "reasoning_content": "/" * 400}
+        )
+        await session.add_message({"role": "user", "content": "welp"})
+        return session
+
+    def test_degenerate_repeat_reads_reasoning_and_content(self, degenerate_session):
+        """The slash wall lives in reasoning_content — content AND reasoning are
+        both scanned."""
+        assert degenerate_repeat(degenerate_session) == "'/' repeated 400 times in a row"
+
+    def test_degenerate_repeat_detects_a_content_wall(self, setup_session):
+        """Same detector, wall in plain content."""
+        session = setup_session
+        session.messages[-1]["content"] = chr(92) * 200
+        assert degenerate_repeat(session) == "'\\\\' repeated 200 times in a row"
+
+    @pytest.mark.asyncio
+    async def test_degenerate_repeat_ignores_legitimate_runs(self, setup_session):
+        """Rulers, separators and fences live inside real text and never dominate
+        a message; short runs are not loops at all."""
+        session = setup_session
+        ruler = "=" * (DEGENERATE_RUN + 16)
+        await session.add_message(
+            {
+                "role": "assistant",
+                "content": f"Here is the section divider\n\n{ruler}\n\nNow the real analysis "
+                           "of the streaming bug we were chasing.",
+            }
+        )
+        assert degenerate_repeat(session) is None
+
+        await session.add_message({"role": "assistant", "content": "/" * 8})
+        assert degenerate_repeat(session) is None
+
+    @pytest.mark.asyncio
+    async def test_degenerate_compaction_skips_every_llm_call(
+        self, degenerate_session, mock_llm, compact_config, tmp_path
+    ):
+        """Zero LLM calls, zero reflection files: the model that would answer is
+        the broken one."""
+        session = degenerate_session
+        result = await compact(session, mock_llm, compact_config, logger=MagicMock())
+
+        mock_llm.chat.completions.create.assert_not_called()
+        assert not analysis_path(compact_config.config_dir, session.agent_id).exists()
+        assert not ideas_path(session.cwd, session.agent_id).exists()
+
+        # The new generation still exists, same session and fork, next index.
+        assert result.agent_idx == session.agent_idx + 1
+        assert result.session_id == session.session_id
+
+    @pytest.mark.asyncio
+    async def test_degenerate_handoff_points_at_the_previous_session(
+        self, degenerate_session, mock_llm, compact_config
+    ):
+        """The handoff is the whole point: no summary, just the pointer thomas
+        would type by hand — which session to read, that the failure is not the
+        reader's fault, and the last user message for orientation."""
+        session = degenerate_session
+        calls = []
+
+        def on_compact(old_agent_id, new_session):
+            calls.append((old_agent_id, new_session))
+
+        result = await compact(
+            session, mock_llm, compact_config, on_compact=on_compact, logger=MagicMock()
+        )
+
+        assert len(calls) == 1 and calls[0][1] is result  # callback still fires
+        assert len(result.messages) == 2
+        handoff = result.messages[1]["content"]
+        assert f"previous session '{session.session_id}'" in handoff
+        assert "'/' repeated 400 times in a row" in handoff
+        assert "not anything you did" in handoff
+        assert "welp" in handoff  # the last user message survives as orientation
+        assert "COMPACTED SUMMARY" not in handoff
+
+    @pytest.mark.asyncio
+    async def test_degenerate_detection_looks_past_the_last_turn(
+        self, setup_session, mock_llm, compact_config
+    ):
+        """The loop can be interrupted mid-wall: a short degenerate blip after the
+        big one must not hide it. The detector scans recent assistant turns, so a
+        tiny '////////' trailing the slash wall still trips it."""
+        session = setup_session
+        await session.add_message(
+            {"role": "assistant", "content": "", "reasoning_content": "/" * 400}
+        )
+        await session.add_message({"role": "user", "content": "what the fuck dude"})
+        await session.add_message(
+            {"role": "assistant", "content": "", "reasoning_content": "/" * 8}
+        )
+
+        result = await compact(session, mock_llm, compact_config, logger=MagicMock())
+        mock_llm.chat.completions.create.assert_not_called()
+        assert "'/' repeated 400 times in a row" in result.messages[1]["content"]
+
+
+
 class TestReflectionPaths:
     """The two output locations, without a session or an LLM in sight."""
 
@@ -555,4 +673,3 @@ class TestReflectionPaths:
             "ideas",
             "a-1-1.md",
         )
-
