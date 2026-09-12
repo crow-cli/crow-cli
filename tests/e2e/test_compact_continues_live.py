@@ -38,16 +38,18 @@ REPO = Path(__file__).resolve().parents[2]
 AGENT_SCRIPT = Path(__file__).resolve().parent / "custom_compactor_agent.py"
 
 MODEL = "qwen3.8-max"
-# crow's own system prompt is ~6-7k tokens before a single tool result, so the
-# turn has to pile up real fetched pages to cross this by a wide margin — a
-# single web search lands within a few hundred tokens of it either way, and
-# the test then fails on "compaction never fired" purely on prompt-length
-# luck. Not lower, because the successor is born with the same ~6-7k-token
-# system prompt plus a summary: below that it re-compacts forever.
-THRESHOLD = 10_000
+# Must sit ABOVE the irreducible floor with room to spare. Measured live:
+# crow's system prompt is ~6.5k tokens and COMPACTION_PROMPT asks for a
+# thorough summary, which qwen3.8-max writes at 7-11k — so a successor is born
+# at ~14-18k. A ceiling below that re-compacts on every tool round (progress,
+# thanks to the guard in react.py, but it never finishes); a ceiling the deep
+# dive never reaches does not test anything. 30k is crossed mid-dive — gen1
+# measured 25k tokens over 26 messages — and leaves the successor ~12k to
+# finish in.
+THRESHOLD = 30_000
 BLANK = Path("/tmp/blank")
 HANDSHAKE_TIMEOUT = 240
-TURN_TIMEOUT = 900
+TURN_TIMEOUT = 1200
 
 
 def _live_config_or_skip() -> Config:
