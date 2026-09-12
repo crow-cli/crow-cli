@@ -9,6 +9,10 @@ subprocess and speaks ACP. Which agent to spawn comes from the
   * no ``-a`` launches the TOP entry, the same way the top model in config.yaml
     is the default model when no ``-m`` is passed.
   * nothing configured launches crow's own agent (:func:`crow_agent`).
+
+``-m/--model`` is orthogonal to all three: it is not part of any launch
+command. The client applies it to the session over ACP
+``session/set_config_option``, so it reaches whichever agent was launched.
 """
 
 from pathlib import Path
@@ -51,7 +55,7 @@ def launch_tui(
         agent_server = next(iter(config.agent_servers), None)
 
     if agent_server is None:
-        agent_data = crow_agent(model, config_dir, config_file)
+        agent_data = crow_agent(config_dir, config_file)
     else:
         try:
             agent_data = resolve_agent_server(agent_server, config.agent_servers)
@@ -59,10 +63,14 @@ def launch_tui(
             typer.echo(str(error), err=True)
             raise typer.Exit(1) from error
 
+    # `model` rides along independently of which agent was picked: the TUI
+    # applies it over ACP session/set_config_option once the session exists,
+    # so -m means the same thing for crow's own agent and for a custom entry.
     app = CrowApp(
         agent_data=agent_data,
         project_dir=str(path),
         mode=None,
         session_id=session,
+        model=model,
     )
     app.run()

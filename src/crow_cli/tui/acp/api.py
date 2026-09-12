@@ -55,6 +55,19 @@ def session_set_mode(sessionId: str, modeId: str) -> protocol.SetSessionModeResp
     ...
 
 
+@API.method(name="session/set_config_option")
+def session_set_config_option(
+    sessionId: str, configId: str, value: str | bool
+) -> protocol.SetSessionConfigOptionResponse:
+    """https://agentclientprotocol.com/protocol/v1/session-config-options#setting-a-config-option
+
+    Valid while the agent is idle OR generating. For a `select` option the
+    value must be one of the option's listed values; the reply carries the
+    complete config state.
+    """
+    ...
+
+
 @API.method(name="session/list")
 def session_list(
     cwd: str | None = None, cursor: str | None = None

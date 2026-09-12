@@ -5,7 +5,7 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
-from typing import Any, cast, NamedTuple
+from typing import Any, cast, Mapping, NamedTuple
 from copy import deepcopy
 from math import floor
 import rich.repr
@@ -20,6 +20,12 @@ import crow_cli.tui as tui
 from crow_cli.tui.agent_schema import Agent as AgentData
 from crow_cli.tui.agent import AgentBase, AgentReady, AgentFail
 from crow_cli.tui.acp import protocol
+from crow_cli.tui.acp.protocol import (
+    config_current_name,
+    config_value_names,
+    find_config_option,
+    match_config_value,
+)
 from crow_cli.tui.acp import api
 from crow_cli.tui.acp.api import API
 from crow_cli.tui.acp import messages
@@ -143,17 +149,27 @@ class Agent(AgentBase):
         agent: AgentData,
         session_id: str | None,
         session_pk: int | None = None,
+        model: str | None = None,
     ) -> None:
         """
 
         Args:
             project_root: Project root path.
             command: Command to launch agent.
+            model: Model name requested with -m/--model, applied to the
+                session over `session/set_config_option` once the agent
+                reports its config options.
         """
         super().__init__(project_root)
 
         self._agent_data = agent
         self.session_id = session_id
+        # Model choice is the CLIENT's job: it travels over the protocol, not
+        # in the agent's argv, so it works for any agent that publishes a
+        # `model` config option — including a custom `agent_servers` entry.
+        # Held until session/new (or /load) reports the options to match on.
+        self._model_request = model
+        self.config_options: list[protocol.ConfigOption] = []
 
         self.server = jsonrpc.Server()
         self.server.expose_instance(self)
@@ -474,6 +490,12 @@ class Agent(AgentBase):
 
             case {"sessionUpdate": "current_mode_update", "currentModeId": mode_id}:
                 self.post_message(messages.ModeUpdate(mode_id))
+
+            case {
+                "sessionUpdate": "config_option_update",
+                "configOptions": config_options,
+            }:
+                self._ingest_config_options({"configOptions": config_options})
 
             case {"sessionUpdate": "usage_update", "used": used, "size": size}:
                 match update.get("cost"):
@@ -926,6 +948,62 @@ class Agent(AgentBase):
         if auth_methods := response.get("authMethods"):
             self.auth_methods = auth_methods
 
+    def _ingest_config_options(self, response: Mapping[str, Any] | None) -> None:
+        """Take the session's config options as reported and publish them.
+
+        Every carrier — session/new, session/load, our own set_config_option
+        reply, and the agent's `config_option_update` notification — holds the
+        COMPLETE state, so this replaces rather than merges. That is what lets
+        an agent-side model fallback show up as the current selection.
+        """
+        options = (response or {}).get("configOptions") or []
+        self.config_options = options
+        if options:
+            self.post_message(messages.SetConfigOptions(options))
+
+    def _model_option(self) -> protocol.ConfigOption | None:
+        """The agent's model selector, if it publishes one."""
+        return find_config_option(
+            self.config_options, category="model", option_id="model"
+        )
+
+    async def _apply_model_request(self) -> None:
+        """Push the -m/--model request onto the session, once.
+
+        Runs after session setup, when the agent has reported the options to
+        match against. Consumes the request either way: a name that does not
+        resolve warns and leaves the agent's default alone instead of being
+        retried against every later option update.
+        """
+        requested, self._model_request = self._model_request, None
+        if requested is None:
+            return
+
+        option = self._model_option()
+        if option is None:
+            self.post_message(
+                messages.ConfigOptionError(
+                    f"This agent offers no model selector — -m {requested!r} was ignored."
+                )
+            )
+            return
+
+        value = match_config_value(option, requested)
+        if value is None:
+            names = ", ".join(config_value_names(option)) or "none"
+            self.post_message(
+                messages.ConfigOptionError(
+                    f"Unknown model {requested!r}. Available: {names}."
+                )
+            )
+            return
+
+        if value == option.get("currentValue"):
+            return
+
+        if (error := await self.set_config_option(option["id"], value)) is not None:
+            self.post_message(messages.ConfigOptionError(error))
+
     async def acp_new_session(self) -> None:
         """Create a new session."""
         with self.request():
@@ -965,6 +1043,9 @@ class Agent(AgentBase):
             }
             self.post_message(messages.SetModes(current_mode, modes_update))
 
+        self._ingest_config_options(response)
+        await self._apply_model_request()
+
     async def acp_load_session(self) -> None:
         assert self.session_id is not None, "Session id must be set"
         cwd = str(self.project_root_path)
@@ -995,6 +1076,9 @@ class Agent(AgentBase):
                 for mode in available_modes
             }
             self.post_message(messages.SetModes(current_mode, modes_update))
+
+        self._ingest_config_options(response)
+        await self._apply_model_request()
 
     async def acp_list_sessions(
         self, cwd: str | None = None, cursor: str | None = None
@@ -1082,6 +1166,34 @@ class Agent(AgentBase):
 
     async def set_mode(self, mode_id: str) -> str | None:
         return await self.acp_session_set_mode(mode_id)
+
+    async def acp_session_set_config_option(
+        self, config_id: str, value: str | bool
+    ) -> str | None:
+        """Set one session config option; returns an error string, or None.
+
+        Legal while the agent is idle or generating. The reply carries the
+        complete config state, so ingest it — that is what keeps the selectors
+        honest when changing one option moves another.
+        """
+        with self.request():
+            response = api.session_set_config_option(self.session_id, config_id, value)
+        try:
+            result = await response.wait()
+        except jsonrpc.APIError as error:
+            match error.data:
+                case {"details": details}:
+                    return (
+                        details
+                        if isinstance(details, str)
+                        else "Failed to set config option"
+                    )
+            return "Failed to set config option"
+        self._ingest_config_options(result)
+        return None
+
+    async def set_config_option(self, config_id: str, value: str | bool) -> str | None:
+        return await self.acp_session_set_config_option(config_id, value)
 
     async def set_session_name(self, name: str) -> None:
         if self.session_pk is None:

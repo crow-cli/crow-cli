@@ -63,12 +63,61 @@ class ModeProvider(Provider):
             )
 
 
+class ModelProvider(Provider):
+    """Command-palette entries for the session's model selector.
+
+    Sourced from the agent's `model` config option, so it lists whatever the
+    agent actually offers — including the models of a custom `agent_servers`
+    entry. No options (an agent that publishes none) means no entries.
+    """
+
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+
+        screen = self.screen
+        assert isinstance(screen, MainScreen)
+
+        if (option := screen.conversation.model_option) is None:
+            return
+        for value in option.get("options") or []:
+            command = value["name"]
+            score = matcher.match(command)
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(command),
+                    partial(
+                        screen.conversation.set_config_option,
+                        option["id"],
+                        value["value"],
+                    ),
+                    help=value.get("description"),
+                )
+
+    async def discover(self) -> Hits:
+        screen = self.screen
+        assert isinstance(screen, MainScreen)
+
+        if (option := screen.conversation.model_option) is None:
+            return
+        for value in option.get("options") or []:
+            yield DiscoveryHit(
+                value["name"],
+                partial(
+                    screen.conversation.set_config_option,
+                    option["id"],
+                    value["value"],
+                ),
+                help=value.get("description"),
+            )
+
+
 class MainScreen(Screen, can_focus=False):
     AUTO_FOCUS = "Conversation Prompt TextArea"
 
     CSS_PATH = "main.tcss"
 
-    COMMANDS = {ModeProvider}
+    COMMANDS = {ModeProvider, ModelProvider}
 
     SESSION_NAVIGATION_GROUP = Binding.Group(description="Sessions")
     BINDINGS = [
@@ -110,6 +159,7 @@ class MainScreen(Screen, can_focus=False):
         agent_session_title: str | None = None,
         session_pk: int | None = None,
         initial_prompt: str | None = None,
+        model: str | None = None,
     ) -> None:
         super().__init__()
         self.set_reactive(MainScreen.project_path, project_path)
@@ -118,6 +168,7 @@ class MainScreen(Screen, can_focus=False):
         self._agent_session_title = agent_session_title
         self._session_pk = session_pk
         self._initial_prompt = initial_prompt
+        self._model = model
 
     def watch_title(self, title: str) -> None:
         self.app.update_terminal_title()
@@ -155,6 +206,7 @@ class MainScreen(Screen, can_focus=False):
                 self._agent_session_id,
                 self._session_pk,
                 initial_prompt=self._initial_prompt,
+                model=self._model,
             ).data_bind(
                 project_path=MainScreen.project_path,
                 column=MainScreen.column,

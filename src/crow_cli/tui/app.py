@@ -294,6 +294,7 @@ class CrowApp(App, inherit_bindings=False):
         project_dir: str | None = None,
         mode: str | None = None,
         session_id: str | None = None,
+        model: str | None = None,
     ) -> None:
         """Crow app.
 
@@ -302,6 +303,9 @@ class CrowApp(App, inherit_bindings=False):
             project_dir: Project directory.
             mode: Initial mode.
             session_id: Session to load at startup (session/load).
+            model: Model to select on the session (-m/--model), applied over
+                ACP `session/set_config_option` — agent-agnostic, so it works
+                for a custom `agent_servers` entry too.
             agent: Agent identity or shor name.
         """
         self.settings_changed_signal: Signal[tuple[int, object]] = Signal(
@@ -309,6 +313,7 @@ class CrowApp(App, inherit_bindings=False):
         )
         self.agent_data = agent_data
         self.preselected_session_id = session_id
+        self.model = model
 
         self._initial_mode = mode
         self._supports_pyperclip: bool | None = None
@@ -691,6 +696,7 @@ class CrowApp(App, inherit_bindings=False):
             self.agent_data,
             agent_session_id=self.preselected_session_id,
             agent_session_title=self.preselected_session_id,
+            model=self.model,
         ).data_bind(
             column=CrowApp.column,
             column_width=CrowApp.column_width,
@@ -875,6 +881,7 @@ class CrowApp(App, inherit_bindings=False):
                 agent_session_id,
                 session_pk=session_pk,
                 initial_prompt=initial_prompt,
+                model=self.model,
             ).data_bind(
                 column=CrowApp.column,
                 column_width=CrowApp.column_width,

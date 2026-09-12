@@ -145,6 +145,33 @@ class ModeUpdate(AgentMessage):
     current_mode: str
 
 
+@rich.repr.auto
+@dataclass
+class SetConfigOptions(AgentMessage):
+    """The session's complete config-option state, as the agent reports it.
+
+    Carried by the session/new and session/load responses, by our own
+    session/set_config_option replies, and by the agent-initiated
+    `config_option_update` notification. Always the FULL list — replace, never
+    merge — so a model the agent fell back to shows up as the current one.
+    """
+
+    config_options: list[protocol.ConfigOption]
+
+
+@rich.repr.auto
+@dataclass
+class ConfigOptionError(AgentMessage):
+    """A config option could not be applied — surfaced as a notification.
+
+    Distinct from a failed RPC: an unknown `-m` model name or an agent that
+    publishes no model selector leaves the session perfectly usable, so this
+    must warn, not tear down.
+    """
+
+    message: str
+
+
 @dataclass
 class UsageUpdage(AgentMessage):
     """Context window change"""

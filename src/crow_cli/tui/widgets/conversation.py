@@ -353,6 +353,7 @@ class Conversation(containers.Vertical):
     agent_ready: var[bool] = var(False)
     modes: var[dict[str, Mode]] = var({}, bindings=True)
     current_mode: var[Mode | None] = var(None)
+    config_options: var[list[acp_protocol.ConfigOption]] = var([], bindings=True)
     turn: var[Literal["agent", "client"] | None] = var(None, bindings=True)
     status: var[str | Content] = var("")
     column: var[bool] = var(False, toggle_class="-column")
@@ -366,6 +367,7 @@ class Conversation(containers.Vertical):
         agent_session_id: str | None = None,
         session_pk: int | None = None,
         initial_prompt: str | None = None,
+        model: str | None = None,
     ) -> None:
         super().__init__()
 
@@ -384,6 +386,7 @@ class Conversation(containers.Vertical):
         self._agent_data = agent
         self._agent_session_id = agent_session_id
         self._session_pk = session_pk
+        self._model = model
         self._mouse_down_offset: Offset | None = None
 
         self._focusable_terminals: list[Terminal] = []
@@ -1174,6 +1177,51 @@ class Conversation(containers.Vertical):
         self.modes = message.modes
         self.current_mode = self.modes[message.current_mode]
 
+    @on(acp_messages.SetConfigOptions)
+    def on_acp_set_config_options(self, message: acp_messages.SetConfigOptions) -> None:
+        self.config_options = message.config_options
+
+    @on(acp_messages.ConfigOptionError)
+    def on_acp_config_option_error(
+        self, message: acp_messages.ConfigOptionError
+    ) -> None:
+        self.notify(message.message, title="Model", severity="error", timeout=15)
+
+    @property
+    def model_option(self) -> acp_protocol.ConfigOption | None:
+        """The agent's model selector, if it publishes one."""
+        return acp_protocol.find_config_option(
+            self.config_options, category="model", option_id="model"
+        )
+
+    @property
+    def current_model_name(self) -> str | None:
+        """Display name of the selected model, or None with no selector."""
+        option = self.model_option
+        return None if option is None else acp_protocol.config_current_name(option)
+
+    async def set_config_option(self, config_id: str, value: str) -> None:
+        """Set a session config option and flash the new value.
+
+        The agent replies with the COMPLETE config state, which arrives as
+        `SetConfigOptions` and updates `config_options` — so read the new
+        current value back from there rather than assuming the set took.
+        """
+        if (agent := self.agent) is None:
+            return
+        if (error := await agent.set_config_option(config_id, value)) is not None:
+            self.notify(error, title="Set option", severity="error")
+            return
+        option = acp_protocol.find_config_option(self.config_options, option_id=config_id)
+        if option is None:
+            return
+        if (name := acp_protocol.config_current_name(option)) is not None:
+            label = option.get("name") or config_id
+            self.flash(
+                Content.from_markup(f"{label} changed to [b]$value", value=name),
+                style="success",
+            )
+
     @on(messages.HistoryMove)
     async def on_history_move(self, message: messages.HistoryMove) -> None:
         message.stop()
@@ -1397,6 +1445,7 @@ class Conversation(containers.Vertical):
                     self._agent_data,
                     self._agent_session_id,
                     self._session_pk,
+                    model=self._model,
                 )
                 await self.agent.start(self)
                 self.post_message(

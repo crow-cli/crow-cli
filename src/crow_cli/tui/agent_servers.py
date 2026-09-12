@@ -53,7 +53,6 @@ class AgentServerError(Exception):
 
 
 def crow_agent(
-    model: str | None = None,
     config_dir: str | None = None,
     config_file: str | None = None,
 ) -> Agent:
@@ -62,14 +61,18 @@ def crow_agent(
     The fallback when nothing is configured: always the code that is actually
     running (see :func:`crow_cli.cli.source.spawn_command`). Pointing at a
     source checkout is an ``agent_servers`` entry the user writes instead.
+
+    No ``--model`` here on purpose. Model choice is the CLIENT's job: it goes
+    over ACP ``session/set_config_option`` once the session exists, which is
+    the one path that works for every agent — crow's own and any custom
+    ``agent_servers`` entry alike. Baking it into this argv would make ``-m``
+    work for one agent and silently vanish for the others.
     """
     args: list[str] = []
     if config_dir is not None:
         args += ["--config-dir", str(config_dir)]
     if config_file is not None:
         args += ["--config-file", str(config_file)]
-    if model is not None:
-        args += ["--model", model]
 
     # spawn_command shell-quotes; hand it raw values.
     command, kind = spawn_command(args)

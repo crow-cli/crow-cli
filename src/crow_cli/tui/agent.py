@@ -47,6 +47,21 @@ class AgentBase(ABC):
             str: The stop reason.
         """
 
+    async def set_config_option(self, config_id: str, value: str | bool) -> str | None:
+        """Set one session config option (model, mode, reasoning level…).
+
+        Config options supersede modes; an agent that publishes them is driven
+        entirely from here.
+
+        Args:
+            config_id: The option's `id`.
+            value: A value id for `select` options, a bool for `boolean` ones.
+
+        Returns:
+            str: An error message, or `None` on success.
+        """
+        return None
+
     def begin_cancel(self) -> bool:
         """Cancel the current turn without awaiting anything.
 

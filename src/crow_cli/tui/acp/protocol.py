@@ -323,6 +323,39 @@ class SessionModelState(SchemaDict, total=False, extra_items=Any):
     currentModelId: Required[ModelId]
 
 
+# https://agentclientprotocol.com/protocol/v1/session-config-options
+# Categories are UX hints only — a client MUST handle missing or unknown ones.
+# Names beginning with "_" are free for custom use; the rest are reserved.
+type ConfigOptionCategory = str
+type ConfigOptionType = Literal["select", "boolean"]
+
+
+class ConfigOptionValue(SchemaDict, total=False, extra_items=Any):
+    _meta: dict
+    description: str | None
+    name: Required[str]
+    value: Required[str]
+
+
+class ConfigOption(SchemaDict, total=False, extra_items=Any):
+    """One session-level selector the agent offers (model, mode, reasoning…).
+
+    ``options`` is required for ``select`` and omitted for ``boolean``;
+    ``currentValue`` is a string value id for the former, a bool for the
+    latter. The agent MUST always supply a default, so a client that ignores
+    an option it does not understand leaves the agent usable.
+    """
+
+    _meta: dict
+    category: ConfigOptionCategory | None
+    currentValue: Required[str | bool]
+    description: str | None
+    id: Required[str]
+    name: Required[str]
+    options: list[ConfigOptionValue]
+    type: Required[ConfigOptionType]
+
+
 # https://agentclientprotocol.com/protocol/schema#param-plan
 class Plan(SchemaDict, total=False, extra_items=Any):
     entries: Required[list[PlanEntry]]
@@ -349,6 +382,17 @@ class CurrentModeUpdate(SchemaDict, total=False, extra_items=Any):
     sessionUpdate: Required[Literal["current_mode_update"]]
 
 
+class ConfigOptionUpdate(SchemaDict, total=False, extra_items=Any):
+    """Agent-initiated config change — always the COMPLETE option list.
+
+    Sent when the agent changes something itself, e.g. falling back to another
+    model on a rate limit, so the client's selectors never drift from truth.
+    """
+
+    configOptions: Required[list[ConfigOption]]
+    sessionUpdate: Required[Literal["config_option_update"]]
+
+
 class UsageUpdate(SchemaDict, total=False, extra_items=object):
     sessionUpdate: Required[Literal["usage_update"]]
     used: Required[int]
@@ -365,6 +409,7 @@ type SessionUpdate = (
     | Plan
     | AvailableCommandsUpdate
     | CurrentModeUpdate
+    | ConfigOptionUpdate
     | UsageUpdate
 )
 
@@ -413,6 +458,8 @@ class InitializeResponse(SchemaDict, total=False, extra_items=Any):
 class NewSessionResponse(SchemaDict, total=False, extra_items=Any):
     _meta: object
     sessionId: Required[str]
+    # Array order is the agent's preferred priority; clients SHOULD respect it.
+    configOptions: list[ConfigOption] | None
     # Unstable from here
     models: SessionModelState | None
     modes: SessionModeState | None
@@ -421,6 +468,7 @@ class NewSessionResponse(SchemaDict, total=False, extra_items=Any):
 # https://agentclientprotocol.com/protocol/schema#loadsessionresponse
 class LoadSessionResponse(SchemaDict, total=False, extra_items=Any):
     _meta: object
+    configOptions: list[ConfigOption] | None
     modes: SessionModeState | None
 
 
@@ -480,6 +528,13 @@ class SetSessionModeResponse(TypedDict, total=False, extra_items=Any):
     meta: dict
 
 
+# https://agentclientprotocol.com/protocol/v1/session-config-options#setting-a-config-option
+class SetSessionConfigOptionResponse(SchemaDict, total=False, extra_items=Any):
+    """Always the COMPLETE config state, so dependent changes come back too."""
+
+    configOptions: Required[list[ConfigOption]]
+
+
 # ---------------------------------------------------------------------------------------
 
 
@@ -491,3 +546,60 @@ class Usage(TypedDict, total=False, extra_items=Any):
     thought_tokens: int
     cached_read_tokens: int
     cached_write_tokens: int
+
+
+# ---------------------------------------------------------------------------------------
+# Config-option helpers — pure functions over the wire types above, so both the
+# agent connection and the widgets can share them without an import cycle.
+
+
+def find_config_option(
+    options: list[ConfigOption],
+    *,
+    category: str | None = None,
+    option_id: str | None = None,
+) -> ConfigOption | None:
+    """Find an option by semantic category, falling back to its id.
+
+    Categories are UX hints that MUST NOT be required for correctness and may
+    be absent or unrecognised, so the well-known id is the fallback rather than
+    the other way round. Ties within a category resolve by array order, which
+    is the agent's stated priority.
+    """
+    if category is not None:
+        for option in options:
+            if option.get("category") == category:
+                return option
+    if option_id is not None:
+        for option in options:
+            if option.get("id") == option_id:
+                return option
+    return None
+
+
+def match_config_value(option: ConfigOption, wanted: str) -> str | None:
+    """Resolve a user-supplied name to one of a select option's values.
+
+    `-m qwen3.8-max-preview` is a config.yaml model NAME, which the agent
+    publishes as an option's `name`; the value it wants back is the option's
+    `value` (`provider:model_id` for crow's own agent). Accept either, exact
+    match only — a near miss should surface the valid names, not guess.
+    """
+    for candidate in option.get("options") or []:
+        if wanted in (candidate.get("value"), candidate.get("name")):
+            return candidate["value"]
+    return None
+
+
+def config_value_names(option: ConfigOption) -> list[str]:
+    """The display names of a select option's values, for error messages."""
+    return [c["name"] for c in (option.get("options") or []) if "name" in c]
+
+
+def config_current_name(option: ConfigOption) -> str | None:
+    """Display name of an option's current value, or None if it has none."""
+    current = option.get("currentValue")
+    for candidate in option.get("options") or []:
+        if candidate.get("value") == current:
+            return candidate.get("name")
+    return current if isinstance(current, str) else None

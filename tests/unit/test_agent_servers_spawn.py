@@ -25,25 +25,32 @@ def test_crow_agent_runs_the_code_that_is_running():
         assert "-m crow_cli.agent.main" in command
 
 
-def test_crow_agent_carries_model_and_config_file():
-    agent = crow_agent(
-        model="alibaba:qwen3.8-max-preview",
-        config_dir="/tmp/crow",
-        config_file="/tmp/my config.yaml",
-    )
+def test_crow_agent_carries_config_file():
+    agent = crow_agent(config_dir="/tmp/crow", config_file="/tmp/my config.yaml")
 
     command = agent["run_command"]["*"]
-    flags = (
-        "--config-dir /tmp/crow --config-file '/tmp/my config.yaml' "
-        "--model alibaba:qwen3.8-max-preview"
-    )
+    flags = "--config-dir /tmp/crow --config-file '/tmp/my config.yaml'"
     if getattr(sys, "frozen", False):
         assert command.endswith(f"acp {flags}")
     else:
         assert command.endswith(flags)
     # quoted exactly once, so the shell hands the agent one path with a space in it
     assert "'/tmp/my config.yaml'" in command
-    assert shlex.split(command)[-3] == "/tmp/my config.yaml"
+    assert shlex.split(command)[-1] == "/tmp/my config.yaml"
+
+
+def test_crow_agent_never_bakes_the_model_into_argv():
+    """-m is client-driven (session/set_config_option), not a launch flag.
+
+    Putting --model here would make it work for crow's own agent and silently
+    vanish for every custom agent_servers entry — the bug this guards.
+    """
+    tokens = shlex.split(crow_agent(config_dir="/tmp/crow")["run_command"]["*"])
+
+    # `python -m crow_cli.agent.main` is a module flag, not a model one — the
+    # invariant is that no model flag reaches the agent's argv at all.
+    assert "--model" not in tokens
+    assert "--model" not in " ".join(tokens)
 
 
 def test_resolve_agent_server_custom_entry_owns_its_argv():

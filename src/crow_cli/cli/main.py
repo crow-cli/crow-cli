@@ -966,7 +966,10 @@ def global_callback(
         None,
         "-m",
         "--model",
-        help="Model for the TUI's agent (bare `crow-cli` only).",
+        help="Model for the TUI's session (bare `crow-cli` only). Selected over "
+        "ACP session/set_config_option once the session exists, so it applies "
+        "to whichever agent launches — crow's own or an `agent_servers` entry. "
+        "Names come from config.yaml models: (see `crow-cli models`).",
     ),
     agent_server: str | None = typer.Option(
         None,
