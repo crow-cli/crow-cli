@@ -11,48 +11,34 @@ raises turns into an ACP internal error rather than a result. These tests drive
 from types import SimpleNamespace
 
 import pytest
-import yaml
 from acp.schema import TextContentBlock
 
-from crow_cli.agent.compact import (
-    ANALYSIS_PROMPT,
-    COMPACTION_PROMPT,
-    IDEAS_PROMPT,
-    analysis_path,
-    ideas_path,
-)
+from crow_cli.agent.compact import COMPACTION_PROMPT, CompactResponse
 from crow_cli.agent.main import AcpAgent
+from crow_cli.agent.prompt import SystemPromptResponse
 from crow_cli.agent.session import make_agent_session
 from tests.integration.test_react_loop_cancel_integrity import SESSION_ID, FakeConn
 
 
-# Which of compaction's three passes a request belongs to, read off the only
-# thing that differs between them: the trailing user prompt.
-_KINDS = {
-    COMPACTION_PROMPT: "summary",
-    ANALYSIS_PROMPT: "analysis",
-    IDEAS_PROMPT: "ideas",
-}
+# Which compaction pass a request belongs to, read off the trailing user prompt.
+# One entry, because the default strategy asks exactly one question. A prompt
+# that is not in here is a KeyError on purpose: it means something other than
+# the default compactor ran, and a test that did not arrange that.
+_KINDS = {COMPACTION_PROMPT: "summary"}
 
 
 class SummarizerLLM:
-    """The LLM boundary: streamed completions, one per compaction pass.
+    """The LLM boundary: a streamed completion for the summary call.
 
     ``compact()`` streams (a local model can take minutes for a whole summary,
     which unstreamed trips the client's read timeout); everything else in the
-    compaction path — persistence, the new agent row, registry rebinding, the
-    two reflection files — is the real thing.
+    compaction path — persistence, the new agent row, registry rebinding — is
+    the real thing.
 
-    Each pass gets distinguishable text so a test can tell which file came from
-    which prompt. ``fail_on`` names passes that should raise, which is how the
-    "a reflection must not break a compaction" guarantee gets exercised through
-    the real slash dispatch rather than against ``compact()`` directly.
+    ``fail_on`` names passes that should raise, which is how "a slash handler
+    must not raise" gets exercised through the real dispatch rather than
+    against ``compact()`` directly.
     """
-
-    BODIES = {
-        "analysis": "## Bugs\nthe edit tool silently picked the wrong occurrence",
-        "ideas": "## Prior art you should steal from\na real system, a real mechanism",
-    }
 
     def __init__(
         self,
@@ -72,7 +58,7 @@ class SummarizerLLM:
                 outer.kinds.append(kind)
                 if kind in outer.fail_on:
                     raise RuntimeError(f"the {kind} pass exploded")
-                body = outer.summary if kind == "summary" else outer.BODIES[kind]
+                body = outer.summary
                 if not kwargs.get("stream"):
                     return SimpleNamespace(
                         choices=[
@@ -106,16 +92,6 @@ class SummarizerLLM:
         self.chat = SimpleNamespace(completions=Completions())
 
 
-def front_matter(path) -> tuple[dict, str]:
-    """Split a reflection file into its crow-written frontmatter and the model's
-    body. The header is YAML on purpose: a note is only useful if something
-    other than a human can join it back to the session that produced it."""
-    text = path.read_text()
-    assert text.startswith("---\n"), f"{path} has no frontmatter"
-    head, body = text[len("---\n") :].split("\n---\n\n", 1)
-    return yaml.safe_load(head), body
-
-
 def sent_text(conn: FakeConn) -> str:
     """All agent message text the fake client received.
 
@@ -137,9 +113,8 @@ async def agent_with_history(test_config, tmp_path):
 
     ``cwd`` is a subdirectory of ``tmp_path``, not ``tmp_path`` itself: the test
     config dir is ``tmp_path/.agents/crow``, so a session rooted at ``tmp_path``
-    would be the degenerate "crow launched from $HOME" case where the project
-    scope and the global scope are one directory (covered separately in
-    tests/unit/test_compact.py).
+    would be the degenerate "crow launched from $HOME" case, where walking up
+    from the workspace finds the config dir's own AGENTS.md.
     """
     config = test_config
     config.db_uri = f"sqlite:///{tmp_path / 'crow.db'}"
@@ -214,18 +189,15 @@ async def test_compact_with_too_little_history_says_so(agent_with_history, monke
     assert "not enough conversation history" in sent_text(agent._conn).lower()
 
 
-async def test_compact_slash_command_writes_the_analysis_and_the_ideas(
+async def test_compact_makes_one_call_over_the_real_history(
     agent_with_history, monkeypatch
 ):
-    """/compact leaves two notes behind: a harness analysis under the config dir
-    and project ideas under the working tree, both named for the generation that
-    was compacted.
+    """/compact asks the model ONE question — the summary — over the session's
+    real history: a rendered system prompt and messages rehydrated from sqlite,
+    not a synthetic list.
 
     The unit tests drive ``compact()`` directly. This drives the real slash
-    dispatch through ``Agent.prompt`` against real sqlite persistence, so it
-    covers the path a user actually takes — and the session shape that path
-    produces, which is a system prompt full of skills/tree/AGENTS.md blocks and
-    messages rehydrated from the db, not a synthetic list.
+    dispatch through ``Agent.prompt``, so it covers the path a user takes.
     """
     agent, session = agent_with_history
     llm = SummarizerLLM()
@@ -236,102 +208,125 @@ async def test_compact_slash_command_writes_the_analysis_and_the_ideas(
     )
 
     assert response.stop_reason == "end_turn"
-    assert llm.kinds == ["summary", "analysis", "ideas"]
-
-    analysis = analysis_path(agent._config.config_dir, session.agent_id)
-    ideas = ideas_path(session.cwd, session.agent_id)
-
-    meta, body = front_matter(analysis)
-    assert meta["kind"] == "analysis"
-    assert meta["agent"] == session.agent_id
-    assert meta["session"] == session.session_id
-    assert "generated" in meta
-    assert body.startswith("## Bugs")
-
-    meta, body = front_matter(ideas)
-    assert meta["kind"] == "ideas"
-    assert meta["agent"] == session.agent_id
-    assert meta["cwd"] == session.cwd
-    assert body.startswith("## Prior art")
+    assert llm.kinds == ["summary"]
+    call = llm.create_kwargs[0]
+    assert call["stream"] is True
+    assert call["tool_choice"] == "none"
+    assert call["messages"][-1]["content"] == COMPACTION_PROMPT
+    # The prefix IS the session's own history, system prompt first, verbatim.
+    prefix = call["messages"][:-1]
+    assert prefix[0]["role"] == "system"
+    assert prefix[0]["content"] == session.messages[0]["content"]
+    assert prefix[: len(session.messages)] == session.messages
+    # /compact leaves a trailing user message and providers reject user+user,
+    # so history_prefix pads it with an assistant placeholder.
+    assert prefix[-1]["role"] == "assistant"
+    assert len(prefix) == len(session.messages) + 1
 
 
-async def test_all_three_passes_share_one_message_prefix(
+async def test_a_failed_summary_is_reported_not_raised(agent_with_history, monkeypatch):
+    """A slash handler must not raise: an exception becomes an ACP internal
+    error, which the client reads as a failed turn. A provider that chokes on
+    the summary is reported as a result instead, and no generation is minted."""
+    agent, session = agent_with_history
+    llm = SummarizerLLM(fail_on=("summary",))
+    monkeypatch.setattr("crow_cli.agent.slash.configure_llm", lambda **kwargs: llm)
+
+    response = await agent.prompt(
+        [TextContentBlock(type="text", text="/compact")], session_id=SESSION_ID
+    )
+
+    assert response.stop_reason == "end_turn"
+    assert "error during compaction" in sent_text(agent._conn).lower()
+    assert (await agent._resolve_session(SESSION_ID)).agent_id == session.agent_id
+
+
+async def test_compact_routes_through_the_agents_own_callables(
     agent_with_history, monkeypatch
 ):
-    """Compaction asks three questions of one conversation and should pay for
-    the history once: every pass sends a byte-identical prefix and only the
-    trailing prompt differs, which is what makes the provider's prompt-prefix
-    cache hit on passes two and three.
+    """``/compact`` runs the AGENT'S compactor and system-prompt callables — the
+    slash path and the react-threshold path share one contract, so a project's
+    strategy reaches both.
 
-    Worth asserting against a real session, not just a synthetic one — the
-    prefix here includes a rendered system prompt and db-round-tripped message
-    dicts, so anything non-deterministic in either would show up as a cache miss
-    in production and as a failure here.
+    The custom compactor here never touches the model. If the handler had fallen
+    back to the default there would be a summary call in ``create_kwargs`` and
+    crow's own prompt on the successor.
     """
     agent, session = agent_with_history
     llm = SummarizerLLM()
     monkeypatch.setattr("crow_cli.agent.slash.configure_llm", lambda **kwargs: llm)
 
-    await agent.prompt(
-        [TextContentBlock(type="text", text="/compact")], session_id=SESSION_ID
-    )
+    seen = {}
 
-    assert len(llm.create_kwargs) == 3
-    assert [k["messages"][-1]["content"] for k in llm.create_kwargs] == [
-        COMPACTION_PROMPT,
-        ANALYSIS_PROMPT,
-        IDEAS_PROMPT,
-    ]
-    prefixes = [k["messages"][:-1] for k in llm.create_kwargs]
-    assert prefixes[0] == prefixes[1] == prefixes[2]
-    assert prefixes[0][0]["role"] == "system"
+    async def project_compactor(ctx):
+        seen["ctx"] = ctx
+        system_prompt = ctx.system_prompt(ctx)
+        return CompactResponse(
+            system_template=system_prompt.template,
+            system_args=system_prompt.template_args,
+            prompt=f"PROJECT HANDOFF for generation {ctx.session.agent_idx + 1}",
+        )
 
+    def project_system_prompt(ctx):
+        return SystemPromptResponse(
+            template="Project agent, generation {{ generation }}.",
+            template_args={"generation": ctx.session.agent_idx + 1},
+        )
 
-async def test_a_failed_reflection_still_compacts(agent_with_history, monkeypatch):
-    """The reflections run after the summary is durable, and each fails alone.
-
-    A provider that chokes on the analysis prompt must not turn a successful
-    /compact into an error the user has to recover from — the summary is already
-    in the database and the new generation is already live by then.
-    """
-    agent, session = agent_with_history
-    llm = SummarizerLLM(fail_on=("analysis",))
-    monkeypatch.setattr("crow_cli.agent.slash.configure_llm", lambda **kwargs: llm)
+    agent._compactor = project_compactor
+    agent._compact_system_prompt = project_system_prompt
 
     response = await agent.prompt(
         [TextContentBlock(type="text", text="/compact")], session_id=SESSION_ID
     )
 
     assert response.stop_reason == "end_turn"
-    assert "error during compaction" not in sent_text(agent._conn).lower()
+    assert llm.create_kwargs == []
+    assert seen["ctx"].session.agent_id == session.agent_id
+    assert seen["ctx"].llm_client is llm
+    assert seen["ctx"].config is agent._config
 
     compacted = await agent._resolve_session(SESSION_ID)
     assert compacted.agent_idx == session.agent_idx + 1
-    assert "the conversation so far" in compacted.messages[1]["content"]
-
-    # The analysis is missing; the ideas pass is independent and still ran.
-    assert not analysis_path(agent._config.config_dir, session.agent_id).exists()
-    assert ideas_path(session.cwd, session.agent_id).exists()
+    assert compacted.messages[0]["content"] == "Project agent, generation 2."
+    assert compacted.messages[1]["content"] == "PROJECT HANDOFF for generation 2"
+    assert "compacted" in sent_text(agent._conn).lower()
 
 
-async def test_reflections_never_leak_into_the_compacted_history(
-    agent_with_history, monkeypatch
+async def test_new_session_renders_the_agents_system_prompt_callable(
+    test_config, tmp_path
 ):
-    """The next generation inherits the summary, not its predecessor's
-    self-criticism. The notes are files on disk precisely so they stay out of
-    the context window."""
-    agent, session = agent_with_history
-    llm = SummarizerLLM()
-    monkeypatch.setattr("crow_cli.agent.slash.configure_llm", lambda **kwargs: llm)
+    """The other half of the contract, at the moment it is used: ``session/new``
+    renders whatever the agent's ``system_prompt`` callable returned, and mints
+    the session id BEFORE calling it, because crow's own template tells the
+    agent which session it is and a replacement has to be able to say the same.
+    """
+    config = test_config
+    config.db_uri = f"sqlite:///{tmp_path / 'new-session.db'}"
+    project = tmp_path / "project"
+    project.mkdir()
 
-    await agent.prompt(
-        [TextContentBlock(type="text", text="/compact")], session_id=SESSION_ID
+    seen = {}
+
+    def project_system_prompt(cfg, cwd, session_id=None):
+        seen["call"] = (cfg, cwd, session_id)
+        return SystemPromptResponse(
+            template="Project agent in {{ workspace }}, session {{ session_id }}.",
+            template_args={"workspace": cwd, "session_id": session_id},
+        )
+
+    agent = AcpAgent(config=config, hooks=[], system_prompt=project_system_prompt)
+    agent._conn = FakeConn()
+    response = await agent.new_session(cwd=str(project), mcp_servers=[])
+
+    assert seen["call"] == (config, str(project), response.session_id)
+
+    session = await agent._resolve_session(response.session_id)
+    assert session.messages[0]["content"] == (
+        f"Project agent in {project}, session {response.session_id}."
     )
-
-    compacted = await agent._resolve_session(SESSION_ID)
-    joined = "\n".join(str(m.get("content", "")) for m in compacted.messages)
-    assert SummarizerLLM.BODIES["analysis"] not in joined
-    assert SummarizerLLM.BODIES["ideas"] not in joined
+    # workspace survived, which is what keeps this session in the session list
+    assert session.prompt_args["workspace"] == str(project)
 
 
 async def test_unknown_command_is_reported(agent_with_history):

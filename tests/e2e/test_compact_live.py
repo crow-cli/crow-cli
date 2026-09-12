@@ -1,31 +1,32 @@
-"""Live compaction (end-to-end, real provider, real sqlite).
+"""Live compaction on the DEFAULT path (end-to-end, real provider, real sqlite).
 
-Compaction makes THREE real calls now — the summary plus a harness analysis and
-a set of project ideas over the same history — and the two extra ones produce
-files a human is supposed to read. A mocked pass can prove the plumbing; only a
-live one can prove the prompts actually get a real model to produce a real
-critique rather than a polite shrug.
+Compaction is a callable now and a project can replace it — that is what
+``test_custom_compactor_live.py`` drives over ACP with its own agent script.
+This is the other half of the same claim: with nothing passed in, ``compact()``
+still does what crow-cli always did — crow's own system prompt, one summary,
+the harness owning every bit of new-session arithmetic — and it no longer
+spends two extra live calls writing reflection notes nobody asked for.
 
 The history below is scripted rather than earned by running real turns: it is
-the conversation content the passes read, and paying for three react turns to
-generate it would triple the cost of a test whose subject is the compaction
-calls. It deliberately contains harness friction (an ambiguous ``edit`` that the
-tool refused) so the analysis pass has something concrete to bite on.
+the conversation content the summary reads, and paying for react turns to
+generate it would multiply the cost of a test whose subject is the compaction
+call itself. It is shaped like a real crow-cli session (a rename, a search, an
+``edit`` the tool refused for being ambiguous, a retry, a test run) so the
+summary has something concrete to lose or keep.
 
-Asserts are loose — the output is nondeterministic — but they are about
-structure the prompts explicitly demand, so a prompt that stops working fails
-here rather than quietly producing mush.
+Asserts are loose where the output is nondeterministic and strict where the
+contract is not.
 """
 
 import logging
-from pathlib import Path
 
 import pytest
-import yaml
 
-from crow_cli.agent.compact import analysis_path, compact, ideas_path
-from crow_cli.config import Config
+from crow_cli.agent.compact import compact
+from crow_cli.agent.prompt import default_system_prompt, render_template
 from crow_cli.agent.session import make_agent_session
+from crow_cli.config import Config
+from crow_cli.memory import build_agent_id, get_engine, get_prompt
 
 from tests.e2e.test_session_update_transmission import get_llm_client
 
@@ -38,7 +39,6 @@ def _tool_call(call_id: str, name: str, arguments: str) -> dict:
         "type": "function",
         "function": {"name": name, "arguments": arguments},
     }
-
 
 # A short but real-shaped crow-cli session: a rename task, a search, an edit
 # that the tool rejected for being ambiguous, a retry, and a test run.
@@ -142,39 +142,18 @@ HISTORY = [
     },
 ]
 
-ANALYSIS_HEADINGS = (
-    "## What worked well",
-    "## What did not work",
-    "## Bugs",
-    "## Ideas",
-)
-
-IDEAS_HEADINGS = (
-    "## Assumptions worth attacking",
-    "## Prior art you should steal from",
-    "## Directions nobody has pointed at",
-    "## What would make this obsolete",
-    "## Cheapest decisive experiments",
-)
-
-
-def _front_matter(path: Path) -> tuple[dict, str]:
-    text = path.read_text()
-    assert text.startswith("---\n"), f"{path} has no frontmatter"
-    head, body = text[len("---\n") :].split("\n---\n\n", 1)
-    return yaml.safe_load(head), body
-
 
 @pytest.mark.asyncio
-async def test_live_compact_writes_a_real_analysis_and_real_ideas(tmp_path):
-    """One real compaction: the summary becomes the new generation's first
-    message, and the two reflection passes leave readable markdown behind."""
+async def test_live_default_compact_mints_the_next_generation(tmp_path):
+    """One real compaction with nothing passed in: the default strategy, crow's
+    default system prompt, and the harness doing every bit of the arithmetic."""
     client, model_id = get_llm_client()
     if client is None:
         pytest.skip("No LLM provider configured")
 
     config = Config.load()
-    # Never touch the real db or the developer's real ~/.agents/crow/ideas.
+    # Never touch the real db — and hand the reflection passes a config_dir
+    # they would have to create in order to be caught writing into it.
     config.db_uri = f"sqlite:///{tmp_path / 'e2e.db'}"
     config.config_dir = tmp_path / "crow"
     project = tmp_path / "project"
@@ -186,45 +165,45 @@ async def test_live_compact_writes_a_real_analysis_and_real_ideas(tmp_path):
     for message in HISTORY:
         await session.add_message(message)
 
-    new_session = await compact(session, client, config, logger=logger)
+    handed_off: list[tuple[str, str]] = []
 
-    # --- the summary still did its job -----------------------------------
+    def on_compact(old_agent_id: str, compacted) -> None:
+        handed_off.append((old_agent_id, compacted.agent_id))
+
+    new_session = await compact(
+        session, client, config, on_compact=on_compact, logger=logger
+    )
+
+    # --- the harness did the arithmetic; the caller did none of it ---------
+    assert handed_off == [(session.agent_id, new_session.agent_id)]
     assert new_session.agent_idx == session.agent_idx + 1
-    assert len(new_session.messages) == 2
-    summary = str(new_session.messages[1].get("content") or "")
-    assert "ancestors" in summary, f"summary lost the subject of the session: {summary[:400]}"
+    assert new_session.session_id == session.session_id
+    assert new_session.fork_idx == session.fork_idx
+    assert new_session.agent_id == build_agent_id(
+        session.session_id, session.agent_idx + 1, session.fork_idx
+    )
 
-    # --- both notes exist, at the two designed scopes ---------------------
-    analysis_file = analysis_path(config.config_dir, session.agent_id)
-    ideas_file = ideas_path(session.cwd, session.agent_id)
-    assert analysis_file.exists(), "the analysis pass wrote nothing"
-    assert ideas_file.exists(), "the ideas pass wrote nothing"
-    assert analysis_file.parent == config.config_dir / "ideas"
-    assert ideas_file.parent == project / ".agents" / "crow" / "ideas"
+    # --- one summary message, and a real one ------------------------------
+    assert [m["role"] for m in new_session.messages] == ["system", "user"]
+    handoff = str(new_session.messages[1]["content"])
+    assert "ancestors" in handoff, f"summary lost the subject: {handoff[:400]}"
+    assert "Last messages:" in handoff
+    assert len(handoff.strip()) > 400, handoff
 
-    # --- and they are notes, not mush -------------------------------------
-    meta, analysis = _front_matter(analysis_file)
-    assert meta["kind"] == "analysis"
-    assert meta["agent"] == session.agent_id
-    assert meta["session"] == session.session_id
-    assert meta["model"] == model_id
-    assert len(analysis.strip()) > 200, analysis
-    assert any(h in analysis for h in ANALYSIS_HEADINGS), analysis[:800]
+    # --- crow's OWN prompt: same template row, same args, re-rendered -------
+    default = default_system_prompt(config, str(project), session.session_id)
+    assert new_session.prompt_id == session.prompt_id
+    engine = get_engine(config.db_uri)
+    assert get_prompt(engine, new_session.prompt_id).template == default.template
+    assert new_session.prompt_args == default.template_args
+    system = str(new_session.messages[0]["content"])
+    assert system == render_template(default.template, **default.template_args)
+    # workspace survived, which is what keeps the session in the session list
+    assert str(project) in system
 
-    meta, ideas = _front_matter(ideas_file)
-    assert meta["kind"] == "ideas"
-    assert meta["agent"] == session.agent_id
-    assert meta["cwd"] == session.cwd
-    assert len(ideas.strip()) > 200, ideas
-    assert any(h in ideas for h in IDEAS_HEADINGS), ideas[:800]
-
-    # The analysis is about the harness, the ideas about the project. Both
-    # prompts draw that line hard; a note that crossed it is a prompt failure.
-    assert analysis != ideas
-
-    # --- the notes stayed out of the context window -----------------------
-    assert analysis.strip()[:200] not in summary
-    assert ideas.strip()[:200] not in summary
+    # --- and the two reflection passes are really gone --------------------
+    assert not (config.config_dir / "analysis").exists()
+    assert not (project / ".agents").exists()
 
     await session.close()
     await new_session.close()

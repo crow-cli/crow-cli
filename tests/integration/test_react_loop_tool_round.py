@@ -20,7 +20,9 @@ from types import SimpleNamespace
 from acp.schema import UsageUpdate
 
 from crow_cli.config import LLModel, LLMProvider
-from crow_cli.agent.compact import analysis_path, ideas_path
+from crow_cli.memory import get_engine, list_agents
+from crow_cli.agent.compact import CompactResponse
+from crow_cli.agent.prompt import SystemPromptResponse
 from crow_cli.agent.react import react_loop
 from crow_cli.agent.session import AgentSession
 
@@ -45,8 +47,8 @@ class MultiTurnLLM:
 
     Script entries are plain strings — the text the model "says" — and are
     served the way the caller asked for it: as a stream of content chunks when
-    ``stream=True`` (react_loop's send_request AND all three of compact()'s
-    passes), as a single completion object otherwise.
+    ``stream=True`` (react_loop's send_request AND compact()'s summary pass),
+    as a single completion object otherwise.
 
     The script is popped, not cycled, on purpose: a compaction that silently
     made an extra LLM call would run the script dry and fail loudly here
@@ -312,8 +314,6 @@ async def test_compaction_crossing_threshold_creates_new_agent(tmp_path):
         [
             [content_chunk("working on it "), usage_chunk(100)],  # turn 1: over 50
             "SUMMARY of the big job",  # compact() summarization (streamed)
-            "ANALYSIS of the harness",  # compact() harness-analysis pass
-            "IDEAS for the project",  # compact() project-ideas pass
             [content_chunk("done now"), usage_chunk(10)],  # turn 2: under 50
         ]
     )
@@ -336,25 +336,14 @@ async def test_compaction_crossing_threshold_creates_new_agent(tmp_path):
     events, stop = await drive_react_loop(gen)
     assert stop == "done", events
 
-    # One request per turn plus compaction's THREE passes — all of which, like
+    # One request per turn plus compaction's single summary pass — which, like
     # every other LLM call, must be streamed (a local model needs minutes to
     # produce a whole summary; unstreamed it trips the client's read timeout).
-    assert len(llm.create_kwargs) == 5
-    for call in llm.create_kwargs[1:4]:
-        assert call.get("stream") is True
+    assert len(llm.create_kwargs) == 3
+    assert llm.create_kwargs[1].get("stream") is True
 
     # The loop announced compaction
     assert any(e["type"] == "compaction" for e in events)
-
-    # The threshold path gets the two notes for free — nothing in react.py
-    # knows they exist, they fall out of compact(). Named for the generation
-    # that was compacted, because that is the history they read.
-    analysis = analysis_path(config.config_dir, AGENT_ID).read_text()
-    ideas = ideas_path(session.cwd, AGENT_ID).read_text()
-    assert analysis.endswith("ANALYSIS of the harness\n")
-    assert ideas.endswith("IDEAS for the project\n")
-    assert f"agent: {AGENT_ID}" in analysis
-    assert f"agent: {AGENT_ID}" in ideas
 
     # New agent (idx 2) holds the summary prompt and the final answer
     new_id = f"{SESSION_ID}-2-1"  # v5: next agent_idx, same fork_idx
@@ -371,6 +360,148 @@ async def test_compaction_crossing_threshold_creates_new_agent(tmp_path):
     # Old agent untouched — still just system + user
     loaded_old = await AgentSession.load(AGENT_ID, memory_path=config.db_uri)
     assert [m["role"] for m in loaded_old.messages] == ["system", "user"]
+
+
+async def test_successor_born_over_the_ceiling_is_not_recompacted(tmp_path):
+    """The irreducible floor is the system prompt plus the handoff. When that
+    alone is over the ceiling, compacting again re-summarizes the summary —
+    and the model writes a BIGGER one each time, so the loop mints generations
+    forever while the ``continue`` throws away every reply the successor
+    produced. Measured live on a 10k ceiling: 11.9k -> 12.8k -> 19.5k -> 26.1k
+    prompt tokens, ~2 minutes a generation, no end. To the client that is
+    indistinguishable from a hang.
+
+    So: one compaction per unit of progress. The successor here is born over
+    the ceiling and must KEEP its own answer instead of being compacted again.
+    The script has no fourth entry, so a second compaction runs it dry and
+    fails loudly.
+    """
+    config, session = await make_test_session(tmp_path)
+    await session.add_message({"role": "user", "content": "do the big job"})
+
+    llm = MultiTurnLLM(
+        [
+            [content_chunk("working on it "), usage_chunk(100)],  # turn 1: over 50
+            "SUMMARY of the big job",  # compact() summarization (streamed)
+            [content_chunk("the answer"), usage_chunk(100)],  # successor: STILL over
+        ]
+    )
+    config.MAX_COMPACT_TOKENS = 50
+    conn = FakeConn()
+    gen = react_loop(
+        conn=conn,
+        config=config,
+        client_capabilities=None,
+        turn_id="turn-1",
+        mcp_clients={},
+        llm=llm,
+        tools=[],
+        sessions={AGENT_ID: session},
+        agent_id=AGENT_ID,
+        state_accumulators={},
+        logger=logger,
+        hooks=[],
+    )
+    events, stop = await drive_react_loop(gen)
+    assert stop == "done", events
+
+    # Two turn calls and ONE summary call: the successor was not re-compacted.
+    assert len(llm.create_kwargs) == 3
+    assert sum(1 for e in events if e["type"] == "compaction") == 1
+
+    # The successor kept the answer it produced while over the ceiling.
+    loaded_new = await AgentSession.load(
+        f"{SESSION_ID}-2-1", memory_path=config.db_uri
+    )
+    assert [m["role"] for m in loaded_new.messages] == [
+        "system",
+        "user",
+        "assistant",
+    ]
+    assert "the answer" in str(loaded_new.messages[-1]["content"])
+
+    # And no third generation was ever minted.
+    engine = get_engine(config.db_uri)
+    assert sorted(a.agent_id for a in list_agents(engine, SESSION_ID)) == [
+        f"{SESSION_ID}-1-1",
+        f"{SESSION_ID}-2-1",
+    ]
+
+
+async def test_react_loop_compacts_with_the_callables_it_was_given(tmp_path):
+    """The threshold path is not hard-wired to crow's strategy: react_loop
+    forwards ``compactor`` and ``compact_system_prompt`` to ``compact()``, so a
+    project's own agent compacts mid-turn exactly the way ``/compact`` does.
+
+    The custom compactor here never touches the model, which is the point — if
+    the loop had fallen back to the default strategy there would be a summary
+    call in ``create_kwargs`` and crow's prompt on the successor.
+    """
+    config, session = await make_test_session(tmp_path)
+    await session.add_message({"role": "user", "content": "do the big job"})
+
+    llm = MultiTurnLLM(
+        [
+            [content_chunk("working on it "), usage_chunk(100)],  # turn 1: over 50
+            [content_chunk("done now"), usage_chunk(10)],  # turn 2: under 50
+        ]
+    )
+    config.MAX_COMPACT_TOKENS = 50
+
+    seen = {}
+
+    async def project_compactor(ctx):
+        seen["ctx"] = ctx
+        prompt = ctx.system_prompt(ctx)
+        return CompactResponse(
+            system_template=prompt.template,
+            system_args=prompt.template_args,
+            # A plain message, not a template — only the system prompt is
+            # rendered. Anything dynamic here the callable computes itself.
+            prompt=f"PROJECT HANDOFF for generation {ctx.session.agent_idx + 1}",
+        )
+
+    def project_system_prompt(ctx):
+        return SystemPromptResponse(
+            template="Project agent, generation {{ generation }}.",
+            template_args={"generation": ctx.session.agent_idx + 1},
+        )
+
+    conn = FakeConn()
+    gen = react_loop(
+        conn=conn,
+        config=config,
+        client_capabilities=None,
+        turn_id="turn-1",
+        mcp_clients={},
+        llm=llm,
+        tools=[],
+        sessions={AGENT_ID: session},
+        agent_id=AGENT_ID,
+        state_accumulators={},
+        logger=logger,
+        hooks=[],
+        compactor=project_compactor,
+        compact_system_prompt=project_system_prompt,
+    )
+    events, stop = await drive_react_loop(gen)
+    assert stop == "done", events
+    assert any(e["type"] == "compaction" for e in events)
+
+    # Two turn calls, ZERO summary calls: the callable replaced the strategy.
+    assert len(llm.create_kwargs) == 2
+
+    # The ctx the loop built is the live one — the session it compacted.
+    assert seen["ctx"].session.agent_id == AGENT_ID
+    assert seen["ctx"].llm_client is llm
+    assert seen["ctx"].config is config
+
+    loaded_new = await AgentSession.load(
+        f"{SESSION_ID}-2-1", memory_path=config.db_uri
+    )
+    assert loaded_new.messages[0]["content"] == "Project agent, generation 2."
+    assert loaded_new.messages[1]["content"] == "PROJECT HANDOFF for generation 2"
+    assert loaded_new.prompt_args == {"generation": 2}
 
 
 async def test_per_model_compact_threshold_overrides_global(tmp_path):
@@ -395,8 +526,6 @@ async def test_per_model_compact_threshold_overrides_global(tmp_path):
         [
             [content_chunk("working on it "), usage_chunk(100)],  # >50, <1000
             "SUMMARY of the big job",  # compact() summarization (streamed)
-            "ANALYSIS of the harness",  # compact() harness-analysis pass
-            "IDEAS for the project",  # compact() project-ideas pass
             [content_chunk("done now"), usage_chunk(10)],
         ]
     )

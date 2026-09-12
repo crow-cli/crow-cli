@@ -18,7 +18,7 @@ from fastmcp import Client as MCPClient
 from openai import APIConnectionError, APIError, AsyncOpenAI, RateLimitError
 from openai._exceptions import APITimeoutError
 
-from crow_cli.agent.compact import compact
+from crow_cli.agent.compact import CompactSystemPrompt, Compactor, compact
 from crow_cli.agent.context import TurnCtx
 from crow_cli.config import (
     Config,
@@ -701,6 +701,8 @@ async def react_loop(
     hooks: list[CommandHook] | None = None,
     snapshot_hooks: list[FileSnapshotHook] | None = None,
     chunk_log_dir: str | None = None,
+    compactor: Compactor | None = None,
+    compact_system_prompt: CompactSystemPrompt | None = None,
 ):
     """
     Main ReAct loop with cancellation support.
@@ -734,6 +736,11 @@ async def react_loop(
     # finished. This is the only path by which a queued reply resumes a
     # session: a user prompt. Nothing self-wakes.
     await consult_deliveries(engine, session, conn, session_id, logger)
+
+    # Message count as of this turn's last compaction (None = none yet). A
+    # compaction is only worth its LLM call if the conversation GREW since
+    # the last one — see the threshold check below.
+    compacted_at_len: int | None = None
 
     for turn in range(max_turns):
         # Top-of-loop checkpoint: highs that landed since the last
@@ -851,28 +858,54 @@ async def react_loop(
 
         # 1. Check your token threshold
         if usage and usage["total_tokens"] > compact_threshold:
-            logger.info("Token threshold crossed. Initiating compaction...")
+            # Compaction is only worth its LLM call if the conversation GREW
+            # since the last one. A successor is born [system, handoff]; when
+            # that alone is over the ceiling, re-summarizing the summary
+            # cannot help — and models reliably write a BIGGER one. Measured
+            # live: 11.9k -> 12.8k -> 19.5k -> 26.1k prompt tokens, one
+            # ~2-minute call per generation, forever, because the `continue`
+            # below discards every reply the successor produces. So carry on
+            # over the ceiling until there is new history to trade away.
+            if (
+                compacted_at_len is not None
+                and len(session.messages) <= compacted_at_len
+            ):
+                logger.warning(
+                    "Over the %s-token ceiling but nothing has been added "
+                    "since the last compaction (%d messages) — continuing "
+                    "without compacting. The floor is the system prompt plus "
+                    "the handoff: raise max_compact_tokens or shrink the "
+                    "system prompt.",
+                    compact_threshold,
+                    len(session.messages),
+                )
+            else:
+                logger.info("Token threshold crossed. Initiating compaction...")
 
-            yield {
-                "type": "compaction",
-                "token": f"\n\nCompaction threshold of {compact_threshold} reached — compacting conversation history...\n\n",
-            }
+                yield {
+                    "type": "compaction",
+                    "token": f"\n\nCompaction threshold of {compact_threshold} reached — compacting conversation history...\n\n",
+                }
 
-            logger.info(f"Pre-compacted session length: {len(session.messages)}")
-            session = await compact(
-                session=session,
-                llm=llm,
-                config=config,
-                on_compact=on_compact,
-                logger=logger,
-            )
-            # Compaction mints a new agent row inside the SAME wire sessionId.
-            # Rebind the turn so every later write in this prompt lands on it.
-            ctx = ctx.with_session(session)
-            logger.info(f"Post-compacted session length: {len(session.messages)}")
-            logger.info("Compaction complete - session updated in-place.")
-            # Start fresh turn with compacted session [system, user]
-            continue
+                logger.info(f"Pre-compacted session length: {len(session.messages)}")
+                session = await compact(
+                    session=session,
+                    llm=llm,
+                    config=config,
+                    on_compact=on_compact,
+                    logger=logger,
+                    compactor=compactor,
+                    system_prompt=compact_system_prompt,
+                )
+                # Compaction mints a new agent row inside the SAME wire
+                # sessionId. Rebind the turn so every later write in this
+                # prompt lands on it.
+                ctx = ctx.with_session(session)
+                compacted_at_len = len(session.messages)
+                logger.info(f"Post-compacted session length: {len(session.messages)}")
+                logger.info("Compaction complete - session updated in-place.")
+                # Start fresh turn with compacted session [system, user]
+                continue
 
         # This ends the react loop — NO TOOLS!! But with bg-task semantics,
         # "model done" ends the turn ONLY when the mailbox is empty AND no

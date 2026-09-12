@@ -88,6 +88,8 @@ async def compact_command(session: AgentSession, args: str, agent: AcpAgent) -> 
             config=agent._config,
             on_compact=on_compact,
             logger=logger,
+            compactor=agent._compactor,
+            system_prompt=agent._compact_system_prompt,
         )
     except Exception as exc:
         logger.error("Compaction failed: %s", exc, exc_info=True)

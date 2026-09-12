@@ -19,11 +19,9 @@ from coolname import generate_slug
 from crow_cli.agent.memory import DEFAULT_MEMORY_PATH, MemoryClient, MemoryServiceError
 from crow_cli.memory import build_agent_id
 from crow_cli.agent.prompt import (
-    build_agents_context,
-    build_display_tree,
-    get_skills,
+    SystemPromptResponse,
+    default_system_prompt,
     render_template,
-    skill_roots,
 )
 
 from crow_cli.config import (
@@ -579,38 +577,40 @@ async def make_agent_session(
     agent_idx: int | None = None,
     fork_idx: int = 1,
     forked_at: str | None = None,
+    template: str | None = None,
+    template_args: dict[str, Any] | None = None,
 ):
+    """Mint an agent row and its session, rendering its system prompt.
+
+    ``template`` / ``template_args`` are the system-prompt seam. Pass neither
+    and the prompt comes from :func:`default_system_prompt` — crow's template
+    with args assembled from ``cwd``, which is what ``session/new`` wants. Pass
+    both and the row is created with exactly that prompt, which is what
+    compaction does: its callable decides what the NEXT generation's system
+    prompt is, and this is where that decision lands.
+
+    The seam sits here rather than in :meth:`AgentSession.create` because
+    ``create`` speaks in ``prompt_id`` — an already-persisted template row. A
+    caller with a prompt of its own should not have to know about the
+    ``prompts`` table.
+    """
     cwd = os.path.abspath(cwd)
-    if config.system_prompt_path:
-        template = config.system_prompt_path.read_text()
-    else:
-        template = config.system_prompt
-    prompt_id = await lookup_or_create_prompt(
-        template, name="crow-default", memory_path=config.db_uri
-    )
-    # Context blocks: the skills catalog (project scopes + user scope, see
-    # skill_roots), the directory tree (cwd only), and the AGENTS.md rule files
-    # split into fully loaded and progressively disclosed. See prompt.py.
-    roots = skill_roots(cwd, config.skills_dir)
-    skills = get_skills(roots)
-    display_tree = build_display_tree(cwd)
-    agents = build_agents_context(cwd)
     if session_id is None:
         session_id = get_coolname()
     if agent_idx is None:
         agent_idx = 1
+    if template is None:
+        system_prompt = default_system_prompt(config, cwd, session_id)
+    else:
+        system_prompt = SystemPromptResponse(
+            template=template, template_args=template_args or {}
+        )
+    prompt_id = await lookup_or_create_prompt(
+        system_prompt.template, name="crow-default", memory_path=config.db_uri
+    )
     return await AgentSession.create(
         prompt_id=prompt_id,
-        prompt_args={
-            "workspace": cwd,
-            "display_tree": display_tree,
-            "agents_full": agents["full"],
-            "agents_catalog": agents["catalog"],
-            "session_id": session_id,
-            "skills": skills,
-            "skills_dir": config.skills_dir,
-            "skills_roots": [str(root) for root in roots],
-        },
+        prompt_args=system_prompt.template_args,
         tool_definitions=tools,
         request_params={"temperature": 0.2},
         model_identifier=model_id,

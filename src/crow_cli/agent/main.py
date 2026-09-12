@@ -100,7 +100,7 @@ from acp.schema import (
 )
 from fastmcp import Client as MCPClient
 
-from crow_cli.agent.compact import compact
+from crow_cli.agent.compact import CompactSystemPrompt, Compactor, compact
 from crow_cli.config import Config, apply_config_overrides, get_default_config_dir
 from crow_cli.agent.hooks import (
     CommandHook,
@@ -109,7 +109,12 @@ from crow_cli.agent.hooks import (
 from crow_cli.agent.llm import configure_llm
 from crow_cli.agent.logger import setup_logger
 from crow_cli.agent.mcp_client import create_mcp_client_from_acp, get_tools
-from crow_cli.agent.prompt import normalize_prompt, get_directory_tree
+from crow_cli.agent.prompt import (
+    SystemPromptFactory,
+    default_system_prompt,
+    get_directory_tree,
+    normalize_prompt,
+)
 from crow_cli.memory import (
     build_agent_id,
     delegation_tool_call_ids,
@@ -166,6 +171,9 @@ class AcpAgent(Agent):
         config: Config | None = None,
         hooks: list[CommandHook] | None = None,
         model: str | None = None,
+        system_prompt: SystemPromptFactory | None = None,
+        compactor: Compactor | None = None,
+        compact_system_prompt: CompactSystemPrompt | None = None,
     ) -> None:
         """
         Initialize the merged agent.
@@ -178,6 +186,23 @@ class AcpAgent(Agent):
             model: Model NAME from config.yaml's models: section to force for
                    all sessions (the `-m` flag). Overrides the first-in-config
                    default and any session's saved model.
+            system_prompt: How a NEW session's system prompt is built — see
+                   :data:`crow_cli.agent.prompt.SystemPromptFactory`. Called
+                   once per ``session/new``, never cached, so an agent serving
+                   several sessions resolves each one against its own cwd.
+                   Defaults to
+                   :func:`crow_cli.agent.prompt.default_system_prompt`.
+            compactor: The compaction strategy every session of this agent
+                   compacts through — see
+                   :data:`crow_cli.agent.compact.Compactor`. Defaults to
+                   :func:`crow_cli.agent.compact.default_compactor`.
+            compact_system_prompt: How the generation compaction MINTS gets its
+                   system prompt. Separate from ``system_prompt`` because a
+                   successor is not a fresh session — it inherits a summary
+                   instead of a conversation — and a project usually wants the
+                   two to differ. Defaults to
+                   :func:`crow_cli.agent.compact.compact_system_prompt`, which
+                   is the standard prompt rebuilt against the current cwd.
 
         Sets up:
         - AsyncExitStack for resource management
@@ -191,6 +216,14 @@ class AcpAgent(Agent):
         self._hooks: list[CommandHook] = (
             hooks if hooks is not None else [uv_project_hook]
         )
+        # Callables, not values: resolved per session at call time. This agent
+        # serves many sessions and must not freeze one session's cwd, prompt or
+        # generation onto itself.
+        self._system_prompt: SystemPromptFactory = (
+            system_prompt if system_prompt is not None else default_system_prompt
+        )
+        self._compactor: Compactor | None = compactor
+        self._compact_system_prompt: CompactSystemPrompt | None = compact_system_prompt
         self._logger = setup_logger(self._config.config_dir / "logs" / "crow-cli.log")
         self._model_override = None
         if model is not None:
@@ -476,11 +509,20 @@ class AcpAgent(Agent):
         # Get tools from MCP server ([] when the client passed none). The
         # task tool lives in the separate crow-mcp process, not here.
         tools = await get_tools(mcp_client)
+        # The session id is minted here rather than inside make_agent_session
+        # because the system-prompt callable is handed it: crow's own template
+        # tells the agent which session it is, so a project replacing the prompt
+        # has to be able to say the same thing.
+        session_id = get_coolname()
+        system_prompt = self._system_prompt(self._config, cwd, session_id)
         session = await make_agent_session(
             self._config,
             tools,
             self._default_model_identifier(),
             cwd,
+            session_id=session_id,
+            template=system_prompt.template,
+            template_args=system_prompt.template_args,
         )
 
         # Store in-memory references keyed on agent_id / session_id
@@ -968,6 +1010,8 @@ class AcpAgent(Agent):
                     logger=session_logger,
                     hooks=self._hooks,
                     chunk_log_dir=chunk_log_dir,
+                    compactor=self._compactor,
+                    compact_system_prompt=self._compact_system_prompt,
                 ):
                     chunk_type = chunk.get("type")
 

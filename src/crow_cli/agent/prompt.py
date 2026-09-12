@@ -12,7 +12,8 @@ import base64
 import itertools
 import logging
 import mimetypes
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 from functools import lru_cache
 from logging import Logger
 from pathlib import Path
@@ -400,6 +401,82 @@ def render_template(template_str: str, **args) -> str:
     env = get_jinja_env()
     template = env.from_string(template_str)
     return template.render(**args).strip()
+
+
+@dataclass(frozen=True)
+class SystemPromptResponse:
+    """A system prompt as a Jinja template plus the args to render it with.
+
+    The two-field split IS the contract. The template is static text, so it
+    content-addresses into a single ``prompts`` row and every generation of a
+    session sends the provider byte-identical system bytes; everything that
+    varies — cwd, the directory tree, the skills catalog, whatever a caller
+    computes — rides in ``template_args``, which is persisted as JSON on the
+    agent row and copied verbatim by :meth:`AgentSession.fork`.
+
+    Two keys are load-bearing beyond rendering, because crow reads them back
+    out of the persisted ``prompt_args`` rather than out of the prompt:
+
+    * ``workspace`` — :func:`crow_cli.agent.session.get_session_by_cwd`
+      filters agents on it. Omit it and the session never appears in the
+      session list.
+    * ``rlm_depth`` — the delegation budget
+      (:attr:`crow_cli.agent.session.AgentSession.rlm_depth`). Omit it and
+      depth reads as 0, which is "not a delegate".
+    """
+
+    template: str
+    template_args: dict[str, Any] = field(default_factory=dict)
+
+
+def default_system_prompt(
+    config: Config,
+    cwd: str,
+    session_id: str | None = None,
+) -> SystemPromptResponse:
+    """The standard system prompt: crow's template, args assembled from cwd.
+
+    Everything ``session/new`` did inline, lifted into one callable so a
+    project can supply its own — and so compaction can be handed a *different*
+    one for the generation it mints. Pure: reads config and the filesystem,
+    touches no database.
+    """
+    cwd = os.path.abspath(cwd)
+    template = (
+        config.system_prompt_path.read_text()
+        if config.system_prompt_path
+        else config.system_prompt
+    )
+    # Context blocks: the skills catalog (project scopes + user scope, see
+    # skill_roots), the directory tree (cwd only), and the AGENTS.md rule files
+    # split into fully loaded and progressively disclosed.
+    roots = skill_roots(cwd, config.skills_dir)
+    agents = build_agents_context(cwd)
+    return SystemPromptResponse(
+        template=template,
+        template_args={
+            "workspace": cwd,
+            "display_tree": build_display_tree(cwd),
+            "agents_full": agents["full"],
+            "agents_catalog": agents["catalog"],
+            "session_id": session_id,
+            "skills": get_skills(roots),
+            "skills_dir": config.skills_dir,
+            "skills_roots": [str(root) for root in roots],
+        },
+    )
+
+
+#: The system-prompt seam for ``session/new``: ``AcpAgent(system_prompt=...)``
+#: installs one, and it is called once per session created.
+#:
+#: Deliberately NOT the same alias as compaction's
+#: :data:`crow_cli.agent.compact.CompactSystemPrompt`. A fresh session has no
+#: history to inspect, so it is handed the three values the harness owns —
+#: config, cwd, and the session id it just minted — rather than a context
+#: object. Compaction gets a context because a successor's prompt is a function
+#: of the conversation it is replacing.
+SystemPromptFactory = Callable[[Config, str, "str | None"], SystemPromptResponse]
 
 
 async def normalize_prompt(

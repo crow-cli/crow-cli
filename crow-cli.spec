@@ -31,6 +31,7 @@ a = Analysis(
         'crow_cli.agent.llm',
         'crow_cli.agent.session',
         'crow_cli.agent.compact',
+        'crow_cli.agent.prompt',
         'crow_cli.agent.slash',
         'crow_cli.agent.context',
         'crow_cli.config',

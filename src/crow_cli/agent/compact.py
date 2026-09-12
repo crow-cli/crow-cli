@@ -12,38 +12,48 @@ Simplified approach:
 
 Nothing is ever deleted.
 
-If the recent assistant turns collapsed into one character repeated over and
-over — a local model that has gone insane — none of those passes run: asking
-the broken model to summarize produces more of the same. Compaction then skips
-every LLM call and hands the next generation a pointer to the previous session
-instead (``degenerate_repeat``, ``DEGENERATE_RUN``).
+Compaction is a CALLABLE, not a fixed pipeline. :func:`compact` owns the
+mechanics every strategy needs — minting the next agent row inside the same
+wire session, writing the handoff message, firing ``on_compact`` — and delegates
+the two decisions to whoever is installed:
 
-Compaction is also the one moment when the whole session is in front of the
-model at once, so it is the natural place to ask for more than a summary. Two
-extra passes run over the SAME history with a different trailing prompt (see
-``write_reflections``): a harness-level analysis, written globally, and
-project-level ideas, written into the working tree. All three passes send a
-byte-identical message prefix, which is what makes the provider's prompt-prefix
-cache pay for passes two and three.
+* what to ask the model, and what the next generation's first message says
+  (the :class:`Compactor`, returning a :class:`CompactResponse`);
+* what the next generation's SYSTEM PROMPT is (the system-prompt callable on
+  :class:`CompactCtx`, returning a
+  :class:`~crow_cli.agent.prompt.SystemPromptResponse`).
+
+The second is why compaction and system-prompt creation are one contract and
+not two. A compacted generation is a fresh agent row with a fresh system
+prompt, so a compactor that cannot reach prompt creation cannot do anything
+interesting — it cannot tell the successor it is generation four, cannot fold
+the summary into the system message instead of a user turn, cannot narrow the
+skills catalog for a session that has already found what it needs. The callable
+it is handed defaults to the same standard prompt ``session/new`` uses, and a
+project can pass a different one.
+
+``default_compactor`` is the strategy above: ONE pass, ``COMPACTION_PROMPT``,
+summary plus the flattened tail of the conversation handed over as a user
+message. It used to run two more passes over the same warm history — a
+harness-level analysis and a set of project ideas, each written to its own
+markdown file. Those are gone from the default path: on a local model they
+roughly tripled compaction time, on a token plan they tripled the cost, and
+because the passes cannot read what earlier sessions already wrote they
+produced the same observations over and over. They are a good example of what a
+custom compactor is for — see ``examples/custom_compactor.py``.
 """
 
-from itertools import groupby
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from logging import Logger
-from pathlib import Path
+from typing import Any
 
 from openai import AsyncOpenAI
 
+from crow_cli.agent.prompt import SystemPromptResponse, default_system_prompt
+from crow_cli.agent.session import AgentSession, make_agent_session
 from crow_cli.config import Config, sampling_params_for
-from crow_cli.memory import build_agent_id, now_iso
-from crow_cli.agent.session import (
-    AgentSession,
-    make_agent_session,
-)
-
-# Where project-scoped crow state lives inside a working tree. Mirrors
-# cli/source.py's PROJECT_SCOPE; duplicated rather than imported so the agent
-# core does not depend on the CLI package.
-PROJECT_SCOPE = Path(".agents") / "crow"
+from crow_cli.memory import build_agent_id
 
 MAX_OUTPUT_TOKENS = 30000
 
@@ -57,77 +67,6 @@ Include:
 - What still needs to be done
 
 Be thorough and detailed. This summary will replace the conversation history, so include everything a new agent would need to continue the work seamlessly.
-"""
-
-
-ANALYSIS_PROMPT = """You are about to be compacted: this conversation is ending and a fresh agent will pick it up from a summary. Before that happens, do the one thing the summary will not do — critique the HARNESS you are running inside.
-
-The harness is crow-cli itself: the system prompt you were given, the tools you were handed and the names, descriptions and schemas they came with, the skills catalog, the execute REPL kernel and its ambient subtools, compaction and context management, the memory database and the tools that read it, config resolution, permission prompts and sandboxing, subagent and delegation plumbing, the ACP wire, and the way all of it renders in the user's terminal.
-
-The harness is NOT the project in the working directory. Draw that line hard, because blurring it is the single most common way this report goes wrong.
-  - HARNESS: "the edit tool's fuzzy matching silently picked the wrong occurrence and I did not notice until the tests failed."
-  - PROJECT: "this repo's test suite takes four minutes to run."
-Only the first kind belongs here. If you catch yourself writing about the code you were asked to write, stop and delete it.
-
-You are the only observer of this harness who has actually been inside it for a whole session. The people who build it see the code; you see the experience. Be adversarial about your own equipment. Assume the friction you quietly worked around is a defect worth reporting, precisely because you worked around it and never mentioned it.
-
-Write four sections, in this order, as markdown:
-
-## What worked well
-Tools, prompt rules, skills or mechanisms that earned their place. Say specifically what you did with them and what that saved. Do not pad this section with politeness — an item here is a claim that the thing should stay, so it needs the same evidence as a complaint.
-
-## What did not work
-Friction. Every moment you re-read a tool result, guessed at a parameter, retried a call, worked around a limitation, or burned tokens discovering something the harness already knew. Include the things you adapted to so smoothly you almost did not notice them — those are the worst, because nobody ever reports them.
-
-## Bugs
-Concrete, reproducible defects in the harness. For each: the exact command or call you made, the exact output or error string you got, what you expected instead, and the narrowest reproduction you can offer. If you are unsure whether something is a bug, say what you are unsure of. Never file one you cannot reproduce.
-
-## Ideas
-Changes to the harness that this session made you want. Each one: what to build, which piece of evidence above motivates it, and roughly what it costs. Small and sharp beats grand and vague.
-
-Rules for every item in every section:
-- EVIDENCE IS MANDATORY. Quote the turn, name the tool, paste the error. An item with no evidence behind it gets deleted, not softened.
-- Be specific enough that someone who never saw this session can act on it. "The memory tools are confusing" is worthless. "query_memory returned 20 rows and I could not tell which session each came from, so I called it three more times" is a finding.
-- Do not summarize the conversation. Do not list what was built. Do not write a TODO list for the project.
-- If a section is genuinely empty, write "None observed." Do not invent items to fill it.
-
-This text is written to a file and read cold, later, by someone with no access to this conversation. It has to stand alone. You cannot call tools on this turn — everything you need is already in the history above.
-"""
-
-
-IDEAS_PROMPT = """You are about to be compacted: this conversation is ending and a fresh agent will pick it up from a summary. Before that happens, do the thing nobody else in this loop can do — think about the PROJECT from outside it.
-
-The project is the repository in the working directory. Its shape is in the directory tree and the AGENTS.md rules in your system prompt; what has been happening to it is in the conversation above.
-
-This is not a summary. It is not a report on what was done. It is not a TODO list, and it is not a restatement of the plan already in the repo — if an idea of yours is already written down somewhere in the project, it is not an idea. Say so in one line and move on.
-
-What this is instead: a creative, adversarial review drawn from everything you know. You are a very large model with a very wide view of how other people have solved adjacent problems. The person working here sees one repository. You see the field. Spend that.
-
-Write these sections, in this order, as markdown:
-
-## Assumptions worth attacking
-Pick the assumptions this project keeps relying on — the load-bearing ones nobody states out loud. Argue against each concretely: what breaks if it is false, what evidence from this session suggests it might be, and what you would do instead. If an assumption survives your attack, say why; that is a useful result too.
-
-## Prior art you should steal from
-Name the actual systems, projects, papers and techniques you know that already solved a problem this project is still working on. For each: what it is, the specific mechanism worth taking, what it cost them, and how it would land here. Be concrete — a real X and a real Y, not "industry best practice". Reach into your weights for this section; that is the entire point of it.
-
-## Directions nobody has pointed at
-New places this project could go that the current plan does not mention. Research directions, capabilities, architectures, audiences, entirely different products the same code could become. Include the ones that feel slightly unreasonable — this loop is good at pruning and bad at generating, so over-produce here.
-
-## What would make this obsolete
-The strongest honest argument against this project existing in its current form. What a well-funded competitor, a change in the underlying models, or a shift in how people work would do to it. What the maintainer should be worried about and is not.
-
-## Cheapest decisive experiments
-For the open questions this session exposed, the smallest piece of work that would actually settle them. Each: the question, the experiment, roughly what it costs, and what result would mean stop.
-
-Rules:
-- Rank by expected value inside each section. Best first.
-- Quality over quantity. Five ideas that change the direction of the project beat twenty that do not. Cap yourself at about seven per section and stop when you run out of real ones.
-- Every idea must say what would prove it WRONG. An idea with no failure condition is a vibe, not an idea.
-- Ground each idea in something from this session or this repository where you can. An idea that could apply to any project anywhere is worth less than one that could only apply here.
-- Do not summarize the work. Do not flatter the project. Do not hedge.
-
-This text is written to a file under the project's .agents/crow/ideas/ directory and read cold, later, by someone with no access to this conversation. It has to stand alone. You cannot call tools on this turn — everything you need is already in the history above.
 """
 
 
@@ -170,7 +109,7 @@ def _fill_missing_tool_responses(messages: list[dict]) -> list[dict]:
     return list(messages)  # No tool calls found at all
 
 
-def _history_prefix(session: AgentSession) -> list[dict]:
+def history_prefix(session: AgentSession) -> list[dict]:
     """The session's messages, made safe to append one more user turn to.
 
     Two repairs, needed by every pass that ends in a user message: dangling
@@ -178,9 +117,10 @@ def _history_prefix(session: AgentSession) -> list[dict]:
     reject an unanswered tool_call), and a trailing user message gets a
     lightweight assistant placeholder (providers reject user+user).
 
-    Returns a FRESH list, rebuilt from the session each call, so every pass
-    sends byte-identical bytes up to its own trailing prompt. That is what
-    makes the provider's prompt-prefix cache hit on the second and third pass.
+    Returns a FRESH list, rebuilt from the session each call, so a strategy
+    that asks several questions sends byte-identical bytes up to each of its
+    own trailing prompts — which is what makes the provider's prompt-prefix
+    cache hit on the second and later ones.
     """
     messages = _fill_missing_tool_responses(session.messages)
     if messages and messages[-1].get("role") == "user":
@@ -238,7 +178,7 @@ async def _stream_completion(
     return "".join(parts), usage
 
 
-async def _ask_over_history(
+async def ask_over_history(
     llm: AsyncOpenAI,
     session: AgentSession,
     config: Config,
@@ -250,146 +190,92 @@ async def _ask_over_history(
     same request shape, same sampling rule — only the trailing user message
     differs.
     """
-    messages = _history_prefix(session)
+    messages = history_prefix(session)
     messages.append({"role": "user", "content": prompt})
     return await _stream_completion(llm, session, messages, config)
 
 
-def analysis_path(config_dir: Path | str, agent_id: str) -> Path:
-    """Where a session's harness analysis lands: ``<config_dir>/analysis/<agent>.md``.
+@dataclass(frozen=True)
+class CompactCtx:
+    """What a compaction callable is handed: the generation being compacted, and
+    the equipment to replace it.
 
-    Global on purpose — the analysis is about crow-cli, not about the repo the
-    session happened to be sitting in, so it has to survive leaving that repo.
+    Frozen and built fresh per call, inside :func:`compact`, for the one session
+    being compacted. An agent serves many sessions; nothing here is cached on
+    the agent, so one session's compaction cannot see another's state.
+
+    ``system_prompt`` is the coupling that makes this contract worth having. A
+    compacted generation is a new agent row with a new system prompt, so a
+    compactor that cannot reach prompt creation can say nothing to its successor
+    beyond the handoff message. It is a callable rather than a finished
+    :class:`~crow_cli.agent.prompt.SystemPromptResponse` because the interesting
+    strategies compute the prompt FROM the summary they just made.
     """
-    return Path(config_dir) / "analysis" / f"{agent_id}.md"
+
+    session: AgentSession
+    llm_client: AsyncOpenAI
+    config: Config
+    system_prompt: Callable[["CompactCtx"], SystemPromptResponse]
+    logger: Logger | None = None
 
 
-def ideas_path(cwd: Path | str, agent_id: str) -> Path:
-    """Where a session's project ideas land: ``<cwd>/.agents/crow/ideas/<agent>.md``.
+@dataclass(frozen=True)
+class CompactResponse:
+    """A compaction callable's answer: the next generation, described.
 
-    Project-local on purpose — these are ideas for THIS repository and belong
-    in its working tree, where they get committed alongside the code they are
-    about.
+    ``prompt`` becomes the new agent's first user message — the handoff. The
+    other two fields are its system prompt, and are usually
+    ``ctx.system_prompt(ctx)`` passed straight through; they ride on the response
+    rather than being resolved by :func:`compact` so a strategy can override them
+    per run — a summary that belongs in the system message, a generation that
+    should not be shown the skills catalog again.
+
+    The response carries no agent id, index or session id on purpose. That
+    arithmetic is the harness's — same wire session, same fork, next
+    ``agent_idx`` — and a strategy that had to get it right would be
+    reimplementing :func:`compact`.
     """
-    return Path(cwd) / PROJECT_SCOPE / "ideas" / f"{agent_id}.md"
+
+    system_template: str
+    system_args: dict[str, Any]
+    prompt: str
 
 
-def _note_header(kind: str, session: AgentSession) -> str:
-    """Provenance for a reflection file, written by code rather than asked of
-    the model — a frontmatter block the model has to reproduce is a frontmatter
-    block the model gets subtly wrong."""
-    return (
-        "---\n"
-        f"kind: {kind}\n"
-        f"session: {session.session_id}\n"
-        f"agent: {session.agent_id}\n"
-        f"model: {session.model_identifier or ''}\n"
-        f"cwd: {session.cwd}\n"
-        f"generated: {now_iso()}\n"
-        "---\n\n"
+#: The compaction seam. ``AcpAgent(compactor=...)`` installs one and every
+#: session that agent serves compacts through it.
+Compactor = Callable[[CompactCtx], Awaitable[CompactResponse]]
+
+#: The system-prompt seam for a compacted generation. A successor is not a fresh
+#: session, so this is not the ``session/new`` callable — but it defaults to
+#: giving the same standard prompt.
+CompactSystemPrompt = Callable[[CompactCtx], SystemPromptResponse]
+
+
+def compact_system_prompt(ctx: CompactCtx) -> SystemPromptResponse:
+    """The standard prompt for a compacted generation: what ``session/new`` would
+    have given it, rebuilt against the cwd as it stands now rather than as it
+    stood when the session opened."""
+    return default_system_prompt(ctx.config, ctx.session.cwd, ctx.session.session_id)
+
+
+async def default_compactor(ctx: CompactCtx) -> CompactResponse:
+    """One pass: summarize the history, hand the summary plus the flattened tail
+    of the conversation to the next generation as its first user message.
+
+    Reusable on purpose — a strategy that wants the standard summary and then
+    something extra calls this and keeps ``response.prompt``.
+    """
+    summary, usage = await ask_over_history(
+        ctx.llm_client, ctx.session, ctx.config, COMPACTION_PROMPT
     )
-
-
-async def write_reflections(
-    session: AgentSession,
-    llm: AsyncOpenAI,
-    config: Config,
-    logger: Logger = None,
-) -> dict[str, Path | None]:
-    """Run the analysis and ideas passes over ``session`` and write each out.
-
-    Called at the end of ``compact()`` on the session being compacted — its
-    history is the material and its ``agent_id`` names the files, so a reader
-    can join either note back to the exact generation that produced it.
-
-    Never raises. By the time this runs the summary is written and the new
-    agent row is in the database; losing a critique to a provider timeout must
-    not cost the user their compaction. Each pass fails alone and is logged.
-    """
-    analysis = analysis_path(config.config_dir, session.agent_id)
-    ideas = ideas_path(session.cwd, session.agent_id)
-    if analysis == ideas:
-        # cwd is $HOME (or otherwise the config dir's parent), so the project
-        # scope and the global scope are the same directory and both notes
-        # would land on one file. The global note keeps the designed name; the
-        # project note takes a suffixed one rather than silently clobbering it.
-        ideas = ideas.with_name(f"{session.agent_id}-project.md")
-    passes = (
-        ("analysis", ANALYSIS_PROMPT, analysis),
-        ("ideas", IDEAS_PROMPT, ideas),
+    if ctx.logger:
+        ctx.logger.info(f"Compact usage: {usage}")
+    system_prompt = ctx.system_prompt(ctx)
+    return CompactResponse(
+        system_template=system_prompt.template,
+        system_args=system_prompt.template_args,
+        prompt=f"{summary}\n\nLast messages:\n\n{last_messages(ctx.session)}",
     )
-    written: dict[str, Path | None] = {}
-    for kind, prompt, path in passes:
-        try:
-            text, usage = await _ask_over_history(llm, session, config, prompt)
-        except Exception:
-            written[kind] = None
-            if logger:
-                logger.warning(f"Compaction {kind} pass failed", exc_info=True)
-            continue
-        if not text.strip():
-            written[kind] = None
-            if logger:
-                logger.warning(f"Compaction {kind} pass returned no text")
-            continue
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(_note_header(kind, session) + text.strip() + "\n")
-        except OSError:
-            written[kind] = None
-            if logger:
-                logger.warning(f"Could not write {kind} to {path}", exc_info=True)
-            continue
-        written[kind] = path
-        if logger:
-            logger.info(f"Compaction {kind} written to {path} (usage: {usage})")
-    return written
-
-
-DEGENERATE_RUN = 64
-
-
-def degenerate_repeat(session: AgentSession) -> str | None:
-    """Describe degenerate single-character repetition in recent assistant turns.
-
-    A local model that has gone insane repeats one token until the context
-    window fills — crow's own observed failure was reasoning_content of nothing
-    but slashes. The compaction fast path keys off this: asking a broken model
-    to summarize produces more of the same, so compaction skips every LLM pass
-    and hands the next generation a pointer instead.
-
-    Scans the last few assistant messages' content AND reasoning_content for
-    one character repeated over and over. A run of ``DEGENERATE_RUN`` or more
-    identical characters that also dominates the message (half its text) is a
-    loop; legitimate runs (code-block rulers, separators) sit inside real text
-    and never dominate it. Returns a short description for logs and the
-    handoff, or None when nothing looks degenerate.
-    """
-    assistants = [m for m in session.messages if m.get("role") == "assistant"]
-    for msg in reversed(assistants[-4:]):
-        texts = [unroll_content(msg.get("content"))]
-        reasoning = msg.get("reasoning_content")
-        if isinstance(reasoning, str):
-            texts.append(reasoning)
-        for text in texts:
-            if not text:
-                continue
-            run_char, run_len = max(
-                ((ch, sum(1 for _ in group)) for ch, group in groupby(text)),
-                key=lambda pair: pair[1],
-            )
-            if run_len >= DEGENERATE_RUN and run_len >= len(text) / 2:
-                return f"{run_char!r} repeated {run_len} times in a row"
-    return None
-
-
-def _last_user_text(session: AgentSession, max_chars: int = 500) -> str:
-    """The most recent user message, flattened and truncated — the one piece
-    of orientation the degenerate handoff carries."""
-    for msg in reversed(session.messages):
-        if msg.get("role") == "user":
-            return unroll_content(msg.get("content", ""))[:max_chars]
-    return ""
 
 
 async def compact(
@@ -398,95 +284,62 @@ async def compact(
     config: Config,
     on_compact: callable = None,
     logger: Logger = None,
+    compactor: Compactor | None = None,
+    system_prompt: CompactSystemPrompt | None = None,
 ) -> AgentSession:
-    """
-    Compact the conversation by summarizing it into a single message.
+    """Compact ``session`` into a new agent generation.
 
-    Creates a new agent record. Old agent and messages are preserved.
-
-    Once the summary is durable, two more passes run over the same history —
-    a harness analysis and a set of project ideas, each written to its own
-    markdown file (see ``write_reflections``). Those are best-effort: they
-    cannot fail the compaction.
+    The mechanics live here and nowhere else. The strategy is asked what the
+    next generation should look like; this builds it — same ``session_id``, same
+    ``fork_idx``, ``agent_idx + 1``, the handoff written as the new agent's
+    first user message, ``on_compact`` fired once the row is durable. The old
+    agent and its messages are never touched. Nothing is ever deleted.
 
     Args:
-        session: The session to compact
-        llm: The LLM client for summarization
-        cwd: Current working directory
-        on_compact: Callback function(old_agent_id, compacted_session)
-        logger: Logger instance
+        session: The generation to compact.
+        llm: Client for this session's provider.
+        config: Resolved config.
+        on_compact: ``f(old_agent_id, new_session)`` — how the agent registers
+            the new generation so later prompts resolve to it. Harness
+            bookkeeping: fired here, never the strategy's problem.
+        logger: Logger instance.
+        compactor: The strategy. Defaults to :func:`default_compactor`.
+        system_prompt: How the next generation's system prompt is built; handed
+            to the compactor as ``ctx.system_prompt``. Defaults to
+            :func:`compact_system_prompt`.
 
     Returns:
-        The new session object with compacted history
+        The new session, holding ``[system, user(handoff)]``.
     """
-    original_session_id = session.session_id
-    original_agent_idx = session.agent_idx
-
     if logger:
         logger.info(
             f"Compacting agent {session.agent_id} ({len(session.messages)} messages)..."
         )
 
-    # Degenerate fast path. If the recent assistant turns collapsed into one
-    # character on repeat, the model is broken: a summary request would either
-    # hang or come back as more of the same, and the reflection passes would
-    # write garbage files. Skip every LLM call and hand the next generation a
-    # pointer to the previous session instead (see degenerate_repeat).
-    degenerate = degenerate_repeat(session)
-    if degenerate:
-        if logger:
-            logger.info(
-                f"Degenerate generation detected ({degenerate}) — compacting "
-                "without a summary or reflections"
-            )
-        summary = None
-    else:
-        # 1-4. Repair the history, append the compaction prompt, and stream the
-        # summary. Same per-model sampling rule as the react loop: the model's
-        # reasoning_effort XOR temperature. Never the provider default (temp 1.0
-        # makes the model ramble instead of compress) and never the session's
-        # request_params temperature.
-        #
-        # Streaming is not cosmetic here: a non-streaming request must produce the
-        # ENTIRE summary before the client's read timeout fires, which kills
-        # compaction outright on slow local models (the summary can be tens of
-        # thousands of tokens). Streamed, the timeout only applies between chunks.
-        summary, usage = await _ask_over_history(llm, session, config, COMPACTION_PROMPT)
-        if logger:
-            logger.info(f"Compact usage: {usage}")
+    ctx = CompactCtx(
+        session=session,
+        llm_client=llm,
+        config=config,
+        system_prompt=system_prompt or compact_system_prompt,
+        logger=logger,
+    )
+    result = await (compactor or default_compactor)(ctx)
 
-    # 5. Create new agent record: same session_id AND fork, next agent_idx
-    new_agent_idx = original_agent_idx + 1
-    new_agent_id = build_agent_id(original_session_id, new_agent_idx, session.fork_idx)
+    # Same session_id AND fork, next agent_idx.
+    new_agent_idx = session.agent_idx + 1
+    new_agent_id = build_agent_id(session.session_id, new_agent_idx, session.fork_idx)
     new_session = await make_agent_session(
         config,
         session.tools,
         session.model_identifier if session.model_identifier else "",
         session.cwd,
-        session_id=original_session_id,
+        session_id=session.session_id,
         agent_idx=new_agent_idx,
         fork_idx=session.fork_idx,
+        template=result.system_template,
+        template_args=result.system_args,
     )
-
-    if summary is not None:
-        last_msgs = last_messages(session)
-        new_agent_prompt = f"{summary}\n\nLast messages:\n\n{last_msgs}"
-    else:
-        new_agent_prompt = (
-            f"The previous generation of this session ({session.agent_id}) went "
-            f"degenerate: its output collapsed into {degenerate} and it never produced "
-            "usable work. That is a model/server failure, not anything you did. It was "
-            "compacted WITHOUT a summary — asking the broken model to summarize would "
-            "only produce more of the same — so this generation starts with no "
-            "conversation context.\n"
-            "Do not try to reconstruct the full history. If you need context, look at "
-            f"previous session '{original_session_id}' with the memory tools "
-            "(memory('search', ...) then read that generation's messages).\n"
-            f"Last user message before the failure: {_last_user_text(session)}"
-        )
-    await new_session.add_message(
-        {"role": "user", "content": new_agent_prompt},
-    )
+    await new_session.add_message({"role": "user", "content": result.prompt})
 
     if logger:
         logger.info(
@@ -494,18 +347,8 @@ async def compact(
             f"{len(session.messages)} messages -> {len(new_session.messages)}"
         )
 
-    # Callback for async task contexts
     if on_compact:
         on_compact(session.agent_id, new_session)
-
-    # Two more passes over the same warm history: a harness-level analysis
-    # (global, <config_dir>/analysis/) and project-level ideas (in the working
-    # tree, <cwd>/.agents/crow/ideas/). Both are named for the generation
-    # being compacted, because that is the history they read. Best-effort —
-    # write_reflections logs and swallows, it never raises. Skipped entirely on
-    # the degenerate fast path: the model that would write them is the broken one.
-    if not degenerate:
-        await write_reflections(session, llm, config, logger=logger)
 
     return new_session
 
