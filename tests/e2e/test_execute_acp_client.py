@@ -34,7 +34,7 @@ from crow_cli.config import Config
 
 pytestmark = pytest.mark.asyncio
 
-PREFERRED_MODEL = "qwen3.8-max-preview"
+MODEL = "qwen3.8-max"
 PROMPT_TIMEOUT = 240
 
 
@@ -42,17 +42,13 @@ def _live_config_or_skip():
     config = Config.load()
     if not config.is_configured:
         pytest.skip("No LLM provider configured")
-    if not config.llm.models:
-        pytest.skip("No models configured")
+    # Named, not "whatever is first in config.yaml": the silent fallback put
+    # this test on the local GGUF model, where one execute round trip takes
+    # minutes and the assertions time out for reasons that have nothing to do
+    # with the identity rail under test.
+    if MODEL not in config.llm.models:
+        pytest.skip(f"{MODEL} not in config.yaml")
     return config
-
-
-def _model_name(config) -> str:
-    return (
-        PREFERRED_MODEL
-        if PREFERRED_MODEL in config.llm.models
-        else next(iter(config.llm.models))
-    )
 
 
 def _updates_by_id(updates, tool_call_id):
@@ -66,7 +62,7 @@ def _updates_by_id(updates, tool_call_id):
 
 async def test_client_sees_in_cell_write_and_read_as_their_own_calls(tmp_path):
     config = _live_config_or_skip()
-    model = _model_name(config)
+    model = MODEL
 
     # Keep the real config dir (.env, providers, mcpServers -> this tree's
     # crow-cli mcp) and isolate ONLY the database, so the run never touches
