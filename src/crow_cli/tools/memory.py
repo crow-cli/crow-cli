@@ -1,62 +1,13 @@
-"""memory — the agent's own history, as DataFrames.
+"""memory — read-only SQL over the agent's own history, returned as DataFrames.
 
-Modes:
-- ``list``   — the database's entries: sessions, most-recently-active first.
-  With ``session_id=``, that session's entries instead: its messages, oldest
-  first. ``ls`` semantics — one mode, and how much you name decides the level.
-- ``search`` — BM25 keyword search across every session, or within one when
-  ``session_id=`` is given. Best match first.
-- ``sql``    — your own statement, over a READ-ONLY connection.
+Use memory("sql", statement). Filtering, grouping, ordering and limiting belong
+in SQL; print only the evidence needed. Legacy list/search modes remain for
+compatibility. In particular, search uses an FTS language, not literal substring
+matching, and its index does not include tool-call arguments.
 
-Python objects, not markdown. The three MCP tools this replaces
-(list_sessions, query_memory, query_session) each returned ONE markdown
-table, because an MCP tool returns one string, and each therefore grew a set
-of parameters whose only job was to control that string. Every one of them is
-a Python expression here, so every one of them is gone:
-
-- ``mode=conversation|with_thinking|with_tools|full`` — a display filter for
-  a transcript. The frame has a ``role`` column; ``.filter()`` is the filter.
-- ``order=asc|desc`` — ``.reverse()``, ``.head()``, ``.tail()``.
-- ``offset`` — pagination, which dies wherever it appears. ``limit`` is
-  top-N by recency or relevance (a property of the QUERY), and slicing the
-  frame you got is Python.
-- ``context=N`` — the neighbours of a match. The frame carries the message
-  ``id``; ``list(session_id=…)`` carries the messages around it.
-- ``after``/``before`` — ``created_at`` is a column of ISO strings, which
-  compare lexicographically: ``.filter(pl.col("created_at") > "2026-09")``.
-- ``search_type=semantic|keyword|both`` — "semantic" was bm25 all along (the
-  ColBERT backend is gone) and "keyword" was a substring scan in Python.
-  ``sql`` does substring scans in sqlite's C, over columns FTS cannot see.
-
-What survives is what cannot be done after the fact: ``limit``, and the
-filters that have to be INSIDE a ranked query for ``limit`` to mean "this
-many matches" rather than "this many rows scanned" — ``roles``,
-``include_forks``, ``session_id``. Pushing them down is a bug fix, not a
-feature: the old path fetched the global top-N and filtered in Python, so a
-session-scoped search for a common term returned the intersection of "best
-80 in the database" with "in this session", which is usually empty.
-
-Read-only at the CONNECTION level (crow_cli.memory.get_ro_engine: sqlite's
-``mode=ro`` URI so the OS refuses, postgres READ ONLY transaction
-characteristics so the server refuses). Verified: insert, update, delete,
-create and drop all raise "attempt to write a readonly database". It is not a
-sandbox and does not claim to be — ``ATTACH`` a fresh file and writing to it
-works, and the kernel has ``write()`` and the whole filesystem anyway. The
-guarantee is that memory cannot be edited by accident while being read.
-
-The database is the one execute's prologue injected on the identity rail
-(``register.db_uri()``) — the same rail that carries the subtool sink, so the
-kernel still reads no config and cannot point itself at someone else's
-history by guessing a path.
-
-THE INDEX HAS A HOLE, and ``search`` inherits it: messages_fts indexes
-``message_text()`` — content plus reasoning_content — and NOT tool_calls.
-Measured on the live database: 17,208 assistant messages (21% of it) carry
-tool calls and no content, so bm25 cannot see them at all; a file path
-mentioned in 70 assistant messages is found in 1, because the other 69 mention
-it only inside an edit's arguments. Tool RESULTS are indexed (a tool
-message's content is the result). For the hole, ``sql`` with
-``data LIKE '%…%'`` — a full scan, 0.5s over 499MB, and it sees everything.
+The database URI comes from execute's injected identity (register.db_uri), not
+from a guessed config path. Read-only connections protect crow.db against
+accidental writes; they do not sandbox the Python kernel or the filesystem.
 """
 
 from __future__ import annotations
@@ -546,113 +497,91 @@ async def memory(
     limit: int | None = None,
     include_forks: bool | None = None,
 ):
-    """Read your own memory: past sessions, what they said, what you did.
+    """Query your history with SQL: ``r = await memory("sql", statement)``.
+
+    SQL is the primary interface. Put session/role filters, ordering, joins,
+    and LIMIT in the statement, not in Python keyword arguments. The injected
+    connection selects the right crow.db; do not open a guessed database path.
 
     Args:
-        mode: "list", "search" or "sql".
-        target: search — the words to look for. sql — the statement. list
-            takes none.
-        session_id: list/search — scope to one session. For list this changes
-            WHAT is listed: sessions are the database's entries, and a
-            session's entries are its messages.
-        roles: list/search — keep only these message roles: "system", "user",
-            "assistant", "tool". Default all four. Pushed into the query, so
-            ``limit`` still means this many rows (filtering the frame
-            afterwards would leave you with fewer than you asked for).
-        limit: list/search — top N (sessions 50, messages 1000, hits 20;
-            max 10000). Messages come back as the LAST N in chronological
-            order; ``.total`` says how many there were.
-        include_forks: list/search — default False, which reads the trunk
-            only. True folds in fork agents' own messages (a fork reads the
-            trunk's prefix, it does not copy it, so this adds only what the
-            fork itself said) and counts them in the session totals.
+        mode: use "sql".
+        target: one SQL statement. No bound parameters; escape a quote inside
+            a SQL string by doubling it (O'Brien -> 'O''Brien').
+        session_id, roles, limit, include_forks: legacy list/search options;
+            leave unset for SQL. Those modes remain for compatibility, not
+            the recommended retrieval path.
 
     Returns:
-        MemoryResult — ``.df`` is a polars DataFrame, ``.sql`` the statement
-        that ran (empty for search, which goes through the memory package's
-        FTS seam), ``.total`` the rows matching before the limit when that is
-        cheap to know, ``.truncated`` whether the 64MB cap cut it, ``.rows``
-        the height, ``.text`` the printable rendering.
+        MemoryResult: .df (polars DataFrame), .rows (returned row count),
+        .sql (executed statement), .text (bounded rendering), .truncated
+        (64MB result cap reached; narrow the query). .total is NOT a SQL
+        match count — use COUNT(*) when you need one.
 
-        list of sessions -> session_id, last_activity, msgs, agents, cwd,
-        model, last_role, last_text (a 200-char snippet).
-        list of a session -> id, agent_idx, fork_idx, role, created_at,
-        chars, calls (its tool calls, arguments cut at 80 chars), text.
-        search -> id, session_id, agent_idx, fork_idx, role, created_at,
-        rank (bm25, LOWER is better; rows arrive best-first), excerpt (±200
-        chars around the match — the frame is a view, the whole message is
-        the id away).
+        Only printed output reaches the model. print(r.df) truncates long
+        cells; to read actual content, select a few rows, then print each
+        content value with r.df.iter_rows(named=True). Never dump all history.
+
+    Retrieval recipe:
+        Know the session? Read its USER messages first, ordered by m.id;
+        user corrections outrank assistant summaries. Then inspect relevant
+        assistant/tool messages. Discovering a session? Query messages joined
+        to agents, with role/date/text filters and a small LIMIT. An empty
+        result means that query matched nothing, not that work never happened.
+
+        For literal text, paths, hyphenated names, and tool-call arguments,
+        scan CAST(m.data AS TEXT): LIKE '%self-improving%' or SQLite's
+        instr(CAST(m.data AS TEXT), 'self-improving') > 0. LIKE treats % and _
+        as wildcards; instr matches a literal, case-sensitive substring.
+        Narrow by session/role/date when possible; a global scan can be costly.
+        Do not send these strings to legacy search: its FTS query language
+        can reject punctuation, even quoted input. The FTS index also omits
+        tool-call arguments; absence from FTS is not absence from memory.
+
+    Core schema (SQLite; discover more with PRAGMA table_info(table_name)):
+        agents: agent_id PK, session_id, agent_idx, fork_idx, cwd,
+            model_identifier, status, created_at. Join messages.agent_id
+            to agents.agent_id. messages has NO session_id column.
+        messages: id PK, agent_id, role, created_at, data (JSON),
+            prompt_tokens, completion_tokens, total_tokens.
+        JSON: json_extract(m.data, '$.content') AS content; also tool_calls,
+            tool_call_id, reasoning_content. Content may itself be a JSON
+            list of text/image blocks, not a plain string.
+        Forks: a.fork_idx=1 is the trunk. Add this filter explicitly if
+            wanted; SQL never hides forks. Compaction generations share a
+            session_id; query the session, not only its newest agent_id.
+        subtool_calls: session_id, agent_id, parent_tool_call_id, tool, mode,
+            args, status, error, created_at — calls made inside execute.
+        Also available: prompts, tasks, task_deliveries, session_tabs.
+        PostgreSQL: use m.data->>'content' instead of json_extract; discover
+            columns through information_schema.columns instead of PRAGMA.
+
+    Examples (SQLite):
+        # Find a literal phrase, including matches in tool-call arguments.
+        r = await memory("sql",
+            "SELECT m.id, a.session_id, m.role FROM messages m "
+            "JOIN agents a ON a.agent_id=m.agent_id "
+            "WHERE m.role='user' AND m.data LIKE '%self-improving%' "
+            "ORDER BY m.id DESC LIMIT 5")
+        print(r.df)
+
+        # Read the user's brief/corrections; replace SESSION with the found id.
+        r = await memory("sql",
+            "SELECT m.id, json_extract(m.data,'$.content') AS content "
+            "FROM messages m JOIN agents a ON a.agent_id=m.agent_id "
+            "WHERE a.session_id='SESSION' AND m.role='user' "
+            "ORDER BY m.id")
+        for row in r.df.iter_rows(named=True):
+            print(row["id"], row["content"])
+
+        # Inspect a matched message in full, not the table's clipped preview.
+        r = await memory("sql", "SELECT data FROM messages WHERE id=123")
+        for row in r.df.iter_rows(named=True):
+            print(row["data"])
 
     Raises:
-        MemoryToolError: unknown mode, a missing or blank target, an argument
-            on the wrong mode, an unknown role, a negative or absurd limit, a
-            session_id that does not exist, SQL the database rejected —
-            including any write, which the connection refuses at the OS level.
-
-    Note:
-        The model sees only what the cell PRINTS, and polars' repr is bounded
-        by construction — 5 rows from each end, 4 columns from each end, ~30
-        chars per cell — so ``print(r.df)`` is a legible table of a 10,000-row
-        result and cannot flood the context. For more than the repr shows:
-        ``print(r.df["text"][3])``, ``for row in r.df.iter_rows(named=True)``,
-        ``print(r.df.select("id", "role", "calls"))``.
-
-        Schema (v5), for mode="sql":
-          agents    agent_id PK = "{session_id}-{agent_idx}-{fork_idx}", all
-                    1-based, trunk fork_idx=1; session_id, agent_idx,
-                    fork_idx, forked_at (the message id a fork branched
-                    from), cwd, model_identifier, status, created_at,
-                    system_prompt, prompt_id, prompt_args, tool_definitions,
-                    mcp_servers, request_params.
-          messages  id PK, agent_id, fork_idx, role, created_at (ISO), data
-                    (the whole message as JSON: content, tool_calls,
-                    tool_call_id, reasoning_content), prompt_tokens,
-                    completion_tokens, total_tokens.
-          messages_fts  the keyword index: rowid = messages.id, UNINDEXED
-                    agent_id/role/fork_idx, indexed text. MATCH it with
-                    quoted tokens — `where messages_fts match '"crow.db"'` —
-                    and rank with bm25(messages_fts), lower = better.
-          prompts   id PK, name, template, created_at — versioned system
-                    prompts, so character has a history.
-          tasks     task_id PK, kind, owner_session, tool_call_id,
-                    sub_session, prompt, model, priority, status, result,
-                    created_at, finished_at.
-          task_deliveries  id PK, session_id, task_id, priority, content,
-                    status, created_at, delivered_at.
-          subtool_calls  every tool call made inside an execute cell:
-                    session_id, agent_id, parent_tool_call_id, cell_seq,
-                    tool, mode, args, status, result_kind, acp_payload,
-                    llm_images, error, emitted, created_at.
-          session_tabs  TUI tab state (title, resume meta).
-
-        Examples (mode="sql"):
-          "select a.session_id, count(*) n, sum(m.total_tokens) tok from
-           messages m join agents a on a.agent_id=m.agent_id group by 1
-           order by tok desc limit 10"
-          "select tool, mode, count(*) n from subtool_calls group by 1,2
-           order by n desc"
-          "select id, role, json_extract(data,'$.content') from messages
-           where id = 2018783"   (postgres: data->>'content')
-          "select m.id, m.role from messages m where m.data like
-           '%EXECUTE_TODO%' and m.role='assistant' limit 20"  — the scan that
-           sees what the FTS index cannot: tool call arguments.
-          "select a.session_id, a.cwd, count(*) n, min(m.created_at) first,
-           max(m.created_at) last from messages m join agents a on
-           a.agent_id=m.agent_id where m.created_at >= '2026-09-04' and
-           m.created_at < '2026-09-06' group by 1,2 order by n desc" — WHICH
-           session was huge and ended at 4am. bm25 cannot answer a shape
-           question; an aggregate can. Find the session here, then read it.
-          "select m.id, m.created_at, json_extract(m.data,'$.content') from
-           messages m join agents a on a.agent_id=m.agent_id where
-           a.session_id='x' and m.role='user' order by m.id" — everything the
-           USER said, in order. A long-running agent has thousands of messages
-           and its user has dozens; this is the whole brief in one query, and
-           it beats keyword search for "what did we decide". No bound
-           parameters — inline the id.
-
-        The connection is read-only: memory cannot be written from here. That
-        is a guarantee about crow.db, not a sandbox — the kernel has write(),
-        fs() and the filesystem.
+        MemoryToolError: missing/invalid SQL, unsupported arguments, or a
+            write rejected by the read-only connection. This protects crow.db,
+            not the filesystem: the kernel itself is not a sandbox.
     """
     if mode not in _MODES:
         raise MemoryToolError(
