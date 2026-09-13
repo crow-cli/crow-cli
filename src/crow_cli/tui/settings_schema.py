@@ -17,6 +17,7 @@ SCHEMA: list[SchemaDict] = [
                     "atom-one-dark",
                     "atom-one-light",
                     "catppuccin-latte",
+                    "catppuccin-macchiato",
                     "catppuccin-mocha",
                     "dracula",
                     "flexoki",
