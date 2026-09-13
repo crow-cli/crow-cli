@@ -947,9 +947,25 @@ async def _run_async(
 # ============================================================================
 
 
+def _print_version_and_exit(value: bool) -> None:
+    if value:
+        import crow_cli
+
+        typer.echo(f"crow-cli {crow_cli.__version__}")
+        raise typer.Exit()
+
+
 @app.callback(invoke_without_command=True)
 def global_callback(
     ctx: typer.Context,
+    version: bool = typer.Option(
+        False,
+        "--version",
+        "-V",
+        help="Print the crow-cli version and exit.",
+        is_eager=True,
+        callback=_print_version_and_exit,
+    ),
     directory: str = typer.Option(
         ".",
         "-d",

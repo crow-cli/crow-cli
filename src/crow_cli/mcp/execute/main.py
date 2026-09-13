@@ -11,6 +11,7 @@ crow.db. One kernel per ACP session, keyed by the session id riding the call's
 import os
 import sys
 from logging import getLogger
+from pathlib import Path
 
 from fastmcp import Context
 
@@ -101,25 +102,31 @@ def _prologue(
     )
 
 
-def get_kernel(key: str, cwd: str) -> CrowKernel:
+def get_kernel(key: str, cwd: str, prelude_path: str | None = None) -> CrowKernel:
     """Get or lazily start the persistent kernel for a key."""
     kernel = _kernels.get(key)
     if kernel is None:
         logger.info(f"Starting new IPython kernel for {key} in {cwd}")
         kernel = CrowKernel(python_path=sys.executable, cwd=cwd)
-        _run_prelude(kernel)
+        _run_prelude(kernel, prelude_path)
         _kernels[key] = kernel
     return kernel
 
 
-def _run_prelude(kernel: CrowKernel) -> None:
+def _run_prelude(kernel: CrowKernel, prelude_path: str | None = None) -> None:
     """Zero-day imports: every fresh kernel (start AND reset both come
-    through get_kernel) comes up with crow_cli.tools ambient. Best effort —
+    through get_kernel) comes up with crow_cli.tools ambient. A prelude_path
+    replaces the built-in prelude with that file's contents. Best effort —
     a broken prelude logs, it never bricks the kernel."""
-    from crow_cli.tools import PRELUDE
+    if prelude_path:
+        prelude = Path(prelude_path).read_text()
+    else:
+        from crow_cli.tools import PRELUDE
+
+        prelude = PRELUDE
 
     try:
-        output = kernel.execute(PRELUDE)
+        output = kernel.execute(prelude)
         if output.strip():
             logger.warning(f"Kernel prelude produced output: {output[:200]}")
     except Exception:
@@ -140,6 +147,7 @@ async def execute(
     code: str,
     reset: bool = False,
     timeout: float | None = 30.0,
+    prelude_path: str | None = None,
 ) -> str:
     """Execute one cell in this session's persistent IPython kernel.
 
@@ -173,6 +181,11 @@ async def execute(
                all state (variables, imports). Use if the kernel is in a bad
                state. With empty code, just resets. Cannot clear a single
                variable — reset clears everything.
+        prelude_path: Optional path to a Python file whose contents run as
+               the kernel prelude instead of the built-in zero-day imports.
+               Implies a reset: the kernel restarts and loads this file on
+               startup — how a session says "hey, actually load this kernel".
+               Later resets without it fall back to the built-in prelude.
         timeout: seconds to wait for the cell to finish (default 30). The cell
                is NOT killed on timeout — IPython keeps running it — so a
                long-running process returns a "(kernel busy: …)" notice and
@@ -192,21 +205,27 @@ async def execute(
         execute("print(x * 2)")           # -> "84"
         execute("import sqlalchemy; print(sqlalchemy.__version__)")
         execute("", reset=True)           # fresh kernel, all state cleared
+        execute("", prelude_path="/env/k.py")  # restart on a custom prelude
     """
     try:
         key, cwd, session_id, parent_tcid, db_uri, images_dir, rlm_depth = (
             _kernel_context(ctx)
         )
 
-        if reset:
+        if reset or prelude_path:
             old = _kernels.pop(key, None)
             if old:
                 old.shutdown()
                 logger.info(f"Reset kernel for {key}")
-            if not code.strip():
+            if not code.strip() and not prelude_path:
                 return "Kernel reset successfully. All previous state lost."
 
-        kernel = get_kernel(key, cwd)
+        kernel = get_kernel(key, cwd, prelude_path)
+        if not code.strip() and prelude_path:
+            return (
+                "Kernel reset successfully. All previous state lost. "
+                f"Prelude loaded from {prelude_path}."
+            )
         if code.strip():
             code = _prologue(session_id, parent_tcid, db_uri, images_dir, rlm_depth) + code
         output = kernel.execute(code, timeout=timeout)

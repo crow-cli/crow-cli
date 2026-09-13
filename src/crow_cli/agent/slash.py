@@ -12,6 +12,7 @@ registries, keyed by the **wire session id** (``session.session_id``); the
 generation-keyed ``session.agent_id`` names an agent row and changes under
 compaction, so it is never a registry key.
 """
+from __future__ import annotations
 
 import re
 from typing import TYPE_CHECKING

@@ -60,7 +60,7 @@ def maximal_deserialize(data):
                 # If it successfully decoded, recurse on the result
                 # (to handle nested-serialized strings)
                 return maximal_deserialize(decoded)
-        except json.JSONDecodeError, TypeError, ValueError:
+        except (json.JSONDecodeError, TypeError, ValueError):
             # Not valid JSON, return the original string
             pass
         return data
@@ -81,7 +81,7 @@ def number_lines(content: str) -> list[str]:
     return [f"{k:6}\t{line}" for k, line in enumerate(content.split("\n"))]
 
 
-def context_fetcher(uri: str, logger: Logging) -> str:
+def context_fetcher(uri: str, logger: Logger) -> str:
 
     res = find_line_numbers(uri)
     if res["status"] == "success":

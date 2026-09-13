@@ -4,6 +4,7 @@ Spawns the agent, performs the `initialize` handshake, issues `session/list`,
 and tears the connection down. Runs its own `jsonrpc.API` instance so it
 never interferes with the app's live agent connection.
 """
+from __future__ import annotations
 
 import asyncio
 import json

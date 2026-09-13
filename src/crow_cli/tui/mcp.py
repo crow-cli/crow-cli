@@ -18,6 +18,7 @@ Config shape::
         args: ["-y", "@playwright/mcp"]
         env: {FOO: bar}
 """
+from __future__ import annotations
 
 from pathlib import Path
 

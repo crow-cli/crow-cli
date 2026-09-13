@@ -17,3 +17,13 @@ def test_version_matches_pyproject():
 
 def test_version_matches_installed_metadata():
     assert crow_cli.__version__ == version("crow-cli")
+
+
+def test_cli_version_flag():
+    from typer.testing import CliRunner
+
+    from crow_cli.cli.main import app
+
+    result = CliRunner().invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert crow_cli.__version__ in result.output

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 from importlib.resources import files
 from functools import cached_property

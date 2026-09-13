@@ -25,14 +25,29 @@ def _cleanup_kernels():
     shutdown_all()
 
 
-async def _call(mcp_app, code, session_id="prelude-test", reset=False):
+async def _call(mcp_app, code, session_id="prelude-test", reset=False, prelude_path=None):
     async with Client(mcp_app) as client:
         meta = {"session_id": session_id}
         args = {"code": code}
         if reset:
             args["reset"] = True
+        if prelude_path:
+            args["prelude_path"] = prelude_path
         result = await client.call_tool("execute", args, meta=meta)
     return result.content[0].text
+
+
+async def test_prelude_path_replaces_builtin_prelude(mcp_app, tmp_path):
+    """prelude_path restarts the kernel on a custom file instead of the
+    built-in zero-day imports, and a later plain reset restores them."""
+    prelude = tmp_path / "custom_prelude.py"
+    prelude.write_text("SENTINEL = 'loaded-from-file'\n")
+    out = await _call(mcp_app, "", session_id="prelude-path", prelude_path=str(prelude))
+    assert "Prelude loaded from" in out
+    out = await _call(mcp_app, "print(SENTINEL, 'edit' in dir())", session_id="prelude-path")
+    assert out.strip() == "loaded-from-file False"
+    out = await _call(mcp_app, "print('edit' in dir())", session_id="prelude-path", reset=True)
+    assert out.strip() == "True"
 
 
 async def test_edit_is_ambient_on_start(mcp_app):
