@@ -44,8 +44,6 @@ from acp import (
     NewSessionResponse,
     PromptResponse,
     run_agent,
-    text_block,
-    update_agent_message,
 )
 from acp.interfaces import Client
 from acp.schema import (
@@ -54,6 +52,8 @@ from acp.schema import (
     McpServerStdio,
     SseMcpServer,
 )
+
+from crow_cli.acp_helpers import text_block, update_agent_message
 
 
 def _env_int(name: str, default: int) -> int:

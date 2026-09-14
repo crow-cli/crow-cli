@@ -38,7 +38,6 @@ from acp import (
     Client,
     RequestError,
     connect_to_agent,
-    text_block,
 )
 from acp.core import ClientSideConnection
 from acp.schema import (
@@ -65,6 +64,7 @@ from acp.schema import (
     WaitForTerminalExitResponse,
     WriteTextFileResponse,
 )
+from crow_cli.acp_helpers import text_block
 from crow_cli.client.subagent import spawn_agent_process
 from crow_cli.client.terminal import TerminalManager
 from rich.console import Console

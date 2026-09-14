@@ -41,10 +41,11 @@ from typing import Any
 
 import pytest
 
-from acp import connect_to_agent, text_block
+from acp import connect_to_agent
 from acp.http import create_http_stream
 from acp.interfaces import Client
 
+from crow_cli.acp_helpers import text_block
 from crow_cli.agent.main import serve_http
 from crow_cli.config import Config
 from crow_cli.memory.db import create_database, get_engine

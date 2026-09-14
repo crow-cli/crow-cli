@@ -9,20 +9,6 @@ import json
 from contextlib import suppress
 from typing import Any
 
-from acp import (
-    image_block,
-    text_block,
-)
-
-
-from acp.helpers import (
-    start_edit_tool_call,
-    start_read_tool_call,
-    start_tool_call,
-    tool_content,
-    tool_diff_content,
-    update_tool_call,
-)
 from acp.schema import (
     TerminalToolCallContent,
     ToolCallLocation,
@@ -36,6 +22,16 @@ from mcp.types import (
     TextContent,
 )
 
+from crow_cli.acp_helpers import (
+    image_block,
+    start_edit_tool_call,
+    start_read_tool_call,
+    start_tool_call,
+    text_block,
+    tool_content,
+    tool_diff_content,
+    update_tool_call,
+)
 from crow_cli.agent.context import TurnCtx
 
 

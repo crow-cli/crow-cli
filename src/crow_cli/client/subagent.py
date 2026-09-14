@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from acp import PROTOCOL_VERSION, RequestError, connect_to_agent, text_block
+from acp import PROTOCOL_VERSION, RequestError, connect_to_agent
 from acp.interfaces import Client
 from acp.schema import (
     ClientCapabilities,
@@ -28,6 +28,8 @@ from acp.schema import (
     PromptResponse,
     SseMcpServer,
 )
+
+from crow_cli.acp_helpers import text_block
 
 
 def _parse_mcp_servers(servers: list) -> list:

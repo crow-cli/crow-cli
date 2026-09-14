@@ -13,9 +13,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from acp import spawn_agent_process, text_block
+from acp import spawn_agent_process
 from acp.interfaces import Client
 from acp.schema import PermissionOption, ToolCallUpdate
+
+from crow_cli.acp_helpers import text_block
 
 
 class SimpleClient(Client):

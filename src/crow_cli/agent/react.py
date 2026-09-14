@@ -6,7 +6,6 @@ from logging import Logger
 from pathlib import Path
 from typing import Any
 
-from acp import text_block
 from acp.interfaces import Client
 from acp.schema import (
     ClientCapabilities,
@@ -18,6 +17,7 @@ from fastmcp import Client as MCPClient
 from openai import APIConnectionError, APIError, AsyncOpenAI, RateLimitError
 from openai._exceptions import APITimeoutError
 
+from crow_cli.acp_helpers import text_block
 from crow_cli.agent.compact import CompactSystemPrompt, Compactor, compact
 from crow_cli.agent.context import TurnCtx
 from crow_cli.config import (
@@ -399,7 +399,7 @@ def process_tool_call_inputs(tool_calls: dict) -> tuple[list[dict], list[bool]]:
         # malformed JSON that will cause API errors when sent back
         try:
             json.loads(arguments_str)
-        except json.JSONDecodeError, TypeError, ValueError:
+        except (json.JSONDecodeError, TypeError, ValueError):
             # JSON is invalid, try to repair common issues
             # or default to empty object
             was_repaired = True
@@ -415,7 +415,7 @@ def process_tool_call_inputs(tool_calls: dict) -> tuple[list[dict], list[bool]]:
                     )
                 # Validate again after repair attempt
                 json.loads(arguments_str)
-            except json.JSONDecodeError, TypeError, ValueError:
+            except (json.JSONDecodeError, TypeError, ValueError):
                 # Still invalid, use empty object as fallback
                 arguments_str = "{}"
 
