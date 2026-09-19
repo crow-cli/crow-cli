@@ -13,10 +13,19 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from crow_cli.agents import (
+    V2,
+    AgentServer,
+    AgentServerError,
+    crow_agent_server,
+    parse_agent_servers,
+    select_agent_server,
+    tool_supply,
+)
 from crow_cli.config import Config, apply_config_overrides
 from crow_cli.agent.main import main as agent_main
 from crow_cli.agent.mcp_client import fastmcp_config_to_acp_servers
-from crow_cli.memory import build_agent_id
+from crow_cli.memory import build_agent_id, get_engine, get_max_agent_idx
 from crow_cli.agent.memory import MemoryClient, MemoryServiceError
 from crow_cli.agent.session import AgentSession
 from crow_cli.cli.init_cmd import init_command
@@ -110,6 +119,73 @@ def run_agentmain(
     agent_main(config=config, model=model, http=http, host=host, port=port)
 
 
+# ===========================================================================
+# ACP v2 Agent
+@app.command("acp2")
+def run_agent2(
+    config_dir: Path = typer.Option(
+        None,
+        "--config-dir",
+        "-d",
+        help="Configuration directory (default: ~/.agents/crow)",
+    ),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Enable chunk-level JSONL logging for debugging",
+    ),
+    system_prompt_path: Path = typer.Option(
+        None,
+        "--system-prompt-path",
+        "-p",
+        help="Path to a Jinja2 system prompt template file",
+    ),
+    config_file: Path = typer.Option(
+        None,
+        "--config-file",
+        "-o",
+        help="YAML file with config values to override",
+    ),
+    model: str = typer.Option(
+        None,
+        "--model",
+        "-m",
+        help="Model to use (name from config.yaml models: section)",
+    ),
+):
+    """Entry point for the ACP v2 agent (``crow_cli.agent2``).
+
+    The v2 counterpart of ``crow-cli acp``, and the command a frozen build
+    spawns when it needs a v2 subagent — :func:`crow_cli.client2.subagent.
+    agent_argv` names it, so the two must not drift.
+
+    stdio only. v1's ``--http`` has no v2 counterpart: the server in
+    ``agent/main.py`` is v1 wire format end to end, and v2's runtime ships
+    ``run_agent`` over a stream pair rather than a transport choice.
+
+    Lazy import, and startup is the reason. ``crow_cli.cli.main`` already
+    costs ~1.15s to import; ``agent2.main`` pulls
+    ``acp.experimental.v2.schema`` — six thousand lines of pydantic — for
+    another ~0.36s. At module scope every invocation pays that, including
+    ``crow-cli --help`` and ``crow-cli mcp2 --list-tools``.
+    """
+    from crow_cli.agent2.main import main as agent2_main
+
+    if config_dir is None:
+        config_dir = Path.home() / ".agents" / "crow"
+
+    config = Config.load(config_dir=config_dir)
+    config = apply_config_overrides(config, config_file)
+
+    if system_prompt_path:
+        config.system_prompt_path = system_prompt_path
+
+    if debug:
+        config.chunk_log = True
+
+    agent2_main(config=config, model=model)
+
+
 @app.command("mcp")
 def run_mcp(
     transport: str = typer.Option(
@@ -160,6 +236,107 @@ def run_mcp(
         raise typer.Exit(2)
 
     serve(transport, host, port, include_tools=include)
+
+
+@app.command("mcp2")
+def run_mcp2(
+    transport: str = typer.Option(
+        "stdio",
+        "--transport",
+        help="stdio = spawned child (default); http = streamable HTTP service",
+    ),
+    host: str = typer.Option("127.0.0.1", "--host", help="bind address for the HTTP transport"),
+    port: int = typer.Option(2770, "--port", help="port for the HTTP transport"),
+    list_tools: bool = typer.Option(
+        False,
+        "--list-tools",
+        help="Print the served tool names and exit.",
+    ),
+):
+    """Serve crow-mcp2 — the ACP v2 agent's MCP tools.
+
+    ``execute`` and nothing else: the rest of the v1 surface is reached through
+    subtools ambient in the kernel, so there is no --include-tools here. Spawn
+    it as an agent2 session's MCP server, or run it over HTTP as one kernel
+    host for many sessions.
+    """
+    # Lazy, and the ORDER is the point. --list-tools answers from the registry
+    # in crow_cli.mcp2, which imports nothing; crow_cli.mcp2.main pulls in
+    # fastmcp and the server instance, and serve() then imports the execute
+    # tool, which pulls jupyter_client and ipykernel. Importing the runner
+    # before the branch would make the cheap question pay for all of it.
+    from crow_cli.mcp2 import tool_names
+
+    if list_tools:
+        for name in tool_names():
+            typer.echo(name)
+        raise typer.Exit(0)
+
+    from crow_cli.mcp2.main import serve
+
+    try:
+        serve(transport, host, port)
+    except ValueError as exc:
+        # Loud and on stderr, and an exit code: stdout is the JSON-RPC stream
+        # on the stdio transport, and a traceback there is a protocol violation
+        # the spawning client would see instead of an error at spawn time.
+        typer.secho(f"crow-cli mcp2: {exc}", fg="yellow", err=True)
+        raise typer.Exit(2)
+
+
+@app.command("timers")
+def run_timers(
+    config_dir: Path = typer.Option(
+        None,
+        "--config-dir",
+        "-d",
+        help="Configuration directory (default: ~/.agents/crow)",
+    ),
+    config_file: Path = typer.Option(
+        None,
+        "--config-file",
+        "-o",
+        help="YAML file with config values to override",
+    ),
+    concurrency: int = typer.Option(
+        1,
+        "--concurrency",
+        help="Worker processes. One is enough: a timer job is two sqlite "
+        "statements and a publish, and a second consumer only makes two "
+        "timers that fire together land in a less predictable order.",
+    ),
+    loglevel: str = typer.Option("INFO", "--loglevel", help="Celery log level"),
+):
+    """Run the timer worker — the process that fires scheduled wakes.
+
+    A timer is an ordinary task row with kind="timer" and a celery job behind
+    it. When the job fires it closes the row, lands the delivery in the
+    owner's mailbox and publishes the wake, exactly like a subagent finishing
+    — so an agent that is parked gets its turn back, and one that is not gets
+    the message at the top of its next turn.
+
+    This worker is the only piece that has to be running for any of that to
+    happen, and it needs the broker and nothing else: the database rides in
+    each message.
+    """
+    # Lazy import, for the reason `mcp` gives: celery, kombu and billiard are
+    # a third of a second of import that no other subcommand wants to pay.
+    from crow_cli.timers import run_worker
+
+    config = Config.load(config_dir=config_dir)
+    config = apply_config_overrides(config, config_file)
+    if not config.redis_url:
+        # Loud and on stderr, and an exit code: a worker started against
+        # celery's own amqp:// default does not fail, it retries forever.
+        typer.secho(
+            "crow-cli timers: redis_url is empty, so there is no broker to run "
+            "against. Set redis_url in config.yaml or CROW_REDIS_URL.",
+            fg="yellow",
+            err=True,
+        )
+        raise typer.Exit(2)
+
+    run_worker(config.redis_url, concurrency=concurrency, loglevel=loglevel)
 
 
 @app.command("init")
@@ -604,6 +781,80 @@ def models(
 
 
 @app.command()
+def agents(
+    config_dir: Path = typer.Option(
+        None,
+        "--config-dir",
+        "-d",
+        help="Configuration directory (default: ~/.agents/crow)",
+    ),
+    config_file: Path = typer.Option(
+        None,
+        "--config-file",
+        "-o",
+        help="YAML override file applied on top of the loaded config — the same "
+        "one `run` takes, so an override can be listed before it is launched.",
+    ),
+    json_out: bool = typer.Option(
+        False, "--json", "-j", help="Machine-readable JSON output"
+    ),
+):
+    """List the `agent_servers` entries `crow-cli run -a NAME` can drive.
+
+    The TOP entry is what a bare `run` launches — the same rule bare
+    `crow-cli` follows — so config order decides the default. Each entry's
+    `protocol` picks the client: `acp` is the v1 client, `acp2` is client2.
+    With nothing configured, `run` falls back to crow's own v2 agent.
+    """
+    config = Config.load(config_dir=config_dir)
+    apply_config_overrides(config, config_file)
+    servers = list(parse_agent_servers(config.agent_servers).values())
+    fallback = not servers
+    if fallback:
+        servers = [crow_agent_server(V2, config_dir=config_dir)]
+    rows = [
+        {
+            "name": s.name,
+            "title": s.title,
+            "protocol": s.protocol,
+            "launch": s.launch,
+            "tools": "global" if s.mcp_servers is None else ", ".join(s.mcp_servers),
+            "builtin": s.builtin,
+            "default": i == 0,
+        }
+        for i, s in enumerate(servers)
+    ]
+    if json_out:
+        print(json.dumps({"fallback": fallback, "agents": rows}, indent=2))
+        return
+    table = Table(title="Agent servers")
+    table.add_column("", justify="center")  # default marker
+    table.add_column("name", style="bold", overflow="fold")
+    table.add_column("protocol", overflow="fold")
+    table.add_column("launch", overflow="fold")
+    table.add_column("tools", overflow="fold")
+    for r in rows:
+        table.add_row(
+            "[green]*[/green]" if r["default"] else "",
+            r["name"],
+            r["protocol"],
+            r["launch"],
+            r["tools"],
+        )
+    console.print(table)
+    if fallback:
+        console.print(
+            "[yellow]No agent_servers configured — `run` falls back to "
+            "crow's own v2 agent.[/yellow]"
+        )
+    else:
+        console.print(
+            "[dim]* = default (top entry in config.yaml agent_servers); "
+            "tools 'global' = the client's mcpServers key[/dim]"
+        )
+
+
+@app.command()
 def run(
     prompt: str = typer.Argument(
         None, help="Prompt to send (optional in interactive mode; '-' reads stdin)"
@@ -655,6 +906,19 @@ def run(
         "-m",
         help="Model to use (name from config.yaml models:); overrides the session's saved model",
     ),
+    agent_server: str | None = typer.Option(
+        None,
+        "--agent-server",
+        "-a",
+        help="Named `agent_servers` entry to drive (see `crow-cli agents`). Default: the "
+        "TOP entry in config, or crow's own v2 agent when none is configured.",
+    ),
+    replay: bool = typer.Option(
+        False,
+        "--replay",
+        help="Re-emit a resumed session's stored updates before prompting (acp2 agents "
+        "only — a v1 `session/load` always replays).",
+    ),
     json_out: bool = typer.Option(
         False,
         "--json",
@@ -670,7 +934,16 @@ def run(
 
     MODELS: the agent uses the first model in config.yaml's models: section
     by default. Override with -m/--model <name> (see `crow-cli models`);
-    the override also wins over a resumed session's saved model.
+    the override also wins over a resumed session's saved model. The choice
+    travels over the wire (session/set_config_option), not in the agent's
+    argv, so it reaches any entry that publishes a `model` config option.
+
+    AGENTS: which agent runs is config, not code. `crow-cli agents` lists the
+    `agent_servers` entries; -a/--agent-server NAME drives one, and a bare
+    `run` drives the TOP entry (crow's own v2 agent when none is configured).
+    Each entry declares its `protocol` — `acp` gets the v1 client, `acp2`
+    gets client2 — and may carry its own `mcpServers` tool supply. An unknown
+    NAME is an error, never a silent fallback to something else.
 
     MACHINE OUTPUT: -j/--json emits JSONL to stdout — one event per line
     (session, thinking, message, tool_call, usage, result, error), rich
@@ -777,11 +1050,64 @@ def run(
         client._console.print("  cat prompt.md | crow-cli run -")
         raise SystemExit(1)
 
-    # Run the async main
+    # The CLIENT owns which agent runs and what tools it gets, so config is
+    # read here — after flag validation, which must be able to fail without a
+    # config dir to read.
+    config = Config.load(config_dir)
+    apply_config_overrides(config, config_file)
+    try:
+        server = select_agent_server(
+            agent_server, config.agent_servers, V2, config_dir, config_file
+        )
+    except AgentServerError as e:
+        client._console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1)
+
+    # -m is a config.yaml model NAME; the wire's `model` config option speaks
+    # `provider:model_id`. Resolved here, before anything is spawned, so a typo
+    # fails instead of quietly running on the config's first model.
+    model_value = None
+    if model:
+        try:
+            model_value = config.llm.option_value(model)
+        except ValueError as e:
+            client._console.print(f"[red]Error: {e}[/red]")
+            raise SystemExit(1)
+
+    # --fork-idx names a fork by number; the wire speaks three-part ids, and
+    # both clients need the same resolution, so it happens once, here.
+    wire_session = session_id
+    if session_id and fork_idx is not None:
+        engine = get_engine(config.db_uri)
+        max_agent = get_max_agent_idx(engine, session_id)
+        wire_session = build_agent_id(session_id, max_agent, fork_idx)
+
+    if server.protocol == V2:
+        # Lazy on purpose: the v2 schema costs ~0.36s to import and a v1 run
+        # never needs it.
+        from crow_cli.client2.main import run_v2
+
+        asyncio.run(
+            run_v2(
+                server,
+                config,
+                console=client._console,
+                prompt=prompt,
+                interactive=interactive,
+                session_id=wire_session,
+                fork=fork,
+                cwd=cwd,
+                model=model_value,
+                json_out=json_out,
+                replay=replay,
+            )
+        )
+        return
+
     asyncio.run(
         _run_async(
-            prompt, interactive, session_id, cwd, config_dir, model, json_out,
-            config_file, fork=fork, fork_idx=fork_idx,
+            server, config, prompt, interactive, wire_session, cwd,
+            model_value, json_out, fork=fork,
         )
     )
 
@@ -791,46 +1117,59 @@ def _emit_json(**event: Any) -> None:
 
 
 async def _run_async(
+    server: AgentServer,
+    config: Config,
     prompt: str | None,
     interactive: bool,
     session_id: str | None,
     cwd: str,
-    config_dir: Path | None = None,
     model: str | None = None,
     json_out: bool = False,
-    config_file: Path | None = None,
     fork: bool = False,
-    fork_idx: int | None = None,
 ) -> None:
-    """Async implementation of run command."""
+    """Async implementation of `run` for a v1 (``acp``) agent.
+
+    ``server`` is already resolved and ``config`` already loaded: which agent
+    runs and what tools it gets are the client's decisions and the caller made
+    them, so this function only drives the wire. ``model`` is already the
+    ``provider:model_id`` value the agent's option speaks, not a config name.
+    """
     client._json_mode = json_out
     if not json_out:
+        mode = (
+            "[green]Interactive[/green]"
+            if interactive
+            else "[yellow]Single-shot[/yellow]"
+        )
         client._console.print(
             Panel(
                 "[bold]Crow ACP Client[/bold]\n\n"
+                f"Agent: [cyan]{server.title}[/cyan] [dim]({server.protocol})[/dim]\n"
                 f"Working directory: [cyan]{cwd}[/cyan]\n"
-                f"Mode: {'[green]Interactive[/green]' if interactive else '[yellow]Single-shot[/yellow]'}\n"
+                f"Mode: {mode}\n"
                 f"Session: {session_id or '[dim]New session[/dim]'}",
                 title="[magenta]🪶 Crow[/magenta]",
                 border_style="magenta",
             )
         )
 
-    # The CLIENT owns tool supply: load config here and hand our mcpServers
-    # to the agent in new_session/load_session (config.yaml -> FastMCP dict ->
-    # ACP server objects, the inverse of the agent's acp_to_fastmcp_config).
-    # `crow-cli mcp` rides along because it is an mcpServers entry like any
-    # other. Empty/absent mcpServers = the session runs with zero tools.
-    config = Config.load(config_dir)
-    apply_config_overrides(config, config_file)
-    mcp_servers = fastmcp_config_to_acp_servers(config.mcp_servers)
+    # The CLIENT owns tool supply: hand mcpServers to the agent in
+    # new_session/load_session (config.yaml -> FastMCP dict -> ACP server
+    # objects, the inverse of the agent's acp_to_fastmcp_config). The entry's
+    # own mcpServers replaces the global map when it declares one; `crow-cli
+    # mcp` rides along because it is an entry like any other. Empty or absent
+    # = the session runs with zero tools.
+    supply = tool_supply(server, config.mcp_servers)
+    mcp_servers = fastmcp_config_to_acp_servers(supply)
     if not json_out:
+        names = ", ".join(s.name for s in mcp_servers)
         client._console.print(
-            f"[cyan]MCP servers: {', '.join(s.name for s in mcp_servers) or '[dim]none — zero tools[/dim]'}[/cyan]"
+            f"[cyan]MCP servers: {names or '[dim]none — zero tools[/dim]'}[/cyan]"
         )
 
-    # Spawn agent
-    proc = await client.spawn_agent(cwd, config_dir, model=model, config_file=config_file)
+    # Spawn the resolved argv, honored exactly as written — this is what makes
+    # a custom `agent_servers` entry work, and why no crow flag is added here.
+    proc = await client.spawn_agent(cwd, argv=server.argv, env=server.env)
 
     try:
         # Connect
@@ -849,28 +1188,15 @@ async def _run_async(
             if not json_out:
                 client._console.print(f"[green]Fork created: {actual_session_id}[/green]")
         elif session_id:
-            wire_id = session_id
-            if fork_idx is not None:
-                # Continue fork N: resolve its three-part wire id through the
-                # shared db. A fork shares its agent_idx with the trunk HEAD
-                # it was spawned from; trunk HEAD resolution follows fork 1.
-                mc = MemoryClient(path=config.db_uri, config_dir=config_dir)
-                try:
-                    max_agent = await mc.get_max_agent_idx(session_id)
-                finally:
-                    await mc.close()
-                if max_agent < 1:
-                    client._console.print(
-                        f"[red]Session '{session_id}' not found[/red]"
-                    )
-                    raise SystemExit(1)
-                wire_id = build_agent_id(session_id, max_agent, fork_idx)
+            # `session_id` is already the wire id: `run` resolved --fork-idx to
+            # a three-part id before dispatching, because the v2 client needs
+            # the same answer and neither should own that translation.
             if not json_out:
-                client._console.print(f"[cyan]Loading session: {wire_id}[/cyan]")
+                client._console.print(f"[cyan]Loading session: {session_id}[/cyan]")
             await conn.load_session(
-                session_id=wire_id, mcp_servers=mcp_servers, cwd=cwd
+                session_id=session_id, mcp_servers=mcp_servers, cwd=cwd
             )
-            actual_session_id = wire_id
+            actual_session_id = session_id
         else:
             if not json_out:
                 client._console.print("[cyan]Creating new session...[/cyan]")
@@ -880,11 +1206,22 @@ async def _run_async(
                 client._console.print(
                     f"[green]Session created: {actual_session_id}[/green]"
                 )
+        if model:
+            # Model choice is the CLIENT's job: it travels over the protocol,
+            # not in the agent's argv, so it works for any agent that publishes
+            # a `model` config option — including a custom `agent_servers`
+            # entry, which is the first time -m has reached one.
+            await conn.set_config_option(
+                config_id="model", session_id=actual_session_id, value=model
+            )
+
         if json_out:
             _emit_json(
                 type="session",
                 session_id=actual_session_id,
                 cwd=cwd,
+                agent=server.name,
+                protocol=server.protocol,
                 mode="interactive" if interactive else "one_shot",
                 model=model,
             )

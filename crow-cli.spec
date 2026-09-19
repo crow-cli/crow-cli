@@ -49,6 +49,45 @@ a = Analysis(
         'crow_cli.mcp.web_fetch',
         'crow_cli.mcp.web_search',
         'crow_cli.mcp.write.main',
+        # --- ACP v2 -------------------------------------------------------
+        # `crow-cli acp2` reaches agent2 through a function-level import, and
+        # agent2 reaches its own submodules normally, so modulegraph would
+        # most likely find all of this on its own. Pinned anyway, for the
+        # reason the v1 block above is: a frozen build fails at RUNTIME, in
+        # front of a client that spawned it over stdio, and "probably
+        # followed" is not worth an ImportError there.
+        'crow_cli.agent2',
+        'crow_cli.agent2.main',
+        'crow_cli.agent2.agent',
+        'crow_cli.agent2.compaction',
+        'crow_cli.agent2.ctx',
+        'crow_cli.agent2.deliveries',
+        'crow_cli.agent2.driver',
+        'crow_cli.agent2.emitter',
+        'crow_cli.agent2.events',
+        'crow_cli.agent2.llm',
+        'crow_cli.agent2.react',
+        'crow_cli.agent2.replay',
+        'crow_cli.agent2.sessions',
+        'crow_cli.agent2.tools',
+        'crow_cli.agent2.watcher',
+        'crow_cli.client2',
+        'crow_cli.client2.subagent',
+        'crow_cli.wake',
+        'crow_cli.timers',
+        'acp.experimental.v2',
+        # mcp2's registry maps a tool name to the module whose IMPORT
+        # registers it, and register_tools() does the importing by string —
+        # invisible to static analysis, exactly like the PEP 562 facades.
+        'crow_cli.mcp2',
+        'crow_cli.mcp2.main',
+        'crow_cli.mcp2.server',
+        'crow_cli.mcp2.execute',
+        'crow_cli.mcp2.execute.main',
+        'crow_cli.mcp2.execute.kernel',
+        # The _LAZY_V2 subtools, resolved through importlib by
+        # crow_cli.tools.reload(v2=True) inside the kernel.
+        'crow_cli.tools.task',
         'typer',
         'rich',
         'acp',

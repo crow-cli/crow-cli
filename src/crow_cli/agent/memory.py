@@ -135,11 +135,13 @@ class MemoryClient:
     """crow_cli.memory-backed store. `path` overrides the configured db_uri."""
 
     def __init__(self, path: str | None = None, config_dir: Path | None = None, **_kwargs):
-        cfg = Config.load(config_dir)
+        self._config_dir = config_dir
+        self._config: Config | None = None
+        self._image_store: db.ImageStore | None = None
         # DEFAULT_MEMORY_PATH is the legacy positional sentinel — it means
         # "whatever the config says", not a literal override.
         override = None if path in (None, DEFAULT_MEMORY_PATH) else path
-        self.db_uri = db.normalize_db_uri(override or cfg.db_uri)
+        self.db_uri = db.normalize_db_uri(override or self.config.db_uri)
         if self.db_uri.startswith("sqlite:///"):
             db_path = Path(self.db_uri.removeprefix("sqlite:///"))
             if db_path.is_dir():
@@ -151,14 +153,44 @@ class MemoryClient:
             self.images_dir = db_path.parent / "images"
         else:
             # Non-file backends (e.g. postgres): images stay beside the config.
-            self.images_dir = cfg.config_dir / "images"
-        # S3 (RustFS) when configured and reachable, filesystem otherwise —
-        # probed ONCE here; the decision is logged by resolve_image_store.
-        self.image_store = db.resolve_image_store(
-            cfg.image_store.get("s3"), self.images_dir
-        )
+            self.images_dir = self.config.config_dir / "images"
         db.create_database(self.db_uri)
         self._engine = db.get_engine(self.db_uri)
+
+    @property
+    def config(self) -> Config:
+        """The loaded config, on the first thing that actually needs one.
+
+        Lazy because a caller that hands in an explicit ``path`` needs nothing
+        else from it, and :meth:`Config.load` is neither free nor side-effect
+        free. With no ``config_dir`` it reads the REAL
+        ``~/.agents/crow/config.yaml``, ``load_dotenv``s the real ``.env`` into
+        this process's ``os.environ``, and attaches a handler to the real log
+        file. Eight of this class's thirteen construction sites are
+        ``agent/session.py`` helpers that pass ``memory_path`` and nothing
+        else, so an eager load did all of that once per session operation —
+        and made every test that touched a session a reader of the developer's
+        own config.
+        """
+        if self._config is None:
+            self._config = Config.load(self._config_dir)
+        return self._config
+
+    @property
+    def image_store(self) -> db.ImageStore:
+        """S3 (RustFS) when configured and reachable, filesystem otherwise.
+
+        Probed once, but on first use rather than at construction: a session
+        that never carries an image blob has no reason to dial an endpoint,
+        and the only thing naming one is the config above. The decision is
+        logged by :func:`crow_cli.memory.resolve_image_store` whenever it
+        happens.
+        """
+        if self._image_store is None:
+            self._image_store = db.resolve_image_store(
+                self.config.image_store.get("s3"), self.images_dir
+            )
+        return self._image_store
 
     async def close(self):
         self._engine.dispose()

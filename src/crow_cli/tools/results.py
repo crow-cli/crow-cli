@@ -707,3 +707,150 @@ class RlmToolError(ToolError):
     """
 
 
+# Same reasoning as _RLM_WINDOW: a subagent's answer is the one thing that
+# comes back into the owner's context, so it is the one thing task has to
+# bound. The object keeps the whole result; only the rendering is windowed.
+_TASK_WINDOW = 5000
+
+
+@dataclass
+class TaskResult(ToolResult):
+    """One background task: its handle, its state, and what it produced.
+
+    ``task_id`` is the durable handle. It survives this cell, this kernel and
+    this process because it is a row, which is what makes an async launch
+    collectable later — by ``task_read``, or by the owner's mailbox when the
+    task finishes and wakes it.
+
+    ``session_id`` is the subagent's WIRE id and the key its transcript is
+    stored under, so ``memory("list", session_id=...)`` reads the work rather
+    than the summary of it. Empty until the child session exists.
+
+    ``status`` is the row's: running, completed, failed or cancelled.
+    ``result`` is the subagent's own last word when it completed and the error
+    when it failed; it is empty while the task runs, and stays empty on an
+    async launch even after the task finishes, because this object is a
+    snapshot of one call and the completion goes to the mailbox instead. On a
+    task that is NOT terminal-by-way-of-an-answer — a cancel whose teardown is
+    still in flight, a row closed as orphaned — ``result`` carries the note
+    explaining that, and ``.text`` renders it in place of the generic prose.
+
+    ``waited`` says whether THIS call blocked for the outcome. ``poked`` says
+    whether the wake reached the bus — reported rather than raised, because a
+    missed poke costs latency and nothing else: the row is already committed
+    and the owner's backstop poll delivers it.
+    """
+
+    task_id: str
+    status: str
+    session_id: str = ""
+    prompt: str = ""
+    result: str = ""
+    waited: bool = False
+    poked: bool = False
+
+    # A task is orchestration, and ACP has no kind for "something else is
+    # working on your behalf" — the same call v1's tool_kind made for the
+    # orchestration names it exact-matches ahead of its substring rules.
+    result_kind = "task"
+
+    def acp_payload(self) -> dict:
+        return {"content": "text", "text": self.text, "subject": self.task_id}
+
+    @property
+    def chars(self) -> int:
+        return len(self.result)
+
+    @property
+    def text(self) -> str:
+        head = f"{self.task_id}: {self.status}"
+        if self.session_id:
+            head += f" (subagent {self.session_id})"
+        if self.status == "running":
+            if self.result:
+                # A note from the call that got here — a cancel whose teardown
+                # is still in flight. It supersedes the generic prose because
+                # it says something more specific about THIS state.
+                return f"{head} — {self.result}"
+            look = (
+                f'read the transcript with memory("list",'
+                f' session_id="{self.session_id}")'
+            )
+            if self.waited:
+                # A wait that ran out is NOT a failure and must not read like
+                # one: the subtool call is recorded as succeeded, the child is
+                # alive, and the completion is still coming. Saying "still
+                # running" without saying "you waited" invites the caller to
+                # wait again, and again, until the turn is gone.
+                return (
+                    f"{head} — you waited for it and it is still going. That"
+                    " is a timeout on the WAIT, not a failure of the task:"
+                    " the child is alive and its completion will still land in"
+                    f" your mailbox and wake you. To act now, {look} to see"
+                    f' what it is stuck on, task_send("{self.task_id}", ...) to'
+                    f' steer it, or task_cancel("{self.task_id}") to stop it.'
+                )
+            return (
+                f"{head} — no result yet, and this object will not grow one."
+                f" The completion lands in your mailbox and wakes you; to look"
+                f" now, {look} or call task_read("
+                f'"{self.task_id}").'
+            )
+        if self.status == "cancelled":
+            note = f" {self.result}" if self.result else ""
+            return f"{head} — cancelled, so there is no delivery to collect.{note}"
+        head += f", {self.chars:,} chars"
+        if not self.waited:
+            head += " (this call did not wait for it)"
+        body = self.result[:_TASK_WINDOW]
+        more = self.chars - len(body)
+        tail = f"\n… {more:,} more chars — result[{len(body)}:]" if more else ""
+        return f"{head}\n{body}{tail}"
+
+
+@dataclass
+class TaskListResult(ToolResult):
+    """Every task this session owns.
+
+    ``tasks`` is the whole list for filtering in Python; ``.text`` is the
+    table, which is what print() shows. Results are not repeated here — a
+    list that carried every answer would cost exactly the context the task
+    system exists to protect, so it carries handles and states and points at
+    task_read for the one you want.
+    """
+
+    tasks: list[TaskResult] = field(default_factory=list)
+
+    result_kind = "task"
+
+    def acp_payload(self) -> dict:
+        return {
+            "content": "text",
+            "text": self.text,
+            "subject": f"{len(self.tasks)} tasks",
+        }
+
+    def __len__(self) -> int:
+        return len(self.tasks)
+
+    @property
+    def text(self) -> str:
+        if not self.tasks:
+            return "no tasks — this session has launched none"
+        width = max(len(t.task_id) for t in self.tasks)
+        return "\n".join(
+            f"{t.task_id:<{width}}  {t.status:<9}  {t.session_id or '-'}"
+            for t in self.tasks
+        )
+
+
+class TaskError(ToolError):
+    """A task could not be launched, steered or read.
+
+    The refusals land here too, and they state the rule rather than the
+    exception: a re-prompt aimed at a task that is still mid-turn is not a
+    crash, it is the one ordering the redirect workflow depends on, so the
+    message says to cancel first.
+    """
+
+

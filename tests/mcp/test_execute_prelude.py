@@ -212,6 +212,24 @@ async def test_reload_is_ambient_on_start(mcp_app):
     assert out.strip() == "crow_cli.tools crow_cli.tools.edit"
 
 
+async def test_a_v1_kernel_does_not_get_the_task_family(mcp_app):
+    """PRELUDE binds _LAZY and stops there; _LAZY_V2 is the v2 kernel's alone.
+
+    The split is a collision, not a protocol: v1 already ships `task` as an MCP
+    tool served from the agent process, so a v1 kernel with a `task` subtool as
+    well would have two launchers minting ids off the same global counter and
+    writing the same two tables. Guarded here because merging them back is a
+    one-character edit (`reload(v2=True)` in PRELUDE) and nothing else in the
+    suite would notice.
+    """
+    out = await _call(
+        mcp_app,
+        "import crow_cli.tools as T\n"
+        "print(T._IS_V2, sorted(n for n in T._LAZY_V2 if n in dir()))",
+    )
+    assert out.strip() == "False []"
+
+
 async def test_reload_re_executes_and_purges_the_facade_cache(mcp_app):
     """The trap reload() exists for: importlib.reload re-executes a module
     in its EXISTING dict, so the facade's cached function survives it and

@@ -66,9 +66,6 @@ from acp import (
     RequestError,
     SetSessionModeResponse,
     run_agent,
-    text_block,
-    update_agent_message,
-    update_agent_thought,
 )
 from acp.interfaces import Client
 from acp.schema import (
@@ -100,6 +97,7 @@ from acp.schema import (
 )
 from fastmcp import Client as MCPClient
 
+from crow_cli.acp_helpers import text_block, update_agent_message, update_agent_thought
 from crow_cli.agent.compact import CompactSystemPrompt, Compactor, compact
 from crow_cli.config import Config, apply_config_overrides, get_default_config_dir
 from crow_cli.agent.hooks import (

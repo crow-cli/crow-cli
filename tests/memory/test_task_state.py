@@ -17,6 +17,7 @@ with two engines on one file.
 from crow_cli.memory.db import create_database, get_engine
 from crow_cli.memory.reads import (
     get_task,
+    owner_tasks,
     pending_deliveries,
     running_tasks,
 )
@@ -253,3 +254,45 @@ def test_set_sub_session_and_reopen_cycle(tmp_path):
     # idempotent finish guard: already-terminal flip returned True once;
     # a reopen does NOT re-deliver the old completion.
     assert pending_deliveries(engine, "owner") != []
+
+
+def test_finish_without_delivery_closes_the_row_alone(tmp_path):
+    """A launch that failed SYNCHRONOUSLY has already told its caller — the
+    exception is in the model's face. The row still has to go terminal, or the
+    owner parks on a task that will never finish; the mailbox message would be
+    the same news a second time, delivered as a wake nobody asked for."""
+    engine = get_engine(_uri(tmp_path))
+    launch_task(engine, task_id="task-1", owner_session="s", prompt="go")
+
+    assert finish_task(
+        engine, "task-1", result="boom", status="failed",
+        content="[task-1: launch failed: boom]", deliver=False,
+    ) is True
+    task = get_task(engine, "task-1")
+    assert task.status == "failed"
+    assert task.result == "boom"
+    assert task.finished_at is not None
+    assert pending_deliveries(engine, "s") == []
+    # Still idempotent, and still delivery-free on the retry.
+    assert finish_task(engine, "task-1", result="x", deliver=False) is False
+
+
+def test_owner_tasks_spans_statuses_in_launch_order(tmp_path):
+    """``running_tasks`` answers "what am I waiting on"; ``owner_tasks``
+    answers "what have I ever set going" — the question a bare task_read()
+    asks. Terminal rows are the point: a completion can be missed (owner
+    mid-turn, owner compacted, owner restarted) and the row is the only durable
+    record that it happened."""
+    engine = get_engine(_uri(tmp_path))
+    launch_task(engine, task_id="task-1", owner_session="mine", prompt="one")
+    launch_task(engine, task_id="task-2", owner_session="mine", prompt="two")
+    launch_task(engine, task_id="task-3", owner_session="yours", prompt="three")
+    finish_task(engine, "task-1", result="a", content="one done")
+
+    rows = owner_tasks(engine, "mine")
+    assert [t.task_id for t in rows] == ["task-1", "task-2"]
+    assert [t.status for t in rows] == ["completed", "running"]
+    assert owner_tasks(engine, "yours")[0].task_id == "task-3"
+    assert owner_tasks(engine, "nobody") == []
+    # The running view is unchanged, and is a subset.
+    assert [t.task_id for t in running_tasks(engine, "mine")] == ["task-2"]

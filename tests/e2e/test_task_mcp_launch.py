@@ -37,8 +37,12 @@ from crow_cli.memory.db import create_database, get_engine
 from crow_cli.memory.reads import get_task, pending_deliveries
 from crow_cli.memory.writes import create_agent, set_agent_mcp_servers
 
-MODEL = "qwen3.8-max-preview"
-WORKTREE = "/home/thomas/src/crow-term/crow-cli-jupyter"
+MODEL = "qwen3.8-max"
+#: The checkout under test, DERIVED. These tests spawn
+#: ``uv --project <here> run crow-cli mcp``, so a literal path silently points
+#: the child at someone else's worktree — which is what it did for six
+#: sessions, at a checkout 20 commits behind and dirty.
+WORKTREE = str(Path(__file__).resolve().parents[2])
 OWNER = "owner-e2e"
 
 pytestmark = pytest.mark.asyncio

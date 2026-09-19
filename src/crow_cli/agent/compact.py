@@ -138,12 +138,19 @@ async def _stream_completion(
     session: AgentSession,
     messages: list[dict],
     config: Config,
+    on_chunk: Callable[[str], Awaitable[None]] | None = None,
 ) -> tuple[str, dict]:
     """Send ``messages`` over a streamed request and accumulate the text.
 
     Streaming matters for slow (local) models: a non-streaming request has to
     generate the whole answer before the client's read timeout fires, while a
     streamed one only has to produce *a* chunk inside the timeout window.
+
+    ``on_chunk`` is the narration seam, and it exists for the same reason the
+    streaming does: a summary can take minutes on a local model, and a harness
+    that cannot show it arriving looks like a hang. Awaited inline, so a caller
+    that cannot deliver a piece stops the pass — the contract the react loop's
+    ``on_content`` already has.
 
     Returns the text and a usage dict — usage arrives on the final, choice-less
     chunk when ``include_usage`` is set, and some providers omit it.
@@ -167,7 +174,10 @@ async def _stream_completion(
     }
     async for chunk in stream:
         if chunk.choices and chunk.choices[0].delta.content:
-            parts.append(chunk.choices[0].delta.content)
+            piece = chunk.choices[0].delta.content
+            parts.append(piece)
+            if on_chunk is not None:
+                await on_chunk(piece)
         if chunk.usage:
             usage = {
                 "prompt_tokens": getattr(chunk.usage, "prompt_tokens", None),
@@ -183,16 +193,18 @@ async def ask_over_history(
     session: AgentSession,
     config: Config,
     prompt: str,
+    on_chunk: Callable[[str], Awaitable[None]] | None = None,
 ) -> tuple[str, dict]:
     """Ask ``prompt`` of the session's full history and stream the answer.
 
     The one function every compaction-time pass goes through: same history,
     same request shape, same sampling rule — only the trailing user message
-    differs.
+    differs. ``on_chunk`` narrates the answer as it arrives; see
+    :func:`_stream_completion`.
     """
     messages = history_prefix(session)
     messages.append({"role": "user", "content": prompt})
-    return await _stream_completion(llm, session, messages, config)
+    return await _stream_completion(llm, session, messages, config, on_chunk)
 
 
 @dataclass(frozen=True)
@@ -210,6 +222,12 @@ class CompactCtx:
     beyond the handoff message. It is a callable rather than a finished
     :class:`~crow_cli.agent.prompt.SystemPromptResponse` because the interesting
     strategies compute the prompt FROM the summary they just made.
+
+    ``on_summary_chunk`` is the other direction: how the harness narrates the
+    pass while it runs. Optional, and a strategy that never streams (one that
+    reads files, or asks nothing at all) simply never calls it — the harness
+    then has to fall back to whatever the response says, which is why it cannot
+    assume chunks arrive.
     """
 
     session: AgentSession
@@ -217,6 +235,7 @@ class CompactCtx:
     config: Config
     system_prompt: Callable[["CompactCtx"], SystemPromptResponse]
     logger: Logger | None = None
+    on_summary_chunk: Callable[[str], Awaitable[None]] | None = None
 
 
 @dataclass(frozen=True)
@@ -266,7 +285,8 @@ async def default_compactor(ctx: CompactCtx) -> CompactResponse:
     something extra calls this and keeps ``response.prompt``.
     """
     summary, usage = await ask_over_history(
-        ctx.llm_client, ctx.session, ctx.config, COMPACTION_PROMPT
+        ctx.llm_client, ctx.session, ctx.config, COMPACTION_PROMPT,
+        on_chunk=ctx.on_summary_chunk,
     )
     if ctx.logger:
         ctx.logger.info(f"Compact usage: {usage}")
@@ -286,6 +306,7 @@ async def compact(
     logger: Logger = None,
     compactor: Compactor | None = None,
     system_prompt: CompactSystemPrompt | None = None,
+    on_summary_chunk: Callable[[str], Awaitable[None]] | None = None,
 ) -> AgentSession:
     """Compact ``session`` into a new agent generation.
 
@@ -307,6 +328,10 @@ async def compact(
         system_prompt: How the next generation's system prompt is built; handed
             to the compactor as ``ctx.system_prompt``. Defaults to
             :func:`compact_system_prompt`.
+        on_summary_chunk: ``await f(text)`` for each piece of summary as it
+            streams; handed to the compactor as ``ctx.on_summary_chunk``. A
+            strategy that does not stream never calls it, so a harness cannot
+            assume any arrive.
 
     Returns:
         The new session, holding ``[system, user(handoff)]``.
@@ -322,6 +347,7 @@ async def compact(
         config=config,
         system_prompt=system_prompt or compact_system_prompt,
         logger=logger,
+        on_summary_chunk=on_summary_chunk,
     )
     result = await (compactor or default_compactor)(ctx)
 

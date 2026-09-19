@@ -27,7 +27,7 @@ from crow_cli.mcp import tool_names
 
 pytestmark = pytest.mark.asyncio
 
-PREFERRED_MODEL = "qwen3.8-max-preview"
+PREFERRED_MODEL = "qwen3.8-max"
 CROW_CLI = str(Path(sys.executable).parent / "crow-cli")
 ALL = sorted(tool_names())
 

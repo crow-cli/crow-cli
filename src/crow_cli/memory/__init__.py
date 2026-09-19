@@ -27,11 +27,12 @@ Module map:
     messages  — image extract/hydrate, searchable text, a transcript's
                 final answer
     writes    — add_message, create_agent, set_agent_mcp_servers,
-                launch_task, finish_task, cancel_task, mark_delivered,
-                claim_deliveries, lookup_or_create_prompt
+                set_agent_model, launch_task, launch_next_task, finish_task,
+                cancel_task, mark_delivered, claim_deliveries,
+                lookup_or_create_prompt
     reads     — queries, list_sessions, get_session_mcp_servers,
-                get_task, running_tasks, pending_deliveries,
-                search_messages
+                get_task, running_tasks, owner_tasks, pending_deliveries,
+                search_messages, session_title
 """
 
 from sqlalchemy.orm import Session
@@ -65,23 +66,29 @@ from .reads import (
     get_session_mcp_servers,
     get_task,
     list_agents,
+    list_session_infos,
     list_sessions,
     load_agent_messages,
     load_messages,
+    owner_tasks,
     pending_deliveries,
     query_messages,
     running_tasks,
     search_messages,
+    session_exists,
+    session_title,
 )
 from .writes import (
     add_message,
     claim_deliveries,
     create_agent,
     finish_task,
+    launch_next_task,
     launch_task,
     lookup_or_create_prompt,
     mark_delivered,
     set_agent_mcp_servers,
+    set_agent_model,
 )
 
 __all__ = [
@@ -114,8 +121,10 @@ __all__ = [
     "hydrate_message",
     "ImageStore",
     "last_assistant_text",
+    "launch_next_task",
     "launch_task",
     "list_agents",
+    "list_session_infos",
     "list_sessions",
     "load_agent_messages",
     "load_messages",
@@ -124,6 +133,7 @@ __all__ = [
     "message_text",
     "normalize_db_uri",
     "now_iso",
+    "owner_tasks",
     "parse_agent_id",
     "pending_deliveries",
     "query_messages",
@@ -131,6 +141,9 @@ __all__ = [
     "resolve_image_store",
     "S3ImageStore",
     "search_messages",
+    "session_exists",
+    "session_title",
     "set_agent_mcp_servers",
+    "set_agent_model",
     "wire_session_id",
 ]

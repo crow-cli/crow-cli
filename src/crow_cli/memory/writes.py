@@ -1,6 +1,7 @@
 """Write path: messages, agents, prompts."""
 
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from . import fts
@@ -8,6 +9,7 @@ from .ids import parse_agent_id
 from .image_store import ImageStore
 from .messages import extract_images, message_text
 from .models import Agent, Message, Prompt, Task, TaskDelivery, now_iso
+from .reads import count_tasks
 
 
 def add_message(
@@ -59,6 +61,29 @@ def set_agent_mcp_servers(engine, agent_id: str, servers: list) -> None:
         db.commit()
 
 
+def set_agent_model(engine, agent_id: str, model_identifier: str) -> None:
+    """Record a model choice on an agent row that already exists.
+
+    ``create_agent`` writes ``model_identifier`` once, at birth, and
+    ``AgentSession.load`` reads it back — so without this the model a client
+    picked over ``session/set_config_option`` lived exactly as long as the
+    process it was picked in, and a restart resumed the session on the model
+    it was BORN with. Same shape as :func:`set_agent_mcp_servers`: one column
+    on one row, and the row must already exist.
+
+    Which row is the caller's business, and it matters: a session's history is
+    one row per generation, and the model belongs on the generation that is
+    current, because that is the one ``get_max_agent_idx`` will resolve to
+    after a restart.
+    """
+    with Session(engine) as db:
+        row = db.query(Agent).filter_by(agent_id=agent_id).first()
+        if row is None:
+            raise ValueError(f"no agent row '{agent_id}' to store a model on")
+        row.model_identifier = model_identifier
+        db.commit()
+
+
 def launch_task(
     engine,
     *,
@@ -87,6 +112,51 @@ def launch_task(
             )
         )
         db.commit()
+
+
+def launch_next_task(
+    engine,
+    *,
+    owner_session: str,
+    kind: str = "subagent",
+    tool_call_id: str | None = None,
+    sub_session: str | None = None,
+    prompt: str = "",
+    model: str | None = None,
+    priority: str = "low",
+) -> str:
+    """Insert a running task under the next free ``task-N`` and return the id.
+
+    The numbering is GLOBAL because the constraint is: ``task_id`` is UNIQUE
+    across the database, so a per-owner counter collides the moment a second
+    session launches its first task. Counting and then inserting is still a
+    race — two processes can read the same count — so the retry is not
+    defensive padding, it is the other half of the allocation. It also absorbs
+    the gaps deleted rows leave behind.
+
+    Two callers and no more, which is why this lives here rather than in
+    either: the ``task`` subtool, and a scheduled wake. Both need the same id
+    space, because both write rows the same mailbox delivers from and the same
+    owner reads with the same ``task_read()``.
+    """
+    n = count_tasks(engine) + 1
+    while True:
+        task_id = f"task-{n}"
+        try:
+            launch_task(
+                engine,
+                task_id=task_id,
+                owner_session=owner_session,
+                kind=kind,
+                tool_call_id=tool_call_id,
+                sub_session=sub_session,
+                prompt=prompt,
+                model=model,
+                priority=priority,
+            )
+            return task_id
+        except IntegrityError:
+            n += 1
 
 
 def set_task_sub_session(engine, task_id: str, sub_session: str) -> None:
@@ -120,11 +190,20 @@ def finish_task(
     result: str | None,
     status: str = "completed",
     content: str = "",
+    deliver: bool = True,
 ) -> bool:
     """STATE FIRST: flip the task to terminal AND land its delivery in the
     owner's mailbox, in ONE commit. Idempotent — a task already terminal
     (cancel racing completion, crash-retry) returns False and delivers
-    nothing a second time."""
+    nothing a second time.
+
+    ``deliver=False`` closes the row without a mailbox message, for the one
+    case where the owner already knows: a launch that failed synchronously
+    and raised at the caller. The row still has to go terminal — a task
+    left "running" is a task the owner will park on forever — but a
+    delivery would tell it the same thing twice, once as the exception it
+    just caught and once as a wake it did not ask for.
+    """
     with Session(engine) as db:
         task = db.query(Task).filter_by(task_id=task_id).first()
         if task is None or task.status != "running":
@@ -132,14 +211,15 @@ def finish_task(
         task.status = status
         task.result = result
         task.finished_at = now_iso()
-        db.add(
-            TaskDelivery(
-                session_id=task.owner_session,
-                task_id=task_id,
-                priority=task.priority,
-                content=content,
+        if deliver:
+            db.add(
+                TaskDelivery(
+                    session_id=task.owner_session,
+                    task_id=task_id,
+                    priority=task.priority,
+                    content=content,
+                )
             )
-        )
         db.commit()
         return True
 

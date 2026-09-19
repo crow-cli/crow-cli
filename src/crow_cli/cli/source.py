@@ -6,9 +6,11 @@
 is just a directory an ``agent_servers`` entry may point at (see
 crow_cli.tui.agent_servers) — one of potentially many agents, nothing special.
 
-:func:`spawn_command` builds the launch string for crow's OWN agent, and it is
-always the code that is actually running: a frozen build's ``acp``
-subcommand, or this interpreter via ``-m crow_cli.agent.main``. No checkout
+:func:`spawn_argv` builds the launch argv for crow's OWN agent, and it is
+always the code that is actually running: a frozen build's ``acp``/``acp2``
+subcommand, or this interpreter via ``-m crow_cli.agent.main`` (v1) or
+``-m crow_cli.agent2.main`` (v2). :func:`spawn_command` is the same argv
+shell-quoted, which is the shape the TUI's Agent dict carries. No checkout
 preference, no re-exec, no behind-the-scenes redirection.
 """
 
@@ -99,22 +101,48 @@ def uv_available() -> bool:
     return shutil.which("uv") is not None
 
 
-def spawn_command(flags: Iterable[str] = ()) -> tuple[str, str]:
-    """Crow's own agent subprocess launch string, given its ``acp`` flags.
+#: ``(console subcommand, module entry)`` per protocol a client can speak. A
+#: frozen build's ``sys.executable`` IS the ``crow-cli`` binary, so the agent is
+#: a subcommand of it; a source checkout has no binary, and ``-m`` is the only
+#: thing that resolves against the code that is actually running.
+AGENT_ENTRY_POINTS = {
+    "acp": ("acp", "crow_cli.agent.main"),
+    "acp2": ("acp2", "crow_cli.agent2.main"),
+}
 
-    Returns ``(command, kind)`` where ``kind`` is ``"binary"`` (a frozen
-    build's own ``acp`` subcommand) or ``"module"`` (this interpreter,
-    ``-m crow_cli.agent.main``, which is the agent's argparse entry and takes
-    no subcommand). Always the code that is actually running: pointing at a
-    source checkout is an ``agent_servers`` entry the user writes, never
-    something crow does behind their back.
+
+def spawn_argv(
+    flags: Iterable[str] = (), protocol: str = "acp"
+) -> tuple[list[str], str]:
+    """Crow's own agent subprocess argv for ``protocol``, given its flags.
+
+    Returns ``(argv, kind)`` where ``kind`` is ``"binary"`` (a frozen build's
+    own subcommand) or ``"module"`` (this interpreter, ``-m <entry>``, which is
+    the agent's argparse entry and takes no subcommand). Always the code that
+    is actually running: pointing at a source checkout is an ``agent_servers``
+    entry the user writes, never something crow does behind their back.
+
+    The list is the truth and :func:`spawn_command` is its shell-quoted form,
+    because the two clients consume different shapes: ``run`` spawns an argv,
+    the TUI's Agent dict carries a command string.
     """
+    try:
+        subcommand, module = AGENT_ENTRY_POINTS[protocol]
+    except KeyError:
+        raise SourceError(
+            f"unknown agent protocol {protocol!r}; expected one of "
+            + ", ".join(AGENT_ENTRY_POINTS)
+        ) from None
     flags = [str(a) for a in flags]
-    quoted = (" " + " ".join(shlex.quote(a) for a in flags)) if flags else ""
-
     if getattr(sys, "frozen", False):
-        return f"{shlex.quote(sys.executable)} acp{quoted}", "binary"
-    return f"{shlex.quote(sys.executable)} -m crow_cli.agent.main{quoted}", "module"
+        return [sys.executable, subcommand, *flags], "binary"
+    return [sys.executable, "-m", module, *flags], "module"
+
+
+def spawn_command(flags: Iterable[str] = (), protocol: str = "acp") -> tuple[str, str]:
+    """Crow's own agent launch STRING — :func:`spawn_argv`, shell-quoted."""
+    argv, kind = spawn_argv(flags, protocol)
+    return " ".join(shlex.quote(a) for a in argv), kind
 
 
 # ---------------------------------------------------------------------------

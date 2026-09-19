@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # local llamacpp box that may be down). Prefer the always-on cloud model —
 # same pin as test_task_mcp_launch.py — and fall back to the agent's
 # default (first configured model) when it is not present.
-PREFERRED_MODEL = "qwen3.8-max-preview"
+PREFERRED_MODEL = "qwen3.8-max"
 
 
 def get_llm_client():

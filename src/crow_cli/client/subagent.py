@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from acp import PROTOCOL_VERSION, RequestError, connect_to_agent, text_block
+from acp import PROTOCOL_VERSION, RequestError, connect_to_agent
 from acp.interfaces import Client
 from acp.schema import (
     ClientCapabilities,
@@ -28,6 +28,8 @@ from acp.schema import (
     PromptResponse,
     SseMcpServer,
 )
+
+from crow_cli.acp_helpers import text_block
 
 
 def _parse_mcp_servers(servers: list) -> list:
@@ -74,6 +76,30 @@ def child_config() -> dict:
     return kwargs
 
 
+async def spawn_argv_process(
+    argv: list[str],
+    cwd: str,
+    env: dict[str, str] | None = None,
+) -> asyncio.subprocess.Process:
+    """Spawn ANY agent by argv — crow's own or a custom `agent_servers` entry.
+
+    ``env`` is merged over this process's environment, not substituted for
+    it: an entry's env is an overlay (a model, a token, a debug flag), and
+    dropping PATH/HOME would break the child's own subprocesses.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        *argv,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=cwd,
+        env={**os.environ, **(env or {})},
+    )
+    if proc.stdin is None or proc.stdout is None:
+        raise RuntimeError("agent subprocess does not expose stdio pipes")
+    return proc
+
+
 async def spawn_agent_process(
     cwd: str,
     config_dir: Path | None = None,
@@ -94,16 +120,7 @@ async def spawn_agent_process(
         argv = [sys.executable, "acp", *dir_args, *model_args]
     else:
         argv = [sys.executable, "-m", "crow_cli.agent.main", *dir_args, *model_args]
-    proc = await asyncio.create_subprocess_exec(
-        *argv,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd=cwd,
-    )
-    if proc.stdin is None or proc.stdout is None:
-        raise RuntimeError("agent subprocess does not expose stdio pipes")
-    return proc
+    return await spawn_argv_process(argv, cwd)
 
 
 class HeadlessClient(Client):

@@ -1,7 +1,17 @@
-"""Zed-style `agent_servers`: name an agent server in config, launch it in the TUI.
+"""Zed-style `agent_servers`, presented as the TUI's `Agent` store schema.
 
-Mirrors Zed's `agent_servers` settings block so an arbitrary ACP agent can be
-selected without touching code:
+The registry itself — parsing, validation, protocol declaration, crow's own
+fallback — lives in :mod:`crow_cli.agents`, which is client-side and knows
+nothing about the TUI. This module is the adapter: it turns a resolved
+:class:`~crow_cli.agents.AgentServer` into the `Agent` TypedDict the store
+screen and the launcher consume, and it enforces the one thing only a v1 client
+can know about itself.
+
+**The TUI speaks ACP v1.** An entry that declares ``protocol: acp2`` is not
+launchable from here, so it is refused rather than spawned into a handshake
+that cannot complete: ``-a NAME`` raises, and the store listing skips it with a
+warning. ``crow-cli run -a NAME`` is the client that drives v2 agents, and the
+error says so.
 
     agent_servers:
       crow-execute:
@@ -24,13 +34,32 @@ from __future__ import annotations
 
 import logging
 import shlex
+import sys
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
-from crow_cli.cli.source import spawn_command
+from crow_cli.agents import (
+    CROW_IDENTITY,
+    V1,
+    AgentServer,
+    AgentServerError,
+    crow_agent_server,
+    parse_agent_server,
+)
+from crow_cli.agents import resolve_agent_server as _resolve_agent_server
 from crow_cli.tui.agent_schema import Agent
 
 logger = logging.getLogger(__name__)
+
+__all__ = [
+    "AgentServerError",
+    "AgentServerSpec",
+    "agent_from_server",
+    "crow_agent",
+    "custom_agent",
+    "resolve_agent_server",
+    "resolved_agent_servers",
+]
 
 
 class AgentServerSpec(TypedDict, total=False):
@@ -46,10 +75,12 @@ class AgentServerSpec(TypedDict, total=False):
     """Extra environment for the agent subprocess."""
     name: str
     """Optional display name; the config key stays the identity either way."""
-
-
-class AgentServerError(Exception):
-    """An `agent_servers` entry is missing or malformed."""
+    protocol: Literal["acp", "acp2"]
+    """Which ACP the agent speaks. Optional, defaults to ``acp`` (v1) — and
+    ``acp2`` is refused here, because this client is v1."""
+    mcpServers: dict[str, Any]
+    """Optional tool supply for this agent, shaped like the global key. Absent
+    means the client's global ``mcpServers``."""
 
 
 def crow_agent(
@@ -59,8 +90,8 @@ def crow_agent(
     """Crow's own agent definition, flags embedded in the launch command.
 
     The fallback when nothing is configured: always the code that is actually
-    running (see :func:`crow_cli.cli.source.spawn_command`). Pointing at a
-    source checkout is an ``agent_servers`` entry the user writes instead.
+    running, and always v1 — the TUI is a v1 client, and crow's v2 agent is
+    what ``crow-cli run`` falls back to instead.
 
     No ``--model`` here on purpose. Model choice is the CLIENT's job: it goes
     over ACP ``session/set_config_option`` once the session exists, which is
@@ -68,50 +99,49 @@ def crow_agent(
     ``agent_servers`` entry alike. Baking it into this argv would make ``-m``
     work for one agent and silently vanish for the others.
     """
-    args: list[str] = []
-    if config_dir is not None:
-        args += ["--config-dir", str(config_dir)]
-    if config_file is not None:
-        args += ["--config-file", str(config_file)]
-
-    # spawn_command shell-quotes; hand it raw values.
-    command, kind = spawn_command(args)
-
+    server = crow_agent_server(V1, config_dir, config_file)
+    launching = "the frozen build" if getattr(sys, "frozen", False) else (
+        "this crow-cli install"
+    )
     return _agent(
-        identity="crow-ai.dev",
+        identity=CROW_IDENTITY,
         name="Crow",
         short_name="crow",
         description="The Crow agent — transparent, observable, self-orchestrating.",
         help=(
             "crow-cli's own ACP agent.\n\n"
-            f"Launching from: {'the frozen build' if kind == 'binary' else 'this crow-cli install'}."
+            f"Launching from: {launching}."
         ),
-        run_command={"*": command},
+        run_command={"*": _quoted(server.argv)},
     )
 
 
 def custom_agent(name: str, spec: AgentServerSpec) -> Agent:
     """Build an Agent definition from a `custom` agent_servers entry."""
-    command = spec.get("command")
-    if not command:
-        raise AgentServerError(f"agent_servers {name!r}: requires a 'command'.")
-    args = spec.get("args") or []
-    if not isinstance(args, list):
-        raise AgentServerError(f"agent_servers {name!r}: 'args' must be a list.")
+    return agent_from_server(parse_agent_server(name, spec))
 
-    argv = " ".join([shlex.quote(str(command)), *(shlex.quote(str(a)) for a in args)])
-    env = spec.get("env") or {}
-    if not isinstance(env, dict):
-        raise AgentServerError(f"agent_servers {name!r}: 'env' must be a mapping.")
 
+def agent_from_server(server: AgentServer) -> Agent:
+    """The store-facing definition for a resolved server.
+
+    Raises:
+        AgentServerError: the agent speaks a protocol this client does not.
+    """
+    if server.protocol != V1:
+        raise AgentServerError(
+            f"agent_servers {server.name!r} speaks {server.protocol}, which the "
+            "TUI does not — drive it with `crow-cli run -a "
+            f"{server.name}` instead."
+        )
+    argv = _quoted(server.argv)
     return _agent(
-        identity=name,
-        name=name,
-        short_name=name,
-        description=f"Custom ACP agent {name}.",
+        identity=server.name,
+        name=server.title,
+        short_name=server.name,
+        description=f"Custom ACP agent {server.name}.",
         help=f"Launched from config: `{argv}`",
         run_command={"*": argv},
-        env={str(k): str(v) for k, v in env.items()},
+        env=server.env,
     )
 
 
@@ -123,39 +153,19 @@ def resolve_agent_server(name: str, agent_servers: dict[str, Any]) -> Agent:
     that is what ``-a NAME`` means.
 
     Raises:
-        AgentServerError: The name is not configured, or its entry is invalid.
+        AgentServerError: The name is not configured, its entry is invalid, or
+            it declares a protocol this client does not speak.
     """
-    if name not in agent_servers:
-        known = ", ".join(sorted(agent_servers)) or "none configured"
-        raise AgentServerError(
-            f"No agent_servers entry named {name!r}. Configured: {known}."
-        )
-    spec = agent_servers[name] or {}
-    if not isinstance(spec, dict):
-        raise AgentServerError(f"agent_servers.{name!r} must be a mapping.")
-
-    kind = spec.get("type", "custom")
-    if kind != "custom":
-        raise AgentServerError(
-            f"agent_servers {name!r}: unknown type {kind!r}; an agent server "
-            "is a command (type 'custom' or none at all)."
-        )
-
-    agent = custom_agent(name, spec)
-
-    # A configured display name wins over the derived one.
-    if display := spec.get("name"):
-        agent["name"] = str(display)
-    return agent
+    return agent_from_server(_resolve_agent_server(name, agent_servers))
 
 
 def resolved_agent_servers(config_dir: str | None = None) -> dict[str, Agent]:
-    """Every launchable agent: crow's own plus each configured entry.
+    """Every agent this client can launch: crow's own plus each v1 entry.
 
     Keyed by identity — what the launcher and LaunchAgent messages carry. A
     `custom` entry's identity is its config name; crow's own is
-    ``crow-ai.dev``. Entries that fail to resolve are logged and skipped:
-    one broken entry must not take down the whole home screen.
+    ``crow-ai.dev``. Entries that fail to resolve are logged and skipped: one
+    broken entry (or one v2 agent) must not take down the whole home screen.
     """
     from crow_cli.config import Config
 
@@ -172,6 +182,11 @@ def resolved_agent_servers(config_dir: str | None = None) -> dict[str, Agent]:
         if (identity := agent["identity"]) not in agents:
             agents[identity] = agent
     return agents
+
+
+def _quoted(argv: list[str]) -> str:
+    """An argv as one shell-safe line — the shape `run_command` carries."""
+    return " ".join(shlex.quote(a) for a in argv)
 
 
 def _agent(

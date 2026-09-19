@@ -28,9 +28,10 @@ import importlib.util
 from pathlib import Path
 
 import pytest
-from acp import PROTOCOL_VERSION, connect_to_agent, text_block
+from acp import PROTOCOL_VERSION, connect_to_agent
 from acp.schema import ClientCapabilities, Implementation
 
+from crow_cli.acp_helpers import text_block
 from crow_cli.agent.mcp_client import fastmcp_config_to_acp_servers
 from crow_cli.client.subagent import HeadlessClient
 from crow_cli.config import Config

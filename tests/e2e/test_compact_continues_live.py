@@ -24,13 +24,20 @@ import asyncio
 from pathlib import Path
 
 import pytest
-from acp import PROTOCOL_VERSION, connect_to_agent, text_block
+from acp import PROTOCOL_VERSION, connect_to_agent
 from acp.schema import ClientCapabilities, Implementation
 
+from crow_cli.acp_helpers import text_block
 from crow_cli.agent.mcp_client import fastmcp_config_to_acp_servers
 from crow_cli.client.subagent import HeadlessClient
 from crow_cli.config import Config
-from crow_cli.memory import get_engine, list_agents, load_agent_messages
+from crow_cli.memory import (
+    Message,
+    Session,
+    get_engine,
+    list_agents,
+    load_agent_messages,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -46,6 +53,15 @@ MODEL = "qwen3.8-max"
 # dive never reaches does not test anything. 30k is crossed mid-dive — gen1
 # measured 25k tokens over 26 messages — and leaves the successor ~12k to
 # finish in.
+#
+# ⚠️ That margin is THIN, and the dive's size is not ours to choose: it is
+# whatever the fetched pages happened to weigh that day. Observed flaking
+# 2026-09 — one run came in under the ceiling and failed "compaction never
+# fired", the retry passed at 12m14s. Hence EIGHT documentation pages below
+# rather than five, and the peak token count in the failure message:
+# "compaction never fired" on its own does not say whether the dive came up
+# 500 tokens short or 20k short, and the answer decides between "the ceiling
+# is wrong" and "the web was quiet".
 THRESHOLD = 30_000
 BLANK = Path("/tmp/blank")
 HANDSHAKE_TIMEOUT = 240
@@ -74,11 +90,11 @@ def _agent_text(updates) -> str:
     return "".join(out)
 
 
-def _message_text(message: dict) -> str:
-    content = message.get("content")
-    if isinstance(content, str):
-        return content
-    return "".join(b.get("text", "") for b in content or [] if isinstance(b, dict))
+def _peak_tokens(engine, agent_id: str) -> int:
+    """The largest ``total_tokens`` the provider reported on one generation."""
+    with Session(engine) as db:
+        rows = db.query(Message.total_tokens).filter_by(agent_id=agent_id).all()
+    return max((r[0] or 0) for r in rows) if rows else 0
 
 
 async def test_compaction_mid_turn_continues_the_react_loop(tmp_path):
@@ -135,7 +151,7 @@ async def test_compaction_mid_turn_continues_the_react_loop(tmp_path):
                 session_id=session_id,
                 prompt=[text_block(
                     "Do a deep dive on the Agent Client Protocol. Fetch "
-                    "https://agentclientprotocol.com/llms.txt, then fetch five "
+                    "https://agentclientprotocol.com/llms.txt, then fetch eight "
                     "of the documentation pages it lists. Also search the web "
                     "for crow-cli. Finish with one sentence on what crow-cli is."
                 )],
@@ -166,7 +182,10 @@ async def test_compaction_mid_turn_continues_the_react_loop(tmp_path):
     generations = list_agents(engine, session_id)
     assert len(generations) >= 2, (
         f"compaction never fired at {THRESHOLD} tokens; "
-        f"{[g.agent_id for g in generations]}\nagent said:\n{said[-2000:]}"
+        f"{[g.agent_id for g in generations]}\n"
+        f"gen1 peaked at {_peak_tokens(engine, generations[0].agent_id)} tokens "
+        f"over {len(load_agent_messages(engine, generations[0]))} messages\n"
+        f"agent said:\n{said[-2000:]}"
     )
     assert f"Compaction threshold of {THRESHOLD} reached" in said, said[-2000:]
 

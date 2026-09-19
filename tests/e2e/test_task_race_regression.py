@@ -41,10 +41,11 @@ from typing import Any
 
 import pytest
 
-from acp import connect_to_agent, text_block
+from acp import connect_to_agent
 from acp.http import create_http_stream
 from acp.interfaces import Client
 
+from crow_cli.acp_helpers import text_block
 from crow_cli.agent.main import serve_http
 from crow_cli.config import Config
 from crow_cli.memory.db import create_database, get_engine
@@ -52,8 +53,12 @@ from crow_cli.memory.reads import get_task
 
 logger = logging.getLogger(__name__)
 
-MODEL = "qwen3.8-flash-next"
-WORKTREE = "/home/thomas/src/crow-term/crow-cli-jupyter"
+MODEL = "qwen3.8-max"
+#: The checkout under test, DERIVED. These tests spawn
+#: ``uv --project <here> run crow-cli mcp``, so a literal path silently points
+#: the child at someone else's worktree — which is what it did for six
+#: sessions, at a checkout 20 commits behind and dirty.
+WORKTREE = str(Path(__file__).resolve().parents[2])
 WINDOW_S = 300.0  # launch + fast child + parent web-search turns + reaction
 DIRECTIVE = (
     "do two things. first use the task tool to launch a background "

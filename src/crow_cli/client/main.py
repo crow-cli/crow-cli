@@ -1,4 +1,3 @@
-#! /home/thomas/src/nid/crow-acp/.venv/bin/python
 """
 Crow ACP Client - A transparent, observable agent client.
 
@@ -38,7 +37,6 @@ from acp import (
     Client,
     RequestError,
     connect_to_agent,
-    text_block,
 )
 from acp.core import ClientSideConnection
 from acp.schema import (
@@ -65,7 +63,8 @@ from acp.schema import (
     WaitForTerminalExitResponse,
     WriteTextFileResponse,
 )
-from crow_cli.client.subagent import spawn_agent_process
+from crow_cli.acp_helpers import text_block
+from crow_cli.client.subagent import spawn_agent_process, spawn_argv_process
 from crow_cli.client.terminal import TerminalManager
 from rich.console import Console
 from rich.panel import Panel
@@ -362,13 +361,22 @@ class CrowClient(Client):
         config_dir: Path | None = None,
         model: str | None = None,
         config_file: Path | None = None,
+        argv: list[str] | None = None,
+        env: dict[str, str] | None = None,
     ) -> asyncio.subprocess.Process:
-        """Spawn the crow-acp agent subprocess (shared machinery with the
-        task system's SubagentDriver — crow_cli.client.subagent)."""
+        """Spawn the agent subprocess (shared machinery with the task
+        system's SubagentDriver — crow_cli.client.subagent).
+
+        ``argv`` overrides everything else: a resolved `agent_servers` entry
+        is an arbitrary command, and crow's own flags mean nothing to it.
+        """
         try:
-            proc = await spawn_agent_process(
-                cwd, config_dir=config_dir, model=model, config_file=config_file
-            )
+            if argv is not None:
+                proc = await spawn_argv_process(argv, cwd, env=env)
+            else:
+                proc = await spawn_agent_process(
+                    cwd, config_dir=config_dir, model=model, config_file=config_file
+                )
         except RuntimeError as e:
             self._console.print(f"[red]{e}[/red]")
             raise SystemExit(1)

@@ -261,11 +261,41 @@ class LLModel:
     # model cannot handle the modalities present in the conversation.
     fallbacks: list[str] = field(default_factory=list)
 
+    @property
+    def option_value(self) -> str:
+        """This model as a ``model`` config-option VALUE: ``provider:model_id``.
+
+        The wire separates the human-facing ``name`` from the value a client
+        sends back, and both crow agents publish this shape, so it is the one
+        translation a client needs to pick a model. The provider prefix is
+        what routes the request — ``model_id`` alone loses it.
+        """
+        return f"{self.provider_name}:{self.model_id}"
+
 
 @dataclass
 class LLMConfig:
     providers: dict[str, LLMProvider] = field(default_factory=dict)
     models: dict[str, LLModel] = field(default_factory=dict)
+
+    def option_value(self, name: str) -> str:
+        """``-m NAME`` as the wire's ``model`` option wants it.
+
+        Model choice is the CLIENT's job — it travels over
+        ``session/set_config_option``, never in an agent's argv — so this is
+        where a client turns the name a human typed into the value an agent
+        publishes.
+
+        Raises:
+            ValueError: NAME is not a configured model. Raised rather than
+                defaulted: a typo must fail before anything is spawned, not
+                quietly run on the first model in config.yaml.
+        """
+        try:
+            return self.models[name].option_value
+        except KeyError:
+            known = ", ".join(self.models) or "none configured"
+            raise ValueError(f"Unknown model {name!r}. Available: {known}.") from None
 
 
 @dataclass
@@ -282,6 +312,13 @@ class Config:
     # image_store.s3 block (endpoint/bucket/access_key/secret_key) — when
     # present and reachable, images go to S3; else filesystem. Empty = FS.
     image_store: dict[str, Any] = field(default_factory=dict)
+    #: The wake bus — redis pub/sub, db 0. Whoever finishes a task publishes
+    #: a poke here; the agent process that owns the session is subscribed and
+    #: routes it to that session's driver inbox. db 1 and 2 on the same server
+    #: are celery's broker and result backend. Empty string disables the bus
+    #: entirely, which degrades wake latency to the driver's backstop poll —
+    #: the mailbox rows in sqlite are the truth, never the poke.
+    redis_url: str = ""
     max_retries_per_step: int = 3
     MAX_COMPACT_TOKENS: int = 190000
     MAX_TOKENS: int = 38192
@@ -420,6 +457,22 @@ class Config:
         _logger.info("FINAL mcp_servers stored in Config: %s", mcp_servers)
         agent_servers = parsed.get("agent_servers", {})
         image_store = parsed.get("image_store") or {}
+        # REDIS_PORT is the knob compose.yaml publishes the bus on, and .env is
+        # loaded above, so one value moves the container and the client.
+        #
+        # A presence check, not an or-chain. ``redis_url: ""`` means "no wake
+        # bus" — that is the documented way to turn it off, and an empty url is
+        # what makes WakeWatcher.start a no-op and publish_wake return False. An
+        # or-chain cannot express it: the empty string falls through to the
+        # localhost default, so the one setting that disables the bus is the one
+        # setting the chain ignores. Same reason apply_config_overrides below
+        # tests ``"redis_url" in overrides`` rather than truthiness.
+        if "redis_url" in parsed:
+            redis_url = parsed["redis_url"] or ""
+        else:
+            redis_url = os.getenv("CROW_REDIS_URL") or (
+                f"redis://localhost:{os.getenv('REDIS_PORT', '6379')}/0"
+            )
         system_prompt_path = None
         if "system_prompt_path" in parsed:
             system_prompt_path = Path(os.path.expanduser(parsed["system_prompt_path"]))
@@ -432,6 +485,7 @@ class Config:
             mcp_servers=mcp_servers,
             agent_servers=agent_servers,
             image_store=image_store,
+            redis_url=redis_url,
             system_prompt_path=system_prompt_path,
             **overrides,
         )
@@ -466,4 +520,6 @@ def apply_config_overrides(config: "Config", config_file: Path | None) -> "Confi
         config.agent_servers = resolve_env_vars(overrides["agent_servers"]) or {}
     if "image_store" in overrides:
         config.image_store = resolve_env_vars(overrides["image_store"]) or {}
+    if "redis_url" in overrides:
+        config.redis_url = resolve_env_vars(overrides["redis_url"]) or ""
     return config

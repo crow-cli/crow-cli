@@ -32,6 +32,25 @@ def agent_index(engine) -> dict[str, tuple[str, int]]:
     return {a.agent_id: (a.session_id, a.agent_idx) for a in rows}
 
 
+def session_exists(engine, wire_id: str) -> bool:
+    """Whether any agent row exists for this wire id.
+
+    ``wire_id`` is a trunk's bare session_id or a fork's full agent_id, and
+    both are answered without hydrating anything: this exists for callers that
+    have to tell "nothing to do" from "no such session" — ``session/close`` —
+    and paying :func:`load_messages` for a session about to be thrown away is
+    not a price worth paying to answer a yes/no question.
+    """
+    try:
+        parse_agent_id(wire_id)
+    except ValueError:
+        column, value = Agent.session_id, wire_id
+    else:
+        column, value = Agent.agent_id, wire_id
+    with Session(engine) as db:
+        return db.query(Agent.agent_id).filter(column == value).first() is not None
+
+
 def get_prompt(engine, prompt_id: str) -> Prompt | None:
     with Session(engine) as db:
         return db.query(Prompt).filter_by(id=prompt_id).first()
@@ -130,6 +149,25 @@ def running_tasks(engine, owner_session: str) -> list[Task]:
         return (
             db.query(Task)
             .filter_by(owner_session=owner_session, status="running")
+            .order_by(Task.created_at)
+            .all()
+        )
+
+
+def owner_tasks(engine, owner_session: str) -> list[Task]:
+    """Every task one session has launched, any status, oldest first.
+
+    ``running_tasks`` answers "what am I waiting on"; this answers "what
+    have I ever set going", which is the question a bare ``task_read()``
+    asks. Terminal tasks are included on purpose — the whole point of the
+    mailbox is that a completion can be missed (owner mid-turn, owner
+    compacted, owner restarted), and the row is the only durable record
+    that it happened.
+    """
+    with Session(engine) as db:
+        return (
+            db.query(Task)
+            .filter_by(owner_session=owner_session)
             .order_by(Task.created_at)
             .all()
         )
@@ -273,6 +311,130 @@ def list_sessions(engine, limit: int = 50, offset: int = 0, include_forks: bool 
         }
         for sid, last, n_msg, n_agent in rows
     ]
+
+
+#: How much of the first user message becomes a session's title.
+TITLE_LEN = 50
+
+
+def _session_title(db: Session, agent_id: str | None) -> str | None:
+    """The first user message of a session's ROOT agent, trimmed.
+
+    Read off the root rather than the representative: a session that compacted
+    has an agent_idx-2 row whose first message is a summary, and titling from
+    that would rename the session every time it grew. Index 1 because index 0
+    is the system row ``AgentSession.create`` always writes first.
+
+    None rather than a placeholder. ``SessionInfo.title`` is optional and the
+    client is the one that knows what an untitled session should look like.
+    """
+    if agent_id is None:
+        return None
+    rows = (
+        db.query(Message.data)
+        .filter_by(agent_id=agent_id)
+        .order_by(Message.id)
+        .limit(2)
+        .all()
+    )
+    if len(rows) < 2:
+        return None
+    content = (rows[1][0] or {}).get("content", "")
+    if isinstance(content, list):
+        text = "".join(
+            b.get("text", "")
+            for b in content
+            if isinstance(b, dict) and b.get("type") == "text"
+        )
+    else:
+        text = str(content)
+    return text.strip()[:TITLE_LEN] or None
+
+
+def session_title(engine, agent_id: str) -> str | None:
+    """The title :func:`list_session_infos` would show for one agent.
+
+    Exists so an agent can announce a session's name the moment one exists.
+    No response in the protocol carries a ``SessionInfo`` — ``session/new``
+    answers with a sessionId and config options — so ``session_info_update``
+    is the only way a client watching a session list learns a title without
+    re-listing. Reading it back out of the store rather than deriving it from
+    the prompt in hand is the whole point: the notification and the list are
+    then incapable of disagreeing about what the session is called.
+    """
+    with Session(engine) as db:
+        return _session_title(db, agent_id)
+
+
+def list_session_infos(
+    engine,
+    cwd: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[dict], int | None]:
+    """One page of sessions shaped for ACP ``session/list``.
+
+    Returns ``(infos, next_offset)``, where ``next_offset`` is None on the last
+    page and each info carries exactly the four fields ``SessionInfo`` has:
+    ``session_id``, ``cwd``, ``title``, ``updated_at``.
+
+    Not :func:`list_sessions` with extra keys. That one is the memory tool's
+    view — message counts, model, who is working now — and its callers render
+    every column it returns; this one is a wire shape, and a wire shape that
+    grew a ``message_count`` would be a column the protocol has nowhere to put.
+
+    ``cwd`` filters; None lists every session the store knows. Recency is the
+    last message, falling back to the agent row's own creation for a session
+    that was opened and never spoken to — without the fallback a brand-new
+    session sorts as older than everything, which is the one session a client
+    is most likely to be looking for.
+
+    Forks are excluded, as in :func:`list_sessions`: a fork is addressed by its
+    own agent id and is a branch of a listed session, not a session of its own.
+    """
+    with Session(engine) as db:
+        last = func.coalesce(func.max(Message.created_at), func.max(Agent.created_at))
+        q = (
+            db.query(Agent.session_id, last)
+            .join(Message, Message.agent_id == Agent.agent_id, isouter=True)
+            .filter(Agent.fork_idx == 1)
+        )
+        if cwd is not None:
+            q = q.filter(Agent.cwd == cwd)
+        # One extra row rather than a COUNT: "is there a next page" is the only
+        # thing the extra answer buys, and a second aggregate over the whole
+        # table costs more than one row.
+        rows = q.group_by(Agent.session_id).order_by(last.desc()).offset(offset).limit(limit + 1).all()
+        more = len(rows) > limit
+        rows = rows[:limit]
+        ids = [r[0] for r in rows]
+
+        head: dict[str, tuple[int, str, str]] = {}
+        root: dict[str, str] = {}
+        if ids:
+            agents = (
+                db.query(
+                    Agent.session_id, Agent.agent_id, Agent.agent_idx,
+                    Agent.cwd, Agent.created_at,
+                )
+                .filter(Agent.session_id.in_(ids), Agent.fork_idx == 1)
+                .all()
+            )
+            for sid, agent_id, idx, agent_cwd, created in agents:
+                if sid not in head or idx > head[sid][0]:
+                    head[sid] = (idx, agent_cwd, created)
+                if idx == 1:
+                    root[sid] = agent_id
+        infos = [
+            {
+                "session_id": sid,
+                "cwd": head.get(sid, (0, cwd or "", ""))[1],
+                "title": _session_title(db, root.get(sid)),
+                "updated_at": updated or head.get(sid, (0, "", ""))[2] or None,
+            }
+            for sid, updated in rows
+        ]
+    return infos, (offset + limit if more else None)
 
 
 def search_messages(

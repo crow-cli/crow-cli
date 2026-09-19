@@ -1,13 +1,13 @@
 """rlm — recursive language modeling: ask a fork of THIS session instead of
 reading the thing yourself.
 
-The pattern TODO.md named and kept: context protection by delegation.
-Instead of the parent reading a maybe-relevant file (always maximally
-increasing context), a fork reads it and reports yes/no on relevance. The
-fork is a copy of this session's history under a new wire id, so it starts
-with everything the caller already knows — warm KV cache reuse where the
-provider supports it, cold agent process regardless — and its ANSWER is the
-only thing that comes back into the caller's context.
+Context protection by delegation. Instead of the parent reading a
+maybe-relevant file (always maximally increasing context), a fork reads it
+and reports yes/no on relevance. The fork is a copy of this session's history
+under a new wire id, so it starts with everything the caller already knows —
+warm KV cache reuse where the provider supports it, cold agent process
+regardless — and its ANSWER is the only thing that comes back into the
+caller's context.
 
 The budget is ONE delegation deep (MAX_RLM_DEPTH), enforced from the
 identity rail the execute prologue injects: a value resolved off the
@@ -20,16 +20,24 @@ with the delegate's id; its transcript lands in the same database under
 that id as it works, so ``memory("list", session_id=...)`` is how an async
 delegation gets collected — no delivery table, because a task owner goes
 idle between launch and completion while an rlm caller is a running cell.
+
+The driver is :mod:`crow_cli.client2.subagent` — ACP v2, where
+``PromptResponse`` is empty and a turn's outcome arrives afterwards as an
+idle ``state_update``. That is what makes a wait which runs out recoverable:
+the notification is still coming and the queue it lands in outlives the
+wait, so an impatient caller hands the turn to a background waiter and gets
+a handle back instead of killing a delegate that was about to answer.
 """
 
 import asyncio
 import os
 import sys
 from contextlib import suppress
+from dataclasses import dataclass
 from pathlib import Path
 
 import crow_cli.memory as cm
-from crow_cli.client.subagent import SubagentDriver, child_config
+from crow_cli.client2.subagent import ChildExited, SubagentDriver, child_config
 
 from .register import current_cell, db_uri, rlm_depth, subtool
 from .results import RlmResult, RlmToolError
@@ -95,8 +103,8 @@ def _identity() -> tuple[str, int]:
 
 def _delegate_prompt(prompt: str, depth: int) -> str:
     """The delegate's prompt. The house idiom for fork behaviour control is
-    PROMPT INSTRUCTIONS (TODO.md: "the analysis/ideas forks rely on PROMPT
-    INSTRUCTIONS to stay read-only") — not history surgery.
+    PROMPT INSTRUCTIONS — the analysis/ideas forks stay read-only the same
+    way — not history surgery.
     """
     return (
         "You are a delegate: a copy of the agent above, forked from its own"
@@ -133,16 +141,27 @@ def _delegate_answer(engine, fork_id: str) -> str:
     )
 
 
-async def _drive(
-    fork_id: str, driver: SubagentDriver, text: str, timeout: float | None,
-) -> None:
-    """One delegate turn in the background. The transcript is the record —
-    nobody waits on this task, so a failure prints one line to stderr and
-    drops; keeping the reference in _state["live"] is what keeps an idle
-    asyncio.Task from being garbage-collected mid-flight.
+async def _drive(fork_id: str, driver: SubagentDriver, text: str | None) -> None:
+    """One delegate turn in the background, and then the driver is reaped.
+
+    ``text`` is None for a HAND-OFF: the prompt already went out and the
+    caller that sent it has left, so what is left is seeing the turn home —
+    ``driver.wait``, not ``driver.prompt``, because asking the delegate its
+    own question a second time is not a timeout recovery.
+
+    Neither branch is on a clock. A delegation nobody is blocked on has no
+    deadline to miss (task's watcher does the same), and killing a delegate
+    for being slow loses the answer AND the context the delegation existed to
+    protect. The transcript is the record: nobody waits on this task, so a
+    failure prints one line to stderr and drops, and keeping the reference in
+    _state["live"] is what keeps an idle asyncio.Task from being
+    garbage-collected mid-flight.
     """
     try:
-        await asyncio.wait_for(driver.prompt(fork_id, text), timeout)
+        if text is None:
+            await driver.wait(fork_id)
+        else:
+            await driver.prompt(fork_id, text)
     except Exception as e:
         print(
             f"rlm: delegate {fork_id} failed: {type(e).__name__}: {e}",
@@ -152,6 +171,46 @@ async def _drive(
         _state.get("live", {}).pop(fork_id, None)
         with suppress(Exception):
             await driver.close()
+
+
+@dataclass
+class LiveDelegate:
+    """One delegate this kernel is driving in the background.
+
+    ``task`` is kept because an unreferenced asyncio.Task can be garbage
+    collected mid-flight. ``driver`` is kept because it is the only handle on
+    the child process, and "the delegate is not lost" is a claim somebody had
+    better be able to check — and to cancel.
+    """
+
+    fork_id: str
+    driver: SubagentDriver
+    task: asyncio.Task
+
+
+def _hand_off(
+    fork_id: str, driver: SubagentDriver, text: str | None
+) -> LiveDelegate:
+    """Put a delegate into the background and return its handle."""
+    task = asyncio.create_task(
+        _drive(fork_id, driver, text), name=f"crow-rlm-{fork_id}"
+    )
+    live = LiveDelegate(fork_id=fork_id, driver=driver, task=task)
+    _state.setdefault("live", {})[fork_id] = live
+    return live
+
+
+def _handle(fork_id: str, prompt: str, depth: int) -> RlmResult:
+    """The not-yet-answered result: a wire id and a promise, no answer.
+
+    One shape for both ways a delegation can be outstanding — launched with
+    ``wait=False``, or waited for and the wait ran out — because from the
+    caller's side they are the same situation, and ``RlmResult.text`` already
+    says what to do about it.
+    """
+    return RlmResult(
+        session_id=fork_id, answer="", prompt=prompt, waited=False, depth=depth
+    )
 
 
 @subtool(tool="rlm")
@@ -192,12 +251,15 @@ async def rlm(
           fork); True inherits this session's MCP servers.
         model: override the delegate's model (default: inherit yours).
         timeout: seconds to wait before giving up on a BLOCKING delegation
-          (default 900). None waits forever. The delegate is not lost on
-          timeout — its transcript keeps growing under r.session_id.
+          (default 900). None waits forever. Running out is not a failure and
+          does not raise: the delegate keeps working, the call comes back as
+          an unwaited handle (``r.waited`` False), and
+          ``memory("list", session_id=r.session_id)`` collects it exactly as
+          it would a ``wait=False`` one.
 
     Raises RlmToolError when the budget is spent (this session already IS a
-    delegate), when there is no identity rail, or when the fork/prompt
-    fails.
+    delegate), when there is no identity rail, when the fork fails, or when
+    the delegate dies before it answers.
     """
     wire_id, depth = _identity()
     if depth >= MAX_RLM_DEPTH:
@@ -227,31 +289,35 @@ async def rlm(
 
     text = _delegate_prompt(prompt, depth + 1)
     if not wait:
-        task = asyncio.create_task(_drive(fork_id, driver, text, timeout))
-        _state.setdefault("live", {})[fork_id] = task
-        return RlmResult(
-            session_id=fork_id,
-            answer="",
-            prompt=prompt,
-            waited=False,
-            depth=depth + 1,
-        )
+        _hand_off(fork_id, driver, text)
+        return _handle(fork_id, prompt, depth + 1)
+    handed_off = False
     try:
-        resp = await asyncio.wait_for(driver.prompt(fork_id, text), timeout)
-    except TimeoutError as e:
+        stop = await driver.prompt(fork_id, text, timeout=timeout)
+    except TimeoutError:
+        # What ran out is the caller's patience, not the delegate's turn: it
+        # is mid-work, its transcript is the mailbox, and the answer is still
+        # coming. So the turn goes to a background waiter and the caller gets
+        # the handle an async delegation would have got. Raising here — and
+        # closing the driver in the finally, which kills the child — is what
+        # v1 did while its own message promised the delegate was "not lost".
+        handed_off = True
+        _hand_off(fork_id, driver, None)
+    except ChildExited as e:
         raise RlmToolError(
-            f"delegate {fork_id} did not answer within {timeout}s — it is"
-            " not lost: its transcript keeps growing under that id, read it"
-            f' with memory("list", session_id="{fork_id}")'
+            f"delegate {fork_id} died before it answered: {e}"
         ) from e
     finally:
-        with suppress(Exception):
-            await driver.close()
+        if not handed_off:
+            with suppress(Exception):
+                await driver.close()
+    if handed_off:
+        return _handle(fork_id, prompt, depth + 1)
     return RlmResult(
         session_id=fork_id,
         answer=_delegate_answer(engine, fork_id),
         prompt=prompt,
         waited=True,
         depth=depth + 1,
-        stop_reason=resp.stop_reason,
+        stop_reason=stop,
     )

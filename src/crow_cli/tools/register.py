@@ -57,6 +57,7 @@ def begin_cell(
     agent_id: str | None = None,
     db_uri: str | None = None,
     images_dir: str | None = None,
+    redis_url: str | None = None,
     rlm_depth: int = 0,
 ) -> None:
     """Set the identity for the cell about to run (execute's prologue).
@@ -69,12 +70,18 @@ def begin_cell(
     ``rlm_depth`` is how many delegations deep the calling session is,
     resolved server-side from the session's own persisted row — like the
     rest of the rail, a value the model never derived and cannot forge.
+    ``redis_url`` is the wake bus to publish on, so an in-cell task can wake
+    its owner the moment it commits a delivery. Empty means the bus is off
+    and the owner's backstop poll is the only wake; None means the caller
+    said nothing and the previous value stands.
     """
-    global _images_dir
+    global _images_dir, _redis_url
     if db_uri is not None:
         configure_sink(db_uri)
     if images_dir is not None:
         _images_dir = images_dir
+    if redis_url is not None:
+        _redis_url = redis_url
     if cell_seq is None:
         cell_seq = _ipython_execution_count()
     _current_cell.set(
@@ -129,6 +136,13 @@ _sink_engine: Any = None
 # (plain Python use) and vision raises rather than dropping bytes.
 _images_dir: str | None = None
 
+# Wake bus: an in-cell task publishes a poke AFTER it commits a delivery, so
+# its owner wakes now instead of at the next backstop poll. Injected by
+# begin_cell like the rest of the rail — the kernel reads no config, and the
+# model can no more point the bus somewhere else than it can forge a session
+# id. None or "" means no bus, which costs latency and nothing else.
+_redis_url: str | None = None
+
 
 def image_store():
     """The kernel-side FsImageStore, or None when begin_cell got no
@@ -152,6 +166,17 @@ def db_uri() -> str | None:
     first, which is exactly what execute's prologue does.
     """
     return _sink_uri
+
+
+def redis_url() -> str:
+    """The wake bus to publish on, or "" when there is none.
+
+    Resolved by the agent out of its own config and injected by execute's
+    prologue, so the kernel still reads NO config. "" is a configuration —
+    bus off, the owner's mailbox poll is the only wake — and not an error:
+    :func:`crow_cli.wake.publish_wake` accepts it and returns False.
+    """
+    return _redis_url or ""
 
 
 def rlm_depth() -> int:
@@ -270,9 +295,10 @@ def drain(cell_seq: int | None = None) -> list[SubtoolEntry]:
 
 def clear() -> None:
     """Test hygiene."""
-    global _images_dir
+    global _images_dir, _redis_url
     _entries.clear()
     _images_dir = None
+    _redis_url = None
     configure_sink(None)
     # Reset the identity ContextVar too: begin_cell sets it, and a clear()
     # that left it standing leaked one test's cell (session_id present, sink
