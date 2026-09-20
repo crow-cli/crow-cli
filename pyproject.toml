@@ -67,7 +67,10 @@ Documentation = "https://github.com/crow-cli/crow-cli#readme"
 crow-cli = "crow_cli.cli.main:main"
 
 [tool.uv.sources]
-# ACP v2 lives on python-sdk main, unreleased. Becomes ../python-sdk on merge to main.
+# ACP v2 lives on python-sdk main, unreleased (PyPI tops out at 0.12.1, which
+# has no experimental/). Local editable so the v2 schema is importable here.
+# ../../ is this worktree's depth; main's checkout is one level shallower and
+# needs ../python-sdk.
 agent-client-protocol = { path = "../../python-sdk", editable = true }
 
 [build-system]
