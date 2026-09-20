@@ -66,6 +66,23 @@ class Mode(NamedTuple):
     description: str | None
 
 
+class Cost(NamedTuple):
+    """A cost with associated currency."""
+
+    amount: float
+    currency: str
+
+    def __str__(self) -> str:
+        return f"{self:}"
+
+    def __format__(self, _specifier: str) -> str:
+        from format_currency import format_currency
+
+        amount, currency = self
+        currency_text = format_currency(amount, currency_code=currency).replace(" ", "")
+        return currency_text
+
+
 class ContextUsage(NamedTuple):
     """Context window usage."""
 
@@ -84,23 +101,6 @@ class ContextUsage(NamedTuple):
     @property
     def percentage_display(self) -> str:
         return f"{floor(self.percentage_used * 10) / 10:.1f}%"
-
-
-class Cost(NamedTuple):
-    """A cost with associated currency."""
-
-    amount: float
-    currency: str
-
-    def __str__(self) -> str:
-        return f"{self:}"
-
-    def __format__(self, _specifier: str) -> str:
-        from format_currency import format_currency
-
-        amount, currency = self
-        currency_text = format_currency(amount, currency_code=currency).replace(" ", "")
-        return currency_text
 
 
 class TokenUsage(NamedTuple):

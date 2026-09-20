@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from functools import lru_cache
 from time import monotonic
 
