@@ -63,6 +63,7 @@ from acp.schema import (
     WaitForTerminalExitResponse,
     WriteTextFileResponse,
 )
+from crow_cli import __version__
 from crow_cli.acp_helpers import text_block
 from crow_cli.client.subagent import spawn_agent_process, spawn_argv_process
 from crow_cli.client.terminal import TerminalManager
@@ -477,9 +478,17 @@ class CrowClient(Client):
 
 
 async def connect_client(
-    proc: asyncio.subprocess.Process, client: CrowClient
+    proc: asyncio.subprocess.Process,
+    client: CrowClient,
+    initialized: bool = False,
 ) -> ClientSideConnection:
-    """Initialize ACP connection to agent."""
+    """Initialize ACP connection to agent.
+
+    ``initialized`` says the caller already handshaked. Protocol discovery
+    sends the one ``initialize`` both versions accept and reads the chosen
+    version back, so a connection that arrives here already negotiated is one
+    this function must not negotiate again.
+    """
     try:
         conn = connect_to_agent(
             client,
@@ -490,18 +499,20 @@ async def connect_client(
             use_unstable_protocol=True,
         )
 
-        await conn.initialize(
-            protocol_version=PROTOCOL_VERSION,
-            # terminal=False: don't advertise the client-side PTY, so the agent's
-            # `terminal` tool falls through to the crow-mcp MCP terminal tool
-            # (agent-owned execution) instead of routing to create_terminal below.
-            client_capabilities=ClientCapabilities(terminal=False),
-            client_info=Implementation(
-                name="crow-client",
-                title="Crow Client",
-                version="0.1.23",
-            ),
-        )
+        if not initialized:
+            await conn.initialize(
+                protocol_version=PROTOCOL_VERSION,
+                # terminal=False: don't advertise the client-side PTY, so the
+                # agent's `terminal` tool falls through to the crow-mcp MCP
+                # terminal tool (agent-owned execution) instead of routing to
+                # create_terminal below.
+                client_capabilities=ClientCapabilities(terminal=False),
+                client_info=Implementation(
+                    name="crow-client",
+                    title="Crow Client",
+                    version=__version__,
+                ),
+            )
         return conn
     except Exception as e:
         # If connection fails, try to read stderr to show the actual error

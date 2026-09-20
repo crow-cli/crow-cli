@@ -124,10 +124,14 @@ def custom_agent(name: str, spec: AgentServerSpec) -> Agent:
 def agent_from_server(server: AgentServer) -> Agent:
     """The store-facing definition for a resolved server.
 
+    An entry that declares no protocol is driven as v1, which is what this
+    client speaks and what such an entry meant before the handshake could be
+    asked. Only an entry that declares the other one is refused.
+
     Raises:
         AgentServerError: the agent speaks a protocol this client does not.
     """
-    if server.protocol != V1:
+    if server.protocol not in (None, V1):
         raise AgentServerError(
             f"agent_servers {server.name!r} speaks {server.protocol}, which the "
             "TUI does not — drive it with `crow-cli run -a "

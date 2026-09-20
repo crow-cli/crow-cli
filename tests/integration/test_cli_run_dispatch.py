@@ -45,6 +45,7 @@ import os
 from uuid import uuid4
 
 from acp import (
+    PROTOCOL_VERSION,
     Agent,
     InitializeResponse,
     NewSessionResponse,
@@ -72,11 +73,17 @@ class Echo(Agent):
 
     async def initialize(self, protocol_version, client_capabilities=None,
                          client_info=None, **kwargs):
-        saw(event="initialize", protocol=protocol_version,
+        # Answer with the version THIS agent speaks, not the one asked for:
+        # "An Agent that only supports v1 will answer with protocolVersion: 1".
+        # Echoing the request back would claim v2 to a client that offered it
+        # and get this agent driven by a stack it cannot answer.
+        saw(event="initialize", asked=protocol_version, protocol=PROTOCOL_VERSION,
             probe=os.environ.get("DISPATCH_PROBE"),
-            client_marker=os.environ.get("DISPATCH_CLIENT_MARKER"))
+            client_marker=os.environ.get("DISPATCH_CLIENT_MARKER"),
+            client=client_info.name if client_info else None,
+            terminal=client_capabilities.terminal if client_capabilities else None)
         return InitializeResponse(
-            protocol_version=protocol_version,
+            protocol_version=PROTOCOL_VERSION,
             agent_capabilities=AgentCapabilities(load_session=True),
         )
 
@@ -140,7 +147,8 @@ class Echo:
         self.conn = conn
 
     async def initialize(self, request):
-        saw(event="initialize", protocol=request.protocol_version,
+        saw(event="initialize", asked=request.protocol_version,
+            protocol=v2.PROTOCOL_VERSION,
             probe=os.environ.get("DISPATCH_PROBE"),
             client_marker=os.environ.get("DISPATCH_CLIENT_MARKER"),
             client=request.info.name if request.info else None)
@@ -199,6 +207,14 @@ class Echo:
 
 asyncio.run(v2.run_agent(Echo()))
 '''
+
+#: An agent that dies at startup. The only place it can say why is stderr, so
+#: this is the child whose error message has to carry the tail.
+DEAD_AGENT = r"""import sys
+
+sys.stderr.write("dead-agent: no LLM provider configured\n")
+raise SystemExit(4)
+"""
 
 
 @pytest.fixture
@@ -261,6 +277,10 @@ def bench(tmp_path: Path) -> dict:
             "v2-echo": entry(v2_script, "acp2"),
             "v1-echo": entry(v1_script),
             "v2-private": entry(v2_script, "acp2", mcpServers={"private-supply": stdio}),
+            # No `protocol`: `run` has to ask. This is the entry shape that
+            # hung before discovery existed — the registry defaulted it to v1
+            # and the v1 client spoke v1 to a v2 agent, so both sides waited.
+            "v2-auto": entry(v2_script),
         },
     }
     (config_dir / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
@@ -352,9 +372,9 @@ def test_a_v1_entry_is_driven_by_the_v1_client(bench):
 
 
 def test_the_two_protocols_are_not_interchangeable(bench):
-    """The point of declaring `protocol`: a v1 client handed a v2 agent (or the
-    reverse) does not fail loudly, it hangs in a handshake that never
-    completes. Both directions work here because each entry named its own."""
+    """A v1 client handed a v2 agent (or the reverse) does not fail loudly, it
+    hangs in a handshake that never completes. Both directions work here: one
+    entry declared `acp2` and the other was asked."""
     first = run_cli(bench, ["run", "-a", "v2-echo", "a"])
     second = run_cli(bench, ["run", "-a", "v1-echo", "b"])
 
@@ -364,29 +384,88 @@ def test_the_two_protocols_are_not_interchangeable(bench):
     assert "V2-ECHO" not in second.stdout
 
 
-def test_the_top_entry_is_what_a_bare_run_launches(bench):
-    proc = run_cli(bench, ["run", "ping"])
+# -- discovery: an entry that did not say ------------------------------------
+
+
+def test_an_undeclared_v2_entry_is_asked_and_driven_as_v2(bench):
+    """The bug discovery exists for. `v2-auto` declares no protocol, so the
+    registry used to default it to v1 and the v1 client spoke v1 to a v2 agent:
+    a session that never initializes, no error on either side, and nothing in
+    the config to tell you the field you forgot was load-bearing."""
+    proc = run_cli(bench, ["run", "-a", "v2-auto", "ping"])
 
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert "V2-ECHO:ping" in proc.stdout
+    assert "acp2" in plain(proc.stdout), "the banner names what the agent said"
+
+    hit = events(bench, event="initialize", probe="probe-v2_agent")
+    assert len(hit) == 1
+    assert hit[0]["asked"] == 2 and hit[0]["protocol"] == 2
 
 
-def test_the_agent_it_picked_is_announced(bench):
-    """A surprise must never be silent: `run` with no -a launches whatever
-    config put on top, and the header says which."""
-    proc = run_cli(bench, ["run", "ping"])
+def test_an_undeclared_v1_entry_is_asked_and_gets_its_own_answer(bench):
+    """The same question, the other answer. The client offers 2 to everybody;
+    an agent that only speaks v1 says so, per the spec's "otherwise the Agent
+    MUST respond with the latest version it supports"."""
+    proc = run_cli(bench, ["run", "-a", "v1-echo", "ping"])
 
-    assert "v2-echo" in proc.stdout
-    assert "acp2" in proc.stdout
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "V1-ECHO:ping" in proc.stdout
+
+    hit = events(bench, event="initialize", probe="probe-v1_agent")
+    assert len(hit) == 1
+    assert hit[0]["asked"] == 2 and hit[0]["protocol"] == 1
 
 
-def test_an_unknown_name_is_an_error_not_a_fallback(bench):
-    proc = run_cli(bench, ["run", "-a", "nope", "ping"])
+def test_the_probe_is_the_connection_so_the_agent_handshakes_once(bench):
+    """Discovery spawns once and hands the live, already-negotiated streams to
+    the stack it selected. A probe that spawned its own child and let the stack
+    spawn another would pay two cold starts for one agent — and v2 refuses a
+    second `initialize` on a connection outright, so "let the stack handshake
+    too" is not available as a shortcut."""
+    proc = run_cli(bench, ["run", "-a", "v2-auto", "ping"])
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert len(events(bench, event="initialize", probe="probe-v2_agent")) == 1
+    assert len(events(bench, event="new_session")) == 1
+
+
+def test_the_union_reaches_a_v1_agent_as_its_own_client_would(bench):
+    """Each half of the union is what that version's own client sends, so a v1
+    agent picked up by discovery is offered exactly what it was offered before
+    discovery existed — `terminal: false` included, which is what routes its
+    terminal tool to its own MCP supply instead of a client-side PTY."""
+    run_cli(bench, ["run", "-a", "v1-echo", "ping"])
+
+    hit = events(bench, event="initialize", probe="probe-v1_agent")
+    assert hit[0]["terminal"] is False
+    assert hit[0]["client"] == "crow-client"
+
+
+def test_an_agent_that_cannot_be_asked_is_an_error_not_a_hang(bench, tmp_path):
+    """The failure a declared `protocol` turns into a silent one. The child
+    dies at startup and the only place it said why is its stderr, so the error
+    has to carry that tail or the user is left with a closed pipe."""
+    dead = tmp_path / "dead_agent.py"
+    dead.write_text(DEAD_AGENT)
+    override = tmp_path / "dead.yaml"
+    override.write_text(
+        yaml.safe_dump(
+            {
+                "agent_servers": {
+                    "dead": {"command": sys.executable, "args": [str(dead)]}
+                }
+            },
+            sort_keys=False,
+        )
+    )
+
+    proc = run_cli(bench, ["run", "-a", "dead", "-o", str(override), "ping"])
 
     assert proc.returncode == 1
-    assert "No agent_servers entry named 'nope'" in plain(proc.stdout)
-    assert "v2-echo, v1-echo, v2-private" in plain(proc.stdout)
-    assert saw(bench) == [], "nothing may be spawned for a name that does not exist"
+    text = plain(proc.stdout) + plain(proc.stderr)
+    assert "no LLM provider configured" in text
+    assert "child exited 4" in text
 
 
 # -- the client owns tool supply ---------------------------------------------
@@ -544,6 +623,9 @@ def test_json_mode_carries_the_agent_on_the_v1_path_too(bench):
 
 
 def test_the_agents_command_lists_the_registry_in_config_order(bench):
+    """`auto` is not a third protocol, it is the absence of a claim: the entry
+    did not say, so `run` will ask the agent. Printing a guess here would be
+    the same lie a `protocol` field that disagrees with the agent tells."""
     proc = run_cli(bench, ["agents", "-j"])
 
     assert proc.returncode == 0, proc.stderr
@@ -552,10 +634,11 @@ def test_the_agents_command_lists_the_registry_in_config_order(bench):
     assert payload["fallback"] is False
     assert [(a["name"], a["protocol"]) for a in payload["agents"]] == [
         ("v2-echo", "acp2"),
-        ("v1-echo", "acp"),
+        ("v1-echo", "auto"),
         ("v2-private", "acp2"),
+        ("v2-auto", "auto"),
     ]
-    assert [a["default"] for a in payload["agents"]] == [True, False, False]
+    assert [a["default"] for a in payload["agents"]] == [True, False, False, False]
     assert payload["agents"][0]["tools"] == "global"
     assert payload["agents"][2]["tools"] == "private-supply"
 
@@ -564,7 +647,7 @@ def test_the_agents_command_prints_the_launch_a_human_can_read(bench):
     proc = run_cli(bench, ["agents"])
 
     assert proc.returncode == 0, proc.stderr
-    for needle in ("v2-echo", "v1-echo", "v2-private", "acp2", "acp"):
+    for needle in ("v2-echo", "v1-echo", "v2-private", "v2-auto", "acp2", "auto"):
         assert needle in proc.stdout
 
 

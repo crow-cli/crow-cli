@@ -92,8 +92,14 @@ def test_display_name_is_the_title_and_the_key_is_the_identity():
     assert parse_agent_server("b", {"command": "a"}).title == "b"
 
 
-def test_protocol_defaults_to_v1():
-    assert parse_agent_server("b", {"command": "a"}).protocol == V1 == "acp"
+def test_an_undeclared_protocol_is_asked_not_assumed():
+    """Absent is not a default value, it is a question.
+
+    Defaulting to v1 is what made an entry pointing at a v2 agent hang with no
+    error on either side: the client spoke v1 to an agent that only answers v2,
+    and both waited. ``None`` means `initialize` decides.
+    """
+    assert parse_agent_server("b", {"command": "a"}).protocol is None
 
 
 def test_protocol_accepts_v2():
@@ -331,8 +337,10 @@ def test_an_unknown_name_never_falls_back():
 
 
 def test_the_fallback_protocol_does_not_leak_into_a_named_entry():
+    """The fallback is for a registry with nothing in it. An entry that exists
+    and declares nothing is asking, not defaulting."""
     servers = {"first": {"command": "a"}}
-    assert select_agent_server("first", servers, V2).protocol == V1
+    assert select_agent_server("first", servers, V2).protocol is None
 
 
 def test_the_dataclass_is_frozen():

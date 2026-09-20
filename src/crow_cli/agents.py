@@ -7,22 +7,24 @@ both launch somebody else's agent without a code change:
       crow-execute:
         command: uv
         args: ["--project", "~/.agents/crow/src/crow-cli", "run", "crow-cli", "acp"]
-      crow-v2:
-        protocol: acp2
-        command: uv
-        args: ["--project", "~/src/crow-cli", "run", "crow-cli", "acp2"]
+      something-else:
+        command: ~/src/other-agent/run.sh
 
 Every entry is a command, honored exactly as written — crow never substitutes
 its own agent for a configured one. Crow's own agent exists only as the
 fallback when nothing is configured (:func:`crow_agent_server`).
 
-``protocol`` is the half that decides which CLIENT drives the entry: ``acp``
-(v1, the default, :mod:`crow_cli.client`) or ``acp2`` (v2,
-:mod:`crow_cli.client2`). It is declared by the entry because nothing else can
-know it — an argv is opaque, and guessing from a substring like ``acp2`` in
-``args`` would be a heuristic that fails on the first agent whose path happens
-to contain it. A client that speaks only one protocol refuses an entry for the
-other rather than launching it and failing the handshake.
+``protocol`` is an optional override, not something an entry owes you. Which
+CLIENT drives it — :mod:`crow_cli.client` for v1, :mod:`crow_cli.client2` for
+v2 — is settled by the ``initialize`` handshake: the client sends the latest
+version it speaks and the agent answers with the one it chose, so the agent
+says what it is and nothing has to be told in advance
+(:mod:`crow_cli.discover`). Declaring ``protocol`` skips that round trip, which
+is why crow's own entries do. Guessing from the argv instead would be a
+heuristic that fails on the first agent whose path happens to contain ``acp2``,
+and a config field that disagrees with the agent is a hang with no error on
+either side. A client that speaks only one protocol refuses an entry declared
+for the other rather than launching it and failing the handshake.
 
 ``mcpServers`` is the other client-owned half: the tools this agent is handed
 at ``session/new``. Absent means the client's global ``mcpServers`` supply,
@@ -33,9 +35,9 @@ same box are handed. Both shapes are the same mapping the global key uses, so
 an entry can be copied between them.
 
 This module knows nothing about the TUI's Agent store schema and nothing about
-either wire protocol: it turns config into an argv, an environment and a
-protocol name. :mod:`crow_cli.tui.agent_servers` builds the store-facing
-``Agent`` TypedDict on top of it.
+either wire protocol: it turns config into an argv, an environment and an
+optional protocol override. :mod:`crow_cli.tui.agent_servers` builds the
+store-facing ``Agent`` TypedDict on top of it.
 """
 
 from __future__ import annotations
@@ -54,8 +56,9 @@ V1 = "acp"
 #: ACP v2 — :mod:`crow_cli.client2`, ``crow-cli acp2``.
 V2 = "acp2"
 
-#: What an entry's ``protocol`` may say. Order is the order they are listed in
-#: an error message, so the default comes first.
+#: What an entry's ``protocol`` override may say. Order is the order they are
+#: listed in an error message. Absent is not a third value: it means "ask the
+#: agent", which is :mod:`crow_cli.discover`'s job.
 PROTOCOLS = (V1, V2)
 
 #: The identity crow's own agent is listed under, when a client lists the
@@ -69,7 +72,7 @@ class AgentServerError(Exception):
 
 @dataclass(frozen=True)
 class AgentServer:
-    """One launchable agent: an argv, an environment, and a protocol.
+    """One launchable agent: an argv, an environment, and maybe a protocol.
 
     ``argv`` is what a client spawns and ``launch`` is what a human reads; the
     list is the truth and the string is decoration, because a shell-quoted
@@ -80,7 +83,10 @@ class AgentServer:
     command: str
     args: tuple[str, ...] = ()
     env: dict[str, str] = field(default_factory=dict)
-    protocol: str = V1
+    #: An override, not a requirement. ``None`` means the client asks the agent
+    #: at ``initialize`` which version it speaks; a value here skips the round
+    #: trip for an entry that already knows.
+    protocol: Optional[str] = None
     display_name: str = ""
     mcp_servers: Optional[dict[str, Any]] = None
     builtin: bool = False
@@ -128,8 +134,8 @@ def parse_agent_server(name: str, spec: Any) -> AgentServer:
     if not isinstance(env, dict):
         raise AgentServerError(f"agent_servers {name!r}: 'env' must be a mapping.")
 
-    protocol = spec.get("protocol") or V1
-    if protocol not in PROTOCOLS:
+    protocol = spec.get("protocol")
+    if protocol is not None and protocol not in PROTOCOLS:
         raise AgentServerError(
             f"agent_servers {name!r}: unknown protocol {protocol!r}; expected "
             f"one of {', '.join(PROTOCOLS)}."

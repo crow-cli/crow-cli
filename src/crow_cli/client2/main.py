@@ -59,6 +59,7 @@ from crow_cli.client2.subagent import (
     config_to_servers,
 )
 from crow_cli.config import Config
+from crow_cli.discover import Connection
 
 #: Tool kind -> icon, over v2's ToolKind vocabulary (``emitter.ToolKind``).
 TOOL_ICONS = {
@@ -424,9 +425,18 @@ class CrowClientV2:
         """
         self.client.emit(**event)
 
-    async def start(self, server: AgentServer, cwd: str) -> None:
-        """Spawn the agent this server names and complete the handshake."""
-        await self.driver.start(cwd, argv=server.argv, env=server.env)
+    async def start(
+        self,
+        server: AgentServer,
+        cwd: str,
+        conn: Optional[Connection] = None,
+    ) -> None:
+        """Spawn the agent this server names and complete the handshake.
+
+        ``conn`` is a child protocol discovery already spawned and asked; the
+        driver adopts its streams instead of starting a second process.
+        """
+        await self.driver.start(cwd, argv=server.argv, env=server.env, conn=conn)
 
     async def open_session(
         self,
@@ -543,6 +553,7 @@ async def run_v2(
     json_out: bool = False,
     replay: bool = False,
     timeout: Optional[float] = None,
+    conn: Optional[Connection] = None,
 ) -> None:
     """Drive one v2 agent for a human: spawn, open a session, run turns.
 
@@ -555,11 +566,19 @@ async def run_v2(
     it declares one, else the global map. A v2 agent reads no config for tools,
     so this list is exactly what the session gets.
 
+    ``conn`` is a child :mod:`crow_cli.discover` already spawned and asked.
+    The protocol it reports — not the one the entry declared, which is why the
+    entry does not have to declare one — is what the banner and the ``session``
+    event name.
+
     Raises whatever the wire raised, after printing the child's stderr tail: a
     v2 agent that fails at startup says why on stderr and nowhere else, and
     without this the client reports a closed pipe instead of the reason.
     """
     workdir = cwd or os.getcwd()
+    # What the agent said it speaks, which an undeclared entry leaves to the
+    # probe rather than to a guess.
+    protocol = conn.protocol if conn is not None else server.protocol
     client = CrowClientV2(console, json_out=json_out, timeout=timeout)
     supply = tool_supply(server, config.mcp_servers)
     servers = config_to_servers(supply)
@@ -570,7 +589,7 @@ async def run_v2(
         console.print(
             Panel(
                 f"[bold]Crow ACP v2 Client[/bold]\n\n"
-                f"Agent: [cyan]{server.title}[/cyan] [dim]({server.protocol})[/dim]\n"
+                f"Agent: [cyan]{server.title}[/cyan] [dim]({protocol})[/dim]\n"
                 f"Working directory: [cyan]{workdir}[/cyan]\n"
                 f"Mode: {mode}\n"
                 f"Session: {session_id or '[dim]New session[/dim]'}",
@@ -581,7 +600,7 @@ async def run_v2(
         console.print(f"[cyan]MCP servers: {tools}[/cyan]")
 
     try:
-        await client.start(server, workdir)
+        await client.start(server, workdir, conn=conn)
         sid = await client.open_session(
             workdir,
             mcp_servers=servers,
@@ -596,7 +615,7 @@ async def run_v2(
             session_id=sid,
             cwd=workdir,
             agent=server.name,
-            protocol=server.protocol,
+            protocol=protocol,
             mode="interactive" if interactive else "one_shot",
             model=model,
         )

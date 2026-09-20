@@ -52,6 +52,7 @@ from acp.experimental import v2
 from acp.stdio import spawn_stdio_transport
 
 from crow_cli import __version__
+from crow_cli.discover import Connection, adopt_v2
 
 #: How much of a child's stderr to keep. The drain exists so the pipe cannot
 #: fill and deadlock the child, not to archive its log, so it is bounded — and
@@ -283,6 +284,7 @@ class SubagentDriver:
         config_file: Optional[Path] = None,
         argv: Optional[list[str]] = None,
         env: Optional[dict[str, str]] = None,
+        conn: Optional[Connection] = None,
     ) -> None:
         """Spawn the child, handshake, and be ready to open sessions.
 
@@ -293,38 +295,61 @@ class SubagentDriver:
         merged OVER this process's environment, which is the entry's own extra
         variables; the base is inherited whole, for the reason spelled out
         below.
+
+        ``conn`` is an already-spawned child somebody else asked: protocol
+        discovery spawns once and hands the live streams to whichever stack
+        the agent's answer selects, because a second spawn is a second cold
+        start of the same process. Adopting one takes the stderr drain over
+        by reference — two readers on one ``StreamReader`` would split the
+        child's lines between them — and skips the handshake when the probe
+        already did it. ``close()`` needs no matching change: the exit stack
+        is empty for an adopted child, so the caller's context manager owns
+        the shutdown.
         """
-        reader, writer, self.proc = await self._stack.enter_async_context(
-            spawn_stdio_transport(
-                *(
-                    argv
-                    or agent_argv(
-                        model=model, config_dir=config_dir, config_file=config_file
-                    )
-                ),
-                # spawn_stdio_transport's default environment is the
-                # MCP-best-practice trim — HOME, LOGNAME, PATH, SHELL, TERM,
-                # USER — because it exists to launch other people's servers.
-                # A crow child is not somebody else's server: v1 inherited the
-                # whole environment, and the trim silently loses shell-exported
-                # API keys, SEARXNG_URL, CROW_MEMORY_PORT and everything else
-                # this process was built out of. child_config() forwards the
-                # two config pointers as argv, which covers config resolution
-                # and nothing else.
-                env={**os.environ, **(env or {})},
-                cwd=cwd,
+        if conn is not None:
+            reader, writer = conn.reader, conn.writer
+            self.proc = conn.proc
+            self.stderr = conn.stderr
+            self._drainer = conn.drainer
+        else:
+            reader, writer, self.proc = await self._stack.enter_async_context(
+                spawn_stdio_transport(
+                    *(
+                        argv
+                        or agent_argv(
+                            model=model, config_dir=config_dir, config_file=config_file
+                        )
+                    ),
+                    # spawn_stdio_transport's default environment is the
+                    # MCP-best-practice trim — HOME, LOGNAME, PATH, SHELL, TERM,
+                    # USER — because it exists to launch other people's servers.
+                    # A crow child is not somebody else's server: v1 inherited the
+                    # whole environment, and the trim silently loses shell-exported
+                    # API keys, SEARXNG_URL, CROW_MEMORY_PORT and everything else
+                    # this process was built out of. child_config() forwards the
+                    # two config pointers as argv, which covers config resolution
+                    # and nothing else.
+                    env={**os.environ, **(env or {})},
+                    cwd=cwd,
+                )
             )
-        )
-        self._drainer = asyncio.create_task(
-            self._drain_stderr(), name="crow-subagent-stderr"
-        )
+            self._drainer = asyncio.create_task(
+                self._drain_stderr(), name="crow-subagent-stderr"
+            )
         self.conn = v2.ClientSideConnection(self.client, writer, reader)
-        await self.conn.initialize(
-            v2.schema.InitializeRequest(
-                protocol_version=v2.PROTOCOL_VERSION,
-                info=self.info,
+        if conn is not None and conn.initialized:
+            # Already negotiated on the wire. v2's connection also gates every
+            # method on a LOCAL initialization state that only its own
+            # initialize() moves, and a second initialize is refused by the
+            # agent, so the state is adopted rather than the request repeated.
+            adopt_v2(self.conn, conn.response)
+        else:
+            await self.conn.initialize(
+                v2.schema.InitializeRequest(
+                    protocol_version=v2.PROTOCOL_VERSION,
+                    info=self.info,
+                )
             )
-        )
 
     async def _drain_stderr(self) -> None:
         """Keep the child's stderr pipe empty.

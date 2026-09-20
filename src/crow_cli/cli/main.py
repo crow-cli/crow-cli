@@ -5,7 +5,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import typer
 from rich.console import Console
@@ -31,6 +31,12 @@ from crow_cli.agent.session import AgentSession
 from crow_cli.cli.init_cmd import init_command
 from crow_cli.cli.install import app as install_app
 from crow_cli.client.main import CrowClient, connect_client
+
+if TYPE_CHECKING:
+    # crow_cli.discover imports the v2 schema (~0.36s), and a run whose entry
+    # declares its protocol must never pay that. The annotation is the only
+    # thing here that needs the name.
+    from crow_cli.discover import Connection
 
 app = typer.Typer(
     name="crow-cli",
@@ -802,8 +808,10 @@ def agents(
     """List the `agent_servers` entries `crow-cli run -a NAME` can drive.
 
     The TOP entry is what a bare `run` launches — the same rule bare
-    `crow-cli` follows — so config order decides the default. Each entry's
+    `crow-cli` follows — so config order decides the default. An entry's
     `protocol` picks the client: `acp` is the v1 client, `acp2` is client2.
+    `auto` means the entry declared none and `run` asks the agent at
+    `initialize`, which is what an entry that is not crow's own should do.
     With nothing configured, `run` falls back to crow's own v2 agent.
     """
     config = Config.load(config_dir=config_dir)
@@ -816,7 +824,7 @@ def agents(
         {
             "name": s.name,
             "title": s.title,
-            "protocol": s.protocol,
+            "protocol": s.protocol or "auto",
             "launch": s.launch,
             "tools": "global" if s.mcp_servers is None else ", ".join(s.mcp_servers),
             "builtin": s.builtin,
@@ -850,7 +858,8 @@ def agents(
     else:
         console.print(
             "[dim]* = default (top entry in config.yaml agent_servers); "
-            "tools 'global' = the client's mcpServers key[/dim]"
+            "tools 'global' = the client's mcpServers key; "
+            "protocol 'auto' = asked at initialize[/dim]"
         )
 
 
@@ -1082,6 +1091,19 @@ def run(
         max_agent = get_max_agent_idx(engine, session_id)
         wire_session = build_agent_id(session_id, max_agent, fork_idx)
 
+    if server.protocol is None:
+        # The entry did not say, so the agent gets asked. One spawn, one
+        # `initialize`, and the answer picks the client — a config field
+        # asserting the same thing is a second source of truth whose only
+        # talent is disagreeing with the first, silently.
+        asyncio.run(
+            _dispatch(
+                server, config, prompt, interactive, wire_session, cwd,
+                model_value, json_out, fork, replay,
+            )
+        )
+        return
+
     if server.protocol == V2:
         # Lazy on purpose: the v2 schema costs ~0.36s to import and a v1 run
         # never needs it.
@@ -1116,6 +1138,62 @@ def _emit_json(**event: Any) -> None:
     print(json.dumps(event), flush=True)
 
 
+async def _dispatch(
+    server: AgentServer,
+    config: Config,
+    prompt: str | None,
+    interactive: bool,
+    session_id: str | None,
+    cwd: str,
+    model: str | None,
+    json_out: bool,
+    fork: bool,
+    replay: bool,
+) -> None:
+    """Ask the agent which protocol it speaks, then drive it with that client.
+
+    This is the path an entry with no ``protocol`` takes, and it spawns once:
+    the probe IS the connection, so the handshaked child is handed to whichever
+    stack the answer selects instead of being spawned a second time by it.
+
+    An agent that cannot be asked — dead, silent, or speaking a version this
+    client does not — is an error with the child's own last words on it, not a
+    hang. That is the failure a declared ``protocol`` turns into a silent one.
+    """
+    # Lazy on purpose, and only reachable from here: an entry that declares its
+    # protocol never imports discovery, and so never imports the v2 schema.
+    from crow_cli.discover import ProtocolError, agent_connection
+
+    workdir = cwd or os.getcwd()
+    try:
+        async with agent_connection(server, workdir) as conn:
+            if conn.protocol == V2:
+                from crow_cli.client2.main import run_v2
+
+                await run_v2(
+                    server,
+                    config,
+                    console=client._console,
+                    prompt=prompt,
+                    interactive=interactive,
+                    session_id=session_id,
+                    fork=fork,
+                    cwd=workdir,
+                    model=model,
+                    json_out=json_out,
+                    replay=replay,
+                    conn=conn,
+                )
+            else:
+                await _run_async(
+                    server, config, prompt, interactive, session_id, workdir,
+                    model, json_out, fork=fork, discovered=conn,
+                )
+    except ProtocolError as e:
+        client._console.print(f"[red]Error: {e}[/red]")
+        raise SystemExit(1)
+
+
 async def _run_async(
     server: AgentServer,
     config: Config,
@@ -1126,6 +1204,7 @@ async def _run_async(
     model: str | None = None,
     json_out: bool = False,
     fork: bool = False,
+    discovered: "Connection | None" = None,
 ) -> None:
     """Async implementation of `run` for a v1 (``acp``) agent.
 
@@ -1133,7 +1212,13 @@ async def _run_async(
     runs and what tools it gets are the client's decisions and the caller made
     them, so this function only drives the wire. ``model`` is already the
     ``provider:model_id`` value the agent's option speaks, not a config name.
+
+    ``discovered`` is a child :mod:`crow_cli.discover` already spawned and
+    asked. Its streams are adopted instead of spawning a second process for
+    the same agent, its handshake is not repeated, and its protocol — not the
+    entry's, which declared none — is what gets announced.
     """
+    protocol = discovered.protocol if discovered is not None else server.protocol
     client._json_mode = json_out
     if not json_out:
         mode = (
@@ -1144,7 +1229,7 @@ async def _run_async(
         client._console.print(
             Panel(
                 "[bold]Crow ACP Client[/bold]\n\n"
-                f"Agent: [cyan]{server.title}[/cyan] [dim]({server.protocol})[/dim]\n"
+                f"Agent: [cyan]{server.title}[/cyan] [dim]({protocol})[/dim]\n"
                 f"Working directory: [cyan]{cwd}[/cyan]\n"
                 f"Mode: {mode}\n"
                 f"Session: {session_id or '[dim]New session[/dim]'}",
@@ -1169,11 +1254,19 @@ async def _run_async(
 
     # Spawn the resolved argv, honored exactly as written — this is what makes
     # a custom `agent_servers` entry work, and why no crow flag is added here.
-    proc = await client.spawn_agent(cwd, argv=server.argv, env=server.env)
+    # A discovered child is already spawned and handshaked: adopting it is the
+    # whole point of a probe that IS the connection, since spawning again would
+    # be a second cold start of the same agent.
+    if discovered is not None:
+        proc = discovered.proc
+    else:
+        proc = await client.spawn_agent(cwd, argv=server.argv, env=server.env)
 
     try:
         # Connect
-        conn = await connect_client(proc, client)
+        conn = await connect_client(
+            proc, client, initialized=bool(discovered and discovered.initialized)
+        )
 
         # Create, fork, or load session
         if fork:
@@ -1221,7 +1314,7 @@ async def _run_async(
                 session_id=actual_session_id,
                 cwd=cwd,
                 agent=server.name,
-                protocol=server.protocol,
+                protocol=protocol,
                 mode="interactive" if interactive else "one_shot",
                 model=model,
             )
@@ -1245,7 +1338,11 @@ async def _run_async(
         # the stderr read completes — the old .done() check raced the reader.
         stderr_output = b""
         reader = getattr(proc, "_stderr_reader", None)
-        if reader is not None:
+        if reader is None and discovered is not None:
+            # A discovered child's stderr went to discovery's drainer, not to a
+            # _stderr_reader task, so its deque is the only copy that exists.
+            stderr_output = discovered.stderr_tail().encode()
+        elif reader is not None:
             try:
                 if proc.returncode is None:
                     with contextlib.suppress(asyncio.TimeoutError):
