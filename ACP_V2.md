@@ -1237,6 +1237,54 @@ probe there uses absolute imports. `pyproject.toml` has no `[tool.ruff]` and no
 
 ## 8. Known open holes
 
+### 8.0 The 3.13 regression this work caused, and the check that missed it
+
+`requires-python` went `>=3.14` to `>=3.13` in `1d3211a6`, the branch commit
+merged into main in Phase 1. That changed which interpreter `uv tool install`
+resolves, and it broke the TUI on install: **3.14's PEP 649 defers annotation
+evaluation, 3.13 evaluates it eagerly**, so five latent annotation bugs in the
+vendored TUI were harmless on 3.14 and fatal on 3.13. Fixed in `6ae60699`:
+
+| site | bug | fix |
+|---|---|---|
+| `tui/acp/protocol.py:486` | `usage: Usage`, `Usage` defined 56 lines later | `from __future__ import annotations` |
+| `tui/acp/agent.py:74` | `cost: Cost`, `Cost` defined 15 lines later | moved `Cost` above `ContextUsage` |
+| `tui/widgets/terminal.py:48` | nested `@dataclass` annotating the enclosing `Terminal` | `from __future__ import annotations` |
+| `tui/widgets/shell_terminal.py:17` | same self-reference | `from __future__ import annotations` |
+| `tui/widgets/throbber.py:42` | `Callable` used, never imported | `from collections.abc import Callable` |
+
+The last one is the important case. Stringifying that annotation would have
+*hidden* a name that genuinely does not exist — `from __future__ import
+annotations` is the right fix for an ordering or self-reference problem and the
+wrong fix for a missing import.
+
+**The check that passed this was worthless.** Phase 1's "3.13 compile: 351 files,
+0 failures" was `py_compile`, which validates SYNTAX ONLY. A forward reference
+and a missing import are both perfectly valid syntax; they fail at import time.
+Reporting that as 3.13 compatibility was a false claim.
+
+The replacement check imports every module **by path** under the installed 3.13
+tool interpreter, which matters because `tui/acp/` is a namespace package with
+no `__init__.py` and `pkgutil.walk_packages` does not descend into it — the
+first sweep walked 169 modules and missed 10 of the 12 failures:
+
+```python
+root = pathlib.Path(REPO) / "src"; sys.path.insert(0, str(root))
+for p in sorted(p for p in root.rglob("*.py")
+                if "__pycache__" not in p.parts and p.name != "__init__.py"):
+    importlib.import_module(".".join(p.relative_to(root).with_suffix("").parts))
+```
+
+202 modules. 3.13 and 3.14 now report the same two failures and nothing else —
+`crow_cli.mcp.memory.client` and `crow_cli.mcp.vision.client`, both
+`ValueError: Could not infer a valid transport from: main.py`, pre-existing on
+both interpreters (fastmcp infers a transport from the filename; these are client
+stubs not meant to be imported standalone).
+
+**Rule going forward: a version-compatibility claim needs an import, not a
+compile.** Anything that changes `requires-python` must run this sweep on the
+new floor.
+
 Features, not bugs.
 
 1. **`remind`** — §5. The live proposal.
