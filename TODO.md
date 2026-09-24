@@ -70,8 +70,13 @@ learn. §5.4: "by the time anything looks, it is an ordinary pending delivery."
 - [ ] Driver: `_park()` checks the goal BEFORE announcing idle (no spurious
       idle flicker), writes the delivery, returns True; the loop's existing
       `_mailbox_pending()` picks it up.
-- [ ] Progress signal: react counts tool batches on `LoopState`, reports on
-      `Done`, so "did this turn do anything" is a fact and not a guess.
+- [x] Progress signal: react counts tool CALLS on `LoopState`, reports on
+      `Done.tools_used`, so "did this turn do anything" is a fact and not a
+      guess.
+      *2026-09-24: shipped, asserted through `Gate.tools_used` on the gate's
+      real-MCP round trip (1) and text-only turn (0), mutation-checked. The
+      driver keeps `_last_tools_used`; the slash-command early return zeroes it
+      so `/goal <objective>` is never judged for progress.*
 - [ ] Loop guards — the part that decides whether this is a feature or a
       token fire: a no-tool CONTINUATION turn ends the goal (`blocked`);
       `turns_used` against a configured max (`budget_limited`); `tokens_used`

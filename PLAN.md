@@ -103,13 +103,30 @@ Trajectory is numeric: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8.
 
 ## Phase 3 — the progress signal
 
-3.1 `LoopState.tool_batches: int = 0`; increment in `react._run_tools`;
-    `Done.tools_used: int = 0` populated from it at every `return Done(...)`
-    site in `react()`. This is a fact the driver needs and cannot infer: a turn
-    that only talked made no progress, and continuing it is the infinite loop.
-    *Verify:* `uv --project . run pytest tests/unit -q` green, plus a unit test
-    asserting a tool-running loop reports `tools_used > 0` and a text-only
-    completion reports `0`.
+3.1 **[DONE 2026-09-24 — `Gate.tools_used` asserted 1 on the gate's real-MCP
+    tool round trip and 0 on its text-only lifecycle test. Mutation-checked:
+    neutering the increment fails `assert 0 == 1`. 948 passed across
+    tests/unit + tests/memory + test_agent2_gate.py.]**
+    `LoopState.tools_used: int = 0`; incremented in `react._run_tools` AFTER
+    the batch survives (a cancel re-raises out of `execute_tool_calls`, and a
+    batch that never finished is not progress); `Done.tools_used: int = 0`
+    populated at all three `return Done(...)` sites in `react()`. This is a
+    fact the driver needs and cannot infer: a turn that only talked made no
+    progress, and continuing it is the infinite loop.
+
+    Two deviations:
+    - the field counts CALLS, not batches, and is named `tools_used` on both
+      `LoopState` and `Done`. The draft's `tool_batches` feeding a field called
+      `tools_used` would have read as "3 tools" when it meant "3 rounds".
+    - the test is in `tests/integration/test_agent2_gate.py`, not a new unit
+      file. `Done` is observable only from the driver, and the gate already
+      runs a real FastMCP subprocess round trip and a real text-only turn —
+      building a second react harness to assert on a dataclass field would test
+      the field rather than the behaviour. `Gate.tools_used` is the new
+      read-only window; the driver gained `_last_tools_used` to feed it, which
+      is 4.3's machinery pulled forward because it is the observable 3.1 needs.
+      The slash-command early-return in `_run_turn` zeroes it too, so a
+      previous turn's progress cannot vouch for a turn that ran no model.
 
 **Commit:** `feat(agent2): report tool activity on Done`
 

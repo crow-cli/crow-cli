@@ -335,6 +335,19 @@ class Gate:
         return [s for s in self.states() if s.get("state") == "idle"]
 
     @property
+    def tools_used(self) -> int:
+        """How many tool calls the last turn ran, read off the driver.
+
+        The one fact in this file that has no wire representation, because no
+        client asks for it. It is still a fact about the turn and not an
+        implementation detail: the goal continuation decides whether to loop
+        again on exactly this number, so a gate that cannot see it cannot test
+        the guard that keeps a goal from burning tokens on a model talking to
+        itself.
+        """
+        return self.agent.sessions.drivers[self.session_id]._last_tools_used
+
+    @property
     def agent_id(self) -> str:
         """The one agent row this gate created."""
         ids = list(self.agent.sessions.sessions)
@@ -683,6 +696,9 @@ async def test_the_v2_prompt_lifecycle_lands_on_the_wire_in_order(tmp_path):
         }
 
         assert g.of_kind("usage_update")[0]["used"] == 42
+        # A turn that only talked ran no tools. Half of the progress signal
+        # the goal continuation reads; the other half is the tool round trip.
+        assert g.tools_used == 0
 
         # One prompt, one model call.
         assert len(g.llm.calls) == 1
@@ -879,6 +895,9 @@ async def test_a_tool_call_becomes_one_upsert_sequence_on_the_wire(tmp_path):
 
         assert g.of_kind("agent_message_chunk")[0]["content"]["text"] == "done"
         assert g.idles()[1]["stopReason"] == "end_turn"
+        # One call in one batch, reported on the turn as a whole: the loop went
+        # round twice but the second iteration only talked.
+        assert g.tools_used == 1
 
         # History stays valid: every tool_call_id in an assistant message has
         # a matching tool response before anything else speaks.

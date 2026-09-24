@@ -140,6 +140,10 @@ class SessionDriver:
         #: before its first prompt reports idle and nothing else.
         self._last_stop: Optional[str] = None
         self._last_usage: Optional[dict] = None
+        #: How many tool calls the last turn ran. Not reported on the wire —
+        #: no client asks — but the goal continuation cannot decide without it,
+        #: and the driver cannot infer it from a stop reason.
+        self._last_tools_used: int = 0
         #: Whether this driver has already told the client what the session is
         #: called. One attempt, not one success: the title is the root agent's
         #: FIRST user message, so if it is not knowable now it never will be,
@@ -274,6 +278,9 @@ class SessionDriver:
                 # fires when _accept_prompt bailed before announcing running.
                 await self._set_state("running")
                 self._last_stop, self._last_usage = "end_turn", None
+                # A slash command ran no tools, and saying otherwise would
+                # let the previous turn's progress vouch for this one.
+                self._last_tools_used = 0
                 return
         # Deliveries and timers need no handling here: the mailbox row is the
         # truth and react consults it before the first model call. The event
@@ -326,6 +333,7 @@ class SessionDriver:
             self._cancel_requested = False
         self._last_stop = done.stop_reason or "end_turn"
         self._last_usage = done.usage
+        self._last_tools_used = done.tools_used
         self.log.info("Turn %s ended: %s", turn_id[:8], self._last_stop)
 
     async def _accept_prompt(self, prompt: Prompt) -> bool:

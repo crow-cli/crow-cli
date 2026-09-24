@@ -68,6 +68,13 @@ class Done:
 
     stop_reason: str = "end_turn"
     usage: Optional[dict] = None
+    #: How many tool calls this turn actually ran. The driver cannot infer it
+    #: and the goal cannot do without it: a turn that only talked made no
+    #: observable progress, and continuing one is the infinite loop.
+    #: Stays 0 on the ``Done`` the driver builds for a cancel or a crash: the
+    #: loop never reached a reporting site. Neither path consults it — a cancel
+    #: pauses the goal and a crash blocks it, whatever progress was made.
+    tools_used: int = 0
 
 
 Step = Union[Continue, Restart, Done]
@@ -101,6 +108,10 @@ class LoopState:
     #: Message count as of this turn's last compaction (None = none yet).
     #: See :func:`compaction.worth_compacting` for why this exists.
     compacted_at_len: Optional[int] = None
+    #: Tool calls run so far this turn, carried to :attr:`Done.tools_used`.
+    #: Lives here rather than in a local because the turn that reports it is
+    #: not the iteration that ran them.
+    tools_used: int = 0
 
 
 async def react(ctx: TurnCtx, deps: Deps) -> Done:
@@ -119,7 +130,7 @@ async def react(ctx: TurnCtx, deps: Deps) -> Done:
         if isinstance(step, Done):
             return step
 
-    return Done(stop_reason="max_turn_requests")
+    return Done(stop_reason="max_turn_requests", tools_used=state.tools_used)
 
 
 async def _step(state: LoopState, turn: int, deps: Deps, engine: Any) -> Step:
@@ -227,13 +238,19 @@ async def _step(state: LoopState, turn: int, deps: Deps, engine: Any) -> Step:
         if await deliveries.consult(engine, session, emitter):
             return Continue()
         log.info("Final react turn usage: %s", completion.usage)
-        return Done(stop_reason="end_turn", usage=completion.usage)
+        return Done(
+            stop_reason="end_turn",
+            usage=completion.usage,
+            tools_used=state.tools_used,
+        )
 
     # No content, no tools: a provider that returned an empty completion.
     # Persisting an empty assistant row would pollute history, and looping
     # would spin to max_turns, so report it and let the driver go idle.
     log.warning("Empty completion — no content and no tool calls")
-    return Done(stop_reason="end_turn", usage=completion.usage)
+    return Done(
+        stop_reason="end_turn", usage=completion.usage, tools_used=state.tools_used
+    )
 
 
 async def _run_tools(
@@ -263,6 +280,9 @@ async def _run_tools(
         # the mailbox. The model cancels them itself if it wants to.
         raise
 
+    # Counted after the batch survives, not before: a cancel re-raises out of
+    # execute_tool_calls and a batch that never finished is not progress.
+    state.tools_used += len(completion.tool_calls)
     await ctx.session.add_assistant_response(
         deps.state.thinking, deps.state.content, completion.tool_calls, log, completion.usage
     )
