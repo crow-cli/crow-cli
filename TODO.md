@@ -3,7 +3,7 @@
 ## **DO NOT ASK USER FOR FEEDBACK — THIS IS THE USER FEEDBACK.**
 ## **DO NOT ASK USER FOR NEXT STEPS — THESE ARE THE NEXT STEPS.**
 
-Sprint origin: 2026-09-12, session `worthy-conscious-rat-of-opportunity`.
+Sprint origin: 2026-09-24, session `worthy-conscious-rat-of-opportunity`.
 Worktree `~/.agents/crow/src/worktrees/goal`, branch `goal`, off main @ 95cf5511.
 
 ## The mandate, in the user's words
@@ -41,14 +41,24 @@ learn. §5.4: "by the time anything looks, it is an ordinary pending delivery."
 
 ## Scope capture (unordered)
 
-- [ ] `Goal` model in `memory/models.py` — one row per wire session
+- [x] `Goal` model in `memory/models.py` — one row per wire session
       (`session_id` PK), `goal_id` uuid for stale-update protection, `objective`,
-      `status` (active|paused|blocked|complete), `token_budget`, `tokens_used`,
+      `status`, `blocked_reason`, `token_budget`, `tokens_used`,
       `time_used_seconds`, `turns_used`, timestamps. `create_all` is idempotent
       so an existing crow.db gains the table with no migration script.
-- [ ] Reads: `get_goal`, `active_goal`. Writes: `set_goal`, `update_goal_status`,
+      *2026-09-24: shipped. Five statuses, not four — `active|paused|blocked|
+      budget_limited|complete`, the codex vocabulary, because "the arithmetic
+      stopped it" and "the model claims it finished" are different facts and
+      collapsing them loses the only one the user can act on. Constants live in
+      `models.py` (reads needs them, writes imports reads → circular otherwise).*
+- [x] Reads: `get_goal`, `active_goal`. Writes: `set_goal`, `update_goal_status`,
       `clear_goal`, `account_goal_usage` (atomic add + budget flip in one commit,
       the `finish_task` discipline).
+      *2026-09-24: shipped, `tests/memory/test_goal_state.py` 16 green,
+      `tests/unit` 811 passed. `set_goal` ALWAYS mints a fresh id and zeroes the
+      counters — codex preserves both on re-set, which suits a product that
+      bills the goal; crow's goal is a loop guard, and a loop guard that
+      inherits its predecessor's spend stops guarding.*
 - [ ] `agent2/goal.py` — the continuation prompt template and the eligibility
       rules, in one place, so the driver stays thin.
 - [ ] Driver: `_park()` checks the goal BEFORE announcing idle (no spurious

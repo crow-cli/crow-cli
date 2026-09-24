@@ -15,7 +15,11 @@ Trajectory is numeric: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8.
 
 ## Phase 1 — the row
 
-1.1 `Goal` in `memory/models.py`. `session_id` Text PK (wire id — never
+1.1 **[DONE 2026-09-24 — `Goal.__tablename__ == "goals"`, all 11 columns
+    present; status constants `GOAL_ACTIVE|PAUSED|BLOCKED|BUDGET_LIMITED|
+    COMPLETE` live in `models.py`, not `writes.py`, because `reads` needs them
+    and `writes` imports `reads`]**
+    `Goal` in `memory/models.py`. `session_id` Text PK (wire id — never
     `agent_id`, which changes under compaction; `agent/slash.py`'s module
     docstring already states this rule). `goal_id` Text uuid, `objective` Text,
     `status` Text default "active", `token_budget` Integer nullable,
@@ -25,21 +29,37 @@ Trajectory is numeric: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8.
     exists separately from the PK.
     *Verify:* `uv --project . run python -c "from crow_cli.memory.models import Goal; print(Goal.__tablename__)"`
 
-1.2 Writes in `memory/writes.py`: `set_goal` (upsert; mints a fresh `goal_id`
-    and zeroes the counters when the objective changes, preserves both when it
-    does not), `update_goal_status(engine, session_id, status, *,
+1.2 **[DONE 2026-09-24 — `tests/memory/test_goal_state.py`, 16 tests green]**
+    Writes in `memory/writes.py`: `set_goal` (upsert; ALWAYS mints a fresh
+    `goal_id` and zeroes the counters — no special case for re-setting the same
+    objective. Deviation from the draft, deliberate: one rule rather than two,
+    and preserving a spent budget would make a restart gesture a no-op that
+    looks like a fresh start. Codex does the opposite — `update_thread_goal`
+    preserves `goal_id` and the accrued usage when the objective changes — and
+    that is a defensible choice for a product that bills the goal; crow's goal
+    is a loop guard, and a loop guard that inherits its predecessor's spend
+    stops guarding),
+    `update_goal_status(engine, session_id, status, *,
     expected_goal_id=None)` returning bool, `clear_goal`, `account_goal_usage`
     (one commit: add tokens + seconds + turns, and flip to `complete`-adjacent
     `budget_limited`-style terminal in the SAME statement when the budget is
     crossed — the codex `CASE WHEN` discipline, so a concurrent writer cannot
     observe an over-budget goal still marked active).
-    *Verify:* unit test `tests/unit/memory/test_goal_writes.py` — set/show/
-    replace-preserves-usage/status-transition-with-stale-goal-id-rejected/
-    budget-flip-in-one-commit.
+    *Verify:* unit test `tests/memory/test_goal_state.py` (repo convention is
+    `tests/memory/`, not `tests/unit/memory/`; style model
+    `tests/memory/test_task_state.py`) — set/show/replace-resets-usage/
+    status-transition-with-stale-goal-id-rejected/budget-flip-in-one-commit,
+    plus `active_goal` returning None for every non-active status, negative
+    clamping, no-budget-means-no-ceiling, and two-engines-on-one-file
+    visibility. 16 tests, green; `tests/unit` 811 passed.
 
-1.3 Reads in `memory/reads.py`: `get_goal(engine, session_id) -> Goal | None`,
+1.3 **[DONE 2026-09-24 — covered by `test_active_goal_is_the_row_the_driver_asks_for`,
+    which walks all four non-active statuses]**
+    Reads in `memory/reads.py`: `get_goal(engine, session_id) -> Goal | None`,
     `active_goal(engine, session_id) -> Goal | None` (None unless status is
-    exactly "active" — the only status that continues).
+    exactly "active" — the only status that continues). The driver asks
+    `active_goal` and never `get_goal`, so "should I keep going" is one column
+    compare in one place rather than a status switch repeated at every call site.
     *Verify:* covered by 1.2's test file.
 
 **Commit:** `feat(memory): the goal row`
