@@ -20,7 +20,8 @@ Search is keyword-only (no embeddings, no service, no lance): FTS5 + bm25
 on sqlite, tsvector + ts_rank on postgres — see ``fts``.
 
 Module map:
-    models    — ORM schema (Prompt, Agent, Task, TaskDelivery, Message)
+    models    — ORM schema (Prompt, Agent, Task, TaskDelivery, Goal, Message)
+                and the GOAL_* status vocabulary
     ids       — agent_id build/parse (v5 three-part format)
     db        — db_uri normalization, engine factories, create_database
     fts       — the full-text-search seam (sqlite FTS5 / postgres tsvector)
@@ -29,10 +30,11 @@ Module map:
     writes    — add_message, create_agent, set_agent_mcp_servers,
                 set_agent_model, launch_task, launch_next_task, finish_task,
                 cancel_task, mark_delivered, claim_deliveries,
-                lookup_or_create_prompt
+                lookup_or_create_prompt, queue_delivery, set_goal,
+                update_goal_status, clear_goal, account_goal_usage
     reads     — queries, list_sessions, get_session_mcp_servers,
                 get_task, running_tasks, owner_tasks, pending_deliveries,
-                search_messages, session_title
+                get_goal, active_goal, search_messages, session_title
 """
 
 from sqlalchemy.orm import Session
@@ -48,8 +50,14 @@ from .image_store import (
 )
 from .messages import extract_images, hydrate_message, last_assistant_text, message_text
 from .models import (
+    GOAL_ACTIVE,
+    GOAL_BLOCKED,
+    GOAL_BUDGET_LIMITED,
+    GOAL_COMPLETE,
+    GOAL_PAUSED,
     Agent,
     Base,
+    Goal,
     Message,
     Prompt,
     Task,
@@ -57,9 +65,11 @@ from .models import (
     now_iso,
 )
 from .reads import (
+    active_goal,
     agent_index,
     delegation_tool_call_ids,
     get_agent,
+    get_goal,
     get_max_agent_idx,
     get_max_fork_idx,
     get_prompt,
@@ -79,16 +89,21 @@ from .reads import (
     session_title,
 )
 from .writes import (
+    account_goal_usage,
     add_message,
     claim_deliveries,
+    clear_goal,
     create_agent,
     finish_task,
     launch_next_task,
     launch_task,
     lookup_or_create_prompt,
     mark_delivered,
+    queue_delivery,
     set_agent_mcp_servers,
     set_agent_model,
+    set_goal,
+    update_goal_status,
 )
 
 __all__ = [
@@ -99,10 +114,13 @@ __all__ = [
     "Session",
     "Task",
     "TaskDelivery",
+    "account_goal_usage",
+    "active_goal",
     "add_message",
     "agent_index",
     "build_agent_id",
     "claim_deliveries",
+    "clear_goal",
     "create_agent",
     "create_database",
     "delegation_tool_call_ids",
@@ -111,12 +129,19 @@ __all__ = [
     "FsImageStore",
     "get_agent",
     "get_engine",
+    "get_goal",
     "get_ro_engine",
     "get_max_agent_idx",
     "get_max_fork_idx",
     "get_prompt",
     "get_session_mcp_servers",
     "get_task",
+    "Goal",
+    "GOAL_ACTIVE",
+    "GOAL_BLOCKED",
+    "GOAL_BUDGET_LIMITED",
+    "GOAL_COMPLETE",
+    "GOAL_PAUSED",
     "HybridReadStore",
     "hydrate_message",
     "ImageStore",
@@ -137,6 +162,7 @@ __all__ = [
     "parse_agent_id",
     "pending_deliveries",
     "query_messages",
+    "queue_delivery",
     "running_tasks",
     "resolve_image_store",
     "S3ImageStore",
@@ -145,5 +171,7 @@ __all__ = [
     "session_title",
     "set_agent_mcp_servers",
     "set_agent_model",
+    "set_goal",
+    "update_goal_status",
     "wire_session_id",
 ]

@@ -75,6 +75,14 @@ class Done:
     #: loop never reached a reporting site. Neither path consults it — a cancel
     #: pauses the goal and a crash blocks it, whatever progress was made.
     tools_used: int = 0
+    #: What the turn COST, summed over every model call in it. Not the same
+    #: number as ``usage`` and not interchangeable with it: ``usage`` is the
+    #: last call's totals, which is how full the context is NOW and is what a
+    #: client's meter should draw, while this is what the turn was billed. A
+    #: five-round tool turn re-sends a growing context five times, so charging
+    #: ``usage`` to a goal's token budget undercounts it by roughly the number
+    #: of rounds — a ceiling that does not fire is not a ceiling.
+    tokens_spent: int = 0
 
 
 Step = Union[Continue, Restart, Done]
@@ -112,6 +120,10 @@ class LoopState:
     #: Lives here rather than in a local because the turn that reports it is
     #: not the iteration that ran them.
     tools_used: int = 0
+    #: Tokens billed so far this turn, carried to :attr:`Done.tokens_spent`.
+    #: Accumulated on every completion INCLUDING the one that triggers a
+    #: compaction: that call was billed whether or not its answer survived.
+    tokens_spent: int = 0
 
 
 async def react(ctx: TurnCtx, deps: Deps) -> Done:
@@ -130,7 +142,11 @@ async def react(ctx: TurnCtx, deps: Deps) -> Done:
         if isinstance(step, Done):
             return step
 
-    return Done(stop_reason="max_turn_requests", tools_used=state.tools_used)
+    return Done(
+        stop_reason="max_turn_requests",
+        tools_used=state.tools_used,
+        tokens_spent=state.tokens_spent,
+    )
 
 
 async def _step(state: LoopState, turn: int, deps: Deps, engine: Any) -> Step:
@@ -198,6 +214,10 @@ async def _step(state: LoopState, turn: int, deps: Deps, engine: Any) -> Step:
     threshold = compaction.threshold_for(ctx.config, session.model_identifier)
     if completion.usage and completion.usage.get("total_tokens"):
         await emitter.usage(int(completion.usage["total_tokens"]), threshold)
+    # Before the compaction branch, not after: the call that crossed the
+    # threshold was billed too, and a Restart drops this iteration's local
+    # scope while the LoopState survives it.
+    state.tokens_spent += int((completion.usage or {}).get("total_tokens") or 0)
 
     if compaction.over_threshold(completion.usage, threshold):
         if not compaction.worth_compacting(session, state.compacted_at_len):
@@ -242,6 +262,7 @@ async def _step(state: LoopState, turn: int, deps: Deps, engine: Any) -> Step:
             stop_reason="end_turn",
             usage=completion.usage,
             tools_used=state.tools_used,
+            tokens_spent=state.tokens_spent,
         )
 
     # No content, no tools: a provider that returned an empty completion.
@@ -249,7 +270,10 @@ async def _step(state: LoopState, turn: int, deps: Deps, engine: Any) -> Step:
     # would spin to max_turns, so report it and let the driver go idle.
     log.warning("Empty completion — no content and no tool calls")
     return Done(
-        stop_reason="end_turn", usage=completion.usage, tools_used=state.tools_used
+        stop_reason="end_turn",
+        usage=completion.usage,
+        tools_used=state.tools_used,
+        tokens_spent=state.tokens_spent,
     )
 
 

@@ -132,27 +132,83 @@ Trajectory is numeric: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8.
 
 ## Phase 4 — the driver fires
 
-4.1 `SessionDriver._park()`: BEFORE `_set_state("idle")`, call
+**[PHASE 4 DONE 2026-09-24 — `tests/integration/test_goal_driver.py`, 11 tests
+green over the real gate harness (real agent, real transport, real sqlite, real
+FastMCP subprocess; only the model is scripted). Seven mutations applied and
+ALL SEVEN detected: drop the `_park` hook, drop `was_continuation`, drop the
+no-progress rule, drop error->blocked, drop cancel->paused, charge every turn,
+drop the turn ceiling. Full tier: 1132 passed, 1 pre-existing flake
+(`test_run_screenshot_rides_the_row`, a playwright/browser test that passes in
+isolation and on re-run; untouched by this work).]**
+
+4.1 **[DONE]** `SessionDriver._park()`: BEFORE `_set_state("idle")`, call
     `self._goal_continuation()`. If it wrote a delivery, return True without
     announcing idle — the loop re-iterates, `_mailbox_pending()` is now true,
     `_run_turn([])` runs, and react's prompt-start `consult` injects it. No
-    spurious idle, no new wake path.
-4.2 `_goal_continuation() -> bool`: read `active_goal`; call `goal.eligible`
-    with the last turn's `tools_used` and the configured max; if ineligible,
-    persist the terminal status it named (blocked/complete) and return False;
-    if eligible, insert the `TaskDelivery` (task_id = `goal_id`, priority
-    "low", content = the continuation text) and bump `turns_used`.
+    spurious idle, no new wake path. Proven on the wire, not inferred:
+    two turns produce `["idle", "running", "idle"]` and ONE running, because
+    `_set_state` dedupes a state that never changed.
+4.2 **[DONE]** `_goal_continuation() -> bool`: read `active_goal`; call
+    `goal.eligible` with the last turn's `tools_used`, `was_continuation` and
+    the configured max; if ineligible, persist the status the `Verdict` named
+    (or nothing, when it named none) and return False; if eligible, insert the
+    `TaskDelivery` (task_id = `goal_id`, priority "low", content = the
+    continuation text) and bump `turns_used`.
     Engine may be None (`config.db_uri` empty) — then goals are unavailable and
     this returns False silently, matching `_mailbox_pending`'s existing guard.
-4.3 Account the finished turn: in `_run_turn` after `done` is settled, fold
-    `done.usage` tokens and wall-clock into `account_goal_usage`. Cancel →
-    `paused`; `stop_reason == "error"` → `blocked` (codex does exactly this, to
-    stop a continuation loop from eating tokens on a repeating failure).
-    *Verify:* integration test `tests/integration/test_goal_driver.py` — a real
-    driver over a temp sqlite db: (a) an active goal with a tool-using turn
-    continues; (b) a text-only turn does NOT continue twice in a row;
-    (c) `goal_done` ends it; (d) an errored turn blocks it; (e) a cancelled
-    turn pauses it; (f) no goal → parks as before, no regression.
+
+    New primitive: `writes.queue_delivery(engine, session_id, *, task_id,
+    content, priority="low") -> int`. `finish_task` built its delivery inline
+    because a task was the only thing with a reason to wake a session; a goal
+    continuation has no task row, and §5.4's deferred wake needed somewhere to
+    go. It pokes nothing, deliberately — the driver writes the row to ITSELF
+    and the loop re-iterates on it, so a redis round trip would be a message to
+    the sender.
+
+    Two commits (delivery, then counter) with a benign window: a crash between
+    them leaves one continuation queued against a counter one low, which is a
+    rounding error on a loop guard and not a way to loop forever.
+4.3 **[DONE]** `_settle_goal(done, elapsed)`, called from `_run_turn` after
+    `done` settles and therefore BEFORE `_park` — so a turn that errored has
+    already blocked the goal by the time the continuation is asked about it.
+    Cancel → `paused`; `stop_reason == "error"` → `blocked` (codex does exactly
+    this, to stop a continuation loop from eating tokens on a repeating
+    failure). Both status writes carry the `goal_id` they read, so a goal the
+    user replaced mid-turn is left alone.
+
+    Two deviations, both about WHICH turns pay:
+    - only a turn the GOAL caused is charged, turns and tokens alike. The draft
+      said "fold `done.usage` and wall-clock" for every turn; billing a
+      user-prompted turn to the goal makes the ceiling fire on conversation
+      length rather than on autonomy, and a limit that stops you for talking to
+      your own agent is a limit nobody leaves enabled.
+    - it charges `Done.tokens_spent`, a NEW field, not `done.usage`. `usage` is
+      the LAST model call's totals — how full the context is now, which is what
+      a client's meter should draw — while a five-round tool turn re-sends a
+      growing context five times and is billed for all five. Charging `usage`
+      undercounts by roughly the number of rounds, and a ceiling that does not
+      fire is not a ceiling. Accumulated on `LoopState` including the completion
+      that triggers a compaction, because that call was billed whether or not
+      its answer survived. The gate now pins both numbers side by side
+      (`tokens_spent == 30` against an idle carrying `totalTokens: 20`).
+
+    Config pulled forward from 7.1, because the driver reads it and the ceiling
+    test has to vary it: `GoalConfig(max_turns=25, max_tokens=None)` under a
+    `goal:` block in config.yaml, typed like `LLMConfig` rather than a loose
+    dict like `image_store`, with unknown keys REJECTED — `goal: {max_turn: 25}`
+    silently doing nothing is a ceiling the user believes they set.
+    `max_tokens` is the default budget for a goal set without one, and Phase 6
+    is what passes it to `set_goal`.
+
+    *Verify:* `tests/integration/test_goal_driver.py`, 11 tests — (a) an active
+    goal with a tool-using turn continues and the client sees no idle between;
+    (b) a text-only CONTINUATION ends it blocked; (b') a text-only USER turn
+    does not; (d) an errored turn blocks it; (e) a cancelled turn pauses it and
+    charges nothing; (f) no goal → parks exactly as before; plus every
+    non-active status is left untouched (parametrized ×4) and the token budget
+    flips mid-run from the SQL `CASE`. (c) `goal_done` ends it is Phase 5's,
+    where the subtool exists; the mechanism it uses — a non-active row is never
+    continued — is covered here.
 
 **Commit:** `feat(agent2): the driver continues an active goal at idle`
 
@@ -188,9 +244,12 @@ Trajectory is numeric: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8.
 
 ## Phase 7 — config and docs
 
-7.1 Config: `[goal] max_turns` (default 25) and `max_token_budget` optional,
-    in `config/config.py` next to the existing redis/bus keys, plumbed to
-    `Deps`/driver the way `max_turns` already is.
+7.1 **[DONE 2026-09-24, pulled forward into Phase 4 — the driver reads it and
+    the ceiling test has to vary it]** Config: `goal: {max_turns: 25,
+    max_tokens: null}` parsed into a typed `GoalConfig`, exported from
+    `crow_cli.config`, honored by `apply_config_overrides` too.
+    REMAINING for 7.1: nothing in config.py. `max_tokens` still has no consumer
+    — Phase 6's `/goal` is what passes it to `set_goal` as the default budget.
 7.2 ACP_V2.md: §5.4 marked shipped with the real function names; the `:28`
     status table row for celery left accurate (still no production caller);
     `:811`'s "Not involved" confirmed still true and now *load-bearing* — the

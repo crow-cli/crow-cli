@@ -252,6 +252,42 @@ def cancel_task(engine, task_id: str) -> bool:
         return True
 
 
+def queue_delivery(
+    engine,
+    session_id: str,
+    *,
+    task_id: str,
+    content: str,
+    priority: str = "low",
+) -> int:
+    """Land one row in a session's mailbox and return its id.
+
+    The primitive underneath ``finish_task``'s delivery, exposed because a task
+    is not the only thing with a reason to wake a session. A goal continuation
+    is a deferred "keep going" with no task row behind it at all, and ACP_V2.md
+    §5.4's state-triggered wake needs somewhere to put it. ``task_id`` has no
+    foreign key, so it names whatever the wake is about — honestly, and without
+    a goal having to pretend to be a task.
+
+    Nothing is poked here, deliberately. The row is the truth and the driver's
+    backstop poll reads it; a caller that wants the wake now rather than within
+    ``PARK_BACKSTOP_S`` publishes its own :class:`~crow_cli.wake.Poke`. The goal
+    continuation does not, because it writes the row from inside the driver that
+    would receive the poke — the loop re-iterates on the row directly, which is
+    §5.3's whole argument for why this never wanted a clock or a worker.
+    """
+    with Session(engine) as db:
+        row = TaskDelivery(
+            session_id=session_id,
+            task_id=task_id,
+            priority=priority,
+            content=content,
+        )
+        db.add(row)
+        db.commit()
+        return row.id
+
+
 def mark_delivered(engine, delivery_ids: list[int]) -> None:
     with Session(engine) as db:
         rows = db.query(TaskDelivery).filter(TaskDelivery.id.in_(delivery_ids)).all()

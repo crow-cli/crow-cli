@@ -67,9 +67,14 @@ learn. §5.4: "by the time anything looks, it is an ordinary pending delivery."
       reason string, because the driver has to persist the status the rule
       named. `Verdict.status is None` means "someone else already stopped this,
       do not overwrite their decision".*
-- [ ] Driver: `_park()` checks the goal BEFORE announcing idle (no spurious
+- [x] Driver: `_park()` checks the goal BEFORE announcing idle (no spurious
       idle flicker), writes the delivery, returns True; the loop's existing
       `_mailbox_pending()` picks it up.
+      *2026-09-24: shipped, `tests/integration/test_goal_driver.py` 11 green,
+      seven mutations all detected. The no-flicker claim is proven on the wire:
+      two turns produce `["idle","running","idle"]`, because `_set_state`
+      dedupes a state that never changed. New primitive `queue_delivery` —
+      `finish_task` built its delivery inline, and a goal has no task row.*
 - [x] Progress signal: react counts tool CALLS on `LoopState`, reports on
       `Done.tools_used`, so "did this turn do anything" is a fact and not a
       guess.
@@ -77,11 +82,17 @@ learn. §5.4: "by the time anything looks, it is an ordinary pending delivery."
       real-MCP round trip (1) and text-only turn (0), mutation-checked. The
       driver keeps `_last_tools_used`; the slash-command early return zeroes it
       so `/goal <objective>` is never judged for progress.*
-- [ ] Loop guards — the part that decides whether this is a feature or a
+- [x] Loop guards — the part that decides whether this is a feature or a
       token fire: a no-tool CONTINUATION turn ends the goal (`blocked`);
       `turns_used` against a configured max (`budget_limited`); `tokens_used`
       against `token_budget` (the SQL `CASE` in `account_goal_usage`, not a
       Python re-check); turn error → `blocked`; cancel → `paused`.
+      *2026-09-24: shipped. Only a turn the GOAL caused is charged, turns and
+      tokens alike — billing a user-prompted turn to the goal makes the ceiling
+      fire on conversation length rather than on autonomy. And it charges
+      `Done.tokens_spent` (new, summed over every model call in the turn), not
+      `done.usage`, which is the LAST call's totals and undercounts a
+      multi-round turn by roughly the number of rounds.*
       *Scope found while building the policy: the no-tool rule needs
       `was_continuation`, so the DRIVER must remember whether the turn it just
       ran was one it caused. Without that distinction a user interjecting
@@ -89,6 +100,10 @@ learn. §5.4: "by the time anything looks, it is an ordinary pending delivery."
       own goal. Phase 4 carries a `_continuation_in_flight` flag: set when the
       delivery is written, consumed when that turn settles. Lost on restart,
       which costs one extra continuation and self-corrects.*
+      *Config landed with it, pulled forward from the docs phase:
+      `goal: {max_turns: 25, max_tokens: null}` as a typed `GoalConfig`,
+      unknown keys rejected. `max_tokens` has no consumer yet — `/goal` passes
+      it to `set_goal` as the default budget.*
 - [ ] `/goal` slash command: bare = show, `<objective>` = set, plus
       `clear|pause|resume`. Needs the engine on `_SlashView` (v2) and on v1's
       `AcpAgent`, because `agent/slash.py` is shared by both.

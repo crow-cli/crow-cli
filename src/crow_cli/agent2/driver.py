@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -53,11 +54,21 @@ from acp.experimental.v2 import schema as v2
 from crow_cli.agent.hooks import CommandHook
 from crow_cli.agent.session import AgentSession
 from crow_cli.config import Config
-from crow_cli.memory import build_agent_id, pending_deliveries, session_title
+from crow_cli.memory import (
+    GOAL_BLOCKED,
+    GOAL_PAUSED,
+    active_goal,
+    build_agent_id,
+    get_goal,
+    pending_deliveries,
+    session_title,
+)
+from crow_cli.memory.writes import account_goal_usage, queue_delivery, update_goal_status
 
 from .ctx import TurnCtx
 from .emitter import Emitter
 from .events import Cancel, Event, Prompt, new_inbox
+from .goal import continuation_text, eligible
 from .llm import StreamState, normalize_prompt
 from .react import Deps, Done, react
 
@@ -144,6 +155,17 @@ class SessionDriver:
         #: no client asks — but the goal continuation cannot decide without it,
         #: and the driver cannot infer it from a stop reason.
         self._last_tools_used: int = 0
+        #: What the last turn was billed across all of its model calls. The
+        #: goal's token budget charges this rather than ``_last_usage``, which
+        #: is the last call's context size — see :attr:`.react.Done.tokens_spent`.
+        self._last_tokens_spent: int = 0
+        #: Goal bookkeeping. ``_continuation_in_flight`` is set when this
+        #: driver writes a continuation to the mailbox and consumed by the next
+        #: turn, which is how the no-progress rule tells a turn the GOAL caused
+        #: from one the USER caused — see :mod:`crow_cli.agent2.goal`. Lost on
+        #: restart, which costs one extra continuation and then self-corrects.
+        self._continuation_in_flight = False
+        self._last_was_continuation = False
         #: Whether this driver has already told the client what the session is
         #: called. One attempt, not one success: the title is the root agent's
         #: FIRST user message, so if it is not knowable now it never will be,
@@ -261,6 +283,13 @@ class SessionDriver:
 
     async def _run_turn(self, events: list[Event]) -> None:
         """Persist what arrived, then run foreground work to completion."""
+        started = time.monotonic()
+        # Consumed at the top rather than at the end: this method has two early
+        # returns (another process claimed the mailbox row; a slash command
+        # answered) and a flag left set would be inherited by the next turn,
+        # which would then be judged as a continuation it was not.
+        self._last_was_continuation = self._continuation_in_flight
+        self._continuation_in_flight = False
         prompts = [e for e in events if isinstance(e, Prompt)]
         if not prompts and not self._mailbox_pending():
             # Woken for a mailbox row another consumer already claimed (two
@@ -278,9 +307,11 @@ class SessionDriver:
                 # fires when _accept_prompt bailed before announcing running.
                 await self._set_state("running")
                 self._last_stop, self._last_usage = "end_turn", None
-                # A slash command ran no tools, and saying otherwise would
-                # let the previous turn's progress vouch for this one.
+                # A slash command ran no tools and billed nothing, and saying
+                # otherwise would let the previous turn's numbers vouch for a
+                # turn that never called the model.
                 self._last_tools_used = 0
+                self._last_tokens_spent = 0
                 return
         # Deliveries and timers need no handling here: the mailbox row is the
         # truth and react consults it before the first model call. The event
@@ -334,7 +365,64 @@ class SessionDriver:
         self._last_stop = done.stop_reason or "end_turn"
         self._last_usage = done.usage
         self._last_tools_used = done.tools_used
+        self._last_tokens_spent = done.tokens_spent
         self.log.info("Turn %s ended: %s", turn_id[:8], self._last_stop)
+        await self._settle_goal(done, time.monotonic() - started)
+
+    async def _settle_goal(self, done: Done, elapsed: float) -> None:
+        """Charge the finished turn to the goal, and stop the goal if the turn
+        did.
+
+        Runs before :meth:`_park`, so a turn that errored has already blocked
+        the goal by the time the continuation is asked about it — otherwise the
+        loop re-runs a repeating failure and spends tokens learning nothing
+        new, which is the one thing a continuation must never do.
+
+        Only a turn the GOAL caused is charged. A turn the user prompted is
+        spend they asked for and watched happen; billing it to the goal makes
+        the ceiling fire on conversation length rather than on autonomy, and a
+        limit that stops you for talking to your own agent is a limit nobody
+        will leave enabled.
+        """
+        engine = self.deps.engine
+        if engine is None:
+            return
+        row = get_goal(engine, self.session_id)
+        if row is None:
+            return
+        # STATE FIRST, and the state is the user's or the harness's, not the
+        # arithmetic's: a cancel is the person stopping the work rather than the
+        # work failing, so it pauses and `/goal resume` picks it back up. Both
+        # writes carry the id they read, so a goal replaced mid-turn is left
+        # alone rather than paused or blocked by a turn that was not about it.
+        if done.stop_reason == "cancelled":
+            update_goal_status(
+                engine, self.session_id, GOAL_PAUSED, expected_goal_id=row.goal_id
+            )
+            self.log.info("Goal %s paused: the turn was cancelled", row.goal_id[:8])
+            return
+        if done.stop_reason == "error":
+            update_goal_status(
+                engine,
+                self.session_id,
+                GOAL_BLOCKED,
+                expected_goal_id=row.goal_id,
+                blocked_reason="the turn errored",
+            )
+            self.log.info("Goal %s blocked: the turn errored", row.goal_id[:8])
+        if self._last_was_continuation:
+            # tokens_spent, not usage: the turn's whole bill rather than its
+            # last call's context size. Prompt tokens are included because
+            # they are billed, and a budget that counted only completions
+            # would understate a long-context goal by an order of magnitude
+            # and look like a limit while never firing.
+            account_goal_usage(
+                engine,
+                self.session_id,
+                goal_id=row.goal_id,
+                tokens=done.tokens_spent,
+                seconds=int(elapsed),
+            )
 
     async def _accept_prompt(self, prompt: Prompt) -> bool:
         """Echo, normalize and persist one prompt. False means "no turn".
@@ -439,7 +527,13 @@ class SessionDriver:
         promptable, which is what ``idle`` means. What the driver is waiting
         on is not the client's business; the wake arrives as an event and the
         next turn announces itself with ``running``.
+
+        The one thing checked before announcing idle is the goal, because a
+        session that is about to start another turn on its own account is not
+        idle and must not be reported as such.
         """
+        if await self._goal_continuation():
+            return True
         await self._set_state(
             "idle", stop_reason=self._last_stop, usage=self._last_usage
         )
@@ -448,6 +542,71 @@ class SessionDriver:
         except TimeoutError:
             return not self._stopping
         self.submit(event)  # put it back; the loop drains it uniformly
+        return True
+
+    async def _goal_continuation(self) -> bool:
+        """Decide whether this session should start another turn by itself.
+
+        True when a continuation landed in the mailbox. The caller returns to
+        the loop, ``_mailbox_pending()`` is now true, ``_run_turn([])`` runs,
+        and react's prompt-start consult injects it — the existing path, with
+        nothing new to wake and nobody to notify. This is ACP_V2.md §5.4, the
+        state-triggered wake that was designed and never built: the transition
+        into idle IS the trigger, the goal is the thing that defers, and by the
+        time anything looks it is an ordinary pending delivery.
+
+        No clock and no worker, which is §5.3's argument vindicated rather than
+        sidestepped. A timer would fire mid-turn and interrupt at the next
+        consult breakpoint — the opposite of the intent — and would need a
+        celery worker running to make a transition that is entirely local to
+        this process.
+
+        The write is two commits (the delivery, then the turn counter) and the
+        window between them is benign: a crash there leaves one continuation
+        queued against a counter one low, which is a rounding error on a loop
+        guard and not a way to loop forever.
+        """
+        engine = self.deps.engine
+        if engine is None:
+            # No store, no goals — the same guard _mailbox_pending uses. A
+            # session with nowhere to persist a goal has nowhere to read one.
+            return False
+        row = active_goal(engine, self.session_id)
+        if row is None:
+            return False
+        max_turns = self.deps.config.goal.max_turns
+        verdict = eligible(
+            row,
+            tools_used=self._last_tools_used,
+            was_continuation=self._last_was_continuation,
+            max_goal_turns=max_turns,
+        )
+        if verdict is not None:
+            if verdict.status is not None:
+                update_goal_status(
+                    engine,
+                    self.session_id,
+                    verdict.status,
+                    expected_goal_id=row.goal_id,
+                    blocked_reason=verdict.reason,
+                )
+            self.log.info("Goal %s not continued: %s", row.goal_id[:8], verdict.reason)
+            return False
+        queue_delivery(
+            engine,
+            self.session_id,
+            task_id=row.goal_id,
+            content=continuation_text(row, max_goal_turns=max_turns),
+            priority="low",
+        )
+        account_goal_usage(engine, self.session_id, goal_id=row.goal_id, turns=1)
+        self._continuation_in_flight = True
+        self.log.info(
+            "Goal %s continues: turn %d of %s",
+            row.goal_id[:8],
+            row.turns_used + 1,
+            max_turns or "no ceiling",
+        )
         return True
 
     def _mailbox_pending(self) -> bool:

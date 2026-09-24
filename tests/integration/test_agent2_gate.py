@@ -348,6 +348,18 @@ class Gate:
         return self.agent.sessions.drivers[self.session_id]._last_tools_used
 
     @property
+    def tokens_spent(self) -> int:
+        """What the last turn was billed, summed over every model call in it.
+
+        Distinct from the ``usage`` an idle carries, which is the LAST call's
+        totals and answers "how full is the context now". A multi-round tool
+        turn re-sends a growing context once per round, so the two diverge by
+        roughly the number of rounds — and the goal's token budget charges this
+        one, because a ceiling computed from the other does not fire.
+        """
+        return self.agent.sessions.drivers[self.session_id]._last_tokens_spent
+
+    @property
     def agent_id(self) -> str:
         """The one agent row this gate created."""
         ids = list(self.agent.sessions.sessions)
@@ -699,6 +711,9 @@ async def test_the_v2_prompt_lifecycle_lands_on_the_wire_in_order(tmp_path):
         # A turn that only talked ran no tools. Half of the progress signal
         # the goal continuation reads; the other half is the tool round trip.
         assert g.tools_used == 0
+        # One model call, so the turn's bill and the context size agree. The
+        # tool round trip below is where they come apart.
+        assert g.tokens_spent == 42
 
         # One prompt, one model call.
         assert len(g.llm.calls) == 1
@@ -898,6 +913,13 @@ async def test_a_tool_call_becomes_one_upsert_sequence_on_the_wire(tmp_path):
         # One call in one batch, reported on the turn as a whole: the loop went
         # round twice but the second iteration only talked.
         assert g.tools_used == 1
+        # Two model calls, 10 + 20. The idle above carries the LAST one (20),
+        # because that is how full the context is now; the turn was billed for
+        # both, and the goal's token budget charges this number rather than
+        # that one. A ceiling computed from the context size undercounts a
+        # multi-round turn by roughly the number of rounds.
+        assert g.tokens_spent == 30
+        assert g.idles()[1]["usage"]["totalTokens"] == 20
 
         # History stays valid: every tool_call_id in an assistant message has
         # a matching tool response before anything else speaks.
