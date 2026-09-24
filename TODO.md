@@ -59,17 +59,31 @@ learn. §5.4: "by the time anything looks, it is an ordinary pending delivery."
       counters — codex preserves both on re-set, which suits a product that
       bills the goal; crow's goal is a loop guard, and a loop guard that
       inherits its predecessor's spend stops guarding.*
-- [ ] `agent2/goal.py` — the continuation prompt template and the eligibility
+- [x] `agent2/goal.py` — the continuation prompt template and the eligibility
       rules, in one place, so the driver stays thin.
+      *2026-09-24: shipped, `tests/unit/test_goal_continuation.py` 12 green.
+      `CONTINUATION_PROMPT` is 15 lines / 607 chars and a test pins that.
+      `eligible` returns `Verdict(status, reason) | None` rather than a bare
+      reason string, because the driver has to persist the status the rule
+      named. `Verdict.status is None` means "someone else already stopped this,
+      do not overwrite their decision".*
 - [ ] Driver: `_park()` checks the goal BEFORE announcing idle (no spurious
       idle flicker), writes the delivery, returns True; the loop's existing
       `_mailbox_pending()` picks it up.
 - [ ] Progress signal: react counts tool batches on `LoopState`, reports on
       `Done`, so "did this turn do anything" is a fact and not a guess.
 - [ ] Loop guards — the part that decides whether this is a feature or a
-      token fire: a no-tool turn suppresses the next continuation; `turns_used`
-      against a configured max; `tokens_used` against `token_budget`; turn error
-      → `blocked`; cancel → `paused`.
+      token fire: a no-tool CONTINUATION turn ends the goal (`blocked`);
+      `turns_used` against a configured max (`budget_limited`); `tokens_used`
+      against `token_budget` (the SQL `CASE` in `account_goal_usage`, not a
+      Python re-check); turn error → `blocked`; cancel → `paused`.
+      *Scope found while building the policy: the no-tool rule needs
+      `was_continuation`, so the DRIVER must remember whether the turn it just
+      ran was one it caused. Without that distinction a user interjecting
+      "what's the status?" mid-goal gets a text-only answer and blocks their
+      own goal. Phase 4 carries a `_continuation_in_flight` flag: set when the
+      delivery is written, consumed when that turn settles. Lost on restart,
+      which costs one extra continuation and self-corrects.*
 - [ ] `/goal` slash command: bare = show, `<objective>` = set, plus
       `clear|pause|resume`. Needs the engine on `_SlashView` (v2) and on v1's
       `AcpAgent`, because `agent/slash.py` is shared by both.

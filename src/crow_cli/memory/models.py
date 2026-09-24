@@ -18,10 +18,13 @@ Base = declarative_base()
 # Free text on the row, the way Task.status is, and for the same reason: a new
 # way of stopping costs no migration, and a reader that has never heard of one
 # still renders the goal. Only GOAL_ACTIVE continues. The others differ in WHO
-# decided — "complete" and "blocked" are the model's claim, "paused" the
-# user's, "budget_limited" the arithmetic's. Keeping the last separate from
-# "complete" is the point: a goal that ran out of budget is not a goal that was
-# achieved, and a summary that cannot tell them apart is not a summary.
+# decided: "complete" is the model's claim that the objective is met, "paused"
+# the user's, "budget_limited" the arithmetic's, and "blocked" means a human is
+# needed — whether the model said so, a turn errored, or a continuation ran no
+# tools and the loop guard gave up on it. Keeping "budget_limited" separate
+# from "complete" is the point: a goal that ran out of budget is not a goal
+# that was achieved, and a summary that cannot tell them apart is not a
+# summary.
 #
 # These live here rather than in writes.py because reads.py needs them too and
 # writes.py imports reads — a constant either module may not reach is a

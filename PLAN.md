@@ -66,20 +66,38 @@ Trajectory is numeric: 1 → 2 → 3 → 4 → 5 → 6 → 7 → 8.
 
 ## Phase 2 — the continuation, as a module
 
-2.1 `src/crow_cli/agent2/goal.py`. Module docstring that states the load-bearing
+2.1 **[DONE 2026-09-24 — `tests/unit/test_goal_continuation.py`, 12 green;
+    `tests/unit tests/memory` 913 passed. Prompt is 15 lines / 607 chars, and
+    `test_the_prompt_stays_short` pins that so the cathedral cannot creep in.]**
+    `src/crow_cli/agent2/goal.py`. Module docstring states the load-bearing
     decision (continuation is an ordinary `TaskDelivery`; §5.4 built at last)
-    and why the goal lives in the row's status rather than in a new event type.
-    Contents: `CONTINUATION_PROMPT` template, `continuation_text(goal) -> str`,
-    and `eligible(goal, *, last_turn_used_tools, max_turns) -> str | None`
-    returning None when it may continue or the reason it may not.
-    Keep the prompt SHORT. codex's `continuation.md` is 56 lines of audit
-    ritual; crow's first cut states the objective, the budget position, and
-    "call goal_done when it is actually finished, goal_blocked when it is
-    genuinely stuck." Do not import codex's completion-audit cathedral.
-    *Verify:* unit test `tests/unit/test_goal_continuation.py` — every branch of
-    `eligible` (no active goal / paused / blocked / complete / turn budget spent
-    / token budget spent / no-tool suppression / may-continue), and the rendered
-    prompt for a budgeted and an unbudgeted goal.
+    and why the stop condition lives in a status column rather than in this
+    module: three different processes have to reach it.
+    Contents: `CONTINUATION_PROMPT`, `continuation_text(goal, *, max_goal_turns)`,
+    `Verdict(status, reason)`, `eligible(...) -> Verdict | None`.
+
+    Four deviations from the draft, all deliberate:
+    - `eligible` returns `Verdict | None`, not `str | None`. 4.2 has to persist
+      "the terminal status it named", and a bare reason string leaves the driver
+      guessing which status a given reason implies. `Verdict.status` is None
+      when the row already says what it needs to say (paused by the user,
+      completed by the model) so policy never overwrites a person's decision.
+    - added `was_continuation: bool`. The no-tool rule must fire on a turn the
+      GOAL caused and not on a turn the USER caused — otherwise interjecting
+      "what's the status?" mid-goal blocks the goal, which punishes the person
+      for using it. Only the driver knows which kind of turn just finished.
+    - `max_turns` renamed `max_goal_turns` everywhere. `Deps.max_turns` is
+      react's per-turn model-round-trip cap (50000); two different ceilings
+      sharing a name is a footgun waiting for a maintainer.
+    - the token budget is NOT re-checked in `eligible`. It lives in the `CASE`
+      inside `account_goal_usage`'s single UPDATE, and a Python
+      read-compare-write on top would reopen exactly the window that `CASE`
+      closes. By idle, an over-budget goal is already `budget_limited` and
+      `active_goal` has already returned None.
+
+    Turn ceiling → `budget_limited` (the arithmetic decided). No-progress →
+    `blocked` (needs a human). Checked in that order, because "stalled" invites
+    a nudge and a nudge cannot buy more turns.
 
 **Commit:** `feat(agent2): goal continuation text and eligibility`
 
