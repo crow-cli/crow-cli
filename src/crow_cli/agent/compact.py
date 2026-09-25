@@ -67,6 +67,17 @@ Include:
 - What still needs to be done
 
 Be thorough and detailed. This summary will replace the conversation history, so include everything a new agent would need to continue the work seamlessly.
+
+Your summary must be substantially SHORTER than the history it replaces. It is a
+compression, and a summary that is not smaller than its input has not freed any
+context — it has only moved the cost onto the next generation.
+
+In particular: when the history already opens with a summary from an earlier
+compaction, that text is material to COMPRESS, not text to reproduce. Fold it
+in, rewrite it, and drop whatever the work has since made irrelevant. Copying a
+previous summary forward verbatim makes every later summary larger than the one
+before it, so a session that compacts repeatedly grows its handoff without
+bound and never gets its context back.
 """
 
 
