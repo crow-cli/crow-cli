@@ -470,12 +470,130 @@ is no config commit to make)
 
 ## Phase 8 — the full gate
 
+**[PHASE 8 DONE 2026-09-25 — `./run_tests.sh -q`, every tier including the live
+e2e: 1437 passed, 0 failed in 2154.88s (35m54s). The first gate came back
+2 failed, 1431 passed; both failures were diagnosed rather than labelled, one
+turned out to be the rc2 path dependency (Phase 9) and one turned out to be a
+real bug in compaction that had nothing to do with this sprint (8.4). The
+eyeball in 8.2 found a third, in /goal itself.]**
+
 8.1 `./run_tests.sh` — all tiers. e2e hits a live LLM; if it cannot run here,
     say so explicitly in the summary rather than reporting green.
+    **DONE, and it did run here.** The first full gate (pre-rc2) came back
+    2 failed, 1431 passed in 2412.47s. Both failures were investigated rather
+    than labelled:
+    - `test_source_first_spawn` — the clone-and-`uv sync` test. Failed because
+      `[tool.uv.sources]` pointed at a relative `../python-sdk`, which cannot
+      resolve in a clone. Confirmed pre-existing by re-running it in the
+      reference checkout on main. **Fixed by Phase 9**, and confirmed: the
+      post-rc2 e2e tier shows `tests/e2e/test_source_first_spawn.py .`.
+    - `test_compact_continues_live` — `TimeoutError` at `TURN_TIMEOUT=1200`.
+      Confirmed pre-existing by running it unmodified in the reference checkout
+      on main: `1 failed in 1204.40s`, same timeout, same test. Then diagnosed
+      properly rather than retried — see 8.4.
 8.2 Manual eyeball: `crow-cli run` in a scratch dir, `/goal write a haiku about
     the sea`, watch it continue, `goal_done` it, `/goal` to see the row.
+    **DONE 2026-09-25, and it earned its keep — it found a bug no test did.**
+    Run as a real `agent2.main` subprocess over real stdio against the live
+    model, in a scratch dir with a scratch db and `goal: {max_turns: 4,
+    max_tokens: 400000}`. Observed, in order: `/goal` advertised in
+    `available_commands_update` alongside `compact, help, clear, stop`; the
+    objective accepted; the continuation injected as a `user_message_chunk`
+    carrying the exact `CONTINUATION_PROMPT` text ("[goal: continuing
+    automatically — the user did not send this] … Turn 1 of at most 4. Tokens 0
+    of 400000."); eight `execute` rounds carrying four subtool calls (`fs read`,
+    `write`, `fs read`, `goal_done`), 20 tool-call updates on the wire;
+    `haiku.txt` written and read back; `goal_done` moving the row to `complete`
+    with `turns 1, tokens 75116, secs 54`; and bare `/goal` printing the row.
+    (Counts read back out of the scratch db at `/tmp/goal-eyeball-wmiohn8b`,
+    not off the log scroll.)
+    **The bug:** the status line read `goal complete — "…" / Turn 2 of at most
+    4.` on a row whose `turns_used` was 1. `progress()` is shared with the
+    continuation on purpose, and its `+1` is right there — a continuation is
+    injected at the START of the turn it counts — and wrong here, where nothing
+    is in flight. Fixed in `2b0ed0cc` by letting the row's own status decide,
+    with a mutation-checked test over active/complete/paused. No automated test
+    could have caught it: the 20 slash tests assert the strings the code
+    produces, and the code was self-consistent. Only reading the line the way a
+    person does made it look wrong.
 8.3 Final `git status` clean, every commit carrying
-    `Session-Id: worthy-conscious-rat-of-opportunity`.
+    `Session-Id: worthy-conscious-rat-of-opportunity`. **DONE** — 14 commits on
+    `goal`, every one carrying the trailer, working tree clean.
+8.4 **(added by 8.1's diagnosis)** The compaction handoff compounds. Not a
+    /goal bug and not an rc2 bug — it is on main, in v1 code both generations
+    share, and the gate only surfaced it because `test_compact_continues_live`
+    is the one test that compacts six times in a row.
+    *Diagnosis:* `last_messages()` capped tool and assistant content at
+    `max_chars` and appended USER messages whole. `default_compactor` hands the
+    successor `summary + last_messages(...)` as its first user message, so the
+    next compaction read the previous handoff back uncapped and folded it in
+    whole. Read out of the failing run's own sqlite file, generation by
+    generation: handoff 11k -> 32k -> 58k -> 92k -> 131k -> 172k chars, born-at
+    10.9k -> 16.2k -> 22.8k -> 31.4k -> 40.9k prompt tokens against a 30k
+    ceiling, summary call 2m00s -> 2m22s -> 3m05s -> 3m19s -> 3m22s -> 3m27s.
+    By generation five the successor was born OVER the ceiling, so every
+    generation compacted after one tool round and the turn could not finish in
+    1200s. `worth_compacting()` did not catch it — that guard stops a successor
+    re-compacting with no new history, and each of these had done one tool
+    round.
+    *Fix, two parts:* the cap the other two branches already had
+    (`6ff6d2d3`), and `COMPACTION_PROMPT` telling the model that a previous
+    summary is material to compress rather than text to reproduce — because
+    after the cap the tail was bounded at 1.3-2.4k chars and the growth moved
+    entirely into the summary (6.8k -> 15.8k -> 23.1k -> 29.5k -> 42.1k).
+    *Verify:* `test_the_handoff_cannot_compound` asserts the FIXED POINT — a
+    handoff 100x bigger must produce a byte-identical tail — because any cap
+    passes a size assertion and the bug was that the tail's size was a function
+    of the history's at all. Mutating the cap back is detected. Then the live
+    test itself.
+
+## Phase 9 — the rc2 migration (added mid-sprint, on the user's instruction)
+
+Discovered while Phase 8 was running: the user asked for the two
+"pre-existing" failures to be made green, for
+`agentclientprotocol/python-sdk` 1.0.0rc2 to be adopted, and for the hardcoded
+`[tool.uv.sources]` path to go. Both of the gate's failures turned out to be
+the same root cause or a live-model timeout, so this became its own phase.
+
+**[PHASE 9 DONE 2026-09-24 — `7ae5438d`, 17 files, +538/−408.
+`tests/{unit,memory,mcp,integration}` 1409 passed, 0 failed in 469.01s (119
+failed before the migration); `tests/e2e/test_agent2_live.py` 3 passed in 27.87s
+against a live model.]**
+
+9.1 **[DONE]** `pyproject.toml` to `agent-client-protocol[http]>=1.0.0rc2,<1.1.0`
+    and the whole `[tool.uv.sources]` block deleted; `uv lock` (243 packages,
+    `httpx2`/`httpcore2`/`truststore` added by the `[http]` extra's move off
+    `httpx`), then `uv sync --all-groups`. The
+    `~/.agents/crow/src/worktrees/python-sdk` symlink that existed only to
+    satisfy the relative path is deleted.
+    *Verify:* `uv --project . run python -c "import importlib.metadata as m;
+    print(m.version('agent-client-protocol'))"` → `1.0.0rc2`, and
+    `tests/e2e/test_source_first_spawn.py` — which clones the repo and runs
+    `uv sync` in the clone, so it is the test that actually proves the path is
+    gone — passes.
+9.2 **[DONE]** The API-shape break (PR #150). Every v2 handler in
+    `agent2/agent.py` expanded to the request's fields as keywords with a
+    trailing `**kwargs` that IS the `_meta`; every connection call in
+    `client2/subagent.py` and `client2/main.py` likewise; nine test fakes
+    converted. `fork_session` sends `**meta` and reads `meta = kwargs`.
+9.3 **[DONE]** The wire-shape break: `_dump` lost `exclude_none`, so
+    `emitter.present(**fields)` now drops the `None`s at all six construction
+    sites that passed one. Found by the gate, not by a `TypeError` —
+    `{'stopReason': None, 'usage': None}` appearing in the idle update.
+9.4 **[DONE]** `PromptResponse.message_id` is required: `events.Prompt` carries
+    it, the `prompt` handler mints it via `emitter.start_message()`, and
+    `driver._accept_prompt` echoes that one instead of minting a second.
+    *Verify:* `test_the_v2_prompt_lifecycle_lands_on_the_wire_in_order` asserts
+    `user["messageId"] == response.message_id` — the assertion that the two
+    halves did not each mint one.
+9.5 **[DONE]** `SessionNotice`, the 24th union member: `TerminalClient._notice`
+    plus two tests, one of them asserting the agent's markup survives as text.
+9.6 **[DONE]** ACP_V2.md §7 gains "python-sdk 1.0.0rc2 — the dependency is
+    published, and the call shape changed", and four stale facts in §7/§9 are
+    corrected rather than left next to it.
+
+**Commit:** `feat(sdk): agent-client-protocol 1.0.0rc2, and the call shape it
+brought`
 
 ---
 

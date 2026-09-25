@@ -148,8 +148,12 @@ learn. §5.4: "by the time anything looks, it is an ordinary pending delivery."
       gate that needs a provider is not a gate. 28 mutations applied and every
       one detected, across Phases 3-6 (1 + 7 + 10 + 10); Phases 1-2 are store
       and pure-policy code, asserted directly rather than mutated. Full tier
-      1407 passed, 0 failed. What is left is Phase 8: `./run_tests.sh`
-      including e2e, and the manual eyeball.*
+      1407 passed, 0 failed.*
+      *2026-09-25, Phase 8 closed: `./run_tests.sh -q` over every tier including
+      the live e2e came back **1437 passed, 0 failed in 2154.88s (35m54s)**.
+      81 goal tests became 83 (the eyeball's `progress()` fix and the
+      compaction fixed-point test), and the manual eyeball ran for real and
+      found a bug — see the two items below.*
 - [ ] The `crow_cli.tools` facade wart, found by Phase 5's registration check:
       `import crow_cli.tools.task` anywhere in the process leaves the MODULE on
       the package attribute, which shadows `__getattr__`, so `T.task` is
@@ -165,8 +169,8 @@ learn. §5.4: "by the time anything looks, it is an ordinary pending delivery."
       store a 200KB objective, and the objective is interpolated into
       `CONTINUATION_PROMPT` — whose size `test_the_prompt_stays_short` pins
       under 900 chars, with a comment reading "if this assertion fails,
-      someone added a cathedral". An unbounded
-      objective defeats that pin entirely, and it is re-sent on every
+      someone added a cathedral". An unbounded objective defeats that pin
+      entirely, and it is re-sent on every
       continuation, so the cost is per turn rather than once. Belongs in
       `set_goal` (the store) and not in the slash handler, because a second
       entry point would need the same check and the store is the one place
@@ -189,6 +193,71 @@ learn. §5.4: "by the time anything looks, it is an ordinary pending delivery."
       is attributed to. §5.3's argument is now recorded as proven rather than
       predicted: the feature that looked most like it would need a scheduler
       needs no clock, no broker and no worker.*
+- [x] `agent-client-protocol` 1.0.0rc2, and with it the end of the hardcoded
+      `[tool.uv.sources]` path. Added mid-sprint on the user's instruction, and
+      it turned out to be the fix for one of the gate's two failures:
+      `test_source_first_spawn` clones this repo to a temp dir and runs `uv
+      sync` there, and a relative path source cannot resolve in a clone.
+      *2026-09-24: `7ae5438d`, 17 files, +538/−408. rc2 is the first PyPI
+      release carrying `acp/experimental/v2/`, so the editable clone is no
+      longer load-bearing and the `worktrees/python-sdk` symlink is deleted.
+      Three separate breaks, of which only the first announces itself:
+      (1) handlers now take the request's FIELDS as keywords with `_meta`
+      spread among them; (2) `_dump` lost `exclude_none`, so an explicit `None`
+      became a `null` on the wire and a `null` on an upsert is "cleared", not
+      "unchanged" — found by the gate as `{'stopReason': None, 'usage': None}`
+      in the idle update, fixed by `emitter.present()`; (3) `PromptResponse`
+      gained a required `messageId`, so `events.Prompt` carries the id the
+      handler minted and the driver echoes THAT one. v1 is untouched —
+      `acp/router.py` adapts a legacy single-model handler with a
+      DeprecationWarning. Before: 119 failed. After: 1409 passed, 0 failed in
+      469.01s, plus `tests/e2e/test_agent2_live.py` 3 passed live. Recorded in
+      ACP_V2.md §7 with the four stale facts it invalidated corrected.*
+
+- [x] Phase 8's gate found two failures, and neither was allowed to stay
+      labelled "pre-existing" without a diagnosis.
+      *2026-09-25: both were reproduced in the reference checkout on main
+      first, so neither was this sprint's. `test_source_first_spawn` was the
+      `[tool.uv.sources]` path — a clone cannot resolve a relative path source —
+      and the rc2 item above fixed it; the post-rc2 e2e tier shows it green.
+      `test_compact_continues_live` was a `TimeoutError` at `TURN_TIMEOUT=1200`,
+      and reading the failing run's own sqlite file turned it from a flake into
+      a bug: the compaction handoff compounded, 11k -> 32k -> 58k -> 92k ->
+      131k -> 172k chars over six generations, because `last_messages()` capped
+      tool and assistant content and appended USER messages whole — and a
+      successor's handoff IS a user message, so each compaction folded the
+      previous one in whole. By generation five the successor was born over the
+      30k ceiling. Fixed in `6ff6d2d3` (the cap) and `a1e3c9c2` (the prompt,
+      because the growth then moved into the summary), the test's ceiling
+      recalibrated against the timeout it has to fit in `7e1e177e`, and the
+      whole thing green: 5 generations, 4 compactions, 864s.*
+- [x] Phase 8.2's manual eyeball — the one check that sees a line the way a
+      person does.
+      *2026-09-25: run for real, `agent2.main` over stdio against the live
+      model in a scratch dir. The loop works end to end: `/goal` advertised,
+      objective accepted, continuation injected with the exact prompt text,
+      eight `execute` rounds carrying four subtool calls, haiku.txt written and
+      read back, `goal_done` moving the row to `complete` (turns 1, tokens
+      75116, secs 54). And it found a bug that no test could have: the
+      status line read "Turn 2 of at most 4" over the word "complete" on a row
+      whose `turns_used` was 1, because `progress()` adds one for the
+      continuation's benefit — correct there, where the turn is about to start,
+      and wrong here, where nothing is in flight. Fixed in `2b0ed0cc` by letting
+      the row's status decide. The 20 slash tests assert the strings the code
+      produces and the code was self-consistent; only reading it made it look
+      wrong.*
+
+- [x] Cleanup, second pass: the residue the mandate names, found by looking at
+      what sits in `tests/` that is not a test.
+      *2026-09-25: `tests/analyze_payload_deep.py` and
+      `tests/analyze_payload_cache_invalidation.py` deleted. Both were
+      throwaway forensics for a llama.cpp KV-cache investigation —
+      `#!/usr/bin/env python3`, reading `~/.agents/crow/logs` directly, never
+      collected by pytest (the names are not `test_*`), and referenced by
+      nothing in the repo, the docs, or git history outside the
+      monorepo-flattening commit that moved them. `tests/` is the worst place
+      for them: a directory that says "these are the checks" holding two
+      scripts that check nothing. History keeps them.*
 
 ## Explicitly deferred (write the reason, do not do the work)
 

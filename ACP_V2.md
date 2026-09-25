@@ -30,7 +30,8 @@ Contents:
 | A model-facing way to feed **itself** | **built** — §5.4's mechanism, with a goal as the thing that defers |
 | `/goal`: the persisted objective, the continuation loop, its ceilings and its exits | built — `memory/models.Goal`, `agent2/goal.py`, `driver._goal_continuation`, `tools/goal.py`, `agent2/slash.py` |
 | `remind`, the self-note subtool §5 proposes | **not built** — §5.10 is unstarted and nothing below depends on it |
-| Test suite | 1407 passed (`tests/{unit,mcp,memory,integration}`), 26 passed (`tests/e2e`) |
+| Test suite | **1437 passed, 0 failed** — `./run_tests.sh`, every tier including the live e2e, 2154.88s |
+| ACP python-sdk | **1.0.0rc2 from PyPI** — the `[tool.uv.sources]` local path is gone (§7) |
 | Python 3.13 compile | 351 files, 0 failures |
 
 ---
@@ -1185,18 +1186,20 @@ ToolKind = read|edit|delete|move|search|execute|think|fetch|other
 ToolCallStatus = pending|in_progress|completed|failed|cancelled
 ```
 
-`UpdateSessionNotification.update` is a union of 23 members with 19
-discriminators. `_RENDERS` covers 17; `UNRENDERED = {"plan_update","plan_removed"}`
-is deliberate. `user_message_chunk` = mailbox deliveries
-(`agent2/deliveries.py:57`); `user_message` = the prompt echo (`driver.py:348`)
-and replay (`replay.py:135`). Different discriminators — which is what makes the
-narrow `own_echo` suppression safe.
+`UpdateSessionNotification.update` is a union of 24 members with 20
+discriminators (`notice` is the 24th, added by 1.0.0rc2). `_RENDERS` covers 18;
+`UNRENDERED = {"plan_update","plan_removed"}` is deliberate.
+`user_message_chunk` = mailbox deliveries (`agent2/deliveries.py:57`);
+`user_message` = the prompt echo (`driver.py:348`) and replay
+(`replay.py:135`). Different discriminators — which is what makes the narrow
+`own_echo` suppression safe.
 
 ### Other SDK facts
 
-- `acp/experimental/v2/agent.py:28 _dump(model)` = `model_dump(mode="json",
-  by_alias=True, exclude_none=True, exclude_unset=True)`. `exclude_none` is
-  why a `null` clear is UNSENDABLE.
+- `acp/experimental/v2/agent.py _dump(model)` = `model_dump(mode="json",
+  by_alias=True, exclude_unset=True)`. **1.0.0rc2 dropped `exclude_none`**, so
+  an explicitly-passed `None` now goes on the wire as `null` — see the rc2
+  section below. `agent2/emitter.py present(**fields)` is the workaround.
 - `MethodRouter` (`acp/experimental/v2/_router.py`): a missing handler
   attribute gives `RequestError.method_not_found(spec.method)` for a REQUEST
   and a silent `return` for a NOTIFICATION. `_`-prefixed methods route to
@@ -1209,12 +1212,102 @@ narrow `own_echo` suppression safe.
   stdio_buffer_limit_bytes=52428800, **kw)`.
 - fastmcp 3.4.7: `Client.call_tool_mcp(name, arguments, progress_handler=None,
   timeout=None, meta=None)`; `MCPConfigTransport(cfg, name_as_prefix=False)`.
-- The authoritative spec is on disk at
-  `~/.agents/crow/src/python-sdk/schema/v2/schema.json` (265 `$defs`, each
-  with a `description`), plus `schema/schema.json` (v1) and
-  `schema/v2/meta.json`. Some models are inline `anyOf` branches and are NOT
-  in `$defs` — use `getattr(vs, name)`, and **read the union, not the `$defs`
-  entry**. Live: `https://agentclientprotocol.com/protocol/v2/...`.
+- The authoritative v2 surface is the GENERATED
+  `acp/experimental/v2/schema.py` in the installed package — the wheel ships no
+  JSON. `~/.agents/crow/src/python-sdk` is a clone at `c1004f8` carrying
+  `schema/v2/schema.json` (265 `$defs`, each with a `description`) at
+  **`schema-v2.0.0-alpha.3`**, i.e. now BEHIND the pinned rc2 (`alpha.5`):
+  read it for the prose descriptions, not for the field lists. Some models are
+  inline `anyOf` branches and are NOT in `$defs` — use `getattr(vs, name)`, and
+  **read the union, not the `$defs` entry**.
+  Live: `https://agentclientprotocol.com/protocol/v2/...`.
+
+### python-sdk 1.0.0rc2 — the dependency is published, and the call shape changed
+
+`pyproject.toml` now says `agent-client-protocol[http]>=1.0.0rc2,<1.1.0` and the
+`[tool.uv.sources]` block is **gone**. rc2 is the first release on PyPI with
+`acp/experimental/v2/`, so the editable local clone — and the
+`../python-sdk` vs `../../python-sdk` two-commit difference it forced on every
+worktree — is no longer load-bearing. That also fixes
+`tests/e2e/test_source_first_spawn.py`, which clones this repo to a temp dir and
+runs `uv sync` there: a relative path source cannot resolve in a clone, and it
+did not.
+
+rc2 is `0.12.1` + PRs #143–#150. `PROTOCOL_VERSION` is still 2. The v2 schema
+moved `alpha.3` → `alpha.5`, v1 → `1.23.0`. Four things bite:
+
+**1. A v2 handler receives the request's FIELDS as keywords, not the model.**
+`MethodRouter.handle_request` is now
+
+```python
+request = spec.request.validate_python(params)
+response = await handler(**model_to_kwargs(request, type(request)))
+```
+
+and `acp/utils.py::model_to_kwargs` passes **every** field — set or not, so an
+omitted optional arrives as `None` — skips `field_meta`, then does
+`kwargs.update(model.field_meta)`. So `async def prompt(self, request)` became
+`async def prompt(self, session_id, prompt, **kwargs)`, and **`kwargs` is the
+request's `_meta`, spread**. Every v2 handler in `agent2/agent.py` and every
+fake in the tests is written that way now. `fork_session` is the one that reads
+`_meta` (`messageOffset`, `rlmDepth`), so it takes `meta = kwargs` wholesale.
+
+**2. The same spread runs in reverse on the sender.**
+`_params.py::build_request(model, fields, meta)` drops `None` for non-required
+fields and then `params["field_meta"] = meta`, so a connection method's trailing
+`**kwargs` **IS** the outgoing `_meta`: `conn.fork_session(session_id=…, cwd=…,
+**meta)`, not `field_meta=meta`.
+
+**3. `_dump` lost `exclude_none`.** It is `model_dump(mode="json",
+by_alias=True, exclude_unset=True)` and nothing else. A field handed an explicit
+`None` is now a `null` the client receives, and on an upsert `null` is not
+"unchanged", it is **"cleared"**. This produced no `TypeError` and no
+validation error — it showed up as `{'stopReason': None, 'usage': None}` inside
+the idle wire update in the gate. `agent2/emitter.py` now builds every optional
+through `present(**fields)`, which drops the `None`s. **This is the subtlest
+break in the release: it is a wire-shape change, not a signature change.**
+
+**4. `PromptResponse.message_id` is required and non-null.** The response to a
+prompt is now `{"messageId": …}` and nothing else — the id of the user message
+the agent inserted. `agent2/events.Prompt` carries it, minted by the `prompt`
+HANDLER (`emitter.start_message()`) and not by the driver that echoes it,
+because the handler has to answer with it and the echo may come later; two mints
+would be two identities for one message. `driver._accept_prompt` passes
+`prompt.message_id` to `emitter.user_message`. The unconfigured-session branch
+answers with an id naming a message it never inserted — the field is required
+and there is no honest value there.
+
+Also new: `SessionNotice` (`session_update: "notice"`, `severity` /
+`title` / `description`) is the 24th union member, rendered by
+`TerminalClient._notice` with `markup=False` because the text is the agent's.
+On the v1 side `EnvVarAuthMethod` was **removed** (crow never used it — grepped)
+and `Notice`, `NoticeCapabilities`, `SessionUpdateNotice`, `TerminalAuthMethod`
+added; the `[http]` extra moved `httpx` → `httpx2`.
+
+**v1 is untouched by all of this.** `acp/router.py::_resolve_handler` detects a
+legacy handler (`len(parameters) == 2 and "params" in parameters`, or a missing
+snake_case attr that exists in camelCase) and calls `await func(model_obj)` with
+a `DeprecationWarning`; v1's `ClientSideConnection` / `AgentSideConnection` are
+`@compatible_class` **and already kwargs-native**. v2's `agent.py` / `client.py`
+are NOT `@compatible_class`, which is exactly why the single-model style is gone
+for v2 and survives for v1. `run_agent(...)` is unchanged.
+
+The v2 connection method NAMES are unchanged (§"v1 vs v2 client connection
+methods" above still holds); only their signatures expanded, e.g.
+`initialize(protocol_version, info, capabilities=None, **kwargs)`,
+`new_session(cwd, additional_directories=None, mcp_servers=None, **kwargs)`,
+`session_update(session_id, update, **kwargs)`,
+`set_config_option(config_id, session_id, value, *, type=None, **kwargs)`.
+`_param_model_field_names` on a union takes the **intersection** of the
+branches' fields in the first branch's order — which is why `set_config_option`
+gets an explicit `type` keyword rather than relying on the model.
+
+Migration cost, measured: 6 files in `src/`, 9 in `tests/`. Before the migration
+the four non-e2e tiers ran **119 failed** (84 ×
+`ClientSideConnection.initialize() missing 1 required positional`, 13 ×
+`TaskError: launch failed`, 6 × `RlmToolError: could not fork session`, …);
+after, **1409 passed, 0 failed in 469.01s**, and `tests/e2e/test_agent2_live.py`
+3 passed in 27.87s against a live model.
 
 ### `crow_cli.memory` exports
 
@@ -1302,8 +1395,11 @@ is load-bearing. Don't assert the whole idle dict — it also carries `usage`.
 ### Test totals
 
 ```
-tests/{unit,mcp,memory,integration}   1326 passed in 434.58s   0 failed
+./run_tests.sh  (ALL tiers, live e2e)   1437 passed in 2154.88s  0 failed
+tests/{unit,mcp,memory,integration}   1411 passed in  469.01s   0 failed
 tests/e2e (26 tests)                    26 passed in 1593.72s  0 failed
+tests/e2e/test_agent2_live.py            3 passed in   27.87s  0 failed  (post-rc2)
+tests/e2e/test_compact_continues_live.py 1 passed in  864.80s  (was a 1200s timeout)
 tests/unit/test_discover.py             13 passed
 tests/integration/test_cli_run_dispatch.py  27 collected (26 defs, one parametrized x2)
 tests/unit/test_agents_registry.py      38 passed
@@ -1387,6 +1483,40 @@ Features, not bugs.
    reason to DELETE code* — if it survives, delete it.
 5. **`_cancel_orphan`'s wording** is subagent-shaped and will read oddly for a
    cancelled reminder (§5.10).
+6. **Compaction's handoff grew without bound.** Two thirds of it fixed
+   2026-09-25, the absolute bound still open. First half, `6ff6d2d3`:
+   `last_messages()` capped tool and assistant content at
+   `max_chars` and appended user messages WHOLE, and since a successor's handoff
+   is itself a user message, each compaction folded the previous handoff into
+   the next one and the size compounded — measured live at a 30k ceiling, 11k →
+   32k → 58k → 92k → 131k → 172k chars over six generations, each successor
+   born closer to the ceiling and then past it, each summary call slower than
+   the last, until `tests/e2e/test_compact_continues_live.py` timed out at 1200s
+   one page from done. `worth_compacting()` could not catch it: that guard stops
+   a successor re-compacting with NO new history, and here every generation did
+   do work — one tool round's worth before crossing the ceiling again.
+
+   The cap bounded the tail and the growth moved wholesale into the SUMMARY, so
+   `a1e3c9c2` fixed the second half: `COMPACTION_PROMPT` said "be thorough and
+   detailed … include everything a new agent would need", and the history it
+   summarizes opens with the previous generation's handoff — read literally, and
+   models read it literally, that is an instruction to reproduce the previous
+   summary and add to it. Measured on the same dive, summaries 6.8k → 15.8k →
+   23.1k → 29.5k → 42.1k chars with the tail flat at 1.3–2.4k. Two paragraphs
+   later (a summary must be substantially shorter than the history it replaces;
+   a previous summary is material to COMPRESS, not text to reproduce) the
+   compaction calls went from 130–210s to 69–191s and the turn from a 1200s
+   timeout to 864s.
+
+   What is STILL open is the absolute bound. `_stream_completion` asks for
+   `MAX_OUTPUT_TOKENS = 30000` with nothing derived from the ceiling, so a
+   single summary can still be a third of a 100k ceiling on its own, and a
+   successor born over the ceiling re-compacts on its first tool round forever.
+   The prompt is a request and the model can decline it; the wall would be
+   `max_tokens = ceiling // 4` on the compaction call. Not shipped: a truncated
+   summary silently loses the record, which is a worse failure than a slow one,
+   and neither the wall nor the prompt is testable without a live model. The
+   one-line cap and its fixed-point test are the part that is.
 
 ---
 
@@ -1422,10 +1552,15 @@ RS   = ~/.agents/crow/src/worktrees/crow-cli-rs     ee2cb032          Rust refer
 D    = ~/.agents/crow/src/python-sdk                c1004f8           ACP v2 clone, editable, 0.12.1
 ```
 
-The worktree workflow is over; MAIN's venv *is* the merged tree.
-`../../python-sdk` (from the worktree) vs `../python-sdk` (from main) is a
-permanent two-commit difference. Never hand-merge `uv.lock` — resolve
-`pyproject.toml`, then `uv lock`.
+The worktree workflow is over; MAIN's venv *is* the merged tree. Never
+hand-merge `uv.lock` — resolve `pyproject.toml`, then `uv lock`.
+
+**The `../../python-sdk` vs `../python-sdk` two-commit difference is dead.**
+`agent-client-protocol` 1.0.0rc2 is on PyPI with `acp/experimental/v2/`, so
+`[tool.uv.sources]` is gone from `pyproject.toml` and every worktree resolves the
+same published wheel. The `~/.agents/crow/src/worktrees/python-sdk` symlink that
+worked around it has been deleted; the clone at `D` stays only as the schema
+prose (§7).
 
 ### Where the project goes
 
