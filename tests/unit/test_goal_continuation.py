@@ -7,7 +7,13 @@ subtools all read, and a hand-built ``Goal(...)`` in a test would let a column
 default drift without anything noticing.
 """
 
-from crow_cli.agent2.goal import CONTINUATION_PROMPT, Verdict, continuation_text, eligible
+from crow_cli.agent2.goal import (
+    CONTINUATION_PROMPT,
+    Verdict,
+    continuation_text,
+    eligible,
+    progress,
+)
 from crow_cli.memory.db import create_database, get_engine
 from crow_cli.memory.models import (
     GOAL_ACTIVE,
@@ -139,6 +145,34 @@ def test_continuation_text_without_a_budget_or_a_ceiling(tmp_path):
     text = continuation_text(goal)
     assert "No token ceiling" in text
     assert "Turn 1 of this goal" in text
+
+
+def test_a_stopped_goal_reports_the_turns_it_spent_not_one_more(tmp_path):
+    """``progress`` is one function with two callers in different states of the
+    world. A continuation is injected at the START of the turn it counts, so the
+    model is told which turn it is about to spend; a goal that has stopped has
+    no turn in flight and the person is told what it cost.
+
+    Found by the manual eyeball — a complete row with ``turns_used == 1``
+    rendered "Turn 2 of at most 4", which reads as a turn nobody is running.
+    The row's own status is what distinguishes the two, so a continuation is
+    unaffected: only a goal that can no longer be continued renders differently,
+    and by definition nothing injects into one of those.
+    """
+    engine, goal, goal_id = _goal(tmp_path, token_budget=400_000)
+    goal = _go(engine, goal_id, turns=1, tokens=75_116)
+
+    assert goal.status == GOAL_ACTIVE
+    assert "Turn 2 of at most 4" in progress(goal, 4)  # the NEXT turn
+
+    update_goal_status(engine, "s", GOAL_COMPLETE)
+    done = get_goal(engine, "s")
+    line = progress(done, 4)
+    assert "Turn 1 of at most 4" in line  # what it SPENT
+    assert "Tokens 75116 of 400000" in line
+
+    update_goal_status(engine, "s", GOAL_PAUSED)
+    assert "Turn 1 of at most 4" in progress(get_goal(engine, "s"), 4)
 
 
 def test_the_prompt_stays_short(tmp_path):

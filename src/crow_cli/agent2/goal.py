@@ -99,8 +99,19 @@ def progress(goal, max_goal_turns: int | None) -> str:
     Public because the user's ``/goal`` status shows the same fact. Two
     renderings of one row would drift, and the drift would be invisible: the
     model would be told one ceiling and the person another.
+
+    One rendering, then, but not one reading of the turn count — the two callers
+    are in different states of the world and the row is what tells them apart.
     """
-    turns = f"Turn {goal.turns_used + 1}"
+    # +1 while the goal is live, and only while. A continuation is injected at
+    # the START of the turn it counts, so the model has to be told which turn it
+    # is about to spend rather than how many it has spent. A goal that has
+    # stopped has no turn in flight, and "Turn 2 of at most 4" on a row that
+    # says `complete` with `turns_used == 1` reads as a turn nobody is running.
+    # Found by the manual eyeball, which is the only check that sees the line
+    # the way a person does.
+    nxt = 1 if goal.status == GOAL_ACTIVE else 0
+    turns = f"Turn {goal.turns_used + nxt}"
     turns += f" of at most {max_goal_turns}" if max_goal_turns else " of this goal"
     if goal.token_budget is None:
         return f"{turns}. No token ceiling."
