@@ -160,14 +160,35 @@ learn. §5.4: "by the time anything looks, it is an ordinary pending delivery."
       make `__getattr__` win. NOT this sprint: it predates /goal, nothing in
       production hits it, and the fix touches the one module every kernel
       starts with.
+- [ ] Objective length cap. codex enforces `MAX_THREAD_GOAL_OBJECTIVE_CHARS =
+      4000` (protocol.rs:3957-3969) and crow enforces nothing: `/goal` will
+      store a 200KB objective, and the objective is interpolated into
+      `CONTINUATION_PROMPT` — whose size `test_the_prompt_stays_short` pins
+      under 900 chars, with a comment reading "if this assertion fails,
+      someone added a cathedral". An unbounded
+      objective defeats that pin entirely, and it is re-sent on every
+      continuation, so the cost is per turn rather than once. Belongs in
+      `set_goal` (the store) and not in the slash handler, because a second
+      entry point would need the same check and the store is the one place
+      every writer passes through. NOT this sprint: it is a new rejection path
+      with its own wording and its own test, and nothing in the shipped loop
+      misbehaves without it.
 - [x] Cleanup found along the way: `agent/slash.py:134-140` is an orphaned copy
       of `register_slash_command`'s body sitting after `stop_command`'s
       `return` — unreachable, and it references `name`/`description` that do
       not exist in that scope. Delete it.
       *2026-09-24: deleted, seven lines. `tests/integration/test_slash_commands.py`
       (v1's own nine) still green.*
-- [ ] ACP_V2.md: §5.4 stops being a proposal; `:28`'s status table and `:811`
+- [x] ACP_V2.md: §5.4 stops being a proposal; `:28`'s status table and `:811`
       ("timers.py, celery | Not involved") get corrected to match what shipped.
+      *2026-09-24: six edits, three of them beyond the item as written because
+      the file was asserting things that are no longer true — §1's "a
+      model-facing way to feed itself: does not exist", §5.5's "`TaskDelivery(`
+      is constructed in exactly ONE place", and §5.8's "ship it without a
+      budget". Every symbol named in the new text was grepped for in the file it
+      is attributed to. §5.3's argument is now recorded as proven rather than
+      predicted: the feature that looked most like it would need a scheduler
+      needs no clock, no broker and no worker.*
 
 ## Explicitly deferred (write the reason, do not do the work)
 

@@ -433,8 +433,40 @@ to raise; agent2 never imports its slash module.]**
     `:811`'s "Not involved" confirmed still true and now *load-bearing* — the
     goal proves §5.3 right.
     *Verify:* prose matches code — grep every symbol named in the new §5.4 text.
+    **DONE. Every symbol in the new text was grepped for in the file it is
+    attributed to and all were found.** Six edits, three of them beyond the
+    draft's list because leaving them would have left the document asserting
+    things that are no longer true:
+    - §1's status table: "A model-facing way to feed **itself** | does not
+      exist" was the stalest line in the file. Now three rows — the mechanism
+      built, `/goal` built with its five modules named, `remind` explicitly not
+      built. Test count 1326 → 1407.
+    - §5's head: a status banner saying the MECHANISM shipped and the subtool
+      did not, and that §5.1–§5.3 and §5.5–§5.9 are still the argument. The
+      heading itself is unchanged so the TOC anchor still resolves.
+    - §5.4 gains "What actually shipped, and where it differs": a three-row
+      table of the deviations (a `Goal` row not a `Task` row; `queue_delivery`
+      plus `account_goal_usage` rather than `finish_task`, because the row must
+      SURVIVE firing; and `_park` consulting the goal BEFORE announcing idle
+      rather than after, which the proposal's snippet gets the other way
+      round), then the real names by file for grepping. The proposal's own
+      snippet is kept and relabelled "as proposed".
+    - §5.5's `TaskDelivery` row said the constructor appears in exactly ONE
+      place. It appears in two now. Corrected rather than left, and the
+      `timers.py`, celery row expanded into the load-bearing claim the draft
+      asked for.
+    - §5.8 recommended shipping without a budget and gave three reasons.
+      `/goal` shipped with three brakes, so the section now records which
+      reason failed — the third, "a budget has no obvious home"; the home is
+      the row that persists the objective, which a one-shot note never had —
+      and describes the brake the assessment could not have predicted, the
+      no-tool continuation rule, which is not a budget at all.
+    - §5.10 marked unstarted and smaller than written, §8's hole 1 reworded,
+      and §9's git state flagged as a prior session's record rather than
+      silently rewritten.
 
-**Commit:** `feat(config)!: goal limits` + `docs: §5.4 shipped`
+**Commit:** `docs: §5.4 shipped` (7.1 landed in Phase 4 and Phase 6, so there
+is no config commit to make)
 
 ## Phase 8 — the full gate
 

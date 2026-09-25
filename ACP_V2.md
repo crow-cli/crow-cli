@@ -10,7 +10,7 @@ Contents:
 2. [Phase 2: protocol negotiation — done, committed](#2-phase-2-protocol-negotiation)
 3. [The v2 conversion: what it bought](#3-the-v2-conversion-what-it-actually-bought)
 4. [Wake: built, wired, and the one missing link](#4-wake-built-wired-and-the-one-missing-link)
-5. [PROPOSAL: `remind` — self-directed input that fires on idle](#5-proposal-remind)
+5. [PROPOSAL: `remind` — mechanism shipped as `/goal`, subtool unstarted](#5-proposal-remind)
 6. [Settled design decisions](#6-settled-design-decisions-do-not-re-litigate)
 7. [SDK and wire facts worth keeping](#7-sdk-and-wire-facts-worth-keeping)
 8. [Known open holes](#8-known-open-holes)
@@ -27,8 +27,10 @@ Contents:
 | Wake bus (`wake.py`), mailbox (`task_deliveries`), watcher (`agent2/watcher.py`) | built **and wired** |
 | Celery timer wheel (`timers.py`), `crow-cli timers` worker | built and tested, **no production caller** |
 | `task` / `task_send` / `task_cancel` / `task_read` subtools | built, `_LAZY_V2` only |
-| A model-facing way to feed **itself** | **does not exist** — §5 is the proposal |
-| Test suite | 1326 passed (`tests/{unit,mcp,memory,integration}`), 26 passed (`tests/e2e`) |
+| A model-facing way to feed **itself** | **built** — §5.4's mechanism, with a goal as the thing that defers |
+| `/goal`: the persisted objective, the continuation loop, its ceilings and its exits | built — `memory/models.Goal`, `agent2/goal.py`, `driver._goal_continuation`, `tools/goal.py`, `agent2/slash.py` |
+| `remind`, the self-note subtool §5 proposes | **not built** — §5.10 is unstarted and nothing below depends on it |
+| Test suite | 1407 passed (`tests/{unit,mcp,memory,integration}`), 26 passed (`tests/e2e`) |
 | Python 3.13 compile | 351 files, 0 failures |
 
 ---
@@ -598,6 +600,21 @@ itself.**
 
 > *Self-directed input that fires when the session goes idle.*
 
+**Status 2026-09-24: the MECHANISM shipped; `remind` did not.** §5.4's
+state-triggered wake is built and load-bearing — the driver consults a
+persisted objective at the idle transition and, when it decides to continue,
+writes an ordinary mailbox row that the loop's existing check picks up. What
+ships on top of it is `/goal`, not `remind`: one objective per session that
+keeps re-firing until its row leaves `active`, with the ceilings §5.8
+recommended skipping. The subtool below, a model leaving itself a single note,
+is unstarted, and §5.10's checklist is with it.
+
+§5.1–§5.3 and §5.5–§5.9 remain the argument for why the trigger is a state and
+not a clock, and nothing in `/goal` contradicts them; §5.3 in particular is now
+proven rather than asserted, because a goal continuation is exactly the case
+§5.3 describes and it needs no worker, no broker and no poke. §5.4 ends with
+what actually shipped and the three places it differs.
+
 ### 5.1 What the model gets
 
 ```python
@@ -674,7 +691,8 @@ callers of `_mailbox_pending()` that turn out to be asking different questions
 (`driver.py:209` asks "should I skip parking?", `driver.py:261` asks "was this
 wake real?"). Deferring in the row's status keeps the mailbox meaning one thing.
 
-`agent2/driver.py:419`:
+`agent2/driver.py`, as proposed (the shipped `_park` differs in ordering — see
+the end of this section):
 
 ```python
 async def _park(self) -> bool:
@@ -795,20 +813,59 @@ _LAZY_V2 = {
 }
 ```
 
+#### What actually shipped, and where it differs
+
+Built 2026-09-24 as the `/goal` continuation. The shape is the one above —
+consult at the idle transition, write a mailbox row, let the loop's existing
+`_mailbox_pending()` find it — with three differences, each forced by what the
+deferring thing turned out to be.
+
+| the proposal | what shipped | why |
+|---|---|---|
+| `remind()` writes a `Task` row with `kind="reminder"`, `status="running"` | `set_goal()` writes a `Goal` row with `status="active"` | A note is one-shot and a goal is a loop, so the row carries the loop's account: `turns_used`, `tokens_used`, `time_used_seconds`, `token_budget`, `blocked_reason`. None of that fits a `Task`, whose counters describe one child's run. |
+| `_fire_deferred()` calls `finish_task`, which lands the delivery in the same commit that takes the row terminal | `_goal_continuation()` calls `queue_delivery`, then `account_goal_usage` | A goal has no task row to finish, and it has to SURVIVE firing — the row is the loop's state, not the note's envelope. `queue_delivery` is `finish_task`'s inline delivery write, exposed. Two commits instead of one, and the window between them is benign: a crash there leaves one continuation queued against a counter one low, which is a rounding error on a loop guard and not a way to loop forever. |
+| `_park` announces `idle`, THEN fires | `_park` consults the goal BEFORE announcing `idle` | A session that is about to start another turn on its own account is not idle, and saying so is a lie the client renders. Hence `states() == ["idle","running","idle"]` for TWO turns: `_set_state` dedupes a state that never changed, so the continuation never announces itself. |
+
+The real names, for grepping:
+
+- `memory/models.py` — `Goal`, plus `GOAL_ACTIVE`, `GOAL_PAUSED`,
+  `GOAL_BLOCKED`, `GOAL_BUDGET_LIMITED`, `GOAL_COMPLETE`.
+- `memory/reads.py` — `get_goal`, `active_goal`.
+- `memory/writes.py` — `set_goal`, `update_goal_status`, `clear_goal`,
+  `account_goal_usage`, `queue_delivery`.
+- `agent2/goal.py` — `CONTINUATION_PROMPT`, `continuation_text`, `progress`,
+  `eligible`, `Verdict`.
+- `agent2/driver.py` — `_goal_continuation` (the consult), `_settle_goal` (the
+  accounting, and the cancel-pauses / error-blocks exits), and `_park`'s first
+  two lines.
+- `agent2/react.py` — `Done.tools_used`, `Done.tokens_spent`.
+- `tools/goal.py` — `goal_done`, `goal_blocked`, bound in `_LAZY_V2`.
+- `agent2/slash.py` — `goal_command`, imported for its side effect from
+  `agent2/agent.py` so that a v1 process never sees the name.
+- `config/config.py` — `GoalConfig`, `goal: {max_turns: 25, max_tokens: null}`.
+
+What did NOT change is still §5.5's list, and the two rows that matter most
+held. `consult` injects `d["content"]` verbatim and has no idea a goal wrote
+it. `wake.py`, `watcher.py` and redis are not involved — no poke, no bus, and
+the whole thing works with none configured. `timers.py` and celery are
+likewise untouched and still have no production caller, which is §5.3's
+argument surviving contact with the one feature that looked like it would need
+a scheduler.
+
 ### 5.5 What does NOT change
 
 This is the point of the design. Verified by reading, not assumed:
 
 | thing | why it is untouched |
 |---|---|
-| `TaskDelivery` schema | `TaskDelivery(` is constructed in exactly ONE place, `writes.py:216` inside `finish_task`. Still is. |
+| `TaskDelivery` schema | Unchanged. It is now constructed in TWO places rather than one — `finish_task` and `queue_delivery`, both in `writes.py`, the second being the first's delivery write exposed for a caller with no task row. Same columns, same `status="pending"`, no new field. |
 | `Task` schema | `sub_session` is already `nullable=True`; `kind` is already free text defaulting to `"subagent"`. |
 | `claim_deliveries` | Keyed on `session_id` with an optional exact `priority` match. No join to `tasks`. Never asks where a row came from. |
 | `consult` | Injects `d["content"]` verbatim as a user message and echoes it. Unchanged. |
 | `react.py:115/134/227/272` | All four breakpoints behave identically; the row is a normal pending delivery by then. |
-| `pending_deliveries` / `_mailbox_pending` | Filters on `status="pending"` only, no priority filter, so it sees the row the moment `finish_task` commits. |
-| `wake.py`, `watcher.py`, redis | **Not involved.** No poke. The trigger is local driver state, so `remind` works with no bus configured at all. |
-| `timers.py`, celery | Not involved. |
+| `pending_deliveries` / `_mailbox_pending` | Filters on `status="pending"` only, no priority filter, so it sees the row the moment `finish_task` — or `queue_delivery` — commits. |
+| `wake.py`, `watcher.py`, redis | **Not involved.** No poke. The trigger is local driver state, so `remind` (and the `/goal` continuation that shipped instead) works with no bus configured at all. |
+| `timers.py`, celery | Not involved — and this row is now load-bearing rather than incidental. `/goal` is the feature that looked most like it would need a scheduler: it re-fires on its own, indefinitely, with nobody watching. It needs no clock, no broker and no worker, because the trigger is a state the driver already passes through. §5.3's argument is no longer a prediction. `schedule_timer` still has no production caller. |
 | v1 / `agent/` | Not touched. v1 has no driver and no park, so a v1 kernel would write a row nobody ever fires — which is why this is `_LAZY_V2`. |
 | `launch_next_task` | Its docstring already claims two callers: *"the `task` subtool, and a scheduled wake. Both need the same id space, because both write rows the same mailbox delivers from and the same owner reads with the same `task_read()`."* `remind` becomes the second one in practice. |
 
@@ -903,6 +960,25 @@ If it turns out to be a problem in practice, the cheapest brake is a per-park ca
 in `_fire_deferred` plus a counter on the session — but that is a fix for an
 observed failure, not a speculative one.
 
+**What happened instead.** `/goal` shipped with three brakes, and the argument
+above lost on point 3 only: the spin is still visible and still stoppable, but
+"a budget has no obvious home" was wrong. The home is the row that persists the
+objective — which a one-shot note, having nothing to persist, never had.
+`Goal.turns_used` is the counter and `config.goal.max_turns` (default 25) the
+cap; `Goal.tokens_used` against `token_budget` is the second one, flipped in the
+SQL `CASE` inside `account_goal_usage` so the write and the limit are one
+commit. Both are consulted at the park by `agent2/goal.eligible`, not inside a
+per-park counter.
+
+The third brake is the one this assessment could not have predicted, because it
+is not a budget: a CONTINUATION turn that ran no tools ends the goal, as
+`blocked`. That covers the case where the model is not spinning hard but
+spinning still — talking about the work instead of doing it — which no token or
+turn ceiling catches early. It is only safe to have because the driver tracks
+whether the turn it just finished was one IT caused (`_continuation_in_flight`,
+consumed at the top of `_run_turn`), so a person who interjects "what's the
+status?" mid-goal gets a text-only answer without blocking their own goal.
+
 ### 5.9 Open decisions
 
 | # | question | recommendation |
@@ -915,6 +991,13 @@ observed failure, not a speculative one.
 | 6 | Does `schedule_timer` get wired too? | **Not in this change.** A timed delay isn't interesting. Leave it built and unwired; if a delay is ever wanted, `remind(note, after=300)` delegating to `schedule_timer` is additive and needs no new machinery. |
 
 ### 5.10 Implementation checklist
+
+**Unstarted, and now smaller than this.** Every item is about `remind`, which
+did not ship. The two driver items were built in a different shape for `/goal`
+and are in §5.4's table instead, and the `_LAZY_V2` item is a pattern
+`goal_done` and `goal_blocked` followed. Kept as the spec for `remind` if a
+model-facing one-shot note is ever wanted: the mechanism it needed now exists,
+so what is left is a subtool, a read and a `kind`, with no driver work at all.
 
 - [ ] `KIND_REMINDER = "reminder"` in `memory/models.py`, next to `Task`.
 - [ ] `deferred_reminders(engine, owner_session)` in `memory/reads.py`; export
@@ -1287,7 +1370,9 @@ new floor.
 
 Features, not bugs.
 
-1. **`remind`** — §5. The live proposal.
+1. **`remind`** — §5. Still unstarted, but no longer the thing blocking
+   self-directed input: §5.4's mechanism shipped under `/goal`, so what is left
+   here is the one-shot note and its subtool, not the wake.
 2. **`schedule_timer` has no production caller.** Built, tested, runnable,
    unwired. §5.3 argues it should stay that way for now.
 3. **`_run_mcp_tool` has no `progress_handler`** (`agent2/tools.py:361`).
@@ -1306,6 +1391,12 @@ Features, not bugs.
 ---
 
 ## 9. Git state
+
+**Stale, and kept as the record of the session that wrote it.** It predates the
+merge of `acp-v2-agent` into main and the `/goal` work; in particular "the
+worktree workflow is over" is no longer true — `/goal` was built in
+`~/.agents/crow/src/worktrees/goal`, off a main that has moved well past
+`07f4ec9b`. Read the commit list below as history, not as the current tree.
 
 ```
 main = 07f4ec9b  feat: ask the agent which protocol it speaks instead of declaring it
