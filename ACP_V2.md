@@ -30,7 +30,7 @@ Contents:
 | A model-facing way to feed **itself** | **built** — §5.4's mechanism, with a goal as the thing that defers |
 | `/goal`: the persisted objective, the continuation loop, its ceilings and its exits | built — `memory/models.Goal`, `agent2/goal.py`, `driver._goal_continuation`, `tools/goal_tool.py`, `agent2/slash.py` |
 | `remind`, the self-note subtool §5 proposes | **not built** — §5.10 is unstarted and nothing below depends on it |
-| Test suite | **1437 passed, 0 failed** — `./run_tests.sh`, every tier including the live e2e, 2154.88s |
+| Test suite | **1440 passed, 0 failed** — every tier including the live e2e (1414 in 462.10s + `tests/e2e` 26 in 1419.32s) |
 | ACP python-sdk | **1.0.0rc2 from PyPI** — the `[tool.uv.sources]` local path is gone (§7) |
 | Python 3.13 compile | 351 files, 0 failures |
 
@@ -1414,6 +1414,11 @@ is load-bearing. Don't assert the whole idle dict — it also carries `usage`.
 ### Test totals
 
 ```
+post-rename (410e11c7), the current state:
+tests/{unit,mcp,memory,integration}   1414 passed in  462.10s   0 failed
+tests/e2e (26 tests)                    26 passed in 1419.32s   0 failed
+                                      ===== 1440 passed, 0 failed
+
 ./run_tests.sh  (ALL tiers, live e2e)   1437 passed in 2154.88s  0 failed
 tests/{unit,mcp,memory,integration}   1411 passed in  469.01s   0 failed
 tests/e2e (26 tests)                    26 passed in 1593.72s  0 failed

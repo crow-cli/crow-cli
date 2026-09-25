@@ -188,7 +188,10 @@ learn. §5.4: "by the time anything looks, it is an ordinary pending delivery."
       `crow-cli.spec` also gained `crow_cli.tools.goal_tool`, which Phase 5
       should have added next to `task_tool` — both are `_LAZY_V2` and both are
       resolved through importlib, so both are invisible to PyInstaller's static
-      analysis. Four tiers: 1414 passed, 0 failed in 462.10s.*
+      analysis. Four tiers 1414 passed, 0 failed in 462.10s; `tests/e2e` 26
+      passed in 1419.32s, which is the half that matters here because it runs a
+      real kernel on PRELUDE_V2 and binds `goal_done`, `goal_blocked` and the
+      four `task` names out of the renamed modules. 1440 in all.*
 - [ ] Objective length cap. codex enforces `MAX_THREAD_GOAL_OBJECTIVE_CHARS =
       4000` (protocol.rs:3957-3969) and crow enforces nothing: `/goal` will
       store a 200KB objective, and the objective is interpolated into
