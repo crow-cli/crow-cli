@@ -55,6 +55,7 @@ from crow_cli.agent.hooks import CommandHook
 from crow_cli.agent.session import AgentSession
 from crow_cli.config import Config
 from crow_cli.memory import (
+    GOAL_ACTIVE,
     GOAL_BLOCKED,
     GOAL_PAUSED,
     active_goal,
@@ -390,18 +391,26 @@ class SessionDriver:
         row = get_goal(engine, self.session_id)
         if row is None:
             return
+        # Only a goal that is STILL RUNNING gets moved by how its turn ended.
+        # A status that is not active was set by somebody else — the model
+        # called goal_done, the user paused it, the budget CASE fired — and
+        # overwriting it would mean a goal_done followed by an unrelated error
+        # comes back as blocked. An exit that does not hold is not an exit.
+        # The spend below is charged either way: those tokens were spent on
+        # this goal whatever its status, and the row is that goal's account.
+        running = row.status == GOAL_ACTIVE
         # STATE FIRST, and the state is the user's or the harness's, not the
         # arithmetic's: a cancel is the person stopping the work rather than the
         # work failing, so it pauses and `/goal resume` picks it back up. Both
         # writes carry the id they read, so a goal replaced mid-turn is left
         # alone rather than paused or blocked by a turn that was not about it.
-        if done.stop_reason == "cancelled":
+        if running and done.stop_reason == "cancelled":
             update_goal_status(
                 engine, self.session_id, GOAL_PAUSED, expected_goal_id=row.goal_id
             )
             self.log.info("Goal %s paused: the turn was cancelled", row.goal_id[:8])
             return
-        if done.stop_reason == "error":
+        if running and done.stop_reason == "error":
             update_goal_status(
                 engine,
                 self.session_id,

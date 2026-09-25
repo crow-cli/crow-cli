@@ -214,14 +214,101 @@ isolation and on re-run; untouched by this work).]**
 
 ## Phase 5 — the model can end it
 
+**[PHASE 5 DONE 2026-09-24 — `tests/unit/test_tools_goal.py` 19 green,
+`tests/integration/test_goal_driver.py` 14 green (3 new), full tier
+`tests/unit tests/memory tests/mcp tests/integration` = 1387 passed, 0 failed.
+TEN mutations applied, all ten detected: drop the driver's error guard; drop
+its cancel guard; make `goal_done` never write (integration AND unit); drop the
+stored reason; accept an empty reason; resolve the engine before the identity;
+delete `KIND_BY_RESULT["goal"]`; make the result promise a stop for a still
+active goal; bind `goal_done` into `_LAZY`.]**
+
 5.1 `tools/goal.py`: two subtools, `goal_done` and `goal_blocked`, each with a
-    `@subtool` decorator, registered in `tools/__init__.py`'s `_LAZY`. They read
-    the identity rail for the session id the same way `tools/task.py` does —
-    never a model-supplied session id. `goal_done` → status complete;
+    `@subtool` decorator, registered in `tools/__init__.py`'s **`_LAZY_V2`, not
+    `_LAZY`** — CORRECTED FROM THE DRAFT. They are the exits from a
+    continuation loop and only the agent2 driver runs one; v1 has no idle
+    transition to hook, so binding them in a v1 kernel offers the model a way
+    out of a loop it is not in. (`task` is in `_LAZY_V2` for a DIFFERENT reason
+    — a name collision with v1's MCP tool — and both reasons are now written in
+    the table's comment rather than one being left to inference.)
+    They read the identity rail for the session id the same way `tools/task.py`
+    does — never a model-supplied session id, and identity is resolved BEFORE
+    the database so a caller with no rail is told who it failed to be rather
+    than where it failed to write. `goal_done` → status complete;
     `goal_blocked(reason)` → status blocked, and the reason is stored so `/goal`
     can show it.
     *Verify:* unit test in the subtool style used by `tests/unit/` for task.py;
     `reload()`-equivalent registration check that both names resolve.
+    **DONE, with four decisions the draft did not make:**
+    - `goal_done()` takes NO arguments. codex's `update_goal` takes only
+      `status` — not even a reason — and the achievement belongs in the model's
+      reply, where the user reads prose. A `summary` argument would have the
+      model write the same sentence twice, once to a wire tool call nobody
+      reads as prose and once to the person.
+    - `goal_blocked(reason)` REQUIRES the reason and refuses an empty or
+      whitespace one with a `GoalError` that models the call it wants. codex
+      captures no reason at all, so a blocked codex goal tells nobody why it
+      stopped; ours stores it stripped, verbatim, because it is the only thing
+      the user gets to read.
+    - Both exits are IDEMPOTENT and neither raises on a goal somebody else
+      already stopped — they return `GoalResult(changed=False)` and say so in
+      `.text`. They are called at the end of a turn the model spent real
+      reasoning on, and the right answer to "I already said that" is "yes, and
+      nothing changed", not an exception that reads as though the work failed.
+      Same rule as `agent2.goal.eligible` returning `Verdict(None, ...)`.
+    - The status is READ BACK off the row after the write, not echoed from the
+      call, because three processes write this row and the driver reads it at
+      the idle transition — what the model is told has to be what the driver
+      will find.
+
+5.2 **NOT IN THE DRAFT — the driver guard, found while building 5.1.**
+    `_settle_goal` now moves the goal only when the row it read is STILL
+    `active` (`running = row.status == GOAL_ACTIVE`, guarding both the
+    cancel→paused and the error→blocked writes). Without it an exit does not
+    hold: `goal_done` followed by an unrelated failure later in the same turn
+    came back `blocked`, telling the model its finished work was stuck and
+    showing `/goal` a problem that does not exist. The spend is charged either
+    way — those tokens were spent on that goal whatever its status, and the row
+    is that goal's account.
+    *Verify:* two integration tests, `..._errors_after_the_goal_was_ended_
+    does_not_reopen_it` and `..._cancelling_a_turn_that_already_ended_the_goal_
+    does_not_pause_it`, each mutation-detected by dropping one guard.
+
+5.3 **NOT IN THE DRAFT — the other two channels.** The draft named the subtools
+    and stopped; a subtool call produces three outputs and the plan only
+    accounted for one. `GoalResult`/`GoalError` in `tools/results.py`
+    (`result_kind = "goal"`, the objective as the ACP `subject` because it is
+    the only part a person scanning a transcript recognizes, and the spend in
+    `.text` because codex asks the model to report final usage and it can only
+    report what the result carries), plus `"goal": "other"` in
+    `agent2/tools.py`'s `KIND_BY_RESULT`. The mapping entry is not redundant:
+    `tool_kind("goal_done")` reaches "other" only by falling through EVERY
+    substring rule, so without it the kind is "other" by accident and the next
+    rule added to that function could quietly reclassify it.
+    *Verify:* `test_the_call_is_recorded_for_the_drain`,
+    `test_a_refusal_is_recorded_as_a_failure`,
+    `test_the_wire_kind_is_stated_not_fallen_into`.
+
+5.4 Also discharged: PLAN 4.3's deferred case (c) — `goal_done` ends the goal
+    and it is not continued. `test_goal_done_from_the_kernel_ends_the_loop`
+    calls the REAL subtool with the rail pointed at the gate's database (its own
+    engine on the same file, which is the cross-process situation) and asserts
+    one llm call, an empty mailbox and one running between the idles. The turn
+    is text-only on purpose: a text-only turn the USER caused DOES continue, so
+    "no continuation" can only mean `active_goal` found nothing.
+
+**Deviation in the registration check:** it resolves each `_LAZY_V2` entry
+through `importlib.import_module(module).attr` — the way `reload()` does — and
+NOT through `getattr(crow_cli.tools, name)`. Running the whole suite showed why:
+an earlier `import crow_cli.tools.task` leaves the MODULE on the package
+attribute, which shadows `__getattr__`, so `T.task` is a module and the facade
+hands out something uncallable. That is the documented wart `reload()`'s purge
+exists to undo, not a bug in this phase, but it is real and it is now in
+TODO.md. The two NEW names are additionally asserted through the facade itself,
+which nothing shadows. The live-kernel half of the check was already there:
+`tests/mcp/test_mcp2_server.py::test_the_prelude_binds_the_whole_v2_facade`
+reads `_names()` out of a running kernel, so it covered `goal_done` and
+`goal_blocked` the moment they were added, with no edit.
 
 **Commit:** `feat(tools): goal_done and goal_blocked`
 

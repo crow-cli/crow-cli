@@ -107,13 +107,42 @@ learn. §5.4: "by the time anything looks, it is an ordinary pending delivery."
 - [ ] `/goal` slash command: bare = show, `<objective>` = set, plus
       `clear|pause|resume`. Needs the engine on `_SlashView` (v2) and on v1's
       `AcpAgent`, because `agent/slash.py` is shared by both.
-- [ ] Model-facing tools so the loop can END: `goal_done` and `goal_blocked` as
+- [x] Model-facing tools so the loop can END: `goal_done` and `goal_blocked` as
       two subtools, not one mode dispatcher — `tools/task.py`'s house rule is
       explicit that "a capability behind a mode-string dispatcher is a
       capability that does not get reached."
-- [ ] Tests: unit for the store and the eligibility rules; integration for the
+      *2026-09-24: shipped in `_LAZY_V2`, not `_LAZY` — v1 runs no continuation
+      loop, so an exit bound there is a call that succeeds, changes a row and
+      means nothing. `goal_done()` takes no arguments (the achievement is the
+      model's reply, not a wire payload); `goal_blocked(reason)` refuses an
+      empty reason, because codex captures none at all and a blocked goal that
+      cannot say why is a dead end with no exit sign. Both idempotent, neither
+      raises on a goal somebody else already stopped, both read the row BACK
+      after writing it. Shipped with the driver guard that makes an exit hold:
+      `_settle_goal` only moves a goal that is still `active`, so a `goal_done`
+      followed by an unrelated error in the same turn stays `complete` instead
+      of coming back `blocked`.*
+- [x] Tests: unit for the store and the eligibility rules; integration for the
       driver actually continuing, actually stopping, and actually not looping
       forever. Real code paths, no mocks.
+      *2026-09-24: 16 store + 12 policy + 19 subtool + 14 driver = 61 goal
+      tests, no mocks anywhere — temp sqlite files, a real FastMCP subprocess,
+      a real agent and transport, and a scripted model because a gate that
+      needs a provider is not a gate. 18 mutations applied and every one
+      detected, across Phases 3-5 (1 + 7 + 10); Phases 1-2 are store and
+      pure-policy code, asserted directly rather than mutated. Full tier 1387
+      passed. What is left is Phase 8: `./run_tests.sh` including e2e, and the
+      manual eyeball.*
+- [ ] The `crow_cli.tools` facade wart, found by Phase 5's registration check:
+      `import crow_cli.tools.task` anywhere in the process leaves the MODULE on
+      the package attribute, which shadows `__getattr__`, so `T.task` is
+      afterwards a module and not the callable. `reload()` purges exactly this
+      (and says so in a comment), so a real kernel is fine — but any in-process
+      consumer that imports a submodule and then reaches for the facade by name
+      gets something uncallable. Either stop setting the parent attribute or
+      make `__getattr__` win. NOT this sprint: it predates /goal, nothing in
+      production hits it, and the fix touches the one module every kernel
+      starts with.
 - [ ] Cleanup found along the way: `agent/slash.py:134-140` is an orphaned copy
       of `register_slash_command`'s body sitting after `stop_command`'s
       `return` — unreachable, and it references `name`/`description` that do

@@ -22,6 +22,8 @@ production:
 - a turn the USER caused is never judged by that rule, so asking a question
   mid-goal does not block your own goal;
 - an errored turn blocks and a cancelled turn pauses, so neither loops;
+- a goal the MODEL ended is not continued, and the turn that carried the
+  ending cannot reopen it;
 - the ceilings — turns and tokens — actually fire from here.
 """
 
@@ -40,6 +42,8 @@ from crow_cli.memory import (
     set_goal,
     update_goal_status,
 )
+from crow_cli.tools.goal import _dispose, goal_done
+from crow_cli.tools.register import begin_cell, clear
 
 from tests.integration.test_agent2_gate import (
     HANG,
@@ -63,6 +67,17 @@ def _config(tmp_path, **goal_kwargs):
     for key, value in goal_kwargs.items():
         setattr(config.goal, key, value)
     return config
+
+
+@pytest.fixture
+def rail():
+    """The subtool identity rail, set the way execute's prologue sets it and
+    taken down again afterwards. It is process-global — a contextvar plus the
+    register's write-through sink — so leaving it standing would point the next
+    test's subtool calls at this one's throwaway database."""
+    yield begin_cell
+    clear()
+    _dispose()
 
 
 def _row(g):
@@ -296,6 +311,90 @@ async def test_the_token_budget_stops_a_goal_that_keeps_working(tmp_path):
         assert row.turns_used == 2
         assert row.blocked_reason is None
         assert _mailbox(g) == []
+
+
+async def test_goal_done_from_the_kernel_ends_the_loop(tmp_path, rail):
+    """The model's exit, and the claim the whole design rests on.
+
+    ``goal_done`` runs in the execute kernel — a different process from the
+    driver, with its own engine on the same file — and the row is the only
+    thing between them. What it writes here is what ``_goal_continuation``
+    reads at the idle transition, so the loop stops with nothing told to
+    anybody: no event, no wake, no client round trip.
+
+    The turn is text-only on purpose. A text-only turn the USER caused does
+    continue (see above), so "no continuation" here can only mean
+    ``active_goal`` found nothing.
+    """
+    scripts = [text("that is everything") + [usage(10)]]
+    async with gate(tmp_path, scripts) as g:
+        await g.new_session()
+        await g.wait_for_idle(1)
+        set_goal(g.agent.sessions.engine, g.session_id, "finish the port")
+
+        rail(session_id=g.session_id, db_uri=g.config.db_uri)
+        result = await goal_done()
+        assert (result.status, result.changed) == (GOAL_COMPLETE, True)
+
+        await g.prompt(v2.schema.TextContentBlock(text="go"))
+        await g.wait_for_idle(2)
+
+        assert len(g.llm.calls) == 1
+        assert _row(g).status == GOAL_COMPLETE
+        assert _mailbox(g) == []
+        assert [s["state"] for s in g.states()] == ["idle", "running", "idle"]
+
+
+async def test_a_turn_that_errors_after_the_goal_was_ended_does_not_reopen_it(
+    tmp_path, rail
+):
+    """The guard on ``_settle_goal``: only a goal that is still running is
+    moved by how its turn ended.
+
+    An exit that a later failure in the same turn can overwrite is not an
+    exit. Without the guard this row comes back ``blocked`` — the model is
+    told its finished work is stuck, and ``/goal`` shows a person a problem
+    that does not exist.
+    """
+    async with gate(tmp_path, []) as g:  # nothing scripted: the first call raises
+        await g.new_session()
+        await g.wait_for_idle(1)
+        set_goal(g.agent.sessions.engine, g.session_id, "finish the port")
+
+        rail(session_id=g.session_id, db_uri=g.config.db_uri)
+        assert (await goal_done()).status == GOAL_COMPLETE
+
+        await g.prompt(v2.schema.TextContentBlock(text="go"))
+        await g.wait_for_idle(2)
+
+        assert g.idles()[1]["stopReason"] == "error"
+        row = _row(g)
+        assert row.status == GOAL_COMPLETE
+        assert row.blocked_reason is None
+        assert _mailbox(g) == []
+
+
+async def test_cancelling_a_turn_that_already_ended_the_goal_does_not_pause_it(
+    tmp_path, rail
+):
+    """The other half of the same guard. A cancel pauses a RUNNING goal so
+    ``/goal resume`` can pick it back up; pausing a goal the model already
+    completed would tell the user there is work left to resume."""
+    async with gate(tmp_path, [text("partial ") + [HANG]]) as g:
+        await g.new_session()
+        await g.wait_for_idle(1)
+        set_goal(g.agent.sessions.engine, g.session_id, "finish the port")
+
+        rail(session_id=g.session_id, db_uri=g.config.db_uri)
+        assert (await goal_done()).status == GOAL_COMPLETE
+
+        await g.prompt(v2.schema.TextContentBlock(text="go on forever"))
+        await g.wait_for(lambda: g.of_kind("agent_message_chunk"))
+        await g.cancel()
+        await g.wait_for_idle(2)
+
+        assert g.idles()[1]["stopReason"] == "cancelled"
+        assert _row(g).status == GOAL_COMPLETE
 
 
 async def test_a_session_with_no_goal_parks_as_before(tmp_path):

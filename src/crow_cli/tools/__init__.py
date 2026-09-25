@@ -34,12 +34,22 @@ _LAZY = {
 
 #: Bound in a v2 kernel ONLY, on top of _LAZY.
 #:
-#: The reason is a collision, not a protocol. v1 already ships `task` as an
-#: MCP tool served from the agent process, so a v1 kernel that also had a
-#: `task` subtool would have two launchers minting ids off the same global
-#: counter and writing the same two tables. And v1 is frozen: it does not get
-#: new ambient surface just because v2 needs it.
+#: For `task` the reason is a collision, not a protocol. v1 already ships it
+#: as an MCP tool served from the agent process, so a v1 kernel that also had
+#: a `task` subtool would have two launchers minting ids off the same global
+#: counter and writing the same two tables.
+#:
+#: For `goal_done`/`goal_blocked` it IS the protocol: they are the exits from
+#: a continuation loop, and only the agent2 driver runs one (v1 has no idle
+#: transition to hook). Binding them in a v1 kernel would offer the model a
+#: way out of a loop it is not in — a call that succeeds, changes a row, and
+#: means nothing.
+#:
+#: Either way, v1 is frozen: it does not get new ambient surface just because
+#: v2 needs it.
 _LAZY_V2 = {
+    "goal_blocked": ("crow_cli.tools.goal", "goal_blocked"),
+    "goal_done": ("crow_cli.tools.goal", "goal_done"),
     "task": ("crow_cli.tools.task", "task"),
     "task_cancel": ("crow_cli.tools.task", "task_cancel"),
     "task_read": ("crow_cli.tools.task", "task_read"),

@@ -854,3 +854,87 @@ class TaskError(ToolError):
     """
 
 
+@dataclass
+class GoalResult(ToolResult):
+    """The goal row after the model ended it — or found it already ended.
+
+    ``status`` is read back off the row rather than echoed from the call, so
+    it is the truth and not the intent: a goal the user paused mid-turn comes
+    back ``paused``, because the model does not get to overrule the person who
+    stopped it. ``changed`` says whether this call is what moved it. Both
+    exits are idempotent on purpose — a model that has just decided the work
+    is done should not have to reason about whether it already said so — and
+    an idempotent call that quietly did nothing is a call that gets made
+    again, so it says so out loud.
+
+    ``reason`` is what ``goal_blocked`` stored, and it is the one field a
+    completed goal never has: a blocked goal is waiting on a person, and this
+    is the only thing that person gets to read about why.
+
+    There is no ``goal_id`` in ``.text``, unlike TaskResult's ``task_id``. A
+    task id is a handle the model passes to three other calls; a goal id is a
+    stale-write guard nobody types.
+    """
+
+    status: str
+    objective: str = ""
+    reason: str = ""
+    changed: bool = True
+    turns_used: int = 0
+    tokens_used: int = 0
+    token_budget: int | None = None
+    time_used_seconds: int = 0
+
+    # A goal is orchestration of the session itself, which is what "task"
+    # files the subagent calls under, and ACP has no kind for either.
+    result_kind = "goal"
+
+    def acp_payload(self) -> dict:
+        # The objective is the subject because it is the only part a person
+        # scanning a transcript can recognize; the status is already in the
+        # title the drain builds from the tool name.
+        return {"content": "text", "text": self.text, "subject": self.subject}
+
+    @property
+    def subject(self) -> str:
+        return self.objective[:60] + ("…" if len(self.objective) > 60 else "")
+
+    @property
+    def text(self) -> str:
+        head = f"goal {self.status}"
+        if not self.changed:
+            head += ", and it already was — this call changed nothing"
+        lines = [f'{head}: "{self.subject}"']
+        if self.reason:
+            lines.append(f"why: {self.reason}")
+        tokens = f"{self.tokens_used:,}"
+        if self.token_budget is not None:
+            tokens += f" of {self.token_budget:,}"
+        lines.append(
+            f"{self.turns_used} turns, {tokens} tokens,"
+            f" {self.time_used_seconds // 60}m{self.time_used_seconds % 60:02d}s."
+        )
+        # The consequence, which is the whole reason the row exists. Stated
+        # for the status the row actually has, because a write that lost the
+        # race against a new goal leaves an ACTIVE one behind and promising
+        # it would stop is the one thing this must not say.
+        lines.append(
+            "The goal is still active, so this session keeps being continued."
+            if self.status == "active"
+            else "This session will not be continued automatically."
+        )
+        return "\n".join(lines)
+
+
+class GoalError(ToolError):
+    """A goal could not be ended.
+
+    The refusals land here too, and they state the rule rather than the
+    exception: reaching for ``goal_done`` in a session that has no goal is not
+    a crash, it is a model looking for an exit that was never armed, and
+    ``goal_blocked`` with no reason is not a mistake to report but a thing to
+    ask again for — the reason is the only part of a blocked goal anybody
+    reads.
+    """
+
+
