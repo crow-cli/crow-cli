@@ -401,6 +401,20 @@ def unroll_content(content: str | list | None) -> str:
         return content
 
 def last_messages(session: AgentSession, n_messages: int = 20, max_chars: int = 300):
+    """The tail of the conversation, flattened into the compaction handoff.
+
+    Every branch is capped at ``max_chars``, and the cap is what makes
+    compaction CONVERGE rather than merely succeed. The handoff a compacted
+    generation is born with is ``summary + last_messages(...)``, persisted as
+    its first USER message — so the next compaction's tail reads the previous
+    handoff back. An uncapped user branch folds each handoff into the next one
+    whole and the size compounds: measured live at a 30k ceiling, 11k -> 32k ->
+    58k -> 92k -> 131k -> 172k chars over six generations, each successor born
+    closer to the ceiling and then past it, each summary call slower than the
+    one before, until the turn could no longer finish inside its timeout. The
+    summary is the record; the tail is texture, and texture is worth
+    ``max_chars`` a message no matter which role wrote it.
+    """
     if len(session.messages) > n_messages:
         last_msgs = session.messages[-n_messages:]
     else:
@@ -411,7 +425,8 @@ def last_messages(session: AgentSession, n_messages: int = 20, max_chars: int = 
         if role == "user":
             last_msgs_list.append("USER:")
             content = unroll_content(msg.get("content", ""))
-            last_msgs_list.append(content)
+            new_content = content[:max_chars] if len(content) > max_chars else content
+            last_msgs_list.append(new_content)
         if role == "tool":
             last_msgs_list.append("TOOL RESULT:")
             content = unroll_content(msg.get("content", ""))
