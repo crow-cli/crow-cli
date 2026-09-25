@@ -209,8 +209,8 @@ class UpdateClient:
     def __init__(self) -> None:
         self.updates: asyncio.Queue = asyncio.Queue()
 
-    async def session_update(self, notification) -> None:
-        await self.updates.put(notification)
+    async def session_update(self, session_id, update, **kwargs) -> None:
+        await self.updates.put((session_id, update))
 
 
 def make_config(tmp_path: Path) -> Config:
@@ -335,6 +335,31 @@ class Gate:
         return [s for s in self.states() if s.get("state") == "idle"]
 
     @property
+    def tools_used(self) -> int:
+        """How many tool calls the last turn ran, read off the driver.
+
+        The one fact in this file that has no wire representation, because no
+        client asks for it. It is still a fact about the turn and not an
+        implementation detail: the goal continuation decides whether to loop
+        again on exactly this number, so a gate that cannot see it cannot test
+        the guard that keeps a goal from burning tokens on a model talking to
+        itself.
+        """
+        return self.agent.sessions.drivers[self.session_id]._last_tools_used
+
+    @property
+    def tokens_spent(self) -> int:
+        """What the last turn was billed, summed over every model call in it.
+
+        Distinct from the ``usage`` an idle carries, which is the LAST call's
+        totals and answers "how full is the context now". A multi-round tool
+        turn re-sends a growing context once per round, so the two diverge by
+        roughly the number of rounds — and the goal's token budget charges this
+        one, because a ceiling computed from the other does not fire.
+        """
+        return self.agent.sessions.drivers[self.session_id]._last_tokens_spent
+
+    @property
     def agent_id(self) -> str:
         """The one agent row this gate created."""
         ids = list(self.agent.sessions.sessions)
@@ -366,35 +391,27 @@ class Gate:
 
     async def initialize(self):
         return await self.conn.initialize(
-            v2.schema.InitializeRequest(
-                protocol_version=v2.PROTOCOL_VERSION,
-                info=v2.schema.Implementation(name="gate-client", version="2.0.0"),
-            )
+            protocol_version=v2.PROTOCOL_VERSION,
+            info=v2.schema.Implementation(name="gate-client", version="2.0.0"),
         )
 
     async def new_session(self, mcp_servers: list | None = None, cwd: str | None = None):
         response = await self.conn.new_session(
-            v2.schema.NewSessionRequest(
-                cwd=cwd or str(self.tmp_path), mcp_servers=mcp_servers or []
-            )
+            cwd=cwd or str(self.tmp_path), mcp_servers=mcp_servers or []
         )
         self.session_id = response.session_id
         return response
 
     async def prompt(self, *blocks):
         return await self.conn.prompt(
-            v2.schema.PromptRequest(session_id=self.session_id, prompt=list(blocks))
+            session_id=self.session_id, prompt=list(blocks)
         )
 
     async def cancel(self) -> None:
-        await self.conn.cancel_session(
-            v2.schema.CancelSessionNotification(session_id=self.session_id)
-        )
+        await self.conn.cancel_session(session_id=self.session_id)
 
     async def list_sessions(self, cwd: str | None = None, cursor: str | None = None):
-        return await self.conn.list_sessions(
-            v2.schema.ListSessionsRequest(cwd=cwd, cursor=cursor)
-        )
+        return await self.conn.list_sessions(cwd=cwd, cursor=cursor)
 
     async def resume_session(
         self,
@@ -406,39 +423,33 @@ class Gate:
         """``replay=True`` sends ``replayFrom: {"type": "start"}`` — the only
         variant the schema has, and the one that asks for the transcript."""
         return await self.conn.resume_session(
-            v2.schema.ResumeSessionRequest(
-                session_id=session_id or self.session_id,
-                cwd=cwd or str(self.tmp_path),
-                mcp_servers=mcp_servers or [],
-                replay_from=v2.schema.ReplayFromStartVariant() if replay else None,
-            )
+            session_id=session_id or self.session_id,
+            cwd=cwd or str(self.tmp_path),
+            mcp_servers=mcp_servers or [],
+            replay_from=v2.schema.ReplayFromStartVariant() if replay else None,
         )
 
     async def close_session(self, session_id: str | None = None):
-        return await self.conn.close_session(
-            v2.schema.CloseSessionRequest(session_id=session_id or self.session_id)
-        )
+        return await self.conn.close_session(session_id=session_id or self.session_id)
 
     async def fork_session(self, session_id: str | None = None, **meta):
         """The anchors ride ``_meta``: v2's ForkSessionRequest carries the
-        environment and nothing else, so there is nowhere else to put them."""
+        environment and nothing else, so there is nowhere else to put them.
+        rc2 spells that as the connection's own ``**kwargs`` — ``build_request``
+        puts whatever the named fields did not consume into ``field_meta``."""
         return await self.conn.fork_session(
-            v2.schema.ForkSessionRequest(
-                session_id=session_id or self.session_id,
-                cwd=str(self.tmp_path),
-                mcp_servers=[],
-                field_meta=meta or None,
-            )
+            session_id=session_id or self.session_id,
+            cwd=str(self.tmp_path),
+            mcp_servers=[],
+            **meta,
         )
 
     async def set_config_option(self, config_id: str, value: str, session_id: str | None = None):
         return await self.conn.set_config_option(
-            v2.schema.SetSessionConfigOptionIdRequest(
-                session_id=session_id or self.session_id,
-                config_id=config_id,
-                value=value,
-                type="id",
-            )
+            config_id=config_id,
+            session_id=session_id or self.session_id,
+            value=value,
+            type="id",
         )
 
     # -- waiting -----------------------------------------------------------
@@ -612,9 +623,14 @@ async def test_the_v2_prompt_lifecycle_lands_on_the_wire_in_order(tmp_path):
 
     v2 inverted the prompt: the response acknowledges and the turn's outcome
     travels as notifications. So the order below is not cosmetics, it is the
-    contract a client is written against — ``{}`` first, then the user message
-    the agent says it inserted, then running, then the reply, then idle
-    carrying the stop reason v1 used to put in the response body.
+    contract a client is written against — the acknowledgement first, then the
+    user message the agent says it inserted, then running, then the reply, then
+    idle carrying the stop reason v1 used to put in the response body.
+
+    The acknowledgement is not empty. It carries the ``messageId`` the prompt
+    landed under, and the ``user_message`` update that follows carries the same
+    one — which is the only reason a client can tie the two together given
+    that the spec lets either arrive first.
     """
     async with gate(tmp_path, [text("Hello", ", world", "!") + [usage(42)]]) as g:
         await g.new_session()
@@ -628,7 +644,9 @@ async def test_the_v2_prompt_lifecycle_lands_on_the_wire_in_order(tmp_path):
 
         prompt_response_index = len(g.wire)
         response = await g.prompt(v2.schema.TextContentBlock(text="say hi"))
-        assert response.model_dump(mode="json", by_alias=True, exclude_none=True) == {}
+        assert response.model_dump(mode="json", by_alias=True, exclude_none=True) == {
+            "messageId": response.message_id
+        }
 
         await g.wait_for_idle(2)
 
@@ -656,12 +674,15 @@ async def test_the_v2_prompt_lifecycle_lands_on_the_wire_in_order(tmp_path):
         first_update_at = next(
             i for i, e in enumerate(tail) if e.message.get("method") == "session/update"
         )
-        assert tail[result_at].message["result"] == {}
+        assert tail[result_at].message["result"] == {"messageId": response.message_id}
         assert result_at < first_update_at, (result_at, first_update_at)
 
         user = g.of_kind("user_message")[0]
         assert user["content"] == [{"text": "say hi", "type": "text"}]
-        assert user["messageId"]
+        # The id the acknowledgement promised, on the message it refers to. The
+        # driver echoes the prompt on its own task, so this is the assertion
+        # that the two halves did not each mint one.
+        assert user["messageId"] == response.message_id
 
         chunks = g.of_kind("agent_message_chunk")
         assert [c["content"]["text"] for c in chunks] == ["Hello", ", world", "!"]
@@ -683,6 +704,12 @@ async def test_the_v2_prompt_lifecycle_lands_on_the_wire_in_order(tmp_path):
         }
 
         assert g.of_kind("usage_update")[0]["used"] == 42
+        # A turn that only talked ran no tools. Half of the progress signal
+        # the goal continuation reads; the other half is the tool round trip.
+        assert g.tools_used == 0
+        # One model call, so the turn's bill and the context size agree. The
+        # tool round trip below is where they come apart.
+        assert g.tokens_spent == 42
 
         # One prompt, one model call.
         assert len(g.llm.calls) == 1
@@ -879,6 +906,16 @@ async def test_a_tool_call_becomes_one_upsert_sequence_on_the_wire(tmp_path):
 
         assert g.of_kind("agent_message_chunk")[0]["content"]["text"] == "done"
         assert g.idles()[1]["stopReason"] == "end_turn"
+        # One call in one batch, reported on the turn as a whole: the loop went
+        # round twice but the second iteration only talked.
+        assert g.tools_used == 1
+        # Two model calls, 10 + 20. The idle above carries the LAST one (20),
+        # because that is how full the context is now; the turn was billed for
+        # both, and the goal's token budget charges this number rather than
+        # that one. A ceiling computed from the context size undercounts a
+        # multi-round turn by roughly the number of rounds.
+        assert g.tokens_spent == 30
+        assert g.idles()[1]["usage"]["totalTokens"] == 20
 
         # History stays valid: every tool_call_id in an assistant message has
         # a matching tool response before anything else speaks.

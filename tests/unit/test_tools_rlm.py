@@ -17,7 +17,7 @@ from crow_cli.memory import (
 )
 from crow_cli.tools.register import begin_cell, clear
 from crow_cli.tools.results import RlmResult, RlmToolError
-from crow_cli.tools.rlm import (
+from crow_cli.tools.rlm_tool import (
     MAX_RLM_DEPTH,
     _delegate_answer,
     _delegate_prompt,

@@ -1,6 +1,6 @@
 """rlm, driving a real delegate over a real pipe.
 
-The subject is :mod:`crow_cli.tools.rlm`. The child is a scripted ACP v2 agent
+The subject is :mod:`crow_cli.tools.rlm_tool`. The child is a scripted ACP v2 agent
 in a subprocess — the peer end of the protocol, not a stand-in for the code
 under test — and it does what a real crow fork does and a stub cannot: it mints
 the fork's agent row off the trunk's head and writes the delegate's answer
@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-import crow_cli.tools.rlm  # noqa: F401 — the module, not the lazy binding
+import crow_cli.tools.rlm_tool  # noqa: F401 — the module, not the lazy binding
 from crow_cli.client2 import subagent as subagent_mod
 from crow_cli.memory import (
     add_message,
@@ -41,12 +41,12 @@ from crow_cli.memory import (
 )
 from crow_cli.tools.register import begin_cell, clear
 from crow_cli.tools.results import RlmResult, RlmToolError
-from crow_cli.tools.rlm import _dispose, _state, rlm
+from crow_cli.tools.rlm_tool import _dispose, _state, rlm
 
 #: ``from crow_cli.tools import rlm`` would hand back the FUNCTION, not the
 #: module: the package's PEP-562 ``__getattr__`` serves the lazy table and
 #: ``rlm`` is one of its bindings. One assertion below needs the module.
-rlm_mod = sys.modules["crow_cli.tools.rlm"]
+rlm_mod = sys.modules["crow_cli.tools.rlm_tool"]
 
 #: A made-up session id. Nothing here touches the wake bus, but a name no
 #: deployment has keeps a stray write attributable if that ever changes.
@@ -63,7 +63,7 @@ SETTLE_TIMEOUT = 60.0
 
 CHILD = r'''"""A scripted ACP v2 delegate: the peer end of the wire for the rlm tests.
 
-Not a mock of anything under test — the subject is :mod:`crow_cli.tools.rlm`.
+Not a mock of anything under test — the subject is :mod:`crow_cli.tools.rlm_tool`.
 What makes this one useful is that it does what a real crow fork does and a stub
 cannot: ``session/fork`` mints the fork's agent row off the trunk's head, and
 the turn writes the delegate's answer under that row, so the parent's
@@ -174,7 +174,9 @@ class ScriptedDelegate:
     def on_connect(self, conn):
         self.conn = conn
 
-    async def initialize(self, request):
+    # rc2's router hands a handler the request's FIELDS as keywords, with its
+    # _meta spread in among them — so ``**meta`` below IS the fork's _meta.
+    async def initialize(self, protocol_version, info, capabilities=None, **kw):
         say("initialized")
         return s.InitializeResponse(
             protocol_version=v2.PROTOCOL_VERSION,
@@ -182,21 +184,21 @@ class ScriptedDelegate:
             capabilities=s.AgentCapabilities(),
         )
 
-    async def fork_session(self, request):
-        fork_id = mint_fork(request.session_id)
+    async def fork_session(self, session_id, cwd, additional_directories=None,
+                           mcp_servers=None, **meta):
+        fork_id = mint_fork(session_id)
         say(
             "forked %s -> %s meta=%s servers=%d"
-            % (request.session_id, fork_id, request.field_meta,
-               len(request.mcp_servers or []))
+            % (session_id, fork_id, meta or None, len(mcp_servers or []))
         )
         return s.ForkSessionResponse(session_id=fork_id)
 
-    async def prompt(self, request):
-        text = "".join(getattr(b, "text", "") for b in request.prompt)
-        say("prompt %s %r" % (request.session_id, text))
-        self.turn_task = asyncio.create_task(self._turn(request.session_id, text))
+    async def prompt(self, session_id, prompt, **kw):
+        text = "".join(getattr(b, "text", "") for b in prompt)
+        say("prompt %s %r" % (session_id, text))
+        self.turn_task = asyncio.create_task(self._turn(session_id, text))
         self.turn_task.add_done_callback(report)
-        return s.PromptResponse()
+        return s.PromptResponse(message_id="u1")
 
     async def _turn(self, session_id, text):
         body = text.strip().splitlines()[-1]
@@ -228,19 +230,14 @@ class ScriptedDelegate:
         say("answered %s" % session_id)
         await self._send(session_id, s.IdleSessionStateUpdate(stop_reason="end_turn"))
 
-    async def cancel_session(self, notification):
-        say("cancelled %s" % notification.session_id)
+    async def cancel_session(self, session_id, **kw):
+        say("cancelled %s" % session_id)
         if self.turn_task is not None:
             self.turn_task.cancel()
-        await self._send(
-            notification.session_id,
-            s.IdleSessionStateUpdate(stop_reason="cancelled"),
-        )
+        await self._send(session_id, s.IdleSessionStateUpdate(stop_reason="cancelled"))
 
     async def _send(self, session_id, update):
-        await self.conn.session_update(
-            s.UpdateSessionNotification(session_id=session_id, update=update)
-        )
+        await self.conn.session_update(session_id=session_id, update=update)
 
 
 asyncio.run(v2.run_agent(ScriptedDelegate()))

@@ -238,14 +238,18 @@ class HeadlessClient:
         """
         return self.stops.setdefault(session_id, asyncio.Queue())
 
-    async def session_update(self, notification: Any) -> None:
-        update = notification.update
+    async def session_update(
+        self, session_id: str, update: Any, **kwargs: Any
+    ) -> None:
+        """One ``session/update``. The router hands over the notification's
+        fields as keywords, not the model — see :mod:`crow_cli.agent2.agent`'s
+        docstring for the two consequences that follow from it."""
         self.updates.append(update)
         if (
             getattr(update, "session_update", None) == "state_update"
             and getattr(update, "state", None) == "idle"
         ):
-            queue = self.stops.get(notification.session_id)
+            queue = self.stops.get(session_id)
             if queue is not None:
                 queue.put_nowait(getattr(update, "stop_reason", None))
 
@@ -345,10 +349,7 @@ class SubagentDriver:
             adopt_v2(self.conn, conn.response)
         else:
             await self.conn.initialize(
-                v2.schema.InitializeRequest(
-                    protocol_version=v2.PROTOCOL_VERSION,
-                    info=self.info,
-                )
+                protocol_version=v2.PROTOCOL_VERSION, info=self.info
             )
 
     async def _drain_stderr(self) -> None:
@@ -370,9 +371,7 @@ class SubagentDriver:
 
     async def new_session(self, cwd: str, mcp_servers: Optional[list] = None) -> str:
         response = await self.conn.new_session(
-            v2.schema.NewSessionRequest(
-                cwd=cwd, mcp_servers=mcp_servers_to_models(mcp_servers)
-            )
+            cwd=cwd, mcp_servers=mcp_servers_to_models(mcp_servers)
         )
         return response.session_id
 
@@ -394,14 +393,10 @@ class SubagentDriver:
         ``replay=True`` and gets the conversation before the first prompt.
         """
         await self.conn.resume_session(
-            v2.schema.ResumeSessionRequest(
-                session_id=session_id,
-                cwd=cwd,
-                mcp_servers=mcp_servers_to_models(mcp_servers),
-                replay_from=(
-                    v2.schema.ReplayFromStartVariant() if replay else None
-                ),
-            )
+            session_id=session_id,
+            cwd=cwd,
+            mcp_servers=mcp_servers_to_models(mcp_servers),
+            replay_from=(v2.schema.ReplayFromStartVariant() if replay else None),
         )
 
     async def fork_session(
@@ -435,13 +430,14 @@ class SubagentDriver:
             meta["messageOffset"] = message_offset
         if rlm_depth is not None:
             meta["rlmDepth"] = rlm_depth
+        # ``**meta``, not ``field_meta=meta``: the connection's trailing
+        # ``**kwargs`` IS the request's ``_meta``, which is what lets a caller
+        # name a field the schema does not have without building the model.
         response = await self.conn.fork_session(
-            v2.schema.ForkSessionRequest(
-                session_id=session_id,
-                cwd=cwd,
-                mcp_servers=mcp_servers_to_models(mcp_servers),
-                field_meta=meta or None,
-            )
+            session_id=session_id,
+            cwd=cwd,
+            mcp_servers=mcp_servers_to_models(mcp_servers),
+            **meta,
         )
         return response.session_id
 
@@ -456,9 +452,7 @@ class SubagentDriver:
         is why the client owns the choice.
         """
         return await self.conn.set_config_option(
-            v2.schema.SetSessionConfigOptionIdRequest(
-                session_id=session_id, config_id=config_id, value=value, type="id"
-            )
+            config_id=config_id, session_id=session_id, value=value, type="id"
         )
 
     async def prompt(
@@ -482,10 +476,8 @@ class SubagentDriver:
         # forever for a notification that already arrived.
         self.client.watch(session_id)
         await self.conn.prompt(
-            v2.schema.PromptRequest(
-                session_id=session_id,
-                prompt=[v2.schema.TextContentBlock(text=text)],
-            )
+            session_id=session_id,
+            prompt=[v2.schema.TextContentBlock(text=text)],
         )
         return await self.wait(session_id, timeout=timeout)
 
@@ -561,9 +553,7 @@ class SubagentDriver:
         afterwards — which is how a redirect works: cancel, then prompt again
         on the same session id.
         """
-        await self.conn.cancel_session(
-            v2.schema.CancelSessionNotification(session_id=session_id)
-        )
+        await self.conn.cancel_session(session_id=session_id)
 
     async def close(self) -> None:
         """Tear down. Safe to call on a driver that never started."""

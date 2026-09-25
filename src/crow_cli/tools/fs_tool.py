@@ -650,8 +650,8 @@ async def _finish(planned: list, dry_run: bool, **fields) -> RewriteResult:
         results = [_planned_edit(p, old, new) for p, old, new in planned]
     else:
         # Call-time import on purpose: reload() refreshes fs BEFORE write, so
-        # a module-level `from .write import write` keeps the stale function.
-        from .write import write
+        # a module-level `from .write_tool import write` keeps the stale function.
+        from .write_tool import write
 
         results = [await write(str(path), new) for path, _, new in planned]
     return RewriteResult(files=results, dry_run=dry_run, **fields)

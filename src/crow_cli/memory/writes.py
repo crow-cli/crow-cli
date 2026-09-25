@@ -1,4 +1,6 @@
-"""Write path: messages, agents, prompts."""
+"""Write path: messages, agents, prompts, goals."""
+
+import uuid
 
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -8,8 +10,19 @@ from . import fts
 from .ids import parse_agent_id
 from .image_store import ImageStore
 from .messages import extract_images, message_text
-from .models import Agent, Message, Prompt, Task, TaskDelivery, now_iso
-from .reads import count_tasks
+from .models import (
+    GOAL_ACTIVE,
+    GOAL_BLOCKED,
+    GOAL_BUDGET_LIMITED,
+    Agent,
+    Goal,
+    Message,
+    Prompt,
+    Task,
+    TaskDelivery,
+    now_iso,
+)
+from .reads import count_tasks, get_goal
 
 
 def add_message(
@@ -239,6 +252,42 @@ def cancel_task(engine, task_id: str) -> bool:
         return True
 
 
+def queue_delivery(
+    engine,
+    session_id: str,
+    *,
+    task_id: str,
+    content: str,
+    priority: str = "low",
+) -> int:
+    """Land one row in a session's mailbox and return its id.
+
+    The primitive underneath ``finish_task``'s delivery, exposed because a task
+    is not the only thing with a reason to wake a session. A goal continuation
+    is a deferred "keep going" with no task row behind it at all, and ACP_V2.md
+    §5.4's state-triggered wake needs somewhere to put it. ``task_id`` has no
+    foreign key, so it names whatever the wake is about — honestly, and without
+    a goal having to pretend to be a task.
+
+    Nothing is poked here, deliberately. The row is the truth and the driver's
+    backstop poll reads it; a caller that wants the wake now rather than within
+    ``PARK_BACKSTOP_S`` publishes its own :class:`~crow_cli.wake.Poke`. The goal
+    continuation does not, because it writes the row from inside the driver that
+    would receive the poke — the loop re-iterates on the row directly, which is
+    §5.3's whole argument for why this never wanted a clock or a worker.
+    """
+    with Session(engine) as db:
+        row = TaskDelivery(
+            session_id=session_id,
+            task_id=task_id,
+            priority=priority,
+            content=content,
+        )
+        db.add(row)
+        db.commit()
+        return row.id
+
+
 def mark_delivered(engine, delivery_ids: list[int]) -> None:
     with Session(engine) as db:
         rows = db.query(TaskDelivery).filter(TaskDelivery.id.in_(delivery_ids)).all()
@@ -290,3 +339,146 @@ def lookup_or_create_prompt(engine, template: str, name: str = "crow-default") -
         db.add(Prompt(id=prompt_id, name=name, template=template))
         db.commit()
         return prompt_id
+
+
+# -- goals --------------------------------------------------------------------
+#
+# The status vocabulary and the reason it is shaped that way live in
+# .models, next to the row. What follows is the discipline around writing it.
+
+
+def set_goal(
+    engine,
+    session_id: str,
+    objective: str,
+    *,
+    token_budget: int | None = None,
+) -> str:
+    """Upsert this session's goal and return its fresh ``goal_id``.
+
+    ALWAYS a fresh id and zeroed counters, with no special case for setting
+    the objective that is already there. One rule rather than two, and the
+    honest one: a new objective is new work, so the old work's spending must
+    not budget it, and re-setting an objective is a restart gesture that would
+    be a no-op if it preserved a spent budget. The fresh id is what makes the
+    reset safe rather than merely intended — see :class:`.models.Goal`.
+    """
+    goal_id = uuid.uuid4().hex
+    stamp = now_iso()
+    with Session(engine) as db:
+        row = db.query(Goal).filter_by(session_id=session_id).first()
+        if row is None:
+            row = Goal(session_id=session_id, created_at=stamp)
+            db.add(row)
+        row.goal_id = goal_id
+        row.objective = objective
+        row.status = GOAL_ACTIVE
+        row.blocked_reason = None
+        row.token_budget = token_budget
+        row.tokens_used = 0
+        row.time_used_seconds = 0
+        row.turns_used = 0
+        row.updated_at = stamp
+        db.commit()
+    return goal_id
+
+
+def update_goal_status(
+    engine,
+    session_id: str,
+    status: str,
+    *,
+    expected_goal_id: str | None = None,
+    blocked_reason: str | None = None,
+) -> bool:
+    """Move the goal to ``status``. False when there is nothing to move.
+
+    ``expected_goal_id`` is the stale-write guard, and the callers that need it
+    are the automatic ones: a turn that errored five minutes ago should not
+    block the goal the user set four minutes ago. A writer that read the row
+    passes the id it read; a writer that is only obeying the user passes None
+    and means whatever is there now.
+    """
+    with Session(engine) as db:
+        row = db.query(Goal).filter_by(session_id=session_id).first()
+        if row is None:
+            return False
+        if expected_goal_id is not None and row.goal_id != expected_goal_id:
+            return False
+        row.status = status
+        row.blocked_reason = blocked_reason if status == GOAL_BLOCKED else None
+        row.updated_at = now_iso()
+        db.commit()
+        return True
+
+
+def clear_goal(engine, session_id: str) -> bool:
+    """Delete the row. False when there was none — the caller says so to the
+    user, and "there was nothing to clear" is a different answer than "done"."""
+    with Session(engine) as db:
+        row = db.query(Goal).filter_by(session_id=session_id).first()
+        if row is None:
+            return False
+        db.delete(row)
+        db.commit()
+        return True
+
+
+def account_goal_usage(
+    engine,
+    session_id: str,
+    *,
+    goal_id: str,
+    tokens: int = 0,
+    seconds: int = 0,
+    turns: int = 0,
+) -> Goal | None:
+    """Add to the counters and enforce the budget, in ONE statement.
+
+    The budget flip is a ``CASE`` inside the same UPDATE rather than a read,
+    a compare and a write, because the alternative has a window in it: two
+    turns finishing together both read under-budget, both write, and the goal
+    sails past its ceiling while marked active — which is the one failure the
+    ceiling exists to prevent. Here the arithmetic and the transition are the
+    same atomic act, and the row that comes back is the row the database
+    decided on.
+
+    ``goal_id`` is not optional and not a filter for tidiness: an accounting
+    write for a goal the user has since replaced charges nothing, which is
+    correct, because the tokens were spent on work that is no longer the goal.
+    Returns None when the write did not land, so a caller can tell "no goal"
+    from "goal unchanged".
+    """
+    tokens = max(0, tokens)
+    seconds = max(0, seconds)
+    turns = max(0, turns)
+    stamp = now_iso()
+    sql = (
+        "UPDATE goals SET "
+        "tokens_used = tokens_used + :tokens, "
+        "time_used_seconds = time_used_seconds + :seconds, "
+        "turns_used = turns_used + :turns, "
+        "status = CASE "
+        "  WHEN status = :active AND token_budget IS NOT NULL "
+        "       AND tokens_used + :tokens >= token_budget "
+        "  THEN :budget_limited ELSE status END, "
+        "updated_at = :stamp "
+        "WHERE session_id = :sid AND goal_id = :goal_id"
+    )
+    with engine.begin() as conn:
+        result = conn.execute(
+            text(sql),
+            {
+                "tokens": tokens,
+                "seconds": seconds,
+                "turns": turns,
+                "active": GOAL_ACTIVE,
+                "budget_limited": GOAL_BUDGET_LIMITED,
+                "stamp": stamp,
+                "sid": session_id,
+                "goal_id": goal_id,
+            },
+        )
+        if result.rowcount == 0:
+            return None
+    return get_goal(engine, session_id)

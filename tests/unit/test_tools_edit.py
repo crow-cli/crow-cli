@@ -1,4 +1,4 @@
-"""crow_cli.tools.edit — the Python-shaped contract: EditResult on success,
+"""crow_cli.tools.edit_tool — the Python-shaped contract: EditResult on success,
 raised EditError on failure (never "Error: ..." strings), and register
 entries carrying the three-fold split (args, ACP payload, LLM image refs,
 cell identity stamped at call time).

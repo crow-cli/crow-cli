@@ -6,7 +6,7 @@ a capability that needs a mode string to reach is a capability that does not
 get reached. Reach for it instead of ``search()``/rg whenever the question is
 about CODE SHAPE rather than text.
 
-The engine, the language table and the walk all live in ``crow_cli.tools.fs``
+The engine, the language table and the walk all live in ``crow_cli.tools.fs_tool``
 and are imported at CALL time: ``reload()`` refreshes modules in ``_LAZY``
 order, so a module-level ``from .fs import ...`` would keep a stale function
 across a reload (the same reason ``fs._finish`` imports ``write`` late).
@@ -89,7 +89,7 @@ async def sg(
     import asyncio
     from pathlib import Path
 
-    from .fs import _LANGS, _ast, _ast_scan, _cap, _lang_of, _resolve_path
+    from .fs_tool import _LANGS, _ast, _ast_scan, _cap, _lang_of, _resolve_path
 
     if not pattern:
         raise FsError("sg() requires a pattern")

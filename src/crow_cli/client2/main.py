@@ -161,19 +161,19 @@ class TerminalClient(HeadlessClient):
         self._our_prompt = False
         self.title: Optional[str] = None
 
-    async def session_update(self, notification: Any) -> None:
+    async def session_update(
+        self, session_id: str, update: Any, **kwargs: Any
+    ) -> None:
         # First: the record and the idle queue, which is what makes a prompt
         # return at all. Rendering is the second job and must not be able to
         # break it.
-        await super().session_update(notification)
+        await super().session_update(session_id, update, **kwargs)
         if self.json_out:
             self.emit(
-                type="update",
-                session_id=notification.session_id,
-                update=dump_update(notification.update),
+                type="update", session_id=session_id, update=dump_update(update)
             )
             return
-        self.render(notification.update)
+        self.render(update)
 
     # -- output ----------------------------------------------------------
 
@@ -203,7 +203,7 @@ class TerminalClient(HeadlessClient):
 
     def render(self, update: Any) -> None:
         """One ``session/update``. Dispatched on the discriminator, not on
-        isinstance: the union has 23 members and a variant this client has
+        isinstance: the union has 24 members and a variant this client has
         never seen should print its name, not fall through a type check into
         silence."""
         kind = getattr(update, "session_update", None) or ""
@@ -361,6 +361,29 @@ class TerminalClient(HeadlessClient):
         if text:
             self.console.print(text, end="", style="dim yellow", markup=False)
 
+    def _notice(self, update: Any) -> None:
+        """An agent-initiated banner: a severity, a title, optional detail.
+
+        crow's agent emits none, so this is for an ``agent_servers`` entry
+        that does. It is rendered rather than left to print its discriminator
+        because a notice is not metadata about a turn — it is the only channel
+        an agent has for something that happened outside one, and an ``error``
+        severity reduced to ``· notice`` is a failure the human cannot act on.
+
+        ``markup=False`` on both lines: the title and the description are the
+        agent's text, and rich would eat anything in them that looks like a
+        tag.
+        """
+        severity = getattr(update, "severity", "info")
+        style = {"error": "red", "warning": "yellow"}.get(severity, "dim")
+        self.console.print(
+            f"{severity}: {getattr(update, 'title', '') or ''}",
+            style=style, highlight=False, markup=False,
+        )
+        description = getattr(update, "description", None)
+        if description:
+            self.console.print(description, style=style, highlight=False, markup=False)
+
 
 #: Discriminator -> renderer. A kind absent here prints its name (see
 #: ``render``), so this table is what the client understands, not what the
@@ -383,6 +406,7 @@ _RENDERS = {
     "config_option_update": TerminalClient._config_options,
     "compaction_update": TerminalClient._compaction,
     "compaction_summary_chunk": TerminalClient._compaction_chunk,
+    "notice": TerminalClient._notice,
 }
 
 

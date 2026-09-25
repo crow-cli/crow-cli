@@ -9,7 +9,7 @@ The prelude half is the reason this file exists. ``PRELUDE_V2`` had never been
 executed by anything until crow-mcp2 got a runner: v1's kernels run
 ``PRELUDE``, whose eight bindings each happen to be named after their own
 module, so ``reload()`` deriving a module name from a binding name went
-unnoticed. ``_LAZY_V2`` binds four names out of ``crow_cli.tools.task``, and
+unnoticed. ``_LAZY_V2`` binds four names out of ``crow_cli.tools.task_tool``, and
 the derivation went looking for ``crow_cli.tools.task_cancel``. The prelude
 raised, ``_run_prelude`` logged one truncated warning, and every v2 kernel came
 up with no subtools at all — no ``fs``, no ``memory``, no ``task``.
@@ -126,7 +126,7 @@ class TestPreludeV2:
             "print(task.__module__, task_read.__module__,"
             " task_send.__module__, task_cancel.__module__)"
         )
-        assert out["output"].split() == ["crow_cli.tools.task"] * 4
+        assert out["output"].split() == ["crow_cli.tools.task_tool"] * 4
 
     async def test_a_bound_subtool_runs(self, server, tmp_path):
         # Binding is not enough — the object has to be the callable, not the

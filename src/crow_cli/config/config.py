@@ -298,6 +298,57 @@ class LLMConfig:
             raise ValueError(f"Unknown model {name!r}. Available: {known}.") from None
 
 
+#: Keys accepted inside the ``goal:`` block. Rejected rather than ignored:
+#: ``goal: {max_turn: 25}`` silently doing nothing is a ceiling the user
+#: believes they set, which is worse than no ceiling at all.
+GOAL_CONFIG_KEYS = ("max_turns", "max_tokens")
+
+
+@dataclass
+class GoalConfig:
+    """The limits on a ``/goal``, and the defaults for one set without them.
+
+    Kept apart from the react loop's own ceilings because they bound different
+    axes. ``MAX_TOKENS`` is one model call's completion budget and
+    ``Deps.max_turns`` is how many model round trips fit inside ONE turn; these
+    bound how many turns a goal may start BY ITSELF, which is a much smaller
+    number and the only one whose default is a judgement call about how much
+    unattended spending is acceptable.
+    """
+
+    #: Continuation turns a goal may start before it goes ``budget_limited``.
+    #: The backstop for a goal that keeps finding real work forever: the
+    #: no-progress rule in :mod:`crow_cli.agent2.goal` catches one that is
+    #: spinning, this catches one that is genuinely grinding, and without it the
+    #: only stop is the user noticing.
+    max_turns: int = 25
+    #: Token ceiling applied to a goal set without one of its own. None means no
+    #: ceiling, and that is the default because the honest number depends
+    #: entirely on the objective — a guess that is too low stops real work, and
+    #: one that is too high is not a limit.
+    max_tokens: int | None = None
+
+
+def parse_goal_config(raw: Any) -> GoalConfig:
+    """The ``goal:`` block, from config.yaml or an override file."""
+    if raw is None:
+        return GoalConfig()
+    if not isinstance(raw, dict):
+        raise ValueError(f"config.yaml: 'goal' must be a mapping, got {raw!r}")
+    unknown = [k for k in raw if k not in GOAL_CONFIG_KEYS]
+    if unknown:
+        raise ValueError(
+            f"config.yaml: unknown key(s) under 'goal': {', '.join(sorted(map(str, unknown)))}. "
+            f"Known: {', '.join(GOAL_CONFIG_KEYS)}."
+        )
+    goal = GoalConfig()
+    if raw.get("max_turns") is not None:
+        goal.max_turns = int(raw["max_turns"])
+    if raw.get("max_tokens") is not None:
+        goal.max_tokens = int(raw["max_tokens"])
+    return goal
+
+
 @dataclass
 class Config:
     config_dir: Path
@@ -319,6 +370,8 @@ class Config:
     #: entirely, which degrades wake latency to the driver's backstop poll —
     #: the mailbox rows in sqlite are the truth, never the poke.
     redis_url: str = ""
+    #: /goal's ceilings. See :class:`GoalConfig`.
+    goal: GoalConfig = field(default_factory=GoalConfig)
     max_retries_per_step: int = 3
     MAX_COMPACT_TOKENS: int = 190000
     MAX_TOKENS: int = 38192
@@ -473,6 +526,7 @@ class Config:
             redis_url = os.getenv("CROW_REDIS_URL") or (
                 f"redis://localhost:{os.getenv('REDIS_PORT', '6379')}/0"
             )
+        goal = parse_goal_config(resolve_env_vars(parsed.get("goal"), missing_vars))
         system_prompt_path = None
         if "system_prompt_path" in parsed:
             system_prompt_path = Path(os.path.expanduser(parsed["system_prompt_path"]))
@@ -486,6 +540,7 @@ class Config:
             agent_servers=agent_servers,
             image_store=image_store,
             redis_url=redis_url,
+            goal=goal,
             system_prompt_path=system_prompt_path,
             **overrides,
         )
@@ -522,4 +577,6 @@ def apply_config_overrides(config: "Config", config_file: Path | None) -> "Confi
         config.image_store = resolve_env_vars(overrides["image_store"]) or {}
     if "redis_url" in overrides:
         config.redis_url = resolve_env_vars(overrides["redis_url"]) or ""
+    if "goal" in overrides:
+        config.goal = parse_goal_config(resolve_env_vars(overrides["goal"]))
     return config

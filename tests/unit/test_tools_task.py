@@ -27,7 +27,7 @@ from crow_cli.memory.reads import get_task, owner_tasks, pending_deliveries
 from crow_cli.memory.writes import finish_task, launch_task
 from crow_cli.tools.register import CellContext, begin_cell, clear, pending
 from crow_cli.tools.results import TaskError, TaskListResult, TaskResult
-from crow_cli.tools.task import (
+from crow_cli.tools.task_tool import (
     LiveTask,
     _child_answer,
     _dispose,

@@ -10,7 +10,7 @@ Contents:
 2. [Phase 2: protocol negotiation — done, committed](#2-phase-2-protocol-negotiation)
 3. [The v2 conversion: what it bought](#3-the-v2-conversion-what-it-actually-bought)
 4. [Wake: built, wired, and the one missing link](#4-wake-built-wired-and-the-one-missing-link)
-5. [PROPOSAL: `remind` — self-directed input that fires on idle](#5-proposal-remind)
+5. [PROPOSAL: `remind` — mechanism shipped as `/goal`, subtool unstarted](#5-proposal-remind)
 6. [Settled design decisions](#6-settled-design-decisions-do-not-re-litigate)
 7. [SDK and wire facts worth keeping](#7-sdk-and-wire-facts-worth-keeping)
 8. [Known open holes](#8-known-open-holes)
@@ -27,8 +27,11 @@ Contents:
 | Wake bus (`wake.py`), mailbox (`task_deliveries`), watcher (`agent2/watcher.py`) | built **and wired** |
 | Celery timer wheel (`timers.py`), `crow-cli timers` worker | built and tested, **no production caller** |
 | `task` / `task_send` / `task_cancel` / `task_read` subtools | built, `_LAZY_V2` only |
-| A model-facing way to feed **itself** | **does not exist** — §5 is the proposal |
-| Test suite | 1326 passed (`tests/{unit,mcp,memory,integration}`), 26 passed (`tests/e2e`) |
+| A model-facing way to feed **itself** | **built** — §5.4's mechanism, with a goal as the thing that defers |
+| `/goal`: the persisted objective, the continuation loop, its ceilings and its exits | built — `memory/models.Goal`, `agent2/goal.py`, `driver._goal_continuation`, `tools/goal_tool.py`, `agent2/slash.py` |
+| `remind`, the self-note subtool §5 proposes | **not built** — §5.10 is unstarted and nothing below depends on it |
+| Test suite | **1440 passed, 0 failed** — every tier including the live e2e (1414 in 462.10s + `tests/e2e` 26 in 1419.32s) |
+| ACP python-sdk | **1.0.0rc2 from PyPI** — the `[tool.uv.sources]` local path is gone (§7) |
 | Python 3.13 compile | 351 files, 0 failures |
 
 ---
@@ -573,7 +576,7 @@ The four consult breakpoints in `agent2/react.py`:
 | registry constructs it | `agent2/sessions.py:180` `WakeWatcher(config.redis_url, self._inbox_for)` | **wired** |
 | registry starts / stops it | `agent2/sessions.py:592` / `:644` | **wired** |
 | poke to inbox route | `agent2/sessions.py:543` `_inbox_for` returning `self.drivers.get(sid)` | **wired** |
-| `publish_wake` in production | `tools/task.py:310` `live.poked = await publish_wake(...)` | **wired** |
+| `publish_wake` in production | `tools/task_tool.py:310` `live.poked = await publish_wake(...)` | **wired** |
 | react consult breakpoints | `agent2/react.py:115, 134, 227, 272` | **wired** |
 | driver park on the inbox | `agent2/driver.py:419-443` | **wired** |
 | `schedule_timer` caller | — | **NOTHING** |
@@ -597,6 +600,21 @@ itself.**
 ## 5. PROPOSAL: `remind`
 
 > *Self-directed input that fires when the session goes idle.*
+
+**Status 2026-09-24: the MECHANISM shipped; `remind` did not.** §5.4's
+state-triggered wake is built and load-bearing — the driver consults a
+persisted objective at the idle transition and, when it decides to continue,
+writes an ordinary mailbox row that the loop's existing check picks up. What
+ships on top of it is `/goal`, not `remind`: one objective per session that
+keeps re-firing until its row leaves `active`, with the ceilings §5.8
+recommended skipping. The subtool below, a model leaving itself a single note,
+is unstarted, and §5.10's checklist is with it.
+
+§5.1–§5.3 and §5.5–§5.9 remain the argument for why the trigger is a state and
+not a clock, and nothing in `/goal` contradicts them; §5.3 in particular is now
+proven rather than asserted, because a goal continuation is exactly the case
+§5.3 describes and it needs no worker, no broker and no poke. §5.4 ends with
+what actually shipped and the three places it differs.
 
 ### 5.1 What the model gets
 
@@ -674,7 +692,8 @@ callers of `_mailbox_pending()` that turn out to be asking different questions
 (`driver.py:209` asks "should I skip parking?", `driver.py:261` asks "was this
 wake real?"). Deferring in the row's status keeps the mailbox meaning one thing.
 
-`agent2/driver.py:419`:
+`agent2/driver.py`, as proposed (the shipped `_park` differs in ordering — see
+the end of this section):
 
 ```python
 async def _park(self) -> bool:
@@ -737,7 +756,7 @@ def deferred_reminders(engine, owner_session: str) -> list[Task]:
         )
 ```
 
-And the subtool, in `tools/task.py` beside its siblings:
+And the subtool, in `tools/task_tool.py` beside its siblings:
 
 ```python
 @subtool(tool="remind")
@@ -789,11 +808,50 @@ Register in `tools/__init__.py:42`:
 
 ```python
 _LAZY_V2 = {
-    "remind": ("crow_cli.tools.task", "remind"),
-    "task": ("crow_cli.tools.task", "task"),
+    "remind": ("crow_cli.tools.task_tool", "remind"),
+    "task": ("crow_cli.tools.task_tool", "task"),
     ...
 }
 ```
+
+#### What actually shipped, and where it differs
+
+Built 2026-09-24 as the `/goal` continuation. The shape is the one above —
+consult at the idle transition, write a mailbox row, let the loop's existing
+`_mailbox_pending()` find it — with three differences, each forced by what the
+deferring thing turned out to be.
+
+| the proposal | what shipped | why |
+|---|---|---|
+| `remind()` writes a `Task` row with `kind="reminder"`, `status="running"` | `set_goal()` writes a `Goal` row with `status="active"` | A note is one-shot and a goal is a loop, so the row carries the loop's account: `turns_used`, `tokens_used`, `time_used_seconds`, `token_budget`, `blocked_reason`. None of that fits a `Task`, whose counters describe one child's run. |
+| `_fire_deferred()` calls `finish_task`, which lands the delivery in the same commit that takes the row terminal | `_goal_continuation()` calls `queue_delivery`, then `account_goal_usage` | A goal has no task row to finish, and it has to SURVIVE firing — the row is the loop's state, not the note's envelope. `queue_delivery` is `finish_task`'s inline delivery write, exposed. Two commits instead of one, and the window between them is benign: a crash there leaves one continuation queued against a counter one low, which is a rounding error on a loop guard and not a way to loop forever. |
+| `_park` announces `idle`, THEN fires | `_park` consults the goal BEFORE announcing `idle` | A session that is about to start another turn on its own account is not idle, and saying so is a lie the client renders. Hence `states() == ["idle","running","idle"]` for TWO turns: `_set_state` dedupes a state that never changed, so the continuation never announces itself. |
+
+The real names, for grepping:
+
+- `memory/models.py` — `Goal`, plus `GOAL_ACTIVE`, `GOAL_PAUSED`,
+  `GOAL_BLOCKED`, `GOAL_BUDGET_LIMITED`, `GOAL_COMPLETE`.
+- `memory/reads.py` — `get_goal`, `active_goal`.
+- `memory/writes.py` — `set_goal`, `update_goal_status`, `clear_goal`,
+  `account_goal_usage`, `queue_delivery`.
+- `agent2/goal.py` — `CONTINUATION_PROMPT`, `continuation_text`, `progress`,
+  `eligible`, `Verdict`.
+- `agent2/driver.py` — `_goal_continuation` (the consult), `_settle_goal` (the
+  accounting, and the cancel-pauses / error-blocks exits), and `_park`'s first
+  two lines.
+- `agent2/react.py` — `Done.tools_used`, `Done.tokens_spent`.
+- `tools/goal_tool.py` — `goal_done`, `goal_blocked`, bound in `_LAZY_V2`.
+- `agent2/slash.py` — `goal_command`, imported for its side effect from
+  `agent2/agent.py` so that a v1 process never sees the name.
+- `config/config.py` — `GoalConfig`, `goal: {max_turns: 25, max_tokens: null}`.
+
+What did NOT change is still §5.5's list, and the two rows that matter most
+held. `consult` injects `d["content"]` verbatim and has no idea a goal wrote
+it. `wake.py`, `watcher.py` and redis are not involved — no poke, no bus, and
+the whole thing works with none configured. `timers.py` and celery are
+likewise untouched and still have no production caller, which is §5.3's
+argument surviving contact with the one feature that looked like it would need
+a scheduler.
 
 ### 5.5 What does NOT change
 
@@ -801,14 +859,14 @@ This is the point of the design. Verified by reading, not assumed:
 
 | thing | why it is untouched |
 |---|---|
-| `TaskDelivery` schema | `TaskDelivery(` is constructed in exactly ONE place, `writes.py:216` inside `finish_task`. Still is. |
+| `TaskDelivery` schema | Unchanged. It is now constructed in TWO places rather than one — `finish_task` and `queue_delivery`, both in `writes.py`, the second being the first's delivery write exposed for a caller with no task row. Same columns, same `status="pending"`, no new field. |
 | `Task` schema | `sub_session` is already `nullable=True`; `kind` is already free text defaulting to `"subagent"`. |
 | `claim_deliveries` | Keyed on `session_id` with an optional exact `priority` match. No join to `tasks`. Never asks where a row came from. |
 | `consult` | Injects `d["content"]` verbatim as a user message and echoes it. Unchanged. |
 | `react.py:115/134/227/272` | All four breakpoints behave identically; the row is a normal pending delivery by then. |
-| `pending_deliveries` / `_mailbox_pending` | Filters on `status="pending"` only, no priority filter, so it sees the row the moment `finish_task` commits. |
-| `wake.py`, `watcher.py`, redis | **Not involved.** No poke. The trigger is local driver state, so `remind` works with no bus configured at all. |
-| `timers.py`, celery | Not involved. |
+| `pending_deliveries` / `_mailbox_pending` | Filters on `status="pending"` only, no priority filter, so it sees the row the moment `finish_task` — or `queue_delivery` — commits. |
+| `wake.py`, `watcher.py`, redis | **Not involved.** No poke. The trigger is local driver state, so `remind` (and the `/goal` continuation that shipped instead) works with no bus configured at all. |
+| `timers.py`, celery | Not involved — and this row is now load-bearing rather than incidental. `/goal` is the feature that looked most like it would need a scheduler: it re-fires on its own, indefinitely, with nobody watching. It needs no clock, no broker and no worker, because the trigger is a state the driver already passes through. §5.3's argument is no longer a prediction. `schedule_timer` still has no production caller. |
 | v1 / `agent/` | Not touched. v1 has no driver and no park, so a v1 kernel would write a row nobody ever fires — which is why this is `_LAZY_V2`. |
 | `launch_next_task` | Its docstring already claims two callers: *"the `task` subtool, and a scheduled wake. Both need the same id space, because both write rows the same mailbox delivers from and the same owner reads with the same `task_read()`."* `remind` becomes the second one in practice. |
 
@@ -903,6 +961,25 @@ If it turns out to be a problem in practice, the cheapest brake is a per-park ca
 in `_fire_deferred` plus a counter on the session — but that is a fix for an
 observed failure, not a speculative one.
 
+**What happened instead.** `/goal` shipped with three brakes, and the argument
+above lost on point 3 only: the spin is still visible and still stoppable, but
+"a budget has no obvious home" was wrong. The home is the row that persists the
+objective — which a one-shot note, having nothing to persist, never had.
+`Goal.turns_used` is the counter and `config.goal.max_turns` (default 25) the
+cap; `Goal.tokens_used` against `token_budget` is the second one, flipped in the
+SQL `CASE` inside `account_goal_usage` so the write and the limit are one
+commit. Both are consulted at the park by `agent2/goal.eligible`, not inside a
+per-park counter.
+
+The third brake is the one this assessment could not have predicted, because it
+is not a budget: a CONTINUATION turn that ran no tools ends the goal, as
+`blocked`. That covers the case where the model is not spinning hard but
+spinning still — talking about the work instead of doing it — which no token or
+turn ceiling catches early. It is only safe to have because the driver tracks
+whether the turn it just finished was one IT caused (`_continuation_in_flight`,
+consumed at the top of `_run_turn`), so a person who interjects "what's the
+status?" mid-goal gets a text-only answer without blocking their own goal.
+
 ### 5.9 Open decisions
 
 | # | question | recommendation |
@@ -916,10 +993,17 @@ observed failure, not a speculative one.
 
 ### 5.10 Implementation checklist
 
+**Unstarted, and now smaller than this.** Every item is about `remind`, which
+did not ship. The two driver items were built in a different shape for `/goal`
+and are in §5.4's table instead, and the `_LAZY_V2` item is a pattern
+`goal_done` and `goal_blocked` followed. Kept as the spec for `remind` if a
+model-facing one-shot note is ever wanted: the mechanism it needed now exists,
+so what is left is a subtool, a read and a `kind`, with no driver work at all.
+
 - [ ] `KIND_REMINDER = "reminder"` in `memory/models.py`, next to `Task`.
 - [ ] `deferred_reminders(engine, owner_session)` in `memory/reads.py`; export
   from `crow_cli.memory`.
-- [ ] `remind` in `tools/task.py`, `@subtool(tool="remind")`, importing `KIND_REMINDER`.
+- [ ] `remind` in `tools/task_tool.py`, `@subtool(tool="remind")`, importing `KIND_REMINDER`.
 - [ ] `_LAZY_V2["remind"]` in `tools/__init__.py`.
 - [ ] `SessionDriver._fire_deferred()` plus the four lines in `_park`, in
   `agent2/driver.py`.
@@ -1102,18 +1186,20 @@ ToolKind = read|edit|delete|move|search|execute|think|fetch|other
 ToolCallStatus = pending|in_progress|completed|failed|cancelled
 ```
 
-`UpdateSessionNotification.update` is a union of 23 members with 19
-discriminators. `_RENDERS` covers 17; `UNRENDERED = {"plan_update","plan_removed"}`
-is deliberate. `user_message_chunk` = mailbox deliveries
-(`agent2/deliveries.py:57`); `user_message` = the prompt echo (`driver.py:348`)
-and replay (`replay.py:135`). Different discriminators — which is what makes the
-narrow `own_echo` suppression safe.
+`UpdateSessionNotification.update` is a union of 24 members with 20
+discriminators (`notice` is the 24th, added by 1.0.0rc2). `_RENDERS` covers 18;
+`UNRENDERED = {"plan_update","plan_removed"}` is deliberate.
+`user_message_chunk` = mailbox deliveries (`agent2/deliveries.py:57`);
+`user_message` = the prompt echo (`driver.py:348`) and replay
+(`replay.py:135`). Different discriminators — which is what makes the narrow
+`own_echo` suppression safe.
 
 ### Other SDK facts
 
-- `acp/experimental/v2/agent.py:28 _dump(model)` = `model_dump(mode="json",
-  by_alias=True, exclude_none=True, exclude_unset=True)`. `exclude_none` is
-  why a `null` clear is UNSENDABLE.
+- `acp/experimental/v2/agent.py _dump(model)` = `model_dump(mode="json",
+  by_alias=True, exclude_unset=True)`. **1.0.0rc2 dropped `exclude_none`**, so
+  an explicitly-passed `None` now goes on the wire as `null` — see the rc2
+  section below. `agent2/emitter.py present(**fields)` is the workaround.
 - `MethodRouter` (`acp/experimental/v2/_router.py`): a missing handler
   attribute gives `RequestError.method_not_found(spec.method)` for a REQUEST
   and a silent `return` for a NOTIFICATION. `_`-prefixed methods route to
@@ -1126,12 +1212,102 @@ narrow `own_echo` suppression safe.
   stdio_buffer_limit_bytes=52428800, **kw)`.
 - fastmcp 3.4.7: `Client.call_tool_mcp(name, arguments, progress_handler=None,
   timeout=None, meta=None)`; `MCPConfigTransport(cfg, name_as_prefix=False)`.
-- The authoritative spec is on disk at
-  `~/.agents/crow/src/python-sdk/schema/v2/schema.json` (265 `$defs`, each
-  with a `description`), plus `schema/schema.json` (v1) and
-  `schema/v2/meta.json`. Some models are inline `anyOf` branches and are NOT
-  in `$defs` — use `getattr(vs, name)`, and **read the union, not the `$defs`
-  entry**. Live: `https://agentclientprotocol.com/protocol/v2/...`.
+- The authoritative v2 surface is the GENERATED
+  `acp/experimental/v2/schema.py` in the installed package — the wheel ships no
+  JSON. `~/.agents/crow/src/python-sdk` is a clone at `c1004f8` carrying
+  `schema/v2/schema.json` (265 `$defs`, each with a `description`) at
+  **`schema-v2.0.0-alpha.3`**, i.e. now BEHIND the pinned rc2 (`alpha.5`):
+  read it for the prose descriptions, not for the field lists. Some models are
+  inline `anyOf` branches and are NOT in `$defs` — use `getattr(vs, name)`, and
+  **read the union, not the `$defs` entry**.
+  Live: `https://agentclientprotocol.com/protocol/v2/...`.
+
+### python-sdk 1.0.0rc2 — the dependency is published, and the call shape changed
+
+`pyproject.toml` now says `agent-client-protocol[http]>=1.0.0rc2,<1.1.0` and the
+`[tool.uv.sources]` block is **gone**. rc2 is the first release on PyPI with
+`acp/experimental/v2/`, so the editable local clone — and the
+`../python-sdk` vs `../../python-sdk` two-commit difference it forced on every
+worktree — is no longer load-bearing. That also fixes
+`tests/e2e/test_source_first_spawn.py`, which clones this repo to a temp dir and
+runs `uv sync` there: a relative path source cannot resolve in a clone, and it
+did not.
+
+rc2 is `0.12.1` + PRs #143–#150. `PROTOCOL_VERSION` is still 2. The v2 schema
+moved `alpha.3` → `alpha.5`, v1 → `1.23.0`. Four things bite:
+
+**1. A v2 handler receives the request's FIELDS as keywords, not the model.**
+`MethodRouter.handle_request` is now
+
+```python
+request = spec.request.validate_python(params)
+response = await handler(**model_to_kwargs(request, type(request)))
+```
+
+and `acp/utils.py::model_to_kwargs` passes **every** field — set or not, so an
+omitted optional arrives as `None` — skips `field_meta`, then does
+`kwargs.update(model.field_meta)`. So `async def prompt(self, request)` became
+`async def prompt(self, session_id, prompt, **kwargs)`, and **`kwargs` is the
+request's `_meta`, spread**. Every v2 handler in `agent2/agent.py` and every
+fake in the tests is written that way now. `fork_session` is the one that reads
+`_meta` (`messageOffset`, `rlmDepth`), so it takes `meta = kwargs` wholesale.
+
+**2. The same spread runs in reverse on the sender.**
+`_params.py::build_request(model, fields, meta)` drops `None` for non-required
+fields and then `params["field_meta"] = meta`, so a connection method's trailing
+`**kwargs` **IS** the outgoing `_meta`: `conn.fork_session(session_id=…, cwd=…,
+**meta)`, not `field_meta=meta`.
+
+**3. `_dump` lost `exclude_none`.** It is `model_dump(mode="json",
+by_alias=True, exclude_unset=True)` and nothing else. A field handed an explicit
+`None` is now a `null` the client receives, and on an upsert `null` is not
+"unchanged", it is **"cleared"**. This produced no `TypeError` and no
+validation error — it showed up as `{'stopReason': None, 'usage': None}` inside
+the idle wire update in the gate. `agent2/emitter.py` now builds every optional
+through `present(**fields)`, which drops the `None`s. **This is the subtlest
+break in the release: it is a wire-shape change, not a signature change.**
+
+**4. `PromptResponse.message_id` is required and non-null.** The response to a
+prompt is now `{"messageId": …}` and nothing else — the id of the user message
+the agent inserted. `agent2/events.Prompt` carries it, minted by the `prompt`
+HANDLER (`emitter.start_message()`) and not by the driver that echoes it,
+because the handler has to answer with it and the echo may come later; two mints
+would be two identities for one message. `driver._accept_prompt` passes
+`prompt.message_id` to `emitter.user_message`. The unconfigured-session branch
+answers with an id naming a message it never inserted — the field is required
+and there is no honest value there.
+
+Also new: `SessionNotice` (`session_update: "notice"`, `severity` /
+`title` / `description`) is the 24th union member, rendered by
+`TerminalClient._notice` with `markup=False` because the text is the agent's.
+On the v1 side `EnvVarAuthMethod` was **removed** (crow never used it — grepped)
+and `Notice`, `NoticeCapabilities`, `SessionUpdateNotice`, `TerminalAuthMethod`
+added; the `[http]` extra moved `httpx` → `httpx2`.
+
+**v1 is untouched by all of this.** `acp/router.py::_resolve_handler` detects a
+legacy handler (`len(parameters) == 2 and "params" in parameters`, or a missing
+snake_case attr that exists in camelCase) and calls `await func(model_obj)` with
+a `DeprecationWarning`; v1's `ClientSideConnection` / `AgentSideConnection` are
+`@compatible_class` **and already kwargs-native**. v2's `agent.py` / `client.py`
+are NOT `@compatible_class`, which is exactly why the single-model style is gone
+for v2 and survives for v1. `run_agent(...)` is unchanged.
+
+The v2 connection method NAMES are unchanged (§"v1 vs v2 client connection
+methods" above still holds); only their signatures expanded, e.g.
+`initialize(protocol_version, info, capabilities=None, **kwargs)`,
+`new_session(cwd, additional_directories=None, mcp_servers=None, **kwargs)`,
+`session_update(session_id, update, **kwargs)`,
+`set_config_option(config_id, session_id, value, *, type=None, **kwargs)`.
+`_param_model_field_names` on a union takes the **intersection** of the
+branches' fields in the first branch's order — which is why `set_config_option`
+gets an explicit `type` keyword rather than relying on the model.
+
+Migration cost, measured: 6 files in `src/`, 9 in `tests/`. Before the migration
+the four non-e2e tiers ran **119 failed** (84 ×
+`ClientSideConnection.initialize() missing 1 required positional`, 13 ×
+`TaskError: launch failed`, 6 × `RlmToolError: could not fork session`, …);
+after, **1409 passed, 0 failed in 469.01s**, and `tests/e2e/test_agent2_live.py`
+3 passed in 27.87s against a live model.
 
 ### `crow_cli.memory` exports
 
@@ -1181,10 +1357,29 @@ error string otherwise).
 ### The tools split
 
 `tools/__init__.py`: `_LAZY = {edit, fs, memory, rlm, sg, vision, web, write}`;
-`_LAZY_V2 = {task, task_send, task_read, task_cancel}` — **v2 kernels only**,
-because v1 already ships `task` as an MCP tool from the agent process, so a v1
-kernel with both would have two launchers minting ids off the same global counter
-and writing the same two tables. And v1 is frozen.
+`_LAZY_V2 = {task, task_send, task_read, task_cancel, goal_done, goal_blocked}`
+— **v2 kernels only**, because v1 already ships `task` as an MCP tool from the
+agent process, so a v1 kernel with both would have two launchers minting ids off
+the same global counter and writing the same two tables; and because the goal
+exits leave a continuation loop that only the agent2 driver runs. And v1 is
+frozen.
+
+**Every subtool module is `<name>_tool.py`** — `fs_tool.py`, `task_tool.py`,
+`goal_tool.py` — and the suffix is load-bearing, not decoration. The facade
+binds the CALLABLE as `crow_cli.tools.<name>` through a PEP 562 `__getattr__`,
+which Python consults only when ordinary lookup FAILS; importing a submodule
+makes the import machinery `setattr(package, child_name, module)`. So while the
+modules were `fs.py` and `task.py`, `import crow_cli.tools.fs` parked the module
+on the attribute the facade binds `fs` to, and `crow_cli.tools.fs(...)` was
+`TypeError: 'module' object is not callable` — order-dependent, invisible in a
+kernel (whose prelude calls `reload()`, which purged it), and real for any
+in-process consumer. The suffix removes the overlap instead of racing it:
+`crow_cli.tools.fs` is the function by one route, `crow_cli.tools.fs_tool` the
+module by one route, in either order. `register.py` and `results.py` keep plain
+names because nothing binds them. Pinned by
+`tests/unit/test_tools_facade_names.py`, which reproduces the original failure
+in a fresh interpreter — the only state it can be reproduced in.
+
 `PRELUDE = "from crow_cli.tools import reload\nreload()"`,
 `PRELUDE_V2 = "...\nreload(v2=True)"`,
 `_IS_V2 = globals().setdefault("_IS_V2", False)` — remembered rather than
@@ -1219,8 +1414,16 @@ is load-bearing. Don't assert the whole idle dict — it also carries `usage`.
 ### Test totals
 
 ```
-tests/{unit,mcp,memory,integration}   1326 passed in 434.58s   0 failed
+post-rename (410e11c7), the current state:
+tests/{unit,mcp,memory,integration}   1414 passed in  462.10s   0 failed
+tests/e2e (26 tests)                    26 passed in 1419.32s   0 failed
+                                      ===== 1440 passed, 0 failed
+
+./run_tests.sh  (ALL tiers, live e2e)   1437 passed in 2154.88s  0 failed
+tests/{unit,mcp,memory,integration}   1411 passed in  469.01s   0 failed
 tests/e2e (26 tests)                    26 passed in 1593.72s  0 failed
+tests/e2e/test_agent2_live.py            3 passed in   27.87s  0 failed  (post-rc2)
+tests/e2e/test_compact_continues_live.py 1 passed in  864.80s  (was a 1200s timeout)
 tests/unit/test_discover.py             13 passed
 tests/integration/test_cli_run_dispatch.py  27 collected (26 defs, one parametrized x2)
 tests/unit/test_agents_registry.py      38 passed
@@ -1287,7 +1490,9 @@ new floor.
 
 Features, not bugs.
 
-1. **`remind`** — §5. The live proposal.
+1. **`remind`** — §5. Still unstarted, but no longer the thing blocking
+   self-directed input: §5.4's mechanism shipped under `/goal`, so what is left
+   here is the one-shot note and its subtool, not the wake.
 2. **`schedule_timer` has no production caller.** Built, tested, runnable,
    unwired. §5.3 argues it should stay that way for now.
 3. **`_run_mcp_tool` has no `progress_handler`** (`agent2/tools.py:361`).
@@ -1302,10 +1507,50 @@ Features, not bugs.
    reason to DELETE code* — if it survives, delete it.
 5. **`_cancel_orphan`'s wording** is subagent-shaped and will read oddly for a
    cancelled reminder (§5.10).
+6. **Compaction's handoff grew without bound.** Two thirds of it fixed
+   2026-09-25, the absolute bound still open. First half, `6ff6d2d3`:
+   `last_messages()` capped tool and assistant content at
+   `max_chars` and appended user messages WHOLE, and since a successor's handoff
+   is itself a user message, each compaction folded the previous handoff into
+   the next one and the size compounded — measured live at a 30k ceiling, 11k →
+   32k → 58k → 92k → 131k → 172k chars over six generations, each successor
+   born closer to the ceiling and then past it, each summary call slower than
+   the last, until `tests/e2e/test_compact_continues_live.py` timed out at 1200s
+   one page from done. `worth_compacting()` could not catch it: that guard stops
+   a successor re-compacting with NO new history, and here every generation did
+   do work — one tool round's worth before crossing the ceiling again.
+
+   The cap bounded the tail and the growth moved wholesale into the SUMMARY, so
+   `a1e3c9c2` fixed the second half: `COMPACTION_PROMPT` said "be thorough and
+   detailed … include everything a new agent would need", and the history it
+   summarizes opens with the previous generation's handoff — read literally, and
+   models read it literally, that is an instruction to reproduce the previous
+   summary and add to it. Measured on the same dive, summaries 6.8k → 15.8k →
+   23.1k → 29.5k → 42.1k chars with the tail flat at 1.3–2.4k. Two paragraphs
+   later (a summary must be substantially shorter than the history it replaces;
+   a previous summary is material to COMPRESS, not text to reproduce) the
+   compaction calls went from 130–210s to 69–191s and the turn from a 1200s
+   timeout to 864s.
+
+   What is STILL open is the absolute bound. `_stream_completion` asks for
+   `MAX_OUTPUT_TOKENS = 30000` with nothing derived from the ceiling, so a
+   single summary can still be a third of a 100k ceiling on its own, and a
+   successor born over the ceiling re-compacts on its first tool round forever.
+   The prompt is a request and the model can decline it; the wall would be
+   `max_tokens = ceiling // 4` on the compaction call. Not shipped: a truncated
+   summary silently loses the record, which is a worse failure than a slow one,
+   and neither the wall nor the prompt is testable without a live model. The
+   one-line cap and its fixed-point test are the part that is.
 
 ---
 
 ## 9. Git state
+
+**Stale, and kept as the record of the session that wrote it.** It predates the
+merge of `acp-v2-agent` into main and the `/goal` work; in particular "the
+worktree workflow is over" is no longer true — `/goal` was built in
+`~/.agents/crow/src/worktrees/goal`, off a main that has moved well past
+`07f4ec9b`. Read the commit list below as history, not as the current tree.
 
 ```
 main = 07f4ec9b  feat: ask the agent which protocol it speaks instead of declaring it
@@ -1331,10 +1576,15 @@ RS   = ~/.agents/crow/src/worktrees/crow-cli-rs     ee2cb032          Rust refer
 D    = ~/.agents/crow/src/python-sdk                c1004f8           ACP v2 clone, editable, 0.12.1
 ```
 
-The worktree workflow is over; MAIN's venv *is* the merged tree.
-`../../python-sdk` (from the worktree) vs `../python-sdk` (from main) is a
-permanent two-commit difference. Never hand-merge `uv.lock` — resolve
-`pyproject.toml`, then `uv lock`.
+The worktree workflow is over; MAIN's venv *is* the merged tree. Never
+hand-merge `uv.lock` — resolve `pyproject.toml`, then `uv lock`.
+
+**The `../../python-sdk` vs `../python-sdk` two-commit difference is dead.**
+`agent-client-protocol` 1.0.0rc2 is on PyPI with `acp/experimental/v2/`, so
+`[tool.uv.sources]` is gone from `pyproject.toml` and every worktree resolves the
+same published wheel. The `~/.agents/crow/src/worktrees/python-sdk` symlink that
+worked around it has been deleted; the clone at `D` stays only as the schema
+prose (§7).
 
 ### Where the project goes
 

@@ -7,7 +7,16 @@ from . import fts
 from .ids import build_agent_id, parse_agent_id
 from .image_store import ImageStore
 from .messages import hydrate_message
-from .models import Agent, Message, Prompt, SubtoolCall, Task, TaskDelivery
+from .models import (
+    GOAL_ACTIVE,
+    Agent,
+    Goal,
+    Message,
+    Prompt,
+    SubtoolCall,
+    Task,
+    TaskDelivery,
+)
 
 
 def get_agent(engine, agent_id: str) -> Agent | None:
@@ -182,6 +191,28 @@ def pending_deliveries(engine, session_id: str) -> list[TaskDelivery]:
             .order_by(TaskDelivery.id)
             .all()
         )
+
+
+def get_goal(engine, session_id: str) -> Goal | None:
+    """This session's goal, whatever its status. ``/goal`` with no argument
+    reads this: a paused or blocked goal is not nothing, and a user who has to
+    guess which of the two they left behind cannot decide what to do next."""
+    with Session(engine) as db:
+        return db.query(Goal).filter_by(session_id=session_id).first()
+
+
+def active_goal(engine, session_id: str) -> Goal | None:
+    """The goal if and only if it continues. None for every other status.
+
+    The driver asks THIS and never ``get_goal``, so "should I keep going" is
+    one column compare in one place rather than a status switch repeated at
+    every call site that has to agree. A goal that is paused, blocked,
+    budget_limited or complete is a row worth showing and not a reason to run
+    another turn.
+    """
+    with Session(engine) as db:
+        row = db.query(Goal).filter_by(session_id=session_id, status=GOAL_ACTIVE).first()
+        return row
 
 
 def get_max_agent_idx(engine, session_id: str, fork_idx: int | None = 1) -> int:

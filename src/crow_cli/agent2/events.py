@@ -29,9 +29,18 @@ class Prompt:
     ``blocks`` is the v2 ``ContentBlock`` list exactly as it arrived on the
     wire. The driver hands it to the emitter to render and to the session to
     persist; this module does not need to know its shape.
+
+    ``message_id`` is minted by the ``prompt`` handler, not by the driver that
+    echoes it, because the handler has to answer with it: v2's
+    ``PromptResponse`` carries the ``messageId`` the accepted user message
+    landed under, and the ``user_message`` update the driver emits later must
+    carry the SAME one. Two mints would be two identities for one message, and
+    the response reaches the client first, so the driver cannot be the one
+    that decides.
     """
 
     blocks: list[Any]
+    message_id: str
 
 
 @dataclass(frozen=True, slots=True)

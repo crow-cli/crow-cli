@@ -9,6 +9,21 @@ described in crow_cli.tools.results.
 Attributes resolve LAZILY (PEP 562), same pattern as crow_cli.mcp: the
 package import stays cheap until a tool is actually used.
 
+**Every subtool module is named ``<name>_tool.py``, and that suffix is
+load-bearing.** Importing a submodule makes the import machinery do
+``setattr(package, child_name, module)``, and a module ``__getattr__`` is only
+consulted when ordinary lookup FAILS — so a submodule called ``fs.py`` parks
+itself on ``crow_cli.tools.fs`` and shadows the ``fs`` the facade binds, and
+``crow_cli.tools.fs(...)`` becomes ``TypeError: 'module' object is not
+callable``. Which of the two you got depended on whether anything had imported
+the submodule yet. The suffix means no submodule name is a binding name, so
+there is nothing to shadow: ``crow_cli.tools.fs`` is the function by exactly
+one route, and ``crow_cli.tools.fs_tool`` is the module by exactly one route.
+``tests/unit/test_tools_facade_names.py`` pins the invariant, so a new subtool
+added as ``foo.py`` with a binding ``foo`` fails a test instead of failing
+whoever imports it first. ``register.py`` and ``results.py`` keep their plain
+names because nothing binds them.
+
 PRELUDE is the zero-day import line execute runs on kernel start/reset: it
 calls :func:`reload`, which re-imports every tool module from source and
 binds the names into the caller's namespace. So the tools are ambient —
@@ -22,28 +37,38 @@ free — see _LAZY_V2 for why `task` is not ambient in every kernel.
 """
 
 _LAZY = {
-    "edit": ("crow_cli.tools.edit", "edit"),
-    "fs": ("crow_cli.tools.fs", "fs"),
-    "memory": ("crow_cli.tools.memory", "memory"),
-    "rlm": ("crow_cli.tools.rlm", "rlm"),
-    "sg": ("crow_cli.tools.sg", "sg"),
-    "vision": ("crow_cli.tools.vision", "vision"),
-    "web": ("crow_cli.tools.web", "web"),
-    "write": ("crow_cli.tools.write", "write"),
+    "edit": ("crow_cli.tools.edit_tool", "edit"),
+    "fs": ("crow_cli.tools.fs_tool", "fs"),
+    "memory": ("crow_cli.tools.memory_tool", "memory"),
+    "rlm": ("crow_cli.tools.rlm_tool", "rlm"),
+    "sg": ("crow_cli.tools.sg_tool", "sg"),
+    "vision": ("crow_cli.tools.vision_tool", "vision"),
+    "web": ("crow_cli.tools.web_tool", "web"),
+    "write": ("crow_cli.tools.write_tool", "write"),
 }
 
 #: Bound in a v2 kernel ONLY, on top of _LAZY.
 #:
-#: The reason is a collision, not a protocol. v1 already ships `task` as an
-#: MCP tool served from the agent process, so a v1 kernel that also had a
-#: `task` subtool would have two launchers minting ids off the same global
-#: counter and writing the same two tables. And v1 is frozen: it does not get
-#: new ambient surface just because v2 needs it.
+#: For `task` the reason is a collision, not a protocol. v1 already ships it
+#: as an MCP tool served from the agent process, so a v1 kernel that also had
+#: a `task` subtool would have two launchers minting ids off the same global
+#: counter and writing the same two tables.
+#:
+#: For `goal_done`/`goal_blocked` it IS the protocol: they are the exits from
+#: a continuation loop, and only the agent2 driver runs one (v1 has no idle
+#: transition to hook). Binding them in a v1 kernel would offer the model a
+#: way out of a loop it is not in — a call that succeeds, changes a row, and
+#: means nothing.
+#:
+#: Either way, v1 is frozen: it does not get new ambient surface just because
+#: v2 needs it.
 _LAZY_V2 = {
-    "task": ("crow_cli.tools.task", "task"),
-    "task_cancel": ("crow_cli.tools.task", "task_cancel"),
-    "task_read": ("crow_cli.tools.task", "task_read"),
-    "task_send": ("crow_cli.tools.task", "task_send"),
+    "goal_blocked": ("crow_cli.tools.goal_tool", "goal_blocked"),
+    "goal_done": ("crow_cli.tools.goal_tool", "goal_done"),
+    "task": ("crow_cli.tools.task_tool", "task"),
+    "task_cancel": ("crow_cli.tools.task_tool", "task_cancel"),
+    "task_read": ("crow_cli.tools.task_tool", "task_read"),
+    "task_send": ("crow_cli.tools.task_tool", "task_send"),
 }
 
 #: Which flavour THIS module instance is. Remembered rather than inferred so
@@ -122,13 +147,13 @@ def reload(v2: bool | None = None) -> None:
     # kernel has imported nothing but this package yet.
     #
     # MODULE names, read off the table's values — not binding names with
-    # "crow_cli.tools." glued in front. Several bindings can share one module
-    # (task, task_cancel, task_read and task_send all live in
-    # crow_cli.tools.task), and every _LAZY binding happens to equal its own
-    # module's basename, which made the derivation look safe right up until
-    # PRELUDE_V2 ran for real and went looking for a module called
-    # crow_cli.tools.task_cancel. Deduped because reloading one module four
-    # times would re-execute it four times.
+    # "crow_cli.tools." glued in front. Several bindings share one module (task,
+    # task_cancel, task_read and task_send all live in crow_cli.tools.task_tool),
+    # and the _tool suffix means the glued derivation is now wrong for EVERY
+    # binding rather than accidentally right for most of it. That is the point:
+    # it used to look safe right up until PRELUDE_V2 ran for real and went
+    # looking for a module called crow_cli.tools.task_cancel. Deduped because
+    # reloading one module four times would re-execute it four times.
     for module_name in dict.fromkeys(
         ("crow_cli.tools.results", "crow_cli.tools.register")
         + tuple(module for module, _attr in names.values())
@@ -145,19 +170,20 @@ def reload(v2: bool | None = None) -> None:
         caller[name] = getattr(importlib.import_module(module_name), attr)
     caller["reload"] = package.reload
 
-    # Purge LAST. Two things put a stale value in this dict under a _LAZY
-    # name: reload re-executes the package in its EXISTING dict, so a cached
-    # facade function survives it; and importing a submodule for the FIRST
-    # time makes the import machinery setattr(parent, child, module). The
-    # second one is why this runs after the binding loop above — that loop
-    # reads the FRESH table, while the import-if-absent loop at the top read
-    # the running one, so a tool just added to _LAZY is first imported down
-    # there. Purging before it left pkg.<new_tool> holding the MODULE, which
-    # shadows __getattr__ and hands callers an uncallable object.
+    # Purge LAST, so a cached facade function does not survive the reload:
+    # __getattr__ caches into this dict, and reload re-executes the package in
+    # its EXISTING dict, so without this `crow_cli.tools.fs` keeps handing back
+    # the pre-edit function even though the caller's binding below is fresh.
     #
-    # Fresh here too, and for the same reason: `names` was captured before the
-    # reload, so a table the reload changed — a tool added, one removed — would
-    # purge by the old membership and leave the new binding shadowed.
+    # Membership is read off `package._names()` and not the `names` captured
+    # before the reload, so a table the reload changed — a tool added, one
+    # removed — purges by the new membership.
+    #
+    # This used to have a second job: undoing the MODULE that the import
+    # machinery parked on the package attribute when a submodule was first
+    # imported, which shadowed __getattr__ and handed callers an uncallable
+    # object. The _tool suffix removed that failure mode at the source (see the
+    # module docstring), so all that is left here is the stale-function case.
     for key in [k for k in list(package.__dict__) if k in package._names()]:
         del package.__dict__[key]
 

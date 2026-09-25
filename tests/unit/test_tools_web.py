@@ -33,11 +33,9 @@ from crow_cli.tools.results import (
     WebSearchResult,
 )
 
-# from-import of internals IS safe; `import crow_cli.tools.web as m` is not —
-# the facade resolves that name to the FUNCTION.
-from crow_cli.tools.web import _answer, _engine_down, _is_html, _is_texty
+from crow_cli.tools.web_tool import _answer, _engine_down, _is_html, _is_texty
 
-MOD = sys.modules["crow_cli.tools.web"]
+MOD = sys.modules["crow_cli.tools.web_tool"]
 
 PAGE = (
     "<html><head><title>Tiny Page</title></head><body>"
@@ -547,7 +545,7 @@ async def test_run_screenshot_is_capped_like_vision(chromium, base, tmp_path, mo
     """The viewport is 1280x720 by default but r.page.set_viewport_size is
     ambient, so a screenshot goes through vision's cap: a 3000px shot is
     bytes no vision model wants."""
-    vision_mod = sys.modules["crow_cli.tools.vision"]
+    vision_mod = sys.modules["crow_cli.tools.vision_tool"]
     monkeypatch.setattr(vision_mod, "_MAX_DIM", 100)
     begin_cell(session_id="s1", parent_tool_call_id="t/c", images_dir=str(tmp_path / "img"))
     r = await web("run", f"{base}/js")

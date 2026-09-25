@@ -56,22 +56,22 @@ async def test_edit_is_ambient_on_start(mcp_app):
     """The prelude ran: bare `edit` resolves with no import in the cell.
     print() is the channel now — no Out[n] reprs in execute's output."""
     out = await _call(mcp_app, "print(edit.__module__)")
-    assert out.strip() == "crow_cli.tools.edit"
+    assert out.strip() == "crow_cli.tools.edit_tool"
 
 
 async def test_vision_is_ambient_on_start(mcp_app):
     out = await _call(mcp_app, "print(vision.__module__)")
-    assert out.strip() == "crow_cli.tools.vision"
+    assert out.strip() == "crow_cli.tools.vision_tool"
 
 
 async def test_write_is_ambient_on_start(mcp_app):
     out = await _call(mcp_app, "print(write.__module__)")
-    assert out.strip() == "crow_cli.tools.write"
+    assert out.strip() == "crow_cli.tools.write_tool"
 
 
 async def test_fs_is_ambient_on_start(mcp_app):
     out = await _call(mcp_app, "print(fs.__module__)")
-    assert out.strip() == "crow_cli.tools.fs"
+    assert out.strip() == "crow_cli.tools.fs_tool"
 
 
 async def test_fs_runs_in_the_kernel(mcp_app, tmp_path):
@@ -148,7 +148,7 @@ async def test_edit_ambient_after_reset(mcp_app):
     """Reset goes through get_kernel too — the prelude reruns."""
     await _call(mcp_app, "", reset=True)
     out = await _call(mcp_app, "print(edit.__module__)")
-    assert out.strip() == "crow_cli.tools.edit"
+    assert out.strip() == "crow_cli.tools.edit_tool"
 
 
 async def test_vision_writes_through_from_kernel(mcp_app, tmp_path):
@@ -226,7 +226,7 @@ async def test_reload_is_ambient_on_start(mcp_app):
     """PRELUDE calls reload(): the name is bound, and the tools came from
     it — reload re-resolves them into the kernel's namespace."""
     out = await _call(mcp_app, "print(reload.__module__, edit.__module__)")
-    assert out.strip() == "crow_cli.tools crow_cli.tools.edit"
+    assert out.strip() == "crow_cli.tools crow_cli.tools.edit_tool"
 
 
 async def test_a_v1_kernel_does_not_get_the_task_family(mcp_app):
@@ -254,17 +254,17 @@ async def test_reload_re_executes_and_purges_the_facade_cache(mcp_app):
     code = (
         "import sys\n"
         "import crow_cli.tools as T\n"
-        "before = sys.modules['crow_cli.tools.edit'].edit\n"
+        "before = sys.modules['crow_cli.tools.edit_tool'].edit\n"
         "T.__dict__['edit'] = 'STALE'\n"
         "reload()\n"
-        "after = sys.modules['crow_cli.tools.edit'].edit\n"
+        "after = sys.modules['crow_cli.tools.edit_tool'].edit\n"
         "print(before is after, T.__dict__.get('edit') == 'STALE')\n"
         "print(T.edit.__module__, edit is after)"
     )
     out = await _call(mcp_app, code)
     assert out.strip().splitlines() == [
         "False False",
-        "crow_cli.tools.edit True",
+        "crow_cli.tools.edit_tool True",
     ]
 
 
@@ -282,7 +282,7 @@ async def test_reload_purges_a_tool_that_is_new_to_the_facade(mcp_app):
     code = (
         "import sys\n"
         "import crow_cli.tools as T\n"
-        "del sys.modules['crow_cli.tools.web']\n"
+        "del sys.modules['crow_cli.tools.web_tool']\n"
         "T.__dict__.pop('web', None)\n"
         "T._LAZY = {k: v for k, v in T._LAZY.items() if k != 'web'}\n"
         "reload()\n"
@@ -293,7 +293,7 @@ async def test_reload_purges_a_tool_that_is_new_to_the_facade(mcp_app):
     out = await _call(mcp_app, code)
     assert out.strip().splitlines() == [
         "False function",
-        "True crow_cli.tools.web True",
+        "True crow_cli.tools.web_tool True",
     ]
 
 
@@ -393,7 +393,7 @@ async def test_memory_is_ambient_and_reads_the_injected_database(mcp_app, tmp_pa
     code = (
         "print(memory.__module__)\n"
         "import sys\n"
-        "M = sys.modules['crow_cli.tools.memory']\n"
+        "M = sys.modules['crow_cli.tools.memory_tool']\n"
         "r = await memory('list')\n"
         "print(r.subject, r.rows, r.total, r.df['session_id'].to_list())\n"
         "engine = M._engine()\n"
@@ -418,7 +418,7 @@ async def test_memory_is_ambient_and_reads_the_injected_database(mcp_app, tmp_pa
         )
     assert result.is_error is False, result.content
     assert result.content[0].text.strip().splitlines() == [
-        "crow_cli.tools.memory",
+        "crow_cli.tools.memory_tool",
         "sessions 1 1 ['sess-mem']",
         "True True",
         "1 ['user'] ['polars in the kernel']",

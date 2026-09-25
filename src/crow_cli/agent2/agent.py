@@ -1,16 +1,25 @@
 """The ACP v2 agent.
 
 Not a subclass of anything. v2's runtime resolves handlers with
-``getattr(target, spec.handler)`` and calls each with ONE positional argument —
-the validated request model — so an agent is any object with the right method
-names. v1's ``AcpAgent(acp.Agent)`` inherited an ABC whose signatures had to be
-kept in step with the schema; here the schema is the only source of truth and
-the methods simply match it.
+``getattr(target, spec.handler)`` and calls each with the request's FIELDS AS
+KEYWORD ARGUMENTS — ``MethodRouter.handle_request`` ends in
+``await handler(**model_to_kwargs(request, type(request)))`` — so an agent is
+any object with the right method names and a signature that absorbs them.
+v1's ``AcpAgent(acp.Agent)`` inherited an ABC whose signatures had to be kept
+in step with the schema; here the schema is the only source of truth and the
+methods simply match it.
 
-    async def initialize(self, request: InitializeRequest) -> InitializeResponse
-    async def new_session(self, request: NewSessionRequest) -> NewSessionResponse
-    async def prompt(self, request: PromptRequest) -> PromptResponse
-    async def cancel_session(self, notification: CancelSessionNotification) -> None
+Two consequences worth knowing before reading a handler. Every field of the
+request model arrives whether the client set it or not, so an omitted optional
+is a ``None`` argument rather than an absent one. And ``_meta`` does not arrive
+as a field: its CONTENTS are spread into the call, which is what the trailing
+``**kwargs`` catches, and why ``fork_session`` reads its fork coordinates
+straight out of ``kwargs``.
+
+    async def initialize(self, protocol_version, info, capabilities=None, **kwargs)
+    async def new_session(self, cwd, additional_directories=None, mcp_servers=None, **kw)
+    async def prompt(self, session_id, prompt, **kwargs) -> PromptResponse
+    async def cancel_session(self, session_id, **kwargs) -> None
 
 v2 also made the rest of the session surface mandatory. Advertising
 ``capabilities.session`` at all is now a promise to answer ``session/list``,
@@ -33,11 +42,11 @@ and the one inversion that defines v2 —
 
 **``prompt`` acknowledges, it does not run the turn.** v1 held
 ``session/prompt`` open for the whole turn and put the ``stopReason`` in the
-response. v2 responds ``{}`` as soon as the prompt is accepted; the user
-message, the running/idle states and the stop reason all travel as
-``session/update`` notifications. That is not bookkeeping — it is what makes a
-wake indistinguishable from a prompt, and therefore what makes background work
-possible at all.
+response. v2 responds as soon as the prompt is accepted, with the ``messageId``
+it landed under and nothing else; the user message, the running/idle states and
+the stop reason all travel as ``session/update`` notifications. That is not
+bookkeeping — it is what makes a wake indistinguishable from a prompt, and
+therefore what makes background work possible at all.
 """
 
 from __future__ import annotations
@@ -64,6 +73,11 @@ from crow_cli.agent.slash import _SLASH_COMMANDS, parse_slash_command
 from crow_cli.config import Config, get_default_config_dir
 from crow_cli.memory import wire_session_id
 
+# Imported for its side effect: the decorator registers /goal in the shared
+# command table THIS process reads. It lives in agent2 rather than in
+# agent/slash.py with the other four because v1 reads the same table and runs
+# no continuation loop — see agent2/slash.py.
+from . import slash as _v2_slash  # noqa: F401
 from .driver import SessionDriver
 from .events import Cancel, Prompt
 from .replay import replay
@@ -216,11 +230,17 @@ class CrowAgentV2:
 
     # -- initialize --------------------------------------------------------
 
-    async def initialize(self, request: v2.InitializeRequest) -> v2.InitializeResponse:
-        self.client_capabilities = request.capabilities
+    async def initialize(
+        self,
+        protocol_version: int,
+        info: v2.Implementation,
+        capabilities: Optional[v2.ClientCapabilities] = None,
+        **kwargs: Any,
+    ) -> v2.InitializeResponse:
+        self.client_capabilities = capabilities
         self.log.info(
             "initialize: client %s %s, capabilities %s",
-            request.info.name, request.info.version, request.capabilities,
+            info.name, info.version, capabilities,
         )
         return v2.InitializeResponse(
             # The runtime rejects anything else: InitializationState.complete
@@ -266,10 +286,16 @@ class CrowAgentV2:
 
     # -- sessions ----------------------------------------------------------
 
-    async def new_session(self, request: v2.NewSessionRequest) -> v2.NewSessionResponse:
-        self.log.info("new_session in cwd %s", request.cwd)
-        self._warn_additional("new", request.additional_directories)
-        session = await self.sessions.create(request.cwd, request.mcp_servers)
+    async def new_session(
+        self,
+        cwd: str,
+        additional_directories: Optional[list] = None,
+        mcp_servers: Optional[list] = None,
+        **kwargs: Any,
+    ) -> v2.NewSessionResponse:
+        self.log.info("new_session in cwd %s", cwd)
+        self._warn_additional("new", additional_directories)
+        session = await self.sessions.create(cwd, mcp_servers)
         session_id = wire_session_id(session.agent_id)
         await self.sessions.driver_for(session, slash=self._slash)
         await self._advertise_commands(session_id)
@@ -311,7 +337,10 @@ class CrowAgentV2:
     # -- listing -----------------------------------------------------------
 
     async def list_sessions(
-        self, request: v2.ListSessionsRequest
+        self,
+        cwd: Optional[str] = None,
+        cursor: Optional[str] = None,
+        **kwargs: Any,
     ) -> v2.ListSessionsResponse:
         """One page of the sessions this agent's store knows, newest first.
 
@@ -324,12 +353,12 @@ class CrowAgentV2:
         stored (``make_agent_session`` runs ``abspath``): a client's bare ``.``
         would otherwise match nothing and look like an empty history.
         """
-        cwd = os.path.abspath(request.cwd) if request.cwd else None
-        offset = decode_cursor(request.cursor)
-        infos, next_offset = self.sessions.session_infos(cwd, PAGE_SIZE, offset)
+        absolute = os.path.abspath(cwd) if cwd else None
+        offset = decode_cursor(cursor)
+        infos, next_offset = self.sessions.session_infos(absolute, PAGE_SIZE, offset)
         self.log.info(
             "list_sessions cwd=%s offset=%d -> %d session(s), next=%s",
-            cwd, offset, len(infos), next_offset,
+            absolute, offset, len(infos), next_offset,
         )
         return v2.ListSessionsResponse(
             sessions=[v2.SessionInfo(**info) for info in infos],
@@ -339,7 +368,13 @@ class CrowAgentV2:
     # -- resume / close / fork ---------------------------------------------
 
     async def resume_session(
-        self, request: v2.ResumeSessionRequest
+        self,
+        session_id: str,
+        cwd: str,
+        additional_directories: Optional[list] = None,
+        mcp_servers: Optional[list] = None,
+        replay_from: Any = None,
+        **kwargs: Any,
     ) -> v2.ResumeSessionResponse:
         """Re-attach to a session, replaying its history when asked.
 
@@ -360,28 +395,27 @@ class CrowAgentV2:
         would be connected and then ignored — a client wanting different tools
         closes the session and resumes it.
         """
-        session_id = request.session_id
         session = await self.sessions.resolve(session_id)
         if session is None:
             self.log.error("resume for unknown session %s", session_id)
             raise RequestError.invalid_params(
                 {"sessionId": session_id, "details": "unknown session"}
             )
-        self._warn_additional(session_id, request.additional_directories)
-        cwd = os.path.abspath(request.cwd)
+        self._warn_additional(session_id, additional_directories)
+        absolute = os.path.abspath(cwd)
         live = session_id in self.sessions.tools
         if live:
             self.log.info(
                 "resume: session %s is already live here — keeping the tool "
                 "supply it came up with", session_id,
             )
-        await self.sessions.provision(session, request.mcp_servers)
+        await self.sessions.provision(session, mcp_servers)
         await self._advertise_commands(session_id)
-        if wants_replay(request.replay_from):
+        if wants_replay(replay_from):
             await replay(
                 self.sessions.emitter_for(session_id),
                 session.messages,
-                cwd,
+                absolute,
                 self.sessions.logger_for(session_id),
             )
         await self.sessions.driver_for(session, slash=self._slash)
@@ -390,7 +424,7 @@ class CrowAgentV2:
         )
 
     async def close_session(
-        self, request: v2.CloseSessionRequest
+        self, session_id: str, **kwargs: Any
     ) -> v2.CloseSessionResponse:
         """Cancel anything in flight, free the session, answer.
 
@@ -408,7 +442,6 @@ class CrowAgentV2:
         prompted — but a session that does not exist ANYWHERE is, and is
         refused the same way ``prompt`` refuses one.
         """
-        session_id = request.session_id
         if not self.sessions.known(session_id):
             self.log.error("close for unknown session %s", session_id)
             raise RequestError.invalid_params(
@@ -418,7 +451,12 @@ class CrowAgentV2:
         return v2.CloseSessionResponse()
 
     async def fork_session(
-        self, request: v2.ForkSessionRequest
+        self,
+        session_id: str,
+        cwd: str,
+        additional_directories: Optional[list] = None,
+        mcp_servers: Optional[list] = None,
+        **kwargs: Any,
     ) -> v2.ForkSessionResponse:
         """A branch of a session's history under its own wire id.
 
@@ -431,18 +469,23 @@ class CrowAgentV2:
         an unknown session, an ``agentIdx`` that does not exist, a
         ``messageOffset`` that steps back past everything. The message carries
         the reason because "cannot fork" on its own is not actionable.
+
+        The fork coordinates travel in ``_meta`` — they are crow's, not the
+        spec's — and the router spreads a request's ``_meta`` INTO the call
+        rather than passing it as a field, so ``kwargs`` here is the meta dict
+        and nothing else.
         """
-        meta = request.field_meta or {}
+        meta = kwargs
         self.log.info(
             "fork_session %s cwd=%s agentIdx=%s turnIdx=%s messageOffset=%s rlmDepth=%s",
-            request.session_id, request.cwd, meta.get("agentIdx"), meta.get("turnIdx"),
+            session_id, cwd, meta.get("agentIdx"), meta.get("turnIdx"),
             meta.get("messageOffset"), meta.get("rlmDepth"),
         )
         try:
             forked = await self.sessions.fork(
-                request.session_id,
-                os.path.abspath(request.cwd),
-                request.mcp_servers,
+                session_id,
+                os.path.abspath(cwd),
+                mcp_servers,
                 agent_idx=int_meta(meta, "agentIdx"),
                 turn_idx=int_meta(meta, "turnIdx"),
                 message_offset=int_meta(meta, "messageOffset"),
@@ -451,15 +494,15 @@ class CrowAgentV2:
         except RequestError:
             raise
         except Exception as exc:
-            self.log.error("fork of %s failed: %s", request.session_id, exc)
+            self.log.error("fork of %s failed: %s", session_id, exc)
             raise RequestError.invalid_params(
                 {
-                    "sessionId": request.session_id,
+                    "sessionId": session_id,
                     "details": f"cannot fork: {exc}",
                 }
             ) from exc
         fork_id = wire_session_id(forked.agent_id)
-        self._warn_additional(fork_id, request.additional_directories)
+        self._warn_additional(fork_id, additional_directories)
         await self._advertise_commands(fork_id)
         await self.sessions.driver_for(forked, slash=self._slash)
         return v2.ForkSessionResponse(
@@ -469,13 +512,19 @@ class CrowAgentV2:
 
     # -- config options ----------------------------------------------------
 
-    async def set_config_option(self, request: Any) -> v2.SetSessionConfigOptionResponse:
+    async def set_config_option(
+        self, config_id: str, session_id: str, value: Any, **kwargs: Any
+    ) -> v2.SetSessionConfigOptionResponse:
         """One option changed; the FULL array comes back.
 
         The request is a union discriminated on ``type`` — ``id`` for a
         select's value, ``boolean``, and an open variant for anything a future
         spec adds — so this is written against the fields all three share
-        rather than against one of them.
+        rather than against one of them. The router expands the intersection of
+        the three branches' fields, which is exactly those shared ones, and
+        ``type`` arrives in ``kwargs``: crow stores no boolean options, so the
+        discriminator is the client's business and shadowing the builtin to
+        receive it would be a price paid for nothing.
 
         An unknown ``configId`` is refused rather than stored. The array this
         agent sent is the only place a client can have learned an id from, so
@@ -487,8 +536,6 @@ class CrowAgentV2:
         response carries the array, and it carries all of it because the spec is
         explicit that one change can affect other options.
         """
-        session_id = request.session_id
-        config_id = request.config_id
         session = await self.sessions.resolve(session_id)
         if session is None:
             self.log.error("set_config_option for unknown session %s", session_id)
@@ -496,7 +543,7 @@ class CrowAgentV2:
                 {"sessionId": session_id, "details": "unknown session"}
             )
         if config_id == "model":
-            if not isinstance(request.value, str):
+            if not isinstance(value, str):
                 raise RequestError.invalid_params(
                     {
                         "sessionId": session_id,
@@ -505,15 +552,13 @@ class CrowAgentV2:
                     }
                 )
             self.log.info(
-                "set_config_option: session %s model -> %s", session_id, request.value
+                "set_config_option: session %s model -> %s", session_id, value
             )
             # persist=True: this is the client's choice about the session, not
             # a process-local default, so it outlives this process. See
             # SessionRegistry.apply_model_option for what the flag buys and why
             # nothing else sets it.
-            self.sessions.apply_model_option(
-                session_id, request.value, session, persist=True
-            )
+            self.sessions.apply_model_option(session_id, value, session, persist=True)
         else:
             known = [o.config_id for o in self.sessions.config_options(session_id)]
             self.log.warning(
@@ -534,15 +579,24 @@ class CrowAgentV2:
 
     # -- prompt ------------------------------------------------------------
 
-    async def prompt(self, request: v2.PromptRequest) -> v2.PromptResponse:
+    async def prompt(
+        self, session_id: str, prompt: list, **kwargs: Any
+    ) -> v2.PromptResponse:
         """Accept a prompt and return. The turn runs on the driver's task.
 
-        Returning ``{}`` immediately is the whole point of the v2 lifecycle:
-        the client learns what happened from ``state_update``, so a wake, a
-        queued prompt and a fresh one are the same thing by the time they
-        reach the loop.
+        Returning before the work is done is the whole point of the v2
+        lifecycle: the client learns what happened from ``state_update``, so a
+        wake, a queued prompt and a fresh one are the same thing by the time
+        they reach the loop.
+
+        The response is not empty, though. It carries the ``messageId`` the
+        accepted prompt landed under, and the ``user_message`` update the
+        driver echoes later has to carry the SAME one — the spec says the
+        update "may arrive before or after this response", so the client is
+        entitled to match them up in either order. The id is therefore minted
+        here and travels on the :class:`~crow_cli.agent2.events.Prompt`, rather
+        than being minted by the thing that emits it.
         """
-        session_id = request.session_id
         # Resolve before anything is minted for the id. A logger writes a file
         # and an emitter takes a dict slot, so validating after them would let
         # a client litter the log directory with a prompt for a session that
@@ -550,27 +604,34 @@ class CrowAgentV2:
         session = await self.sessions.resolve(session_id)
         if session is None:
             self.log.error("no session found for session_id=%s", session_id)
-            # v1 could answer with stop_reason="error"; v2's prompt response is
-            # empty, so a JSON-RPC error is the only channel left. Better than
-            # a clean acknowledgement: a client that thinks the turn started
-            # will wait forever for an idle that never comes.
+            # v1 could answer with stop_reason="error"; v2's prompt response
+            # carries a messageId and nothing else, so a JSON-RPC error is the
+            # only channel left. Better than a clean acknowledgement: a client
+            # that thinks the turn started will wait forever for an idle that
+            # never comes.
             raise RequestError.invalid_params(
                 {"sessionId": session_id, "details": "unknown session"}
             )
 
+        emitter = self.sessions.emitter_for(session_id)
+        message_id = emitter.start_message()
+
         if not self.config.is_configured:
             # First run, no provider. Say so and go idle — a turn cannot run.
-            emitter = self.sessions.emitter_for(session_id)
+            # Nothing is echoed and nothing is persisted, so the id this
+            # answers with names a message that was never inserted. The field
+            # is required and there is no honest value for it here; a response
+            # the client can still parse beats an error the user has to decode.
             await emitter.agent_message(
                 emitter.start_message(), [v2.TextContentBlock(text=_SETUP_MESSAGE)]
             )
             await emitter.idle(stop_reason="end_turn")
-            return v2.PromptResponse()
+            return v2.PromptResponse(message_id=message_id)
 
         self.sessions.logger_for(session_id).info("prompt accepted for session %s", session_id)
         driver = await self.sessions.driver_for(session, slash=self._slash)
-        driver.submit(Prompt(blocks=request.prompt))
-        return v2.PromptResponse()
+        driver.submit(Prompt(blocks=prompt, message_id=message_id))
+        return v2.PromptResponse(message_id=message_id)
 
     async def _slash(self, session: Any, text: str) -> Optional[str]:
         """Dispatch a slash command. None means "not a command — run a turn".
@@ -588,7 +649,7 @@ class CrowAgentV2:
                 return await cmd["func"](session, args, self._slash_view)
         return f"Unknown command: /{name}. Type /help for available commands."
 
-    async def cancel_session(self, notification: v2.CancelSessionNotification) -> None:
+    async def cancel_session(self, session_id: str, **kwargs: Any) -> None:
         """Cancel the foreground work. The driver confirms via idle state.
 
         A notification, so there is nothing to return: per the spec the agent
@@ -597,7 +658,6 @@ class CrowAgentV2:
         cancelling the task covers a cancel that lands between turns, where
         there is no task to cancel but queued prompts must still be dropped.
         """
-        session_id = notification.session_id
         log = self.sessions.logger_for(session_id)
         driver = self.sessions.drivers.get(session_id)
         if driver is None:
@@ -672,6 +732,18 @@ class _SlashView:
 
     def _default_model_value(self) -> str:
         return self._r.default_model_value()
+
+    @property
+    def _engine(self) -> Any:
+        """The registry's long-lived write engine, or None with no ``db_uri``.
+
+        ``/goal`` is the only handler that asks for it — the others work on the
+        in-memory session or on config. It is the SAME engine the driver
+        settles goals through, which is the point: the status a person writes
+        has to be the one the driver reads at the idle transition, and two
+        engines on one file would only be a way to get a stale read.
+        """
+        return self._r.engine
 
     @property
     def _prompt_tasks(self) -> "_Stoppable":

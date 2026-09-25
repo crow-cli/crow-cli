@@ -445,7 +445,7 @@ def _store_shot(png: bytes, source: str) -> VisionResult:
     import cv2
     import numpy as np
 
-    from .vision import _cap_resolution, _encode, _store
+    from .vision_tool import _cap_resolution, _encode, _store
 
     frame = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR)
     if frame is None:

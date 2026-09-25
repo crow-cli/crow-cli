@@ -131,13 +131,6 @@ async def stop_command(session: AgentSession, args: str, agent: AcpAgent) -> str
         task.cancel()
         return "Operation stopped."
     return "No active operation to stop."
-    """Decorator to register a slash command."""
-
-    def decorator(func):
-        _SLASH_COMMANDS.append({"name": name, "description": description, "func": func})
-        return func
-
-    return decorator
 
 
 def parse_slash_command(text: str) -> tuple[str, str] | None:

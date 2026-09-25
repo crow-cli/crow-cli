@@ -263,7 +263,14 @@ def json_harness(capfd):
 
 
 def notif(update, session_id: str = "s1"):
-    return vs.UpdateSessionNotification(session_id=session_id, update=update)
+    """The call the router makes: a notification's FIELDS as keywords.
+
+    python-sdk 1.0.0rc2 stopped handing a handler the validated model, so
+    ``session_update`` takes ``session_id`` and ``update`` and there is no
+    ``UpdateSessionNotification`` to build. Spreading this at the call site
+    keeps the tests driving the handler the way the wire does.
+    """
+    return {"session_id": session_id, "update": update}
 
 
 def test_an_agent_message_chunk_renders_its_text(harness):
@@ -363,7 +370,7 @@ async def test_suppressing_the_echo_does_not_suppress_the_record(harness):
     reads now. Only the second one is the duplicate."""
     with harness.client.own_echo():
         await harness.client.session_update(
-            notif(
+            **notif(
                 vs.UserMessageUpdate(
                     message_id="u1", content=[vs.TextContentBlock(text="do it")]
                 )
@@ -378,7 +385,7 @@ async def test_json_mode_carries_the_echo_even_mid_turn(json_harness):
     """`-j` is a transcript, not a terminal: it gets every update."""
     with json_harness.client.own_echo():
         await json_harness.client.session_update(
-            notif(
+            **notif(
                 vs.UserMessageUpdate(
                     message_id="u1", content=[vs.TextContentBlock(text="do it")]
                 )
@@ -683,6 +690,33 @@ def test_a_compaction_summary_chunk_is_rendered(harness):
     assert "so far..." in harness.text
 
 
+def test_a_notice_shows_its_severity_and_title(harness):
+    """New in schema 2.0.0-alpha.5, and the reason the dispatch canary moved.
+
+    crow's agent emits none; an ``agent_servers`` entry may. What must not
+    happen is an ``error`` notice degrading to the unknown-kind placeholder,
+    which is a dot and a discriminator — the human reads "something" and not
+    "the agent told me something broke".
+    """
+    harness.client.render(
+        vs.SessionNotice(severity="error", title="the provider refused")
+    )
+    assert "error: the provider refused" in harness.text
+
+
+def test_a_notice_description_is_rendered_and_its_markup_is_not(harness):
+    harness.client.render(
+        vs.SessionNotice(
+            severity="warning",
+            title="rate limited",
+            description="retry after [bold]30s[/bold]",
+        )
+    )
+    assert "warning: rate limited" in harness.text
+    # markup=False, so the agent's text survives instead of being styled.
+    assert "[bold]30s[/bold]" in harness.text
+
+
 # -- the dispatch table itself ----------------------------------------------
 
 
@@ -748,8 +782,8 @@ async def test_rendering_cannot_break_the_record(json_harness):
     what makes a prompt return, and the face is the second job."""
     client = json_harness.client
     client.watch("s1")
-    await client.session_update(notif(vs.RunningSessionStateUpdate()))
-    await client.session_update(notif(vs.IdleSessionStateUpdate(stop_reason="end_turn")))
+    await client.session_update(**notif(vs.RunningSessionStateUpdate()))
+    await client.session_update(**notif(vs.IdleSessionStateUpdate(stop_reason="end_turn")))
 
     assert len(client.updates) == 2
     assert client.stops["s1"].get_nowait() == "end_turn"
@@ -757,7 +791,9 @@ async def test_rendering_cannot_break_the_record(json_harness):
 
 async def test_json_mode_emits_the_wire_and_renders_nothing(json_harness):
     await json_harness.client.session_update(
-        notif(vs.AgentMessageChunk(message_id="m1", content=vs.TextContentBlock(text="hi")))
+        **notif(
+            vs.AgentMessageChunk(message_id="m1", content=vs.TextContentBlock(text="hi"))
+        )
     )
 
     assert json_harness.events == [
@@ -776,7 +812,9 @@ async def test_json_mode_emits_the_wire_and_renders_nothing(json_harness):
 
 async def test_rich_mode_emits_no_jsonl(harness):
     await harness.client.session_update(
-        notif(vs.AgentMessageChunk(message_id="m1", content=vs.TextContentBlock(text="hi")))
+        **notif(
+            vs.AgentMessageChunk(message_id="m1", content=vs.TextContentBlock(text="hi"))
+        )
     )
     assert harness.events == []
     assert "hi" in harness.text
@@ -784,7 +822,7 @@ async def test_rich_mode_emits_no_jsonl(harness):
 
 async def test_an_unrenderable_update_still_lands_in_the_record(harness):
     await harness.client.session_update(
-        notif(vs.OtherSessionUpdate(session_update="brand_new_thing"))
+        **notif(vs.OtherSessionUpdate(session_update="brand_new_thing"))
     )
     assert len(harness.client.updates) == 1
     assert "brand_new_thing" in harness.text
@@ -804,14 +842,14 @@ async def test_send_prompt_holds_the_echo_for_the_length_of_the_turn(capfd):
 
     async def fake_prompt(session_id, text, timeout=None):
         await h.client.session_update(
-            notif(
+            **notif(
                 vs.UserMessageUpdate(
                     message_id="u1", content=[vs.TextContentBlock(text=text)]
                 )
             )
         )
         await h.client.session_update(
-            notif(
+            **notif(
                 vs.AgentMessageChunk(
                     message_id="m1", content=vs.TextContentBlock(text="done")
                 )
@@ -837,7 +875,7 @@ async def test_the_next_turn_after_a_raise_still_holds_its_echo(capfd):
 
     async def echo(session_id, text, timeout=None):
         await h.client.session_update(
-            notif(
+            **notif(
                 vs.UserMessageUpdate(
                     message_id="u2", content=[vs.TextContentBlock(text=text)]
                 )

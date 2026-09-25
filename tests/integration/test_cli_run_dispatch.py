@@ -146,45 +146,50 @@ class Echo:
     def on_connect(self, conn):
         self.conn = conn
 
-    async def initialize(self, request):
-        saw(event="initialize", asked=request.protocol_version,
+    # rc2's router hands a handler the request's FIELDS as keywords, with its
+    # _meta spread in among them, so each signature names what it reads and
+    # catches the rest.
+    async def initialize(self, protocol_version, info, capabilities=None, **kw):
+        saw(event="initialize", asked=protocol_version,
             protocol=v2.PROTOCOL_VERSION,
             probe=os.environ.get("DISPATCH_PROBE"),
             client_marker=os.environ.get("DISPATCH_CLIENT_MARKER"),
-            client=request.info.name if request.info else None)
+            client=info.name if info else None)
         return s.InitializeResponse(
             protocol_version=v2.PROTOCOL_VERSION,
             info=s.Implementation(name="v2-echo", version="0.0.1"),
             capabilities=s.AgentCapabilities(),
         )
 
-    async def new_session(self, request):
+    async def new_session(self, cwd, additional_directories=None,
+                          mcp_servers=None, **kw):
         self.sessions += 1
-        saw(event="new_session", cwd=request.cwd,
-            servers=[m.name for m in (request.mcp_servers or [])])
+        saw(event="new_session", cwd=cwd,
+            servers=[m.name for m in (mcp_servers or [])])
         return s.NewSessionResponse(session_id="v2-%d" % self.sessions)
 
-    async def resume_session(self, request):
-        saw(event="resume_session", session_id=request.session_id,
-            replay=request.replay_from is not None,
-            servers=[m.name for m in (request.mcp_servers or [])])
+    async def resume_session(self, session_id, cwd, additional_directories=None,
+                             mcp_servers=None, replay_from=None, **kw):
+        saw(event="resume_session", session_id=session_id,
+            replay=replay_from is not None,
+            servers=[m.name for m in (mcp_servers or [])])
         return s.ResumeSessionResponse()
 
-    async def fork_session(self, request):
-        saw(event="fork_session", session_id=request.session_id,
-            servers=[m.name for m in (request.mcp_servers or [])])
-        return s.ForkSessionResponse(session_id="fork-of-" + request.session_id)
+    async def fork_session(self, session_id, cwd, additional_directories=None,
+                           mcp_servers=None, **kw):
+        saw(event="fork_session", session_id=session_id,
+            servers=[m.name for m in (mcp_servers or [])])
+        return s.ForkSessionResponse(session_id="fork-of-" + session_id)
 
-    async def set_config_option(self, request):
-        saw(event="config_option", config_id=request.config_id,
-            value=request.value)
+    async def set_config_option(self, config_id, session_id, value, **kw):
+        saw(event="config_option", config_id=config_id, value=value)
         return s.SetSessionConfigOptionResponse(config_options=[])
 
-    async def prompt(self, request):
-        text = "".join(getattr(b, "text", "") for b in request.prompt)
+    async def prompt(self, session_id, prompt, **kw):
+        text = "".join(getattr(b, "text", "") for b in prompt)
         saw(event="prompt", text=text)
-        asyncio.create_task(self._turn(request.session_id, text))
-        return s.PromptResponse()
+        asyncio.create_task(self._turn(session_id, text))
+        return s.PromptResponse(message_id="u1")
 
     async def _turn(self, session_id, text):
         await self._send(session_id, s.RunningSessionStateUpdate())
@@ -200,9 +205,7 @@ class Echo:
         )
 
     async def _send(self, session_id, update):
-        await self.conn.session_update(
-            s.UpdateSessionNotification(session_id=session_id, update=update)
-        )
+        await self.conn.session_update(session_id=session_id, update=update)
 
 
 asyncio.run(v2.run_agent(Echo()))

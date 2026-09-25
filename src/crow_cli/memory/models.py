@@ -13,6 +13,29 @@ from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
 
+# -- goal statuses -----------------------------------------------------------
+#
+# Free text on the row, the way Task.status is, and for the same reason: a new
+# way of stopping costs no migration, and a reader that has never heard of one
+# still renders the goal. Only GOAL_ACTIVE continues. The others differ in WHO
+# decided: "complete" is the model's claim that the objective is met, "paused"
+# the user's, "budget_limited" the arithmetic's, and "blocked" means a human is
+# needed — whether the model said so, a turn errored, or a continuation ran no
+# tools and the loop guard gave up on it. Keeping "budget_limited" separate
+# from "complete" is the point: a goal that ran out of budget is not a goal
+# that was achieved, and a summary that cannot tell them apart is not a
+# summary.
+#
+# These live here rather than in writes.py because reads.py needs them too and
+# writes.py imports reads — a constant either module may not reach is a
+# constant one of them will hardcode.
+
+GOAL_ACTIVE = "active"
+GOAL_PAUSED = "paused"
+GOAL_BLOCKED = "blocked"
+GOAL_BUDGET_LIMITED = "budget_limited"
+GOAL_COMPLETE = "complete"
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -97,6 +120,48 @@ class TaskDelivery(Base):
     status = Column(Text, nullable=False, default="pending")  # pending|delivered
     created_at = Column(Text, nullable=False, default=now_iso)
     delivered_at = Column(Text, nullable=True)
+
+
+class Goal(Base):
+    """One persisted objective per wire session, and the reason a turn ending
+    is not the end.
+
+    Keyed by ``session_id`` — the WIRE id — for the reason ``agent/slash.py``
+    states: ``agent_id`` names a generation and changes under compaction, so
+    anything keyed by it is silently orphaned the first time the session
+    compacts. A goal is exactly the thing that has to survive compaction;
+    that is most of what makes it worth having.
+
+    One row per session, not a history. A goal that is replaced is gone — the
+    objective, the counters and the status all reset together, because a
+    counter that outlives the objective it measured would budget the new work
+    with the old work's spending. ``goal_id`` is what makes that safe: it is
+    minted fresh on every set, and a writer that carries the id it read is
+    telling the truth about which goal it means. An accounting write from a
+    turn that was already running when the user replaced the goal carries the
+    OLD id, loses the compare, and charges nothing to the new one. Without it
+    the two are indistinguishable and the new goal inherits a spent budget.
+
+    ``status`` is the whole mechanism. Only ``active`` continues; every other
+    value is a way of stopping, and the driver asks this column rather than
+    asking the model. ``turns_used`` counts continuations, not user turns, and
+    exists because a goal with no ceiling is a token fire — the model decides
+    when it is done, and "done" is a claim the loop must be able to refuse.
+    """
+
+    __tablename__ = "goals"
+
+    session_id = Column(Text, primary_key=True)  # wire id
+    goal_id = Column(Text, nullable=False, index=True)
+    objective = Column(Text, nullable=False)
+    status = Column(Text, nullable=False, default="active")
+    blocked_reason = Column(Text, nullable=True)
+    token_budget = Column(Integer, nullable=True)
+    tokens_used = Column(Integer, nullable=False, default=0)
+    time_used_seconds = Column(Integer, nullable=False, default=0)
+    turns_used = Column(Integer, nullable=False, default=0)
+    created_at = Column(Text, nullable=False, default=now_iso)
+    updated_at = Column(Text, nullable=False, default=now_iso)
 
 
 class SessionTab(Base):

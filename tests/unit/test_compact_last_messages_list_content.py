@@ -14,6 +14,10 @@ nothing except call tools. ``AgentSession.add_message`` persists whatever dict
 it is handed without normalizing it, so any caller that builds messages in the
 API's own shape produced a session whose compaction crashed — and compaction
 crashing is the one failure the whole module exists to prevent.
+
+The third regression is not a crash but a divergence, and it is the reason the
+user branch is capped like the other two: see
+``test_the_handoff_cannot_compound``.
 """
 
 import json
@@ -72,6 +76,48 @@ def test_last_messages_with_null_content_on_a_tool_calling_turn():
     # The turn is still represented — by the tool call it made.
     assert "TOOL — edit:" in result
     assert '{"a": 1}' in result
+
+
+def test_the_handoff_cannot_compound():
+    """A handoff 100x bigger produces a byte-identical tail.
+
+    ``default_compactor`` hands the successor ``summary + last_messages(...)``
+    as its first USER message, so the NEXT compaction's tail reads the previous
+    handoff back. While the user branch was the one branch with no cap, each
+    pass folded the previous handoff in whole and the size compounded — measured
+    live at a 30k ceiling: 11k -> 32k -> 58k -> 92k -> 131k -> 172k chars over
+    six generations. Each successor was born closer to the ceiling and then past
+    it, each summary call took longer than the one before (2m00s -> 3m27s), and
+    the turn never finished: ``tests/e2e/test_compact_continues_live.py`` timed
+    out at 1200s with the dive one page from done.
+
+    The assertion is the fixed point rather than a size limit, because a limit
+    would pass on any cap and the bug is that the tail's size was a function of
+    the history's at all. What the successor needs from the tail is texture, and
+    the record is the summary.
+    """
+    def tail(handoff_chars: int) -> str:
+        session = SimpleNamespace(
+            messages=[
+                {"role": "system", "content": "You are Crow agent."},
+                {"role": "user", "content": "## Summary\n\n" + "s" * handoff_chars},
+                {
+                    "role": "assistant",
+                    "content": "Picking up where the last generation left off.",
+                },
+                {"role": "tool", "tool_call_id": "call_1", "content": "ok"},
+            ]
+        )
+        return last_messages(session)
+
+    small, large = tail(2_000), tail(200_000)
+
+    assert small == large
+    assert len(large) < 1_000, len(large)
+    # The tail is still a tail: every role is represented, and the user's own
+    # opening words survive the cap because the cap is a window, not a mute.
+    assert large.startswith("USER:\n## Summary")
+    assert "ASSISTANT:" in large and "TOOL RESULT:" in large
 
 
 def test_unroll_content_flattens_every_shape_it_is_handed():

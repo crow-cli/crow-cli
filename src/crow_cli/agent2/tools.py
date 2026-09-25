@@ -511,6 +511,13 @@ KIND_BY_RESULT: dict[str, str] = {
     # "other" only by way of a name list in a different function — and ACP has
     # no kind for "something else is working on your behalf" to reach for.
     "task": "other",
+    # The model ending its own continuation loop. Same artifact as task —
+    # orchestration, with no ACP kind to reach for — but reached differently:
+    # tool_kind("goal_done") falls all the way through the substring rules, so
+    # without this entry the kind would be "other" by accident of nothing in
+    # the name matching, and the next rule added to that function could
+    # quietly reclassify it.
+    "goal": "other",
 }
 """ACP kind follows the ARTIFACT, not the tool name: a multi-mode tool
 (``fs``) is one name doing read/glob/search, and ``tool_kind("fs")`` is
