@@ -45,24 +45,38 @@ REPO = Path(__file__).resolve().parents[2]
 AGENT_SCRIPT = Path(__file__).resolve().parent / "custom_compactor_agent.py"
 
 MODEL = "qwen3.8-max"
-# Must sit ABOVE the irreducible floor with room to spare. Measured live:
-# crow's system prompt is ~6.5k tokens and COMPACTION_PROMPT asks for a
-# thorough summary, which qwen3.8-max writes at 7-11k — so a successor is born
-# at ~14-18k. A ceiling below that re-compacts on every tool round (progress,
-# thanks to the guard in react.py, but it never finishes); a ceiling the deep
-# dive never reaches does not test anything. 30k is crossed mid-dive — gen1
-# measured 25k tokens over 26 messages — and leaves the successor ~12k to
-# finish in.
+# Must sit ABOVE the irreducible floor with room to spare, and leave the dive
+# enough headroom that the number of compactions it needs fits inside
+# TURN_TIMEOUT. Both halves matter and the second one is the one that was
+# getting missed.
 #
-# ⚠️ That margin is THIN, and the dive's size is not ours to choose: it is
-# whatever the fetched pages happened to weigh that day. Observed flaking
-# 2026-09 — one run came in under the ceiling and failed "compaction never
-# fired", the retry passed at 12m14s. Hence EIGHT documentation pages below
-# rather than five, and the peak token count in the failure message:
-# "compaction never fired" on its own does not say whether the dive came up
-# 500 tokens short or 20k short, and the answer decides between "the ceiling
-# is wrong" and "the web was quiet".
-THRESHOLD = 30_000
+# The floor, measured live: crow's system prompt is ~7.4k tokens and a summary
+# is 8-10k, so a successor is BORN at ~15k. A ceiling at or below that
+# re-compacts on every tool round — progress, thanks to worth_compacting(), but
+# it never finishes.
+#
+# The headroom: each compaction is one unparallelizable LLM call over the whole
+# history, and on this provider it costs 70-210s. Measured 2026-09-25 at a 30k
+# ceiling: SEVEN compactions, 1042s of the 1200s budget spent on summaries
+# alone, and the turn timed out with the dive one page from done — not because
+# anything hung, but because 30k - 15k born = 15k of headroom is two
+# documentation pages a generation, and eight pages therefore costs four
+# generations minimum before any re-reading. At 45k the headroom is 30k, about
+# five pages: measured 5 generations, 4 compactions, 461s of summaries, turn
+# complete in 864s.
+#
+# ⚠️ The dive's size is still not ours to choose — it is whatever the fetched
+# pages happened to weigh that day. Observed flaking 2026-09 at 30k: one run
+# came in under the ceiling and failed "compaction never fired", the retry
+# passed at 12m14s. Hence EIGHT documentation pages below rather than five, and
+# the peak token count in the failure message: "compaction never fired" on its
+# own does not say whether the dive came up 500 tokens short or 20k short, and
+# the answer decides between "the ceiling is wrong" and "the web was quiet".
+# At 45k gen1 peaked at 36.7k over 15 messages, so the dive crosses it with
+# ~8k to spare on the first generation and the margin is the whole dive's
+# ~68k of unique context against the ceiling — wider than at 30k, and still the
+# web's to move.
+THRESHOLD = 45_000
 BLANK = Path("/tmp/blank")
 HANDSHAKE_TIMEOUT = 240
 TURN_TIMEOUT = 1200
