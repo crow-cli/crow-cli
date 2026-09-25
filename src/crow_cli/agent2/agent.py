@@ -64,6 +64,11 @@ from crow_cli.agent.slash import _SLASH_COMMANDS, parse_slash_command
 from crow_cli.config import Config, get_default_config_dir
 from crow_cli.memory import wire_session_id
 
+# Imported for its side effect: the decorator registers /goal in the shared
+# command table THIS process reads. It lives in agent2 rather than in
+# agent/slash.py with the other four because v1 reads the same table and runs
+# no continuation loop — see agent2/slash.py.
+from . import slash as _v2_slash  # noqa: F401
 from .driver import SessionDriver
 from .events import Cancel, Prompt
 from .replay import replay
@@ -672,6 +677,18 @@ class _SlashView:
 
     def _default_model_value(self) -> str:
         return self._r.default_model_value()
+
+    @property
+    def _engine(self) -> Any:
+        """The registry's long-lived write engine, or None with no ``db_uri``.
+
+        ``/goal`` is the only handler that asks for it — the others work on the
+        in-memory session or on config. It is the SAME engine the driver
+        settles goals through, which is the point: the status a person writes
+        has to be the one the driver reads at the idle transition, and two
+        engines on one file would only be a way to get a stale read.
+        """
+        return self._r.engine
 
     @property
     def _prompt_tasks(self) -> "_Stoppable":

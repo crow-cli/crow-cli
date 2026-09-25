@@ -314,18 +314,108 @@ reads `_names()` out of a running kernel, so it covered `goal_done` and
 
 ## Phase 6 — the slash command
 
+**[PHASE 6 DONE 2026-09-24 — `tests/integration/test_goal_slash.py` 20 green,
+`tests/integration` plus the goal unit and store files 289 passed together,
+full tier `tests/unit tests/memory tests/mcp tests/integration` = 1407
+passed, 0 failed in 471s. TEN mutations applied, all ten detected: pause does not
+write; resume does not write; `_set` drops the configured budget; the
+subcommand check goes first-word-wins; `resume` accepts a finished goal;
+`_show` renders its own progress instead of calling `progress()`; `clear`
+always claims success; the no-engine guard is removed; the handler is allowed
+to raise; agent2 never imports its slash module.]**
+
 6.1 Expose the engine to slash handlers: `_SlashView._engine` (v2, from
-    `SessionRegistry.engine`) and the matching attribute on v1's `AcpAgent`,
-    because `agent/slash.py` is shared and a handler that only works in v2 is a
-    handler that breaks in v1.
-6.2 `@register_slash_command("goal", ...)` in `agent/slash.py`: bare → a
-    status block (objective, status, turns, tokens/budget, time);
+    `SessionRegistry.engine`).
+    **DONE, and the draft's second half is WRONG — v1 needs no attribute and
+    got none.** The draft reasoned that `agent/slash.py` is shared, so a
+    handler registered there must work in both generations. It IS shared, and
+    that is exactly why `/goal` is not registered there: `_SLASH_COMMANDS` is
+    one module-level list that both generations read AND advertise, so a
+    command registered from `agent/slash.py` shows up in a v1 session, and v1
+    runs no continuation loop — `/goal port the widget` would answer "goal set"
+    and then nothing would ever happen. The same reasoning that put `goal_done`
+    in `_LAZY_V2`. So the handler lives in a NEW `agent2/slash.py`, imported
+    for its side effect from `agent2/agent.py`, and the two generations are
+    separate processes (`cli/source.py:108-111 AGENT_ENTRY_POINTS`;
+    `cli/main.py:178` imports `crow_cli.agent2.main` only inside the `acp2`
+    subcommand), so registering it there reaches exactly the process that can
+    honour it. v1 is untouched. It could not have been given the attribute
+    anyway: v1's `AcpAgent` keeps no persistent engine, it has `_memory_db_uri`
+    and builds and disposes one per call (`agent/main.py:741`).
+    Asserted rather than argued — `test_a_v1_process_never_sees_it` runs a
+    fresh interpreter that imports only v1 and prints the registry, because in
+    the test process agent2 has already been imported and the table is shared:
+    the claim is about what a v1 process sees, and only a v1 process can answer
+    it.
+    `_engine` returns the registry's long-lived write engine, the SAME one the
+    driver settles goals through. The status a person writes has to be the one
+    the driver reads at the idle transition, and two engines on one file would
+    only be a way to get a stale read.
+6.2 `@register_slash_command("goal", ...)`: bare → a status block;
     `clear|pause|resume` → the transition; anything else → set the objective.
-    Return a string, never raise (the module docstring's rule: an exception
-    becomes an ACP internal error the client reads as a failed turn).
-6.3 Delete the orphaned dead code at `agent/slash.py:134-140`.
-    *Verify:* unit test over `parse_slash_command` + the handler for each
-    subcommand against a temp db; `uv --project . run pytest tests/unit -q` green.
+    Returns a string, never raises.
+    **DONE, in `agent2/slash.py`, with five decisions the draft did not make:**
+    - A subcommand is recognized only when the word is the WHOLE argument, so
+      `/goal clear the build cache` sets an objective called "clear the build
+      cache". First-word-wins would make an ordinary imperative untypeable, and
+      all three verbs start objectives people actually write.
+    - `resume` refuses `complete` and `budget_limited`, and says which. Both
+      would stop again at once — the turn ceiling and the token `CASE` read
+      counters that resuming does not reset — and a command that appears to
+      work and then does nothing reads as a bug. The gesture "start this over"
+      is `/goal <objective>`, and the refusal names it. A divergence from
+      codex, whose TUI `edit` reactivates a budget-limited or complete goal
+      (`tui/src/chatwidget/goal_menu.rs`); codex can afford that because
+      editing there goes through a menu that also lets you raise the budget.
+    - The status block calls `agent2/goal.progress()` — the same function that
+      builds the line the model is sent — so the person and the agent cannot be
+      told two different ceilings. `_progress` became public for this, and a
+      mutation that gives `_show` its own rendering is detected.
+    - No `expected_goal_id` on any of the user's writes. The driver's automatic
+      ones carry the id they read so a goal replaced mid-turn is left alone;
+      the user's gesture means whatever row is there now.
+    - `_set` passes `config.goal.max_tokens` as the row's `token_budget`, which
+      discharges the remainder of 7.1: `max_tokens` now has a consumer.
+    *Verify:* `tests/integration/test_goal_slash.py`, 20 tests, driven through
+    the real prompt dispatch — text in at `session/prompt`, the reply the client
+    saw out at `agent_message`, the row read back from the database the DRIVER
+    reads. Dispatch and handler together, because a handler that works when
+    called directly and raises through the dispatch is the failure this command
+    must not have. The never-raises half is tested on a real broken row rather
+    than a patched engine: SQLite gives an INTEGER column numeric AFFINITY and
+    not a type, so a writer that put a string in `time_used_seconds` stored a
+    string and `NOT NULL` is no defence.
+6.3 Delete the orphaned dead code at `agent/slash.py:134-140`. **DONE** — seven
+    unreachable lines after `stop_command`'s `return`, a duplicate of
+    `register_slash_command`'s body referencing `name` and `description`, which
+    do not exist in that scope.
+6.4 **NOT IN THE DRAFT, and the thing the draft would have got wrong.**
+    `/goal <objective>` on an idle session starts a turn IMMEDIATELY. The
+    handler returns without running one, `_run_turn` returns early, the loop
+    reaches `_park`, `_goal_continuation` finds an active goal on a session
+    with nothing in flight, and the continuation is queued. Eight of the first
+    draft's tests failed on this, and the failure was in the tests.
+    Checked against codex before believing either side: `apply_external_goal_set`
+    (`ext/goal/src/runtime.rs:184-248`) calls `self.continue_if_idle().await?`
+    at line 233 for a goal whose status is Active. The table that suppresses a
+    pickup, `thread_goal_continuation_deferrals`, is about FORKS and not about
+    user-set goals — its only inserter, `replace_thread_goal_snapshot`
+    (`state/src/runtime/goals.rs:109-118`, same transaction as the goal
+    upsert), has exactly one caller,
+    `app-server/src/request_processors/thread_fork_goal.rs:25`, and the
+    deferral is cleared at `on_turn_start`. A forked thread that inherits a
+    goal snapshot must not auto-continue before anyone has started a turn in
+    it. crow has no fork-inherited goals, so it has no deferral and no reason
+    to add one.
+    Consequence for the tests: most run with `max_turns=0`, which stops the
+    pickup before it reaches a model and leaves `budget_limited` in the row as
+    the trace of an active one — a stronger assertion than `status == active`,
+    because only an active row is continued and only a continuation consults
+    the ceiling. Tests that need a particular status write the row directly.
+    And the discovery is itself asserted, in
+    `test_setting_a_goal_on_an_idle_session_starts_work_at_once`: a person who
+    types `/goal` and walks away comes back to work that was done, not to a
+    session sitting idle on the objective it was just handed.
 
 **Commit:** `feat(agent): the /goal slash command`
 
@@ -335,8 +425,9 @@ reads `_names()` out of a running kernel, so it covered `goal_done` and
     the ceiling test has to vary it]** Config: `goal: {max_turns: 25,
     max_tokens: null}` parsed into a typed `GoalConfig`, exported from
     `crow_cli.config`, honored by `apply_config_overrides` too.
-    REMAINING for 7.1: nothing in config.py. `max_tokens` still has no consumer
-    — Phase 6's `/goal` is what passes it to `set_goal` as the default budget.
+    REMAINING for 7.1: nothing. `max_tokens` got its consumer in Phase 6 —
+    `_set` passes `config.goal.max_tokens` to `set_goal` as the row's
+    `token_budget`, and `test_setting_a_goal_stores_the_row` asserts it lands.
 7.2 ACP_V2.md: §5.4 marked shipped with the real function names; the `:28`
     status table row for celery left accurate (still no production caller);
     `:811`'s "Not involved" confirmed still true and now *load-bearing* — the

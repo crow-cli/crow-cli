@@ -102,11 +102,28 @@ learn. §5.4: "by the time anything looks, it is an ordinary pending delivery."
       which costs one extra continuation and self-corrects.*
       *Config landed with it, pulled forward from the docs phase:
       `goal: {max_turns: 25, max_tokens: null}` as a typed `GoalConfig`,
-      unknown keys rejected. `max_tokens` has no consumer yet — `/goal` passes
-      it to `set_goal` as the default budget.*
-- [ ] `/goal` slash command: bare = show, `<objective>` = set, plus
+      unknown keys rejected. `max_tokens` got its consumer in Phase 6: `_set`
+      passes it to `set_goal` as the row's `token_budget`.*
+- [x] `/goal` slash command: bare = show, `<objective>` = set, plus
       `clear|pause|resume`. Needs the engine on `_SlashView` (v2) and on v1's
       `AcpAgent`, because `agent/slash.py` is shared by both.
+      *2026-09-24: shipped, `tests/integration/test_goal_slash.py` 20 green,
+      ten mutations all detected. The v1 half of the note is WRONG and v1 is
+      untouched: `_SLASH_COMMANDS` is one list both generations read AND
+      advertise, so a command registered in `agent/slash.py` shows up in a v1
+      session that runs no continuation loop and would answer "goal set" and
+      then do nothing. The handler lives in a new `agent2/slash.py`, imported
+      for its side effect from `agent2/agent.py`; the two generations are
+      separate processes, so that reaches exactly the one that can honour it.
+      Asserted in a fresh interpreter that imports only v1.*
+      *Behaviour the draft did not anticipate: `/goal <objective>` on an idle
+      session starts a turn IMMEDIATELY, because the handler runs no turn of its
+      own and the loop reaches `_park` with an active goal and nothing in
+      flight. Verified as codex parity, not a bug — `apply_external_goal_set`
+      calls `continue_if_idle()` for a goal that is Active
+      (ext/goal/src/runtime.rs:233), and codex's deferral table suppresses the
+      pickup only for FORKED threads (one inserter, one caller:
+      thread_fork_goal.rs:25). Now asserted in its own test.*
 - [x] Model-facing tools so the loop can END: `goal_done` and `goal_blocked` as
       two subtools, not one mode dispatcher — `tools/task.py`'s house rule is
       explicit that "a capability behind a mode-string dispatcher is a
@@ -125,14 +142,14 @@ learn. §5.4: "by the time anything looks, it is an ordinary pending delivery."
 - [x] Tests: unit for the store and the eligibility rules; integration for the
       driver actually continuing, actually stopping, and actually not looping
       forever. Real code paths, no mocks.
-      *2026-09-24: 16 store + 12 policy + 19 subtool + 14 driver = 61 goal
-      tests, no mocks anywhere — temp sqlite files, a real FastMCP subprocess,
-      a real agent and transport, and a scripted model because a gate that
-      needs a provider is not a gate. 18 mutations applied and every one
-      detected, across Phases 3-5 (1 + 7 + 10); Phases 1-2 are store and
-      pure-policy code, asserted directly rather than mutated. Full tier 1387
-      passed. What is left is Phase 8: `./run_tests.sh` including e2e, and the
-      manual eyeball.*
+      *2026-09-24: 16 store + 12 policy + 19 subtool + 14 driver + 20 slash =
+      81 goal tests, no mocks anywhere — temp sqlite files, a real FastMCP
+      subprocess, a real agent and transport, and a scripted model because a
+      gate that needs a provider is not a gate. 28 mutations applied and every
+      one detected, across Phases 3-6 (1 + 7 + 10 + 10); Phases 1-2 are store
+      and pure-policy code, asserted directly rather than mutated. Full tier
+      1407 passed, 0 failed. What is left is Phase 8: `./run_tests.sh`
+      including e2e, and the manual eyeball.*
 - [ ] The `crow_cli.tools` facade wart, found by Phase 5's registration check:
       `import crow_cli.tools.task` anywhere in the process leaves the MODULE on
       the package attribute, which shadows `__getattr__`, so `T.task` is
@@ -143,10 +160,12 @@ learn. §5.4: "by the time anything looks, it is an ordinary pending delivery."
       make `__getattr__` win. NOT this sprint: it predates /goal, nothing in
       production hits it, and the fix touches the one module every kernel
       starts with.
-- [ ] Cleanup found along the way: `agent/slash.py:134-140` is an orphaned copy
+- [x] Cleanup found along the way: `agent/slash.py:134-140` is an orphaned copy
       of `register_slash_command`'s body sitting after `stop_command`'s
       `return` — unreachable, and it references `name`/`description` that do
       not exist in that scope. Delete it.
+      *2026-09-24: deleted, seven lines. `tests/integration/test_slash_commands.py`
+      (v1's own nine) still green.*
 - [ ] ACP_V2.md: §5.4 stops being a proposal; `:28`'s status table and `:811`
       ("timers.py, celery | Not involved") get corrected to match what shipped.
 

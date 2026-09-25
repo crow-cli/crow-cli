@@ -87,14 +87,19 @@ def continuation_text(goal, *, max_goal_turns: int | None = None) -> str:
     """The delivery body for one continuation of ``goal``."""
     return CONTINUATION_PROMPT.format(
         objective=goal.objective,
-        progress=_progress(goal, max_goal_turns),
+        progress=progress(goal, max_goal_turns),
     )
 
 
-def _progress(goal, max_goal_turns: int | None) -> str:
+def progress(goal, max_goal_turns: int | None) -> str:
     """Where the goal stands, as one line. A model that cannot see the ceiling
     cannot budget against it, and a continuation that never mentions the cap
-    gets an even 25 turns of confidence."""
+    gets an even 25 turns of confidence.
+
+    Public because the user's ``/goal`` status shows the same fact. Two
+    renderings of one row would drift, and the drift would be invisible: the
+    model would be told one ceiling and the person another.
+    """
     turns = f"Turn {goal.turns_used + 1}"
     turns += f" of at most {max_goal_turns}" if max_goal_turns else " of this goal"
     if goal.token_budget is None:
