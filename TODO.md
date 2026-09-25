@@ -125,7 +125,7 @@ learn. §5.4: "by the time anything looks, it is an ordinary pending delivery."
       pickup only for FORKED threads (one inserter, one caller:
       thread_fork_goal.rs:25). Now asserted in its own test.*
 - [x] Model-facing tools so the loop can END: `goal_done` and `goal_blocked` as
-      two subtools, not one mode dispatcher — `tools/task.py`'s house rule is
+      two subtools, not one mode dispatcher — `tools/task_tool.py`'s house rule is
       explicit that "a capability behind a mode-string dispatcher is a
       capability that does not get reached."
       *2026-09-24: shipped in `_LAZY_V2`, not `_LAZY` — v1 runs no continuation
@@ -154,16 +154,41 @@ learn. §5.4: "by the time anything looks, it is an ordinary pending delivery."
       81 goal tests became 83 (the eyeball's `progress()` fix and the
       compaction fixed-point test), and the manual eyeball ran for real and
       found a bug — see the two items below.*
-- [ ] The `crow_cli.tools` facade wart, found by Phase 5's registration check:
-      `import crow_cli.tools.task` anywhere in the process leaves the MODULE on
-      the package attribute, which shadows `__getattr__`, so `T.task` is
-      afterwards a module and not the callable. `reload()` purges exactly this
-      (and says so in a comment), so a real kernel is fine — but any in-process
-      consumer that imports a submodule and then reaches for the facade by name
-      gets something uncallable. Either stop setting the parent attribute or
-      make `__getattr__` win. NOT this sprint: it predates /goal, nothing in
-      production hits it, and the fix touches the one module every kernel
-      starts with.
+- [x] The `crow_cli.tools` facade wart, found by Phase 5's registration check:
+      `import crow_cli.tools.task` anywhere in the process left the MODULE on the
+      package attribute, which shadows `__getattr__`, so `T.task` was afterwards
+      a module and not the callable. `reload()` purged exactly this, so a real
+      kernel was fine — but any in-process consumer that imported a submodule
+      and then reached for the facade by name got something uncallable, and
+      WHICH of the two you got depended on import order.
+      *2026-09-25: fixed at the source, not papered over. Neither "stop setting
+      the parent attribute" nor "make `__getattr__` win" was needed — both fight
+      the import machinery. The names were the problem: every subtool module is
+      now `<name>_tool.py`, so no submodule name is a binding name and there is
+      nothing left to shadow. `crow_cli.tools.fs` is the function by exactly one
+      route and `crow_cli.tools.fs_tool` is the module by exactly one route, in
+      either order. Ten modules renamed (`edit fs memory rlm sg vision web write
+      task goal`), 67 references updated, and three relative imports the first
+      pass missed because they are call-time and indented — `sg_tool` from
+      `.fs`, `fs_tool` from `.write`, `web_tool` from `.vision` — which is what
+      the 23 failures in the first tier run were. The SUBTOOL names are
+      untouched: `@subtool(tool="fs")` and the `_LAZY` keys are what the model
+      calls, and only the module filenames moved.
+      `reload()`'s purge stays, with its comment corrected: it still has one
+      real job (a cached facade function surviving `importlib.reload` of the
+      package in its own existing dict) and the shadowing job is gone.
+      `tests/unit/test_tools_facade_names.py` pins the invariant three ways —
+      the naming rule over the directory, every binding callable after every
+      submodule is imported, and the original failure reproduced in a FRESH
+      interpreter, which is the only state it can be reproduced in since
+      anything that touched the facade first would cache the callable and hide
+      it. Mutation-checked: adding `demo.py` bound as `demo` fails two of the
+      three with `demo resolved to module`. Four test files carried
+      workarounds and warnings for the old behaviour; all four are deleted.
+      `crow-cli.spec` also gained `crow_cli.tools.goal_tool`, which Phase 5
+      should have added next to `task_tool` — both are `_LAZY_V2` and both are
+      resolved through importlib, so both are invisible to PyInstaller's static
+      analysis. Four tiers: 1414 passed, 0 failed in 462.10s.*
 - [ ] Objective length cap. codex enforces `MAX_THREAD_GOAL_OBJECTIVE_CHARS =
       4000` (protocol.rs:3957-3969) and crow enforces nothing: `/goal` will
       store a 200KB objective, and the objective is interpolated into

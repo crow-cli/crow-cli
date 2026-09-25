@@ -127,9 +127,7 @@ async def test_webcam_mode_stores_jpeg(images_dir, monkeypatch):
 
     import numpy as np
 
-    # `import crow_cli.tools.vision as vmod` would bind the FUNCTION: the
-    # facade caches it into crow_cli.tools.__dict__, shadowing the submodule.
-    vmod = sys.modules["crow_cli.tools.vision"]
+    vmod = sys.modules["crow_cli.tools.vision_tool"]
 
     def fake_capture(device_index):
         frame = np.zeros((480, 640, 3), dtype=np.uint8)

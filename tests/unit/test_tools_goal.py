@@ -25,7 +25,7 @@ from crow_cli.memory import (
     update_goal_status,
 )
 from crow_cli.memory.reads import get_goal
-from crow_cli.tools.goal import _dispose, _engine, _state, goal_blocked, goal_done
+from crow_cli.tools.goal_tool import _dispose, _engine, _state, goal_blocked, goal_done
 from crow_cli.tools.register import begin_cell, clear, pending
 from crow_cli.tools.results import GoalError, GoalResult
 
@@ -287,26 +287,19 @@ def test_both_names_resolve_through_the_v2_facade():
     names. The real-kernel half — PRELUDE_V2 binding them into a live
     namespace — is tests/mcp/test_mcp2_server.py, which reads the same table.
     """
-    import importlib
-
     import crow_cli.tools as T
 
     assert {"goal_done", "goal_blocked"} <= set(T._LAZY_V2)
+    # Through the facade, which is the path a kernel takes. This used to have
+    # to resolve the modules by hand, because another test importing a
+    # submodule left the MODULE on the package attribute and that shadowed
+    # __getattr__. The _tool suffix ended it — pinned by
+    # tests/unit/test_tools_facade_names.py.
     for name, (module_name, attr) in T._LAZY_V2.items():
-        # Resolved the way reload() resolves it, NOT getattr(T, name). A test
-        # that imported crow_cli.tools.task as a submodule left the MODULE on
-        # the package attribute, and that shadows __getattr__ — the wart
-        # reload()'s purge exists to undo, and not this test's to trip over.
-        value = getattr(importlib.import_module(module_name), attr)
+        value = getattr(T, name)
         assert callable(value), name
         assert value.__name__ == attr, name
-
-    # The two new names through the facade itself. Nothing imports
-    # crow_cli.tools.goal for its module and then wants the function, so
-    # there is no shadow to trip over and this is the path a kernel takes.
-    for name in ("goal_done", "goal_blocked"):
-        assert callable(getattr(T, name)), name
-        assert getattr(T, name).__module__ == "crow_cli.tools.goal", name
+        assert value.__module__ == module_name, name
 
 
 def test_the_goal_tools_are_not_ambient_in_a_v1_kernel():

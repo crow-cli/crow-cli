@@ -30,11 +30,9 @@ from crow_cli.tools import memory
 from crow_cli.tools.register import begin_cell, clear, current_cell, db_uri, pending
 from crow_cli.tools.results import MemoryResult, MemoryToolError, _compact
 
-# from-import of internals IS safe; `import crow_cli.tools.memory as m` is
-# not — the facade resolves that name to the FUNCTION.
-from crow_cli.tools.memory import _cell, _excerpt
+from crow_cli.tools.memory_tool import _cell, _excerpt
 
-MOD = sys.modules["crow_cli.tools.memory"]
+MOD = sys.modules["crow_cli.tools.memory_tool"]
 
 SESSION_COLS = [
     "session_id",

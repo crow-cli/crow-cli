@@ -11,7 +11,7 @@ writes it is allowed. The other three statuses belong to the user
 turn errors or a continuation makes no progress).
 
 Two names, not one ``goal(status=...)``, for the reason
-:mod:`crow_cli.tools.task` gives: a capability behind a mode-string dispatcher
+:mod:`crow_cli.tools.task_tool` gives: a capability behind a mode-string dispatcher
 is a capability that does not get reached. The asymmetry here is the argument
 list — ``goal_blocked`` cannot be called without saying why, and a dispatcher
 with an argument that is required on one branch and forbidden on the other is

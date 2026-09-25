@@ -1,6 +1,6 @@
 """The task subtool, driving real children over real pipes.
 
-The subject is :mod:`crow_cli.tools.task`: its rows, its mailbox, its watcher,
+The subject is :mod:`crow_cli.tools.task_tool`: its rows, its mailbox, its watcher,
 its wake. The child is a scripted ACP v2 agent in a subprocess — the peer end of
 the protocol, not a stand-in for the code under test — and it writes its own
 transcript into the shared sqlite as it goes, so ``_child_answer`` reads a real
@@ -37,7 +37,7 @@ from crow_cli.memory import (
 from crow_cli.memory.reads import get_task, owner_tasks, pending_deliveries
 from crow_cli.tools.register import begin_cell, clear, pending
 from crow_cli.tools.results import TaskError, TaskResult
-from crow_cli.tools.task import (
+from crow_cli.tools.task_tool import (
     _dispose,
     _live,
     task,
@@ -50,7 +50,7 @@ from crow_cli.wake import CHANNEL, Poke
 CHILD = r'''
 """A scripted ACP v2 subagent: the peer end of the wire for the task tests.
 
-Not a mock of anything under test. The subject is :mod:`crow_cli.tools.task` —
+Not a mock of anything under test. The subject is :mod:`crow_cli.tools.task_tool` —
 its rows, its mailbox, its watcher — and a child agent is the other side of the
 protocol. What makes this one useful is that it does what a real crow child does
 and a stub cannot: it writes its own transcript into the shared database as the

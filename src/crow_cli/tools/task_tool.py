@@ -35,7 +35,7 @@ anyway, which is what makes the hand-off race-free: the watcher commits before
 it signals, so a wait that times out inside that window finds a terminal row and
 returns the answer instead of a snapshot.
 
-There is no depth budget here, unlike :mod:`crow_cli.tools.rlm`. A delegate is a
+There is no depth budget here, unlike :mod:`crow_cli.tools.rlm_tool`. A delegate is a
 copy of its caller and inherits its context, so an unbounded chain is an
 infinity mirror; a task child is a fresh session with nothing in it, and the
 cost of a chain is one visible process per link.

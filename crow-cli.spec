@@ -87,7 +87,8 @@ a = Analysis(
         'crow_cli.mcp2.execute.kernel',
         # The _LAZY_V2 subtools, resolved through importlib by
         # crow_cli.tools.reload(v2=True) inside the kernel.
-        'crow_cli.tools.task',
+        'crow_cli.tools.task_tool',
+        'crow_cli.tools.goal_tool',
         'typer',
         'rich',
         'acp',

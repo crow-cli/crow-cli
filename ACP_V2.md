@@ -28,7 +28,7 @@ Contents:
 | Celery timer wheel (`timers.py`), `crow-cli timers` worker | built and tested, **no production caller** |
 | `task` / `task_send` / `task_cancel` / `task_read` subtools | built, `_LAZY_V2` only |
 | A model-facing way to feed **itself** | **built** — §5.4's mechanism, with a goal as the thing that defers |
-| `/goal`: the persisted objective, the continuation loop, its ceilings and its exits | built — `memory/models.Goal`, `agent2/goal.py`, `driver._goal_continuation`, `tools/goal.py`, `agent2/slash.py` |
+| `/goal`: the persisted objective, the continuation loop, its ceilings and its exits | built — `memory/models.Goal`, `agent2/goal.py`, `driver._goal_continuation`, `tools/goal_tool.py`, `agent2/slash.py` |
 | `remind`, the self-note subtool §5 proposes | **not built** — §5.10 is unstarted and nothing below depends on it |
 | Test suite | **1437 passed, 0 failed** — `./run_tests.sh`, every tier including the live e2e, 2154.88s |
 | ACP python-sdk | **1.0.0rc2 from PyPI** — the `[tool.uv.sources]` local path is gone (§7) |
@@ -576,7 +576,7 @@ The four consult breakpoints in `agent2/react.py`:
 | registry constructs it | `agent2/sessions.py:180` `WakeWatcher(config.redis_url, self._inbox_for)` | **wired** |
 | registry starts / stops it | `agent2/sessions.py:592` / `:644` | **wired** |
 | poke to inbox route | `agent2/sessions.py:543` `_inbox_for` returning `self.drivers.get(sid)` | **wired** |
-| `publish_wake` in production | `tools/task.py:310` `live.poked = await publish_wake(...)` | **wired** |
+| `publish_wake` in production | `tools/task_tool.py:310` `live.poked = await publish_wake(...)` | **wired** |
 | react consult breakpoints | `agent2/react.py:115, 134, 227, 272` | **wired** |
 | driver park on the inbox | `agent2/driver.py:419-443` | **wired** |
 | `schedule_timer` caller | — | **NOTHING** |
@@ -756,7 +756,7 @@ def deferred_reminders(engine, owner_session: str) -> list[Task]:
         )
 ```
 
-And the subtool, in `tools/task.py` beside its siblings:
+And the subtool, in `tools/task_tool.py` beside its siblings:
 
 ```python
 @subtool(tool="remind")
@@ -808,8 +808,8 @@ Register in `tools/__init__.py:42`:
 
 ```python
 _LAZY_V2 = {
-    "remind": ("crow_cli.tools.task", "remind"),
-    "task": ("crow_cli.tools.task", "task"),
+    "remind": ("crow_cli.tools.task_tool", "remind"),
+    "task": ("crow_cli.tools.task_tool", "task"),
     ...
 }
 ```
@@ -840,7 +840,7 @@ The real names, for grepping:
   accounting, and the cancel-pauses / error-blocks exits), and `_park`'s first
   two lines.
 - `agent2/react.py` — `Done.tools_used`, `Done.tokens_spent`.
-- `tools/goal.py` — `goal_done`, `goal_blocked`, bound in `_LAZY_V2`.
+- `tools/goal_tool.py` — `goal_done`, `goal_blocked`, bound in `_LAZY_V2`.
 - `agent2/slash.py` — `goal_command`, imported for its side effect from
   `agent2/agent.py` so that a v1 process never sees the name.
 - `config/config.py` — `GoalConfig`, `goal: {max_turns: 25, max_tokens: null}`.
@@ -1003,7 +1003,7 @@ so what is left is a subtool, a read and a `kind`, with no driver work at all.
 - [ ] `KIND_REMINDER = "reminder"` in `memory/models.py`, next to `Task`.
 - [ ] `deferred_reminders(engine, owner_session)` in `memory/reads.py`; export
   from `crow_cli.memory`.
-- [ ] `remind` in `tools/task.py`, `@subtool(tool="remind")`, importing `KIND_REMINDER`.
+- [ ] `remind` in `tools/task_tool.py`, `@subtool(tool="remind")`, importing `KIND_REMINDER`.
 - [ ] `_LAZY_V2["remind"]` in `tools/__init__.py`.
 - [ ] `SessionDriver._fire_deferred()` plus the four lines in `_park`, in
   `agent2/driver.py`.
@@ -1357,10 +1357,29 @@ error string otherwise).
 ### The tools split
 
 `tools/__init__.py`: `_LAZY = {edit, fs, memory, rlm, sg, vision, web, write}`;
-`_LAZY_V2 = {task, task_send, task_read, task_cancel}` — **v2 kernels only**,
-because v1 already ships `task` as an MCP tool from the agent process, so a v1
-kernel with both would have two launchers minting ids off the same global counter
-and writing the same two tables. And v1 is frozen.
+`_LAZY_V2 = {task, task_send, task_read, task_cancel, goal_done, goal_blocked}`
+— **v2 kernels only**, because v1 already ships `task` as an MCP tool from the
+agent process, so a v1 kernel with both would have two launchers minting ids off
+the same global counter and writing the same two tables; and because the goal
+exits leave a continuation loop that only the agent2 driver runs. And v1 is
+frozen.
+
+**Every subtool module is `<name>_tool.py`** — `fs_tool.py`, `task_tool.py`,
+`goal_tool.py` — and the suffix is load-bearing, not decoration. The facade
+binds the CALLABLE as `crow_cli.tools.<name>` through a PEP 562 `__getattr__`,
+which Python consults only when ordinary lookup FAILS; importing a submodule
+makes the import machinery `setattr(package, child_name, module)`. So while the
+modules were `fs.py` and `task.py`, `import crow_cli.tools.fs` parked the module
+on the attribute the facade binds `fs` to, and `crow_cli.tools.fs(...)` was
+`TypeError: 'module' object is not callable` — order-dependent, invisible in a
+kernel (whose prelude calls `reload()`, which purged it), and real for any
+in-process consumer. The suffix removes the overlap instead of racing it:
+`crow_cli.tools.fs` is the function by one route, `crow_cli.tools.fs_tool` the
+module by one route, in either order. `register.py` and `results.py` keep plain
+names because nothing binds them. Pinned by
+`tests/unit/test_tools_facade_names.py`, which reproduces the original failure
+in a fresh interpreter — the only state it can be reproduced in.
+
 `PRELUDE = "from crow_cli.tools import reload\nreload()"`,
 `PRELUDE_V2 = "...\nreload(v2=True)"`,
 `_IS_V2 = globals().setdefault("_IS_V2", False)` — remembered rather than

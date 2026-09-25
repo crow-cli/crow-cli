@@ -223,7 +223,7 @@ stored reason; accept an empty reason; resolve the engine before the identity;
 delete `KIND_BY_RESULT["goal"]`; make the result promise a stop for a still
 active goal; bind `goal_done` into `_LAZY`.]**
 
-5.1 `tools/goal.py`: two subtools, `goal_done` and `goal_blocked`, each with a
+5.1 `tools/goal_tool.py`: two subtools, `goal_done` and `goal_blocked`, each with a
     `@subtool` decorator, registered in `tools/__init__.py`'s **`_LAZY_V2`, not
     `_LAZY`** — CORRECTED FROM THE DRAFT. They are the exits from a
     continuation loop and only the agent2 driver runs one; v1 has no idle
@@ -231,7 +231,7 @@ active goal; bind `goal_done` into `_LAZY`.]**
     out of a loop it is not in. (`task` is in `_LAZY_V2` for a DIFFERENT reason
     — a name collision with v1's MCP tool — and both reasons are now written in
     the table's comment rather than one being left to inference.)
-    They read the identity rail for the session id the same way `tools/task.py`
+    They read the identity rail for the session id the same way `tools/task_tool.py`
     does — never a model-supplied session id, and identity is resolved BEFORE
     the database so a caller with no rail is told who it failed to be rather
     than where it failed to write. `goal_done` → status complete;
@@ -297,15 +297,17 @@ active goal; bind `goal_done` into `_LAZY`.]**
     is text-only on purpose: a text-only turn the USER caused DOES continue, so
     "no continuation" can only mean `active_goal` found nothing.
 
-**Deviation in the registration check:** it resolves each `_LAZY_V2` entry
-through `importlib.import_module(module).attr` — the way `reload()` does — and
-NOT through `getattr(crow_cli.tools, name)`. Running the whole suite showed why:
-an earlier `import crow_cli.tools.task` leaves the MODULE on the package
-attribute, which shadows `__getattr__`, so `T.task` is a module and the facade
-hands out something uncallable. That is the documented wart `reload()`'s purge
-exists to undo, not a bug in this phase, but it is real and it is now in
-TODO.md. The two NEW names are additionally asserted through the facade itself,
-which nothing shadows. The live-kernel half of the check was already there:
+**Deviation in the registration check — since withdrawn.** It resolved each
+`_LAZY_V2` entry through `importlib.import_module(module).attr` — the way
+`reload()` does — and NOT through `getattr(crow_cli.tools, name)`, because an
+earlier `import crow_cli.tools.task` left the MODULE on the package attribute,
+shadowed `__getattr__`, and handed out something uncallable. That was the wart
+recorded in TODO.md, and it is now FIXED at the source: every subtool module is
+`<name>_tool.py`, so no submodule name is a binding name and there is nothing
+left to shadow. The check goes through the facade like everything else, and
+`tests/unit/test_tools_facade_names.py` pins the invariant — including in a
+fresh interpreter, which is the only state the original failure could be
+reproduced in. The live-kernel half of the check was already there:
 `tests/mcp/test_mcp2_server.py::test_the_prelude_binds_the_whole_v2_facade`
 reads `_names()` out of a running kernel, so it covered `goal_done` and
 `goal_blocked` the moment they were added, with no edit.

@@ -21,9 +21,7 @@ from crow_cli.memory.db import create_database
 from crow_cli.memory.models import SubtoolCall
 from crow_cli.tools import fs
 
-# from-import, NOT `import crow_cli.tools.fs as m`: the facade caches the
-# resolved FUNCTION into the package dict, so the import-as form binds fs().
-from crow_cli.tools.fs import _rg_stream
+from crow_cli.tools.fs_tool import _rg_stream
 from crow_cli.tools.register import begin_cell, clear, pending
 from crow_cli.tools.results import (
     FileResult,
@@ -1082,7 +1080,7 @@ async def test_rg_stream_timeout_kills_the_whole_process_group(tmp_path, monkeyp
     lets a grandchild keep stdout open, and the drain then waits for an EOF
     that will not come: `sh -c 'echo hit; sleep 30'` cost a full 30s before
     its FsError. start_new_session + killpg reaches the group."""
-    monkeypatch.setattr(sys.modules["crow_cli.tools.fs"], "_RG_TIMEOUT", 1.0)
+    monkeypatch.setattr(sys.modules["crow_cli.tools.fs_tool"], "_RG_TIMEOUT", 1.0)
     nap = f"37.{random.randint(100, 999)}"
 
     with pytest.raises(FsError, match="timed out"):

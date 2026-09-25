@@ -1,6 +1,6 @@
 """rlm, driving a real delegate over a real pipe.
 
-The subject is :mod:`crow_cli.tools.rlm`. The child is a scripted ACP v2 agent
+The subject is :mod:`crow_cli.tools.rlm_tool`. The child is a scripted ACP v2 agent
 in a subprocess — the peer end of the protocol, not a stand-in for the code
 under test — and it does what a real crow fork does and a stub cannot: it mints
 the fork's agent row off the trunk's head and writes the delegate's answer
@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-import crow_cli.tools.rlm  # noqa: F401 — the module, not the lazy binding
+import crow_cli.tools.rlm_tool  # noqa: F401 — the module, not the lazy binding
 from crow_cli.client2 import subagent as subagent_mod
 from crow_cli.memory import (
     add_message,
@@ -41,12 +41,12 @@ from crow_cli.memory import (
 )
 from crow_cli.tools.register import begin_cell, clear
 from crow_cli.tools.results import RlmResult, RlmToolError
-from crow_cli.tools.rlm import _dispose, _state, rlm
+from crow_cli.tools.rlm_tool import _dispose, _state, rlm
 
 #: ``from crow_cli.tools import rlm`` would hand back the FUNCTION, not the
 #: module: the package's PEP-562 ``__getattr__`` serves the lazy table and
 #: ``rlm`` is one of its bindings. One assertion below needs the module.
-rlm_mod = sys.modules["crow_cli.tools.rlm"]
+rlm_mod = sys.modules["crow_cli.tools.rlm_tool"]
 
 #: A made-up session id. Nothing here touches the wake bus, but a name no
 #: deployment has keeps a stray write attributable if that ever changes.
@@ -63,7 +63,7 @@ SETTLE_TIMEOUT = 60.0
 
 CHILD = r'''"""A scripted ACP v2 delegate: the peer end of the wire for the rlm tests.
 
-Not a mock of anything under test — the subject is :mod:`crow_cli.tools.rlm`.
+Not a mock of anything under test — the subject is :mod:`crow_cli.tools.rlm_tool`.
 What makes this one useful is that it does what a real crow fork does and a stub
 cannot: ``session/fork`` mints the fork's agent row off the trunk's head, and
 the turn writes the delegate's answer under that row, so the parent's

@@ -8,7 +8,7 @@ from crow_cli.memory.models import SubtoolCall
 from crow_cli.tools import write
 from crow_cli.tools.register import begin_cell, clear, pending
 from crow_cli.tools.results import EditResult
-from crow_cli.tools.write import WriteError
+from crow_cli.tools.write_tool import WriteError
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 

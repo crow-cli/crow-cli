@@ -42,7 +42,7 @@ from crow_cli.memory import (
     set_goal,
     update_goal_status,
 )
-from crow_cli.tools.goal import _dispose, goal_done
+from crow_cli.tools.goal_tool import _dispose, goal_done
 from crow_cli.tools.register import begin_cell, clear
 
 from tests.integration.test_agent2_gate import (
