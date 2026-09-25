@@ -62,8 +62,8 @@ class _Client:
     def __init__(self) -> None:
         self.updates: asyncio.Queue = asyncio.Queue()
 
-    async def session_update(self, notification) -> None:
-        await self.updates.put(notification)
+    async def session_update(self, session_id, update, **kwargs) -> None:
+        await self.updates.put((session_id, update))
 
 
 def config_root(tmp_path: Path) -> Path:
@@ -180,10 +180,8 @@ async def acp2(tmp_path: Path, *args: str):
 async def handshake(conn) -> v2.schema.InitializeResponse:
     return await asyncio.wait_for(
         conn.initialize(
-            v2.schema.InitializeRequest(
-                protocol_version=v2.PROTOCOL_VERSION,
-                info=v2.schema.Implementation(name="acp2-cli", version="2.0.0"),
-            )
+            protocol_version=v2.PROTOCOL_VERSION,
+            info=v2.schema.Implementation(name="acp2-cli", version="2.0.0"),
         ),
         TIMEOUT,
     )
@@ -191,9 +189,7 @@ async def handshake(conn) -> v2.schema.InitializeResponse:
 
 async def new_session(conn, cwd: Path) -> v2.schema.NewSessionResponse:
     return await asyncio.wait_for(
-        conn.new_session(
-            v2.schema.NewSessionRequest(cwd=str(cwd), mcp_servers=[])
-        ),
+        conn.new_session(cwd=str(cwd), mcp_servers=[]),
         TIMEOUT,
     )
 
@@ -250,7 +246,7 @@ async def test_the_argv_a_frozen_build_spawns_reaches_a_live_v2_agent(
         # turn; closing it is the last thing a client does.
         assert kinds(wire)[:2] == ["available_commands_update", "state_update"]
         await asyncio.wait_for(
-            conn.close_session(v2.schema.CloseSessionRequest(session_id=sid)),
+            conn.close_session(session_id=sid),
             TIMEOUT,
         )
 

@@ -67,8 +67,8 @@ class UpdateClient:
     def __init__(self) -> None:
         self.updates: asyncio.Queue = asyncio.Queue()
 
-    async def session_update(self, notification) -> None:
-        await self.updates.put(notification)
+    async def session_update(self, session_id, update, **kwargs) -> None:
+        await self.updates.put((session_id, update))
 
 
 @asynccontextmanager
@@ -203,17 +203,17 @@ async def wait_for_idle(wire, stderr, count: int = 1, timeout: float = LIVE_TIME
 
 
 async def test_a_live_turn_over_real_stdio(tmp_path):
-    """initialize -> new -> prompt -> {} -> user_message -> running -> idle.
+    """initialize -> new -> prompt -> ack -> user_message -> running -> idle.
 
     The whole v2 inversion, against a provider that has never seen our script.
+    The acknowledgement is not empty: it carries the ``messageId`` the prompt
+    landed under, and the ``user_message`` that follows carries the same one.
     """
     model = live_model_or_skip()
     async with live_agent(tmp_path, model) as (conn, wire, stderr):
         init = await conn.initialize(
-            v2.schema.InitializeRequest(
-                protocol_version=v2.PROTOCOL_VERSION,
-                info=v2.schema.Implementation(name="live-e2e", version="2.0.0"),
-            )
+            protocol_version=v2.PROTOCOL_VERSION,
+            info=v2.schema.Implementation(name="live-e2e", version="2.0.0"),
         )
         assert init.protocol_version == v2.PROTOCOL_VERSION
         assert init.info.name == "crow-cli"
@@ -222,7 +222,7 @@ async def test_a_live_turn_over_real_stdio(tmp_path):
         assert not init.auth_methods
 
         new = await conn.new_session(
-            v2.schema.NewSessionRequest(cwd=str(tmp_path), mcp_servers=[])
+            cwd=str(tmp_path), mcp_servers=[]
         )
         assert new.session_id
         # The model picker, offering every configured model with the agent's
@@ -236,15 +236,13 @@ async def test_a_live_turn_over_real_stdio(tmp_path):
         await wait_for_idle(wire, stderr, 1)
 
         marked = len(wire)
-        await conn.prompt(
-            v2.schema.PromptRequest(
-                session_id=new.session_id,
-                prompt=[
-                    v2.schema.TextContentBlock(
-                        text="Reply with exactly one short sentence. Do not use tools."
-                    )
-                ],
-            )
+        response = await conn.prompt(
+            session_id=new.session_id,
+            prompt=[
+                v2.schema.TextContentBlock(
+                    text="Reply with exactly one short sentence. Do not use tools."
+                )
+            ],
         )
         await wait_for_idle(wire, stderr, 2)
 
@@ -258,7 +256,7 @@ async def test_a_live_turn_over_real_stdio(tmp_path):
         update_at = next(
             i for i, e in enumerate(tail) if e.message.get("method") == "session/update"
         )
-        assert tail[result_at].message["result"] == {}
+        assert tail[result_at].message["result"] == {"messageId": response.message_id}
         assert result_at < update_at, (result_at, update_at)
 
         sequence = kinds(wire)
@@ -279,7 +277,11 @@ async def test_a_live_turn_over_real_stdio(tmp_path):
         assert reply.strip(), f"model streamed no text; stderr:\n{''.join(stderr)}"
         # One reply, one messageId — a client keys its document by it.
         assert len({c["messageId"] for c in chunks}) == 1
-        assert chunks[0]["messageId"] != of_kind(wire, "user_message")[0]["messageId"]
+        echoed = of_kind(wire, "user_message")[0]["messageId"]
+        assert chunks[0]["messageId"] != echoed
+        # The acknowledgement named the message the agent then echoed. Two
+        # mints would each be unique and neither would be findable.
+        assert echoed == response.message_id
 
         final = idles(wire)[1]
         assert final["stopReason"] == "end_turn"
@@ -309,38 +311,34 @@ async def test_a_live_cancel_is_confirmed_by_an_idle(tmp_path):
     """Cancel a real stream mid-flight; the idle is the only confirmation.
 
     v1 answered ``session/prompt`` with ``stopReason: "cancelled"``. That
-    response is now ``{}`` and long gone, so a client that does not get an
-    idle has no way to know the cancel landed — and a provider stream is where
+    response is now a ``messageId`` and long gone, so a client that does not
+    get an idle has no way to know the cancel landed — and a provider stream is where
     that is most likely to go wrong, because the socket is doing something at
     the moment the task dies.
     """
     model = live_model_or_skip()
     async with live_agent(tmp_path, model) as (conn, wire, stderr):
         await conn.initialize(
-            v2.schema.InitializeRequest(
-                protocol_version=v2.PROTOCOL_VERSION,
-                info=v2.schema.Implementation(name="live-e2e", version="2.0.0"),
-            )
+            protocol_version=v2.PROTOCOL_VERSION,
+            info=v2.schema.Implementation(name="live-e2e", version="2.0.0"),
         )
         new = await conn.new_session(
-            v2.schema.NewSessionRequest(cwd=str(tmp_path), mcp_servers=[])
+            cwd=str(tmp_path), mcp_servers=[]
         )
         await wait_for_idle(wire, stderr, 1)
 
         await conn.prompt(
-            v2.schema.PromptRequest(
-                session_id=new.session_id,
-                prompt=[
-                    v2.schema.TextContentBlock(
-                        text="Count from 1 to 500, one number per line. No tools."
-                    )
-                ],
-            )
+            session_id=new.session_id,
+            prompt=[
+                v2.schema.TextContentBlock(
+                    text="Count from 1 to 500, one number per line. No tools."
+                )
+            ],
         )
         await wait_for(lambda: len(of_kind(wire, "agent_message_chunk")) >= 2, wire, stderr)
 
         await conn.cancel_session(
-            v2.schema.CancelSessionNotification(session_id=new.session_id)
+            session_id=new.session_id
         )
         await wait_for_idle(wire, stderr, 2)
 
@@ -352,10 +350,8 @@ async def test_a_live_cancel_is_confirmed_by_an_idle(tmp_path):
         # And the session is still alive: cancel is per-turn in v2, so a
         # second prompt on the same session must still work.
         await conn.prompt(
-            v2.schema.PromptRequest(
-                session_id=new.session_id,
-                prompt=[v2.schema.TextContentBlock(text="Reply with exactly: PONG")],
-            )
+            session_id=new.session_id,
+            prompt=[v2.schema.TextContentBlock(text="Reply with exactly: PONG")],
         )
         await wait_for_idle(wire, stderr, 3)
         assert idles(wire)[2]["stopReason"] == "end_turn"
@@ -383,33 +379,27 @@ async def test_a_live_execute_call_becomes_a_terminal_on_the_wire(tmp_path):
     model = live_model_or_skip()
     async with live_agent(tmp_path, model) as (conn, wire, stderr):
         await conn.initialize(
-            v2.schema.InitializeRequest(
-                protocol_version=v2.PROTOCOL_VERSION,
-                info=v2.schema.Implementation(name="live-e2e", version="2.0.0"),
-            )
+            protocol_version=v2.PROTOCOL_VERSION,
+            info=v2.schema.Implementation(name="live-e2e", version="2.0.0"),
         )
         new = await conn.new_session(
-            v2.schema.NewSessionRequest(
-                cwd=str(tmp_path), mcp_servers=[crow_mcp2()]
-            )
+            cwd=str(tmp_path), mcp_servers=[crow_mcp2()]
         )
         await wait_for_idle(wire, stderr, 1)
 
         await conn.prompt(
-            v2.schema.PromptRequest(
-                session_id=new.session_id,
-                prompt=[
-                    v2.schema.TextContentBlock(
-                        text=(
-                            "Use the execute tool to run exactly this Python "
-                            "cell, unchanged:\n"
-                            "    print('CROW-E2E-MARKER')\n"
-                            "Then reply with the exact text it printed and "
-                            "nothing else."
-                        )
+            session_id=new.session_id,
+            prompt=[
+                v2.schema.TextContentBlock(
+                    text=(
+                        "Use the execute tool to run exactly this Python "
+                        "cell, unchanged:\n"
+                        "    print('CROW-E2E-MARKER')\n"
+                        "Then reply with the exact text it printed and "
+                        "nothing else."
                     )
-                ],
-            )
+                )
+            ],
         )
         await wait_for_idle(wire, stderr, 2)
         assert idles(wire)[1]["stopReason"] == "end_turn"

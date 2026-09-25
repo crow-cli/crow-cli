@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 license = { file = "LICENSE.md" }
 dependencies = [
-    "agent-client-protocol[http]>=0.12.0,<0.13.0",
+    "agent-client-protocol[http]>=1.0.0rc2,<1.1.0",
     # TUI layer derived from batrachianai/toad (see src/crow_cli/tui/NOTICE)
     "aiosqlite>=0.22.1",
     "bashlex==0.18",
@@ -65,12 +65,6 @@ Documentation = "https://github.com/crow-cli/crow-cli#readme"
 
 [project.scripts]
 crow-cli = "crow_cli.cli.main:main"
-
-[tool.uv.sources]
-# ACP v2 lives on python-sdk main, unreleased (PyPI tops out at 0.12.1, which
-# has no experimental/). Local editable so the v2 schema is importable here.
-# The acp-v2-agent worktree sits one level deeper and needs ../../python-sdk.
-agent-client-protocol = { path = "../python-sdk", editable = true }
 
 [build-system]
 requires = ["hatchling"]

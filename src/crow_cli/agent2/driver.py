@@ -449,7 +449,7 @@ class SessionDriver:
             self.log.warning("Empty user content — skipping prompt")
             return False
 
-        await self.emitter.user_message(self.emitter.start_message(), prompt.blocks)
+        await self.emitter.user_message(prompt.message_id, prompt.blocks)
         await self.session.add_message({"role": "user", "content": content})
         # Running goes here rather than in _run_turn: the spec's order is
         # user_message then running, and a slash command is foreground work

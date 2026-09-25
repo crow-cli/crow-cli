@@ -105,36 +105,39 @@ class ScriptedChild:
     def on_connect(self, conn):
         self.conn = conn
 
-    async def initialize(self, request):
-        say("initialized protocol=%s" % request.protocol_version)
+    # rc2's router hands a handler the request's FIELDS as keywords and
+    # spreads its _meta in among them, so each signature below names the
+    # fields it cares about and catches the rest.
+    async def initialize(self, protocol_version, info, capabilities=None, **kw):
+        say("initialized protocol=%s" % protocol_version)
         return s.InitializeResponse(
             protocol_version=v2.PROTOCOL_VERSION,
             info=s.Implementation(name="scripted-child", version="0.0.1"),
             capabilities=s.AgentCapabilities(),
         )
 
-    async def new_session(self, request):
+    async def new_session(self, cwd, additional_directories=None,
+                          mcp_servers=None, **kw):
         self.sessions += 1
-        say(
-            "new-session cwd=%s servers=%d"
-            % (request.cwd, len(request.mcp_servers or []))
-        )
+        say("new-session cwd=%s servers=%d" % (cwd, len(mcp_servers or [])))
         return s.NewSessionResponse(session_id="child-%d" % self.sessions)
 
-    async def resume_session(self, request):
-        say("resumed %s replay_from=%s" % (request.session_id, request.replay_from))
+    async def resume_session(self, session_id, cwd, additional_directories=None,
+                             mcp_servers=None, replay_from=None, **kw):
+        say("resumed %s replay_from=%s" % (session_id, replay_from))
         return s.ResumeSessionResponse()
 
-    async def fork_session(self, request):
-        say("forked %s meta=%s" % (request.session_id, request.field_meta))
-        return s.ForkSessionResponse(session_id="fork-of-%s" % request.session_id)
+    async def fork_session(self, session_id, cwd, additional_directories=None,
+                           mcp_servers=None, **meta):
+        say("forked %s meta=%s" % (session_id, meta or None))
+        return s.ForkSessionResponse(session_id="fork-of-%s" % session_id)
 
-    async def prompt(self, request):
-        text = "".join(getattr(b, "text", "") for b in request.prompt)
-        say("prompt %s %r" % (request.session_id, text))
-        self.turn_task = asyncio.create_task(self._turn(request.session_id, text))
+    async def prompt(self, session_id, prompt, **kw):
+        text = "".join(getattr(b, "text", "") for b in prompt)
+        say("prompt %s %r" % (session_id, text))
+        self.turn_task = asyncio.create_task(self._turn(session_id, text))
         self.turn_task.add_done_callback(report)
-        return s.PromptResponse()
+        return s.PromptResponse(message_id="u1")
 
     async def _turn(self, session_id, text):
         # The wire models are Running/Idle/RequiresActionSessionStateUpdate.
@@ -157,19 +160,14 @@ class ScriptedChild:
         )
         await self._send(session_id, s.IdleSessionStateUpdate(stop_reason="end_turn"))
 
-    async def cancel_session(self, notification):
-        say("cancelled %s" % notification.session_id)
+    async def cancel_session(self, session_id, **kw):
+        say("cancelled %s" % session_id)
         if self.turn_task is not None:
             self.turn_task.cancel()
-        await self._send(
-            notification.session_id,
-            s.IdleSessionStateUpdate(stop_reason="cancelled"),
-        )
+        await self._send(session_id, s.IdleSessionStateUpdate(stop_reason="cancelled"))
 
     async def _send(self, session_id, update):
-        await self.conn.session_update(
-            s.UpdateSessionNotification(session_id=session_id, update=update)
-        )
+        await self.conn.session_update(session_id=session_id, update=update)
 
 
 for _i in range(FLOOD):
@@ -279,10 +277,6 @@ def make_child_config(tmp_path: Path) -> Path:
         )
     )
     return config_dir
-
-
-def notif(session_id: str, update):
-    return v2.schema.UpdateSessionNotification(session_id=session_id, update=update)
 
 
 # -- the driver, over a real pipe ------------------------------------------
@@ -638,14 +632,18 @@ def test_the_stop_queue_is_per_session_and_stable_across_calls():
 async def test_only_an_idle_for_a_watched_session_ends_the_wait():
     client = HeadlessClient()
     queue = client.watch("s1")
-    await client.session_update(notif("s1", v2.schema.RunningSessionStateUpdate()))
+    # Called the way the router calls it: the notification's fields as
+    # keywords, never the notification.
+    await client.session_update(
+        session_id="s1", update=v2.schema.RunningSessionStateUpdate()
+    )
     assert queue.empty(), "running is not a stop"
     await client.session_update(
-        notif("s2", v2.schema.IdleSessionStateUpdate(stop_reason="end_turn"))
+        session_id="s2", update=v2.schema.IdleSessionStateUpdate(stop_reason="end_turn")
     )
     assert queue.empty(), "another session's idle must not wake ours"
     await client.session_update(
-        notif("s1", v2.schema.IdleSessionStateUpdate(stop_reason="cancelled"))
+        session_id="s1", update=v2.schema.IdleSessionStateUpdate(stop_reason="cancelled")
     )
     assert queue.get_nowait() == "cancelled"
 
@@ -655,13 +653,16 @@ async def test_an_idle_with_no_stop_reason_still_ends_the_wait():
     not "still running". A driver that waited for a value would hang."""
     client = HeadlessClient()
     queue = client.watch("s1")
-    await client.session_update(notif("s1", v2.schema.IdleSessionStateUpdate()))
+    await client.session_update(
+        session_id="s1", update=v2.schema.IdleSessionStateUpdate()
+    )
     assert queue.get_nowait() is None
 
 
 async def test_updates_are_recorded_even_for_sessions_nobody_watches():
     client = HeadlessClient()
     await client.session_update(
-        notif("ghost", v2.schema.IdleSessionStateUpdate(stop_reason="end_turn"))
+        session_id="ghost",
+        update=v2.schema.IdleSessionStateUpdate(stop_reason="end_turn"),
     )
     assert len(client.updates) == 1

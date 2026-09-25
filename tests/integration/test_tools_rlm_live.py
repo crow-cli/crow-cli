@@ -174,7 +174,9 @@ class ScriptedDelegate:
     def on_connect(self, conn):
         self.conn = conn
 
-    async def initialize(self, request):
+    # rc2's router hands a handler the request's FIELDS as keywords, with its
+    # _meta spread in among them — so ``**meta`` below IS the fork's _meta.
+    async def initialize(self, protocol_version, info, capabilities=None, **kw):
         say("initialized")
         return s.InitializeResponse(
             protocol_version=v2.PROTOCOL_VERSION,
@@ -182,21 +184,21 @@ class ScriptedDelegate:
             capabilities=s.AgentCapabilities(),
         )
 
-    async def fork_session(self, request):
-        fork_id = mint_fork(request.session_id)
+    async def fork_session(self, session_id, cwd, additional_directories=None,
+                           mcp_servers=None, **meta):
+        fork_id = mint_fork(session_id)
         say(
             "forked %s -> %s meta=%s servers=%d"
-            % (request.session_id, fork_id, request.field_meta,
-               len(request.mcp_servers or []))
+            % (session_id, fork_id, meta or None, len(mcp_servers or []))
         )
         return s.ForkSessionResponse(session_id=fork_id)
 
-    async def prompt(self, request):
-        text = "".join(getattr(b, "text", "") for b in request.prompt)
-        say("prompt %s %r" % (request.session_id, text))
-        self.turn_task = asyncio.create_task(self._turn(request.session_id, text))
+    async def prompt(self, session_id, prompt, **kw):
+        text = "".join(getattr(b, "text", "") for b in prompt)
+        say("prompt %s %r" % (session_id, text))
+        self.turn_task = asyncio.create_task(self._turn(session_id, text))
         self.turn_task.add_done_callback(report)
-        return s.PromptResponse()
+        return s.PromptResponse(message_id="u1")
 
     async def _turn(self, session_id, text):
         body = text.strip().splitlines()[-1]
@@ -228,19 +230,14 @@ class ScriptedDelegate:
         say("answered %s" % session_id)
         await self._send(session_id, s.IdleSessionStateUpdate(stop_reason="end_turn"))
 
-    async def cancel_session(self, notification):
-        say("cancelled %s" % notification.session_id)
+    async def cancel_session(self, session_id, **kw):
+        say("cancelled %s" % session_id)
         if self.turn_task is not None:
             self.turn_task.cancel()
-        await self._send(
-            notification.session_id,
-            s.IdleSessionStateUpdate(stop_reason="cancelled"),
-        )
+        await self._send(session_id, s.IdleSessionStateUpdate(stop_reason="cancelled"))
 
     async def _send(self, session_id, update):
-        await self.conn.session_update(
-            s.UpdateSessionNotification(session_id=session_id, update=update)
-        )
+        await self.conn.session_update(session_id=session_id, update=update)
 
 
 asyncio.run(v2.run_agent(ScriptedDelegate()))

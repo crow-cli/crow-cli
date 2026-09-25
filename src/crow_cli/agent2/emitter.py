@@ -45,6 +45,19 @@ ToolKind = Literal["read", "edit", "delete", "move", "search", "execute", "think
 CompactionStatus = Literal["in_progress", "completed", "failed", "cancelled"]
 
 
+def present(**fields: Any) -> dict[str, Any]:
+    """The kwargs to build an update with, minus the ones that are ``None``.
+
+    The connection serializes with ``exclude_unset``, and since python-sdk
+    1.0.0rc2 with nothing else — that release dropped ``exclude_none`` from
+    ``_dump``. So a field handed an explicit ``None`` is a field the client
+    receives as ``null``, and on an upsert ``null`` is not "unchanged", it is
+    "cleared". Every optional below means "I have nothing to say", which is
+    exactly what an absent key says and what a ``null`` contradicts.
+    """
+    return {name: value for name, value in fields.items() if value is not None}
+
+
 def usage_model(raw: Any) -> Optional[v2.Usage]:
     """A provider usage dict -> v2 ``Usage``, or None when there is nothing.
 
@@ -69,8 +82,10 @@ def usage_model(raw: Any) -> Optional[v2.Usage]:
         total_tokens=total if total is not None else (inp or 0) + (out or 0),
         input_tokens=inp or 0,
         output_tokens=out or 0,
-        thought_tokens=completion_details.get("reasoning_tokens"),
-        cached_read_tokens=prompt_details.get("cached_tokens"),
+        **present(
+            thought_tokens=completion_details.get("reasoning_tokens"),
+            cached_read_tokens=prompt_details.get("cached_tokens"),
+        ),
     )
 
 class Emitter:
@@ -101,9 +116,7 @@ class Emitter:
 
     async def _send(self, update: Any) -> None:
         """Emit one update. Propagates: a dead client should end the turn."""
-        await self._conn.session_update(
-            v2.UpdateSessionNotification(session_id=self.session_id, update=update)
-        )
+        await self._conn.session_update(session_id=self.session_id, update=update)
 
     async def _best_effort(self, update: Any) -> None:
         """Emit one decorative update. A dead client must not kill the loop.
@@ -183,7 +196,7 @@ class Emitter:
         """
         await self._send(
             v2.IdleSessionStateUpdate(
-                stop_reason=stop_reason, usage=usage_model(usage)
+                **present(stop_reason=stop_reason, usage=usage_model(usage))
             )
         )
 
@@ -203,7 +216,7 @@ class Emitter:
 
     async def usage(self, used: int, size: int, cost: Any = None) -> None:
         """The context meter: tokens in context against the compaction ceiling."""
-        await self._best_effort(v2.UsageUpdate(used=used, size=size, cost=cost))
+        await self._best_effort(v2.UsageUpdate(used=used, size=size, **present(cost=cost)))
 
     # -- tool calls --------------------------------------------------------
 
@@ -242,14 +255,18 @@ class Emitter:
         """
         exit_status = None
         if exit_code is not None or signal is not None:
-            exit_status = v2.TerminalExitStatus(exit_code=exit_code, signal=signal)
+            exit_status = v2.TerminalExitStatus(
+                **present(exit_code=exit_code, signal=signal)
+            )
         await self._send(
             v2.SessionTerminalUpdate(
                 terminal_id=terminal_id,
-                command=command,
-                cwd=cwd,
-                output=v2.TerminalOutput(data=output_b64) if output_b64 else None,
-                exit_status=exit_status,
+                **present(
+                    command=command,
+                    cwd=cwd,
+                    output=v2.TerminalOutput(data=output_b64) if output_b64 else None,
+                    exit_status=exit_status,
+                ),
             )
         )
 
@@ -282,8 +299,7 @@ class Emitter:
             v2.SessionCompactionUpdate(
                 compaction_id=compaction_id,
                 status=status,
-                summary=list(summary) if summary else None,
-                error=error,
+                **present(summary=list(summary) if summary else None, error=error),
             )
         )
 
@@ -329,4 +345,6 @@ class Emitter:
         the turn here rather than have the failure swallowed and surfaced
         three notifications later as something else.
         """
-        await self._send(v2.SessionInfoUpdate(title=title, updated_at=updated_at))
+        await self._send(
+            v2.SessionInfoUpdate(**present(title=title, updated_at=updated_at))
+        )

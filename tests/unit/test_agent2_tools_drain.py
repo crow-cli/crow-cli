@@ -11,6 +11,7 @@ import base64
 import logging
 
 import pytest
+from acp.experimental.v2 import schema as vs
 
 from crow_cli.agent2.ctx import TurnCtx
 from crow_cli.agent2.emitter import Emitter
@@ -33,11 +34,16 @@ class RecordingConn:
     def __init__(self):
         self.wire: list[dict] = []
 
-    async def session_update(self, notification):
+    async def session_update(self, session_id, update, **kwargs):
+        # Rebuilds the notification and dumps it the way the connection does:
+        # ``exclude_unset``, and — since python-sdk 1.0.0rc2 dropped
+        # ``exclude_none`` from ``_dump`` — nothing else. A field the emitter
+        # set to ``None`` on purpose is a ``null`` a client receives, so this
+        # fake has to keep it rather than tidy it away.
         self.wire.append(
-            notification.model_dump(
-                mode="json", by_alias=True, exclude_none=True, exclude_unset=True
-            )
+            vs.UpdateSessionNotification(
+                session_id=session_id, update=update
+            ).model_dump(mode="json", by_alias=True, exclude_unset=True)
         )
 
     @property
