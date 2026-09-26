@@ -42,6 +42,7 @@ from crow_cli.agent.compact import CompactResponse
 from crow_cli.agent.session import AgentSession
 from crow_cli.agent2.agent import CrowAgentV2
 from crow_cli.agent2.driver import PARK_BACKSTOP_S
+from crow_cli.agent2.sessions import SessionRegistry
 from crow_cli.config import Config
 from crow_cli.memory import Agent, Session, running_tasks, wire_session_id
 from crow_cli.memory.writes import finish_task, launch_task
@@ -2184,6 +2185,179 @@ async def test_a_model_imposed_by_the_command_line_is_not_written_to_the_row(
         await g3.prompt(v2.schema.TextContentBlock(text="and again"))
         await g3.wait_for_idle(1)
         assert g3.llm.calls[0]["model"] == "gate-model-id"
+
+
+def two_provider_config(tmp_path: Path) -> Config:
+    """A config whose DEFAULT model is on a different provider than its second.
+
+    ``make_llm``'s fallback is "the first model in config.yaml", so a session
+    that loses its own selection lands on a different base_url — and the
+    base_url on the client ``make_llm`` returns is the only place a miss is
+    observable, because nothing in a gate ever dials one.
+
+    ``sort_keys=False`` is load-bearing, not tidiness: the default is the
+    first model in the dict, and safe_dump sorts. Dumped alphabetically,
+    "chosen" would come before "fallback" and the fallback under test would
+    be the model the session was born on.
+    """
+    config_dir = tmp_path / "config-two"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    (config_dir / ".env").write_text("API_KEY=gate-key\n")
+    (config_dir / "config.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "providers": {
+                    "fallback-provider": {
+                        "api_key": "${API_KEY}",
+                        "base_url": "https://fallback.invalid/v1",
+                    },
+                    "chosen-provider": {
+                        "api_key": "${API_KEY}",
+                        "base_url": "https://chosen.invalid/v1",
+                    },
+                },
+                "models": {
+                    # First in the dict, so it is what a lost selection falls
+                    # back to.
+                    "fallback-model": {
+                        "provider": "fallback-provider",
+                        "model": "fallback-model-id",
+                    },
+                    "chosen-model": {
+                        "provider": "chosen-provider",
+                        "model": "chosen-model-id",
+                    },
+                },
+            },
+            sort_keys=False,
+        )
+    )
+    config = Config.load(config_dir)
+    config.db_uri = f"sqlite:///{tmp_path / 'gate-two.db'}"
+    return config
+
+
+class _Tap(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__()
+        self.lines: list[str] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lines.append(record.getMessage())
+
+
+def real_make_llm(g: Gate, session: AgentSession):
+    """The registry's OWN make_llm, plus everything it logged.
+
+    The gate replaces ``make_llm`` on the instance, so the class method is the
+    way past the stand-in — and it is the thing under test. The logger is built
+    here rather than tapped off the agent's because a session logger writes to a
+    file and does not propagate, so a handler attached to a throwaway logger is
+    the only reliable tap.
+    """
+    tap = _Tap()
+    log = logging.getLogger(f"make-llm.{session.agent_id}")
+    log.handlers = [tap]
+    log.setLevel(logging.INFO)
+    log.propagate = False
+    return SessionRegistry.make_llm(g.agent.sessions, session, log), tap.lines
+
+
+async def test_a_fork_runs_on_the_sessions_model_not_the_first_one_in_config(
+    tmp_path,
+):
+    """A fork inherits the model it was forked from. It did not.
+
+    ``config_values`` is keyed by ``wire_session_id(agent_id)`` everywhere it is
+    written — ``_register``, ``apply_model_option``, ``adopt_model_option`` — and
+    ``make_llm`` read it back by ``session.session_id``. On a trunk those are the
+    same string, so the miss was invisible on the path anyone drives by hand. On
+    a fork the wire id IS the agent id, so the read missed every time and the
+    ``or`` handed back the first model in config.yaml.
+
+    Which is why this needs TWO gates. Inside the agent that created the trunk,
+    ``config_values`` also holds the trunk's bare session id, so the wrong key
+    still finds the right value and the bug hides. A delegate runs in its own
+    process, which knows the fork and nothing else — the second gate is that
+    process, and the two ``config_values`` assertions are the bug stated
+    exactly: the key ``make_llm`` used to read is not in the dict.
+
+    The body of the request named the inherited model all along, and the server
+    it reached answered to whatever IT had loaded, so nothing downstream had a
+    reason to complain.
+    """
+    config = two_provider_config(tmp_path)
+    async with gate(tmp_path, [text("one") + [usage(2)]], config) as g1:
+        await g1.new_session()
+        await g1.wait_for_idle(1)
+        source = g1.session_id
+        trunk = g1.agent.sessions.sessions[g1.agent_id_of(source)]
+        assert trunk.model_identifier == "fallback-model-id"
+
+        # Moved over the wire, which is the one path that persists to the row —
+        # and the row is all a fork inherits.
+        await g1.set_config_option("model", "chosen-provider:chosen-model-id")
+        await g1.prompt(v2.schema.TextContentBlock(text="first"))
+        await g1.wait_for_idle(2)
+        assert g1.llm.calls[0]["model"] == "chosen-model-id"
+        assert model_in_the_store(g1, g1.agent_id_of(source)) == "chosen-model-id"
+
+    async with gate(tmp_path, [], config) as g2:
+        await g2.fork_session(source)
+        fork_id = g2.last_result()["sessionId"]
+        assert fork_id == f"{source}-1-2"
+        await g2.wait_for_idle(1)
+
+        # The mechanism, stated as state: the fork is registered under its wire
+        # id and the trunk's bare id is not registered at all.
+        assert fork_id in g2.agent.sessions.config_values
+        assert source not in g2.agent.sessions.config_values
+
+        forked = g2.agent.sessions.sessions[fork_id]
+        assert forked.model_identifier == "chosen-model-id"
+        client, notes = real_make_llm(g2, forked)
+        assert str(client.base_url).startswith("https://chosen.invalid"), notes
+        assert not [n for n in notes if "model split" in n], notes
+
+
+async def test_make_llm_says_so_when_the_route_and_the_request_disagree(tmp_path):
+    """The routing and the request body are resolved separately; log the split.
+
+    ``make_llm`` picks the provider, ``react.send_request`` names
+    ``session.model_identifier`` in the body. ``apply_model_option`` is the one
+    path that moves them together, so a disagreement means one was resolved
+    behind the other's back — and it is worth a line with the URL, because the
+    failure is otherwise silent end to end: a server answers to whatever model
+    it has loaded and does not object to a name it has never heard of.
+    """
+    config = two_provider_config(tmp_path)
+    async with gate(tmp_path, [text("one") + [usage(2)]], config) as g:
+        await g.new_session()
+        await g.wait_for_idle(1)
+        sid = g.session_id
+        session = g.agent.sessions.sessions[g.agent_id_of(sid)]
+
+        client, notes = real_make_llm(g, session)
+        assert str(client.base_url).startswith("https://fallback.invalid")
+        assert f"session {sid} -> fallback-provider:fallback-model-id" in notes[0]
+
+        # Desynchronise the two halves the way the fork bug did: the route moves,
+        # the body does not.
+        g.agent.sessions.apply_model_option(
+            sid, "chosen-provider:chosen-model-id", session
+        )
+        session.model_identifier = "fallback-model-id"
+
+        client, notes = real_make_llm(g, session)
+        assert str(client.base_url).startswith("https://chosen.invalid")
+        # configure_llm logs its own USER-AGENT line to the same logger, so pick
+        # the split out rather than counting.
+        split = [x for x in notes if "model split" in x]
+        assert len(split) == 1, notes
+        assert "chosen-provider" in split[0] and "chosen.invalid" in split[0]
+        assert "'fallback-model-id'" in split[0]
+        # And it replaces the agreeing line rather than accompanying it.
+        assert not [x for x in notes if x.startswith(f"session {sid} ->")]
 
 
 # ---------------------------------------------------------------------------

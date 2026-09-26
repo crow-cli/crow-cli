@@ -291,7 +291,15 @@ class SessionRegistry:
         the first configured provider with a warning: a stale option left over
         from a config edit should degrade to "works" rather than refuse to run.
         """
-        value = self.config_values.get(session.session_id, {}).get("model") or (
+        # The WIRE id, not ``session.session_id``. Every writer of
+        # ``config_values`` keys on ``wire_session_id(agent_id)``, and for a
+        # fork (fork_idx > 1) that is the agent id, not the trunk's session id.
+        # Reading the trunk's id here misses, and the ``or`` below turns the
+        # miss into "the first model in config.yaml" — so every delegate
+        # silently ran on whatever model was listed first instead of the one it
+        # inherited, with no warning because the fallback is the quiet path.
+        session_id = wire_session_id(session.agent_id)
+        value = self.config_values.get(session_id, {}).get("model") or (
             self.default_model_value()
         )
         provider_name = value.split(":", 1)[0] if ":" in value else ""
@@ -307,6 +315,24 @@ class SessionRegistry:
         if not provider:
             raise RuntimeError(
                 "No LLM providers configured. Check ~/.agents/crow/config.yaml."
+            )
+        # ``value`` routes the request; ``session.model_identifier`` is the model
+        # named in its body (react.send_request sends that, not this).
+        # apply_model_option is the one path that moves them together, so a split
+        # means one was resolved behind the other's back. Say so with the URL:
+        # the server at the other end answers to whatever IT has loaded and will
+        # not complain about a model name it does not know.
+        selected = value.split(":", 1)[1] if ":" in value else value
+        if selected != session.model_identifier:
+            log.warning(
+                "model split for session %s: routing to %s at %s but the request "
+                "will name %r",
+                session_id, provider.name, provider.base_url, session.model_identifier,
+            )
+        else:
+            log.info(
+                "session %s -> %s:%s at %s",
+                session_id, provider.name, selected, provider.base_url,
             )
         return configure_llm(
             provider=provider, debug=self.config.chunk_log, logger=log
