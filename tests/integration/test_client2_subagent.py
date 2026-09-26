@@ -135,6 +135,10 @@ class ScriptedChild:
     async def prompt(self, session_id, prompt, **kw):
         text = "".join(getattr(b, "text", "") for b in prompt)
         say("prompt %s %r" % (session_id, text))
+        if session_id.startswith("fork-of-"):
+            # Forks park before their first prompt. Deliver the pre-turn idle
+            # after the client subscribed, as it can arrive on a real pipe.
+            await self._send(session_id, s.IdleSessionStateUpdate())
         self.turn_task = asyncio.create_task(self._turn(session_id, text))
         self.turn_task.add_done_callback(report)
         return s.PromptResponse(message_id="u1")
@@ -312,6 +316,22 @@ async def test_prompt_returns_the_stop_reason_the_idle_update_carried(
     assert text == "pong: ping"
 
 
+async def test_a_fresh_session_initial_idle_does_not_end_a_turn():
+    client = HeadlessClient()
+    queue = client.watch("fresh")
+    await client.session_update(
+        session_id="fresh", update=v2.schema.IdleSessionStateUpdate()
+    )
+    assert queue.empty()
+    await client.session_update(
+        session_id="fresh", update=v2.schema.RunningSessionStateUpdate()
+    )
+    await client.session_update(
+        session_id="fresh", update=v2.schema.IdleSessionStateUpdate()
+    )
+    assert queue.get_nowait() is None
+
+
 async def test_a_prompt_that_never_idles_times_out_rather_than_hanging(
     tmp_path, monkeypatch
 ):
@@ -416,6 +436,22 @@ async def test_resume_asks_for_no_replay_and_fork_returns_a_new_id(tmp_path, mon
     assert "meta=None" in tail, "a fork with nothing to anchor sends no _meta"
 
 
+async def test_a_fork_initial_idle_cannot_complete_its_first_turn(tmp_path, monkeypatch):
+    async with scripted(tmp_path, monkeypatch) as driver:
+        sid = await driver.new_session(str(tmp_path))
+        fork = await driver.fork_session(sid, str(tmp_path))
+        stop = await asyncio.wait_for(driver.prompt(fork, "ping"), TURN_TIMEOUT)
+        updates = list(driver.client.updates)
+
+    assert stop == "end_turn", "the fork must wait for its own turn, not its first park"
+    assert any(is_running(u) for u in updates)
+    assert any(
+        getattr(u, "session_update", None) == "agent_message_chunk"
+        and getattr(u.content, "text", "") == "pong: ping"
+        for u in updates
+    )
+
+
 async def test_fork_anchors_ride_the_request_meta(tmp_path, monkeypatch):
     """``messageOffset``/``rlmDepth`` are the delegation half of the fork
     contract, and they are not in the schema — v2's ``ForkSessionRequest``
@@ -465,6 +501,29 @@ async def test_close_on_a_driver_that_never_started_is_a_no_op():
     assert driver.conn is None
     assert driver.proc is None
     assert driver.stderr_tail == ""
+
+
+async def test_a_real_agent_fork_completes_its_own_prompt_not_its_initial_idle(tmp_path):
+    config_dir = make_child_config(tmp_path)
+    driver = SubagentDriver()
+    try:
+        await asyncio.wait_for(
+            driver.start(str(tmp_path), config_dir=config_dir), START_TIMEOUT
+        )
+        sid = await asyncio.wait_for(driver.new_session(str(tmp_path)), START_TIMEOUT)
+        assert await asyncio.wait_for(driver.prompt(sid, "/help"), TURN_TIMEOUT) == "end_turn"
+        fork = await asyncio.wait_for(driver.fork_session(sid, str(tmp_path)), TURN_TIMEOUT)
+        assert await asyncio.wait_for(driver.prompt(fork, "/help"), TURN_TIMEOUT) == "end_turn"
+        updates = list(driver.client.updates)
+    finally:
+        await driver.close()
+
+    assert fork != sid
+    assert sum(
+        getattr(u, "session_update", None) == "agent_message"
+        and "Available slash commands" in str(getattr(u, "content", ""))
+        for u in updates
+    ) == 2, "both the trunk and the fork must answer their own prompt"
 
 
 async def test_agent_argv_really_starts_a_v2_agent_that_can_open_a_session(tmp_path):
@@ -653,6 +712,9 @@ async def test_an_idle_with_no_stop_reason_still_ends_the_wait():
     not "still running". A driver that waited for a value would hang."""
     client = HeadlessClient()
     queue = client.watch("s1")
+    await client.session_update(
+        session_id="s1", update=v2.schema.RunningSessionStateUpdate()
+    )
     await client.session_update(
         session_id="s1", update=v2.schema.IdleSessionStateUpdate()
     )

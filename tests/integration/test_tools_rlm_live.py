@@ -36,7 +36,7 @@ from crow_cli.memory import (
     get_agent,
     get_engine,
     last_assistant_text,
-    load_agent_messages,
+    load_messages,
     set_agent_mcp_servers,
 )
 from crow_cli.tools.register import begin_cell, clear
@@ -196,6 +196,8 @@ class ScriptedDelegate:
     async def prompt(self, session_id, prompt, **kw):
         text = "".join(getattr(b, "text", "") for b in prompt)
         say("prompt %s %r" % (session_id, text))
+        # A fresh crow fork can park after the prompt watcher subscribes.
+        await self._send(session_id, s.IdleSessionStateUpdate())
         self.turn_task = asyncio.create_task(self._turn(session_id, text))
         self.turn_task.add_done_callback(report)
         return s.PromptResponse(message_id="u1")
@@ -214,6 +216,9 @@ class ScriptedDelegate:
         if "hang" in words:
             say("hanging")
             await asyncio.Event().wait()
+            return
+        if "silent" in words:
+            await self._send(session_id, s.IdleSessionStateUpdate(stop_reason="end_turn"))
             return
         for word in words:
             if word.startswith("slow:"):
@@ -347,9 +352,8 @@ async def said(probe: Path, needle: str, timeout: float = SETTLE_TIMEOUT) -> str
 
 def answer_in(engine, fork_id: str) -> str:
     """What the delegate persisted, read the way rlm reads it."""
-    agent = get_agent(engine, fork_id)
-    assert agent is not None, f"no agent row for {fork_id}"
-    return last_assistant_text(load_agent_messages(engine, agent))
+    assert get_agent(engine, fork_id) is not None, f"no agent row for {fork_id}"
+    return last_assistant_text(load_messages(engine, fork_id))
 
 
 # -- the port itself --------------------------------------------------------
@@ -383,13 +387,20 @@ async def test_a_blocking_delegation_returns_the_delegates_answer(
         assert r.stop_reason == "end_turn"
         assert r.session_id == FORK, "a fork's wire id IS its agent_id"
         assert r.answer == "the delegate answered: is x.py relevant? answer yes or no"
-        # The answer came out of the fork CHAIN, not off the wire: the trunk
-        # prefix plus the fork's own rows, which is the read task's trunk scan
-        # gets wrong for a delegate.
+        # The answer came from the fork's persisted rows, not the wire or
+        # a previous answer in its inherited trunk prefix.
         assert answer_in(engine, FORK) == r.answer
         assert get_agent(engine, FORK).fork_idx == 2
         await said(probe, "answered")
     assert not _state.get("live"), "a waited-for delegate is reaped, not kept"
+
+
+async def test_a_fork_that_ends_without_answer_is_not_a_success(tmp_path, monkeypatch):
+    async with in_kernel(tmp_path, monkeypatch) as (engine, uri, probe):
+        add_message(engine, TRUNK, {"role": "assistant", "content": "parent's answer"})
+        with pytest.raises(RlmToolError, match="produced no final answer"):
+            await rlm("silent", timeout=SETTLE_TIMEOUT)
+        assert not _state.get("live")
 
 
 async def test_the_fork_carries_the_offset_and_the_depth_budget(

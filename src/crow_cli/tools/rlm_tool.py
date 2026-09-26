@@ -127,18 +127,15 @@ def _delegate_prompt(prompt: str, depth: int) -> str:
 def _delegate_answer(engine, fork_id: str) -> str:
     """The delegate's final answer, read from the shared sqlite.
 
-    The fork's wire id IS its agent_id, so this is a direct row lookup — no
-    trunk scan, because task/_child_answer's shape (max agent_idx of the
-    trunk) is wrong here: the delegate IS a fork, and load_agent_messages
-    chains the trunk prefix in front of its own rows.
+    The fork's wire id IS its agent id. Read only its own rows: the shared
+    trunk prefix is context, never an answer to this delegation.
     """
-    agent = cm.get_agent(engine, fork_id)
-    if agent is None:
-        return "(the delegate produced no transcript)"
-    return cm.last_assistant_text(
-        cm.load_agent_messages(engine, agent),
-        fallback="(the delegate produced no final answer)",
-    )
+    if cm.get_agent(engine, fork_id) is None:
+        raise RlmToolError(f"delegate {fork_id} produced no transcript")
+    answer = cm.last_assistant_text(cm.load_messages(engine, fork_id), fallback="")
+    if not answer:
+        raise RlmToolError(f"delegate {fork_id} produced no final answer")
+    return answer
 
 
 async def _drive(fork_id: str, driver: SubagentDriver, text: str | None) -> None:

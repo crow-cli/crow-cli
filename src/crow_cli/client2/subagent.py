@@ -227,6 +227,7 @@ class HeadlessClient:
     def __init__(self) -> None:
         self.updates: list[Any] = []
         self.stops: dict[str, asyncio.Queue] = {}
+        self.running: set[str] = set()
 
     def watch(self, session_id: str) -> asyncio.Queue:
         """The queue this session's stop reasons land in.
@@ -245,13 +246,14 @@ class HeadlessClient:
         fields as keywords, not the model — see :mod:`crow_cli.agent2.agent`'s
         docstring for the two consequences that follow from it."""
         self.updates.append(update)
-        if (
-            getattr(update, "session_update", None) == "state_update"
-            and getattr(update, "state", None) == "idle"
-        ):
-            queue = self.stops.get(session_id)
-            if queue is not None:
-                queue.put_nowait(getattr(update, "stop_reason", None))
+        if getattr(update, "session_update", None) != "state_update":
+            return
+        state = getattr(update, "state", None)
+        if state == "running" and session_id in self.stops:
+            self.running.add(session_id)
+        elif state == "idle" and session_id in self.running:
+            self.running.remove(session_id)
+            self.stops[session_id].put_nowait(getattr(update, "stop_reason", None))
 
 
 class SubagentDriver:

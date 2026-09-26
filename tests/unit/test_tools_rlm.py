@@ -83,8 +83,7 @@ def test_the_delegates_prompt_carries_its_depth_and_the_rule():
 
 
 def test_the_delegates_answer_is_its_own_last_word(tmp_path):
-    """A delegate IS a fork: its transcript is the trunk prefix followed by
-    its own rows, and the answer is the last assistant word in THAT."""
+    """A delegate is a fork, but only its own rows can provide its answer."""
     uri = f"sqlite:///{tmp_path}/crow.db"
     create_database(uri)
     engine = get_engine(uri)
@@ -104,9 +103,8 @@ def test_the_delegates_answer_is_its_own_last_word(tmp_path):
             engine, "s1-1-2",
             {"role": "assistant", "content": [{"type": "text", "text": "yes — it defines the rail"}]},
         )
-        # A second fork with NO rows of its own: its history is the trunk
-        # PREFIX, so its last assistant word is the trunk's — reading only a
-        # fork's own rows would call that "(no final answer)".
+        # A fork with no assistant rows of its own must not pass off a trunk
+        # answer as the delegate's result.
         anchor2 = add_message(
             engine, "s1-1-1",
             {"role": "assistant", "content": [{"type": "text", "text": "the trunk said: read the rail doc"}]},
@@ -121,11 +119,10 @@ def test_the_delegates_answer_is_its_own_last_word(tmp_path):
     ro = get_ro_engine(uri)
     try:
         assert _delegate_answer(ro, "s1-1-2") == "yes — it defines the rail"
-        assert (
+        with pytest.raises(RlmToolError, match="produced no final answer"):
             _delegate_answer(ro, "s1-1-3")
-            == "the trunk said: read the rail doc"
-        )
-        assert _delegate_answer(ro, "s1-9-2") == "(the delegate produced no transcript)"
+        with pytest.raises(RlmToolError, match="produced no transcript"):
+            _delegate_answer(ro, "s1-9-2")
     finally:
         ro.dispose()
 
@@ -145,7 +142,8 @@ def test_a_delegate_that_never_spoke_says_so(tmp_path):
 
     ro = get_ro_engine(uri)
     try:
-        assert _delegate_answer(ro, "s1-1-2") == "(the delegate produced no final answer)"
+        with pytest.raises(RlmToolError, match="produced no final answer"):
+            _delegate_answer(ro, "s1-1-2")
     finally:
         ro.dispose()
 
