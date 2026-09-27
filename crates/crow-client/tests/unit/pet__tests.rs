@@ -158,7 +158,7 @@ fn thumbnails_scroll_by_replacement_without_retransmit() {
 #[test]
 fn theme_background_is_placed_behind_text_and_retracted() {
     let file = std::env::temp_dir().join(format!(
-        "dsh-tui-background-{}-{}.png",
+        "crow-background-{}-{}.png",
         std::process::id(),
         1
     ));

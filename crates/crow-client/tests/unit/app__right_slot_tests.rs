@@ -7,14 +7,14 @@ fn test_app() -> (App, Controller, Receiver<AppEvent>) {
         bin: "demo".into(),
         workspace: "/tmp".into(),
         session_root: std::env::temp_dir()
-            .join(format!("dsh-tui-right-slot-{}", std::process::id()))
+            .join(format!("crow-right-slot-{}", std::process::id()))
             .to_string_lossy()
             .into_owned(),
         startup_session: None,
     };
     let (tx, rx) = std::sync::mpsc::channel::<AppEvent>();
     let ctl = Controller::start(cfg.clone(), true, None, tx.clone());
-    let app = App::new(Some(Theme::dark()), cfg, "dsh-test".into(), true, false, tx);
+    let app = App::new(Some(Theme::dark()), cfg, "crow-test".into(), true, false, tx);
     (app, ctl, rx)
 }
 
@@ -461,7 +461,7 @@ fn status_slash_fallback_shows_run_state_without_transcript_stats() {
     assert!(text.contains("- state · "), "{text}");
     // ACP facts: demo run shows the demo marker and its session.
     assert!(text.contains("- acp · demo"), "{text}");
-    assert!(text.contains("- session · dsh-test"), "{text}");
+    assert!(text.contains("- session · crow-test"), "{text}");
     // The client owns no model: with nothing reported by an agent the line
     // says so instead of naming a built-in default.
     assert!(text.contains("- model · not reported"), "{text}");

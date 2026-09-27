@@ -5,8 +5,8 @@ use serde_json::json;
 fn parse_catalog_models_and_presets() {
     let value = json!({
         "models": [
-            {"provider": "deepseek-official", "id": "m1", "name": "M One", "vision": true},
-            {"provider": "deepseek-official", "name": "no id → skipped"},
+            {"provider": "acme-official", "id": "m1", "name": "M One", "vision": true},
+            {"provider": "acme-official", "name": "no id → skipped"},
         ],
         "presets": [
             {"id": "standard", "name": "Standard mode", "description": "full agent"},
@@ -112,7 +112,7 @@ fn loop_cfg() -> RuntimeConfig {
         bin: "demo".into(),
         workspace: "/tmp".into(),
         session_root: std::env::temp_dir()
-            .join(format!("dsh-tui-ctl-{}", std::process::id()))
+            .join(format!("crow-ctl-{}", std::process::id()))
             .to_string_lossy()
             .into_owned(),
         startup_session: None,

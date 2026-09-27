@@ -104,6 +104,19 @@ field must stay or the next patch-write drops `uiPreset` out of
 `settings.json`. Whether it should drive something now is a product call for
 7.4/7.5, not a drive-by `#[allow]` inside a rename phase.
 
+**Phase 6 gate result:** check rc 0, still exactly those 3 warnings (same three
+lines, same bindings — a fixture rename moves nothing in `src`); `cargo test
+--locked --bin crow -j 6` → **941 passed, 0 failed** (941 → 941: none added,
+none deleted; three test fns renamed to match their new fixtures —
+`dsh_acp_terminal_login_…`, `dsh_question_schema_…`,
+`live_deepseek_landing_also_uses_acp_…` — plus the `dsh_acp_methods` helper;
+nine assertions rewritten from vacuous negatives into positive pins; three
+geometry fixtures corrected); `cli_help` 3, `startup_session_e2e` 12,
+`sigterm_cleanup` 1, `tcp_attach` 1 all green. `--dump-frame 100x34` → 1815
+chars / 35 rows, byte-identical to `/tmp/rebrand-p4-baseline.frame` under a
+clean `CROW_HOME` — test vocabulary never reaches the paint. 23 files changed,
+377 insertions, 373 deletions.
+
 ## Scope capture (unordered)
 
 - [x] **The client stops owning provider/model/credentials.** `MODEL_PRESETS`
@@ -319,10 +332,47 @@ field must stay or the next patch-write drops `uiPreset` out of
       `slash_menu_offers_the_dynamic_plugin_manager`, relocated next to the
       `/liang` park pin (the closer precedent) rather than next to
       `login`/`logout` as PLAN said. 941 → 941 tests.
-- [ ] **Test fixture vocabulary**: ~400 hits — `dsh-test` (156), `dsh-acp` (22),
+- [x] **Test fixture vocabulary**: ~400 hits — `dsh-test` (156), `dsh-acp` (22),
       `dsh-tui`, `dsh-runtime`, `martty-*` temp dirs and env names,
       `deepseek-*` model ids in canned payloads. Renamed to crow-shaped names
       with every assertion's meaning preserved.
+      *Done (PLAN 6.1–6.3).* A 67-pair longest-first map applied with
+      `edit(replace_all)` over all 54 `tests/**/*.rs`: **329 replacements in 23
+      files** (`dsh-*`→`crow-*`, `MARTTY_SHELL_TEST`→`CROW_SHELL_TEST`,
+      `martty-*`→`crow-*`, `deepseek-v4*`→`acme-v4*`, `deepseek-v3`→`acme-v3`,
+      `deepseek/m1`→`acme/m1`, `current-deepseek-model`→`current-agent-model`,
+      `@deepseek-ai/dsh-tool-bash`→`@acme-ai/acme-tool-bash`,
+      `builtin-dsh`→`builtin-agent`), then 19 hand edits for the payloads a
+      name map cannot reach: auth-method prose the assertions read,
+      `uiPreset:"deepseek"`→`"acme-compositor"` (must round-trip verbatim —
+      `UiSettings` has no flatten map, so a save would drop it), the `/ui`
+      catalog and overlay-select plugin fixtures → `Alpha`/`Beta` with id
+      `beta`, `_meta.dsh`→`_meta.acme` (opaque pass-through, and deliberately
+      *not* `crow`, which is this client's own capability namespace), and the
+      `deepseek-harness-tui` workspace paths.
+      "With every assertion's meaning preserved" turned out to be the actual
+      work. **Nine `!contains` assertions** would have gone vacuous — a
+      negative pin on vocabulary that no longer exists passes forever, green
+      for no reason — so each became a positive pin on the behaviour
+      underneath: `displayed_model` is `None` until the agent reports one, the
+      failed-auth row names the *method*, a new tab's runtime reads `waiting
+      for ACP`, the codex chip shows exactly `gpt-5.6-codex`. Three further
+      tests pin geometry rather than vocabulary and `crow-` is one char wider
+      than `dsh-`: an untitled tab label is a `short_id` (8 chars, so
+      `crow-test` renders as `crow-tes`) and picker meta is `{short:<8}`
+      padded. All three were fixed against the production contract
+      (`app/staging.rs:118,143`) rather than nudged until green.
+      941 → 941; check rc 0 with exactly the 3 permanent warnings;
+      `--dump-frame` byte-identical to the Phase-4 baseline.
+      *Correction:* PLAN's verifies for 6.2 (`grep -rni martty tests` → 0) and
+      6.3 ("returns only palette tests") were both wrong as written — 10
+      `martty` and 9 `deepseek` hits survive, and every one is an absence pin
+      (`MARTTY_HOME`, `/opt/martty`, `~/.martty/settings.json`,
+      `.martty|.dsh|.dsh-tui/sessions`, `!HELP.contains("DEEPSEEK")`, the
+      `["deepseek","martty","dsh","whale"]` logo-primitive guard) or the
+      palette pack mandate rule 3 keeps. Itemised in PLAN. The `cordis`
+      fixture vocabulary was already swept in 5.2, which is why Phase 6 never
+      listed it; one hit survives, the `"--cordis"` rejection pin.
 - [ ] **Docs, assets, scripts, packaging**: `assets/promo/build.py:89`
       (`github.com/openma-ai/deepseek-harness-tui`), `docs/tui-palette.v0.schema.json`
       `$id` (`https://openma.ai/dsh-tui/…`) and the `$schema` refs in the 8

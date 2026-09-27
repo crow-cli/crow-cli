@@ -6,7 +6,7 @@ fn test_app() -> (App, Receiver<AppEvent>) {
         bin: "demo".into(),
         workspace: "/tmp".into(),
         session_root: std::env::temp_dir()
-            .join(format!("dsh-tui-scroll-{}", std::process::id()))
+            .join(format!("crow-scroll-{}", std::process::id()))
             .to_string_lossy()
             .into_owned(),
         startup_session: None,

@@ -709,23 +709,155 @@ later, not a drive-by inside a rename phase.
 ~400 hits. Mechanical, and the reason it is last-but-one: every earlier phase
 rewrites some of these files anyway, so renaming first would just be churn.
 
-6.1 **`dsh-*` fixture names** — `dsh-test` (156), `dsh-acp` (22), `dsh-tui`,
+[x] 6.1 **`dsh-*` fixture names** — `dsh-test` (156), `dsh-acp` (22), `dsh-tui`,
     `dsh-runtime`, `dsh-newest|past|alpha|old|new|cur|fb|blank|mid|start`,
     `agent-dsh-test` — become `crow-*` equivalents across
     `app__mode_tests.rs`, `ui__tests.rs`, `app__session_tabs_tests.rs`,
     `acp__tests.rs`, `sessions__tests.rs`, `app__resume_tests.rs`.
     *Verify:* the test count is unchanged by this item (a rename adds and
     removes nothing) and the suite is green.
+    *Done:* an ordered 67-pair map, longest-first so `dsh-sess-limit` is
+    replaced before `dsh-sess`, applied with the `edit` subtool
+    (`replace_all`) across all 54 `tests/**/*.rs`: **329 replacements in 23
+    files**. `dsh-test`→`crow-test`, `dsh-acp`→`crow-acp`,
+    `dsh-runtime`→`crow-runtime`, `dsh-tui-*`→`crow-*`, every `dsh-<sess>`
+    id→`crow-*`, `builtin-dsh`→`builtin-agent`.
+    *Correction:* the test count is indeed unchanged (941 → 941) but the suite
+    was **not** immediately green — `crow-` is one char wider than `dsh-`, and
+    three tests pin geometry rather than vocabulary:
+    - `app__session_tabs_tests.rs` (2 tests) — an untitled tab's label is
+      `short_id(session_id)` (`app/staging.rs:118`: the first **8** chars), so
+      `dsh-test` rendered whole while `crow-test` renders as `crow-tes`. Both
+      assertions now compare against `short_id("crow-test")` rather than a
+      literal, which pins the real contract instead of a width accident, plus
+      `assert_eq!(parked, "crow-tes")` so the clamp itself is stated. The
+      `open_eight_tabs` doc comment (tab 0 = 13 cols, rest 12) was still
+      arithmetically right but for the wrong reason; it now says the label
+      clamps to 8.
+    - `ui__tests.rs::session_picker_rows_align_label_and_meta_columns` — the
+      fixture's meta is hand-padded to imitate `session_picker_row`'s
+      `{short:<8}` (`app/staging.rs:143`). `dsh-alp` is 7 chars so it carried
+      two spaces; `crow-alp` is exactly 8 so it carries one. Dropping the space
+      reproduces what production emits — it is not a nudge to force the
+      assertion green (61 vs 60 cols was the failure).
 
-6.2 **`martty-*`** temp dirs, env vars and test names (`MARTTY_SHELL_TEST`,
+[x] 6.2 **`martty-*`** temp dirs, env vars and test names (`MARTTY_SHELL_TEST`,
     `/opt/martty`, `work/acme/martty`, `martty-file-ref-*`,
     `martty-proto-wedge-*`, `martty-shell-*`, `martty-at-menu-ws-*`) → `crow-*`.
     *Verify:* `grep -rni martty tests` → 0; suite green.
+    *Done:* `MARTTY_SHELL_TEST`→`CROW_SHELL_TEST`,
+    `martty-{shell,file-ref,proto-wedge,at-menu-ws}`→`crow-*`, and
+    `/work/acme/martty`→`/work/acme/client` — 17 chars → 17 chars, so the
+    narrow-terminal geometry the `composer_cap_*` tests pin is untouched.
+    *Correction:* the verify as written is **wrong**. `grep -rni martty tests`
+    is 10, not 0, and every surviving hit is an *absence pin* that stops
+    meaning anything if it is renamed: `main__cli_args_tests.rs` 8
+    (`MARTTY_HOME`, `/opt/martty`, `~/.martty/settings.json`,
+    `a_pre_rebrand_martty_home_is_not_read`), `sessions__tests.rs:95`
+    (`.martty/sessions` seeded with `martty-gone`, proving the legacy root is
+    never scanned), `ui__tests.rs:1807` (`for name in ["deepseek","martty",
+    "dsh","whale"]` — the guard that no logo primitive of that name survives).
+    Restated verify: **every surviving hit is an absence pin**; suite green.
 
-6.3 **`deepseek-*` model ids and provider ids in canned payloads** → neutral
+[x] 6.3 **`deepseek-*` model ids and provider ids in canned payloads** → neutral
     crow-shaped ids, except where a test is specifically about the deepseek
     *palette* (4.2), which keeps its name on purpose.
     *Verify:* `grep -rni deepseek tests` returns only palette tests; suite green.
+    *Done:* the map took `deepseek-v4{-pro,-flash}`→`acme-v4*`,
+    `DeepSeek V4`→`Acme V4`, `deepseek-v3`→`acme-v3`, `deepseek/m1`→`acme/m1`,
+    `deepseek-official`→`acme-official`,
+    `current-deepseek-model`→`current-agent-model`,
+    `@deepseek-ai/dsh-tool-bash`→`@acme-ai/acme-tool-bash`. Then, by hand, the
+    payloads a name map cannot reach because they are *prose the assertions
+    read*: `{"provider":"deepseek"}`→`"acme"` and `"DeepSeek API key"`→
+    `"Acme API key"` (`acp__tests.rs:1234/1245`);
+    `"Log in with a DeepSeek API key"`→`"Log in with an Acme API key"` at
+    `acp_auth__tests.rs:7` **and** `:150`, which asserts it, plus that
+    fixture's `…shared with the dsh Web UI` description;
+    `uiPreset:"deepseek"`→`"acme-compositor"` (`app__mode_tests.rs:217/235` —
+    `UiSettings` has no flatten map, so an unknown key has to round-trip
+    verbatim or the save drops it); the `/ui` catalog and overlay-select
+    plugin fixtures → `Alpha`/`Beta` with id `beta` (**not** `Standard`, whose
+    `position()` would find the "Standard mode" chrome chip first);
+    `_meta.dsh`→`_meta.acme` (`events__tests.rs:964/974` — deliberately *not*
+    `crow`, which is this client's own capability namespace, and the test's
+    whole point is that the key is opaque pass-through); the
+    `deepseek-harness-tui` workspace paths in `sessions__tests.rs:30-31` and
+    `ui__tests.rs:125/134/143/151`; and two skill/auth descriptions at
+    `app__mode_tests.rs:4260/4287`.
+    *Correction:* the verify as written is **wrong**. `grep -rni deepseek
+    tests` is 9, and only 6 are palette tests (`theme__tests.rs`:
+    `builtin("deepseek")`, `"DeepSeek Blue"`, `DEEPSEEK_450/500`,
+    `the_deepseek_palette_survives_as_a_pack_and_nothing_more` — kept on
+    purpose by mandate rule 3). The other 3 are absence pins: `cli_help.rs:40`
+    and `main__cli_args_tests.rs:151` (both `!HELP.contains("DEEPSEEK")`) and
+    `ui__tests.rs:1807`. Restated verify: **every surviving hit is an absence
+    pin or the palette**; suite green.
+
+**The negative assertions a rename would have made vacuous.** A `!contains`
+that used to exclude brand vocabulary passes forever once the vocabulary is
+gone, so each one became a positive pin on the behaviour it was really about —
+this is the "rewritten, never silently deleted" rule applied to assertions
+rather than tests:
+
+- `codex_model_chip_waits_for_acp_then_uses_the_reported_session_model` —
+  `!pending.contains("deepseek-chat")` → `!pending.contains("gpt-5.6-codex")`
+  (the model this test itself reports at `:454`), and the trailing negative →
+  `assert_eq!(displayed_model(&app).as_deref(), Some("gpt-5.6-codex"))`.
+- `attached_landing_does_not_guess_runtime_before_initialize_or_after_failure`
+  → `assert_eq!(displayed_model(&app), None, "{text}")` — `ui.rs:2164-2173`:
+  the client has no model of its own to display.
+- `new_tab_landing_never_falls_back_to_old_runtime_or_auth` →
+  `assert!(text.contains("waiting for ACP"))`, which is what `active_runtime`
+  yields for an attached non-demo app whose `server_info` a new tab cleared.
+- `welcome_info_uses_the_active_acp_runtime_and_reported_session_model` →
+  `!pending.contains("gpt-5.6-sol")` before the report and
+  `!reported.contains("waiting for ACP")` after it.
+- `welcome_auth_distinguishes_pending_and_failed_authenticate` —
+  `!failed.contains("host dsh")` → `failed.contains("Log in with Google")`.
+  *Correction:* this row is built by `ui.rs:4189-4196`, **not** `info.rs:102`
+  or `:270`; the copy is `sign-in failed · {method_name} · /auth`, so the
+  method name is the honest positive pin. `info.rs:102`'s `ACP authenticate
+  failed` is the `/session` *overlay*'s copy and only appears when
+  `auth.message` is None there — asserting it on the welcome row would have
+  been a green-for-the-wrong-reason in reverse.
+- `live_deepseek_landing_also_uses_acp_instead_of_startup_provider_and_model`
+  → `live_landing_also_uses_acp_instead_of_startup_provider_and_model`.
+- `ui__rpc_probe.rs:201`'s comment read "crow-acp folds userQuestions into
+  one" after the map ran. That is the *agent*'s behaviour, and the mechanical
+  rename had turned a true statement about someone else's runtime into a false
+  one about ours — now "the agent folds userQuestions into one".
+
+**Phase 6 gate result:** `cargo check --locked --tests -j 6` rc 0 with exactly
+the 3 permanent warnings (unused `Path` @ `main__cli_args_tests.rs:2`, unused
+`ctl` @ `ui__tests.rs:3602`, non-snake-case `dd_kills_the_line_and_gg_G_jump` @
+`input__vim__tests.rs:74`); `cargo test --locked --bin crow -j 6` → **941
+passed, 0 failed** (941 → 941: no test added or deleted, and three test fns
+renamed to match their new fixtures — `dsh_acp_terminal_login_…` →
+`crow_acp_terminal_login_…`, `dsh_question_schema_…` →
+`agent_question_schema_…`, `live_deepseek_landing_also_uses_acp_…` →
+`live_landing_also_uses_acp_…` — plus the `dsh_acp_methods` helper; a rename
+changes a test's name, not what it pins);
+`--dump-frame 100x34` → 1815 chars / 35 rows, **byte-identical** to
+`/tmp/rebrand-p4-baseline.frame` (saved as `/tmp/rebrand-p6-clean.frame`);
+`cli_help` 3, `startup_session_e2e` 12, `sigterm_cleanup` 1, `tcp_attach` 1 —
+all green. 23 files changed, 377 insertions, 373 deletions.
+
+Surviving brand vocabulary in `tests/`, every hit deliberate: `liang` 43
+(parked pet machinery, rule 4), `dsh` 12 (absence pins —
+`main__cli_args_tests.rs` 8, `sessions__tests.rs` 2, `app__mode_tests.rs:123`'s
+retired `dsh-tui-settings.json` cache pin, `ui__tests.rs:1807`), `martty` 10
+(absence pins), `deepseek` 9 (6 palette + 3 absence pins), `whale` 4 (pet and
+logo-primitive guards), `cordis` 1 (`main__cli_args_tests.rs:128`'s
+`"--cordis"` rejection pin — the rest of the `cordis` *fixture* vocabulary was
+already swept in 5.2, which is why Phase 6 never listed it), `openma` 0.
+
+For Phase 7, two counts that will otherwise be misread: `grep -rni dsh src` →
+5, and **all 5 are the substring "handshake"** (`acp.rs` 4,
+`acp/negotiate.rs` 1) — false positives, not brand vocabulary. And
+`grep -rni deepseek src` → 37: `theme.rs` 31 (the palette, rule 3), `pet.rs` 2
+(rule 4), and the 4 provenance module docs (`events.rs:1`, `file_ref.rs:3`,
+`proto.rs:1`, `transcript.rs:3`) that 7.5 owns.
 
 **Commit:** `test(client): the fixture vocabulary is crow's`
 

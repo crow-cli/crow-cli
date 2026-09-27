@@ -6,7 +6,7 @@ fn fresh_root() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "dsh-tui-tabs-{}-{}",
+        "crow-tabs-{}-{}",
         std::process::id(),
         N.fetch_add(1, Ordering::Relaxed),
     ));
@@ -27,7 +27,7 @@ fn test_app() -> (App, Controller, Receiver<AppEvent>) {
     let cfg = test_cfg();
     let (tx, rx) = std::sync::mpsc::channel::<AppEvent>();
     let ctl = Controller::start(cfg.clone(), true, None, tx.clone());
-    let app = App::new(Some(Theme::dark()), cfg, "dsh-test".into(), true, false, tx);
+    let app = App::new(Some(Theme::dark()), cfg, "crow-test".into(), true, false, tx);
     (app, ctl, rx)
 }
 
@@ -76,7 +76,7 @@ fn harness_new_session_action_preserves_old_tabs_from_every_position() {
         app.handle(AppEvent::Ctl(CtlEvent::SessionBound {
             session_id: "new-harness".into(), notice: None,
         }), &ctl);
-        for (tab, id) in ["dsh-test", "old-second", "old-third", "new-harness"].iter().enumerate() {
+        for (tab, id) in ["crow-test", "old-second", "old-third", "new-harness"].iter().enumerate() {
             app.switch_to_session(tab);
             assert_eq!(&app.session_id, id);
         }
@@ -105,12 +105,12 @@ fn empty_session_reuses_tab_then_chat_and_new_adds_a_tab() {
 fn acp_reported_models_follow_session_tabs() {
     let (mut app, _ctl, _rx) = test_app();
     app.apply_ui(crate::events::UiEvent::SessionModel {
-        session: "dsh-test".into(), model: "first-model".into(),
+        session: "crow-test".into(), model: "first-model".into(),
     });
     app.open_new_session("s-two".into(), true);
     assert_eq!(app.session_model, None, "fresh tab must not inherit the old model");
     app.apply_ui(crate::events::UiEvent::SessionModel {
-        session: "dsh-test".into(), model: "updated-first-model".into(),
+        session: "crow-test".into(), model: "updated-first-model".into(),
     });
     let slot = app.parked.remove(0);
     app.put_live_slot(slot);
@@ -171,7 +171,7 @@ fn parked_session_events_land_in_their_slot_only() {
     assert_eq!(app.parked.len(), 1);
     let live_before = transcript_text(&mut app.transcript);
 
-    app.apply_ui(final_event("dsh-test", "old session answer"));
+    app.apply_ui(final_event("crow-test", "old session answer"));
 
     assert!(
         transcript_text(&mut app.parked[0].transcript).contains("old session answer"),
@@ -189,7 +189,7 @@ fn cancel_requested_only_closes_work_in_the_named_session() {
     let (mut app, ctl, _rx) = test_app();
     app.state = RunState::Running;
     app.transcript.apply(crate::events::UiEvent::ToolCall {
-        session: "dsh-test".into(),
+        session: "crow-test".into(),
         call_id: "old".into(),
         name: "old-tool".into(),
         arguments: "{}".into(),
@@ -207,7 +207,7 @@ fn cancel_requested_only_closes_work_in_the_named_session() {
 
     app.handle(
         AppEvent::Ctl(CtlEvent::CancelRequested {
-            session_id: "dsh-test".into(),
+            session_id: "crow-test".into(),
         }),
         &ctl,
     );
@@ -238,7 +238,7 @@ fn session_catalogs_park_and_restore_with_their_tabs() {
     app.open_new_session("s-two".into(), true);
     app.handle(
         AppEvent::Ctl(CtlEvent::Catalog {
-            session_id: Some("dsh-test".into()),
+            session_id: Some("crow-test".into()),
             models: vec![crate::bus::CatalogModel {
                 provider: "provider-one".into(),
                 id: "model-one".into(),
@@ -251,7 +251,7 @@ fn session_catalogs_park_and_restore_with_their_tabs() {
     );
     app.handle(
         AppEvent::Ctl(CtlEvent::Skills {
-            session_id: Some("dsh-test".into()),
+            session_id: Some("crow-test".into()),
             skills: vec![crate::bus::SkillInfo {
                 name: "session-one-skill".into(),
                 description: String::new(),
@@ -312,14 +312,14 @@ fn unknown_session_events_never_reach_any_transcript() {
 fn parked_subagent_events_land_in_parked_subagent_transcript() {
     let (mut app, ctl, _rx) = test_app();
     app.apply_ui(crate::events::UiEvent::SubagentStarted {
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         child: "sub-1".into(),
     });
     assert_eq!(app.subagents.len(), 1);
 
     app.open_new_session("s-two".into(), true);
     assert_eq!(app.session_id, "s-two");
-    assert_eq!(app.parked[0].id, "dsh-test");
+    assert_eq!(app.parked[0].id, "crow-test");
     assert_eq!(app.parked[0].subagents.len(), 1);
 
     app.needs_redraw = false;
@@ -341,7 +341,7 @@ fn hidden_subagent_streams_are_retained_without_repainting_the_parent() {
     app.demo = false;
     for child in ["sub-1", "sub-2", "sub-3"] {
         app.apply_ui(crate::events::UiEvent::SubagentStarted {
-            parent: "dsh-test".into(), child: child.into(),
+            parent: "crow-test".into(), child: child.into(),
         });
     }
     app.needs_redraw = false;
@@ -384,7 +384,7 @@ fn hidden_subagent_streams_are_retained_without_repainting_the_parent() {
 fn parked_subagent_permission_ask_does_not_clobber_live_tab() {
     let (mut app, _ctl, _rx) = test_app();
     app.apply_ui(crate::events::UiEvent::SubagentStarted {
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         child: "sub-1".into(),
     });
     app.open_new_session("s-two".into(), true);
@@ -435,11 +435,11 @@ fn parked_completion_edge_badges_the_tab_and_switching_clears_it() {
     app.open_new_session("s-two".into(), true);
     // The parked session (tab 0) runs, then goes idle while out of view.
     app.apply_ui(crate::events::UiEvent::SessionStatus {
-        session: "dsh-test".into(),
+        session: "crow-test".into(),
         running: true,
     });
     app.apply_ui(crate::events::UiEvent::SessionStatus {
-        session: "dsh-test".into(),
+        session: "crow-test".into(),
         running: false,
     });
 
@@ -450,7 +450,7 @@ fn parked_completion_edge_badges_the_tab_and_switching_clears_it() {
 
     app.switch_to_session(0);
 
-    assert_eq!(app.session_id, "dsh-test");
+    assert_eq!(app.session_id, "crow-test");
     assert!(
         !app.session_tabs()[0].completed_unseen,
         "viewing the tab clears the badge"
@@ -472,7 +472,7 @@ fn switch_round_trip_preserves_transcripts_and_queues() {
     app.transcript.push_user("beta".into(), false);
 
     app.switch_to_session(0);
-    assert_eq!(app.session_id, "dsh-test");
+    assert_eq!(app.session_id, "crow-test");
     let text = transcript_text(&mut app.transcript);
     assert!(text.contains("alpha"), "first transcript survives:\n{text}");
     assert!(!text.contains("beta"));
@@ -494,14 +494,14 @@ fn session_bound_lands_on_the_tab_that_asked() {
     app.run_slash("new", "", &ctl);
     let placeholder = app.session_id.clone();
     assert!(
-        placeholder.starts_with("crow-") && placeholder != "dsh-test",
+        placeholder.starts_with("crow-") && placeholder != "crow-test",
         "ACP /new opens a placeholder tab: {placeholder}"
     );
-    assert_eq!(app.parked[0].id, "dsh-test", "previous session parked");
+    assert_eq!(app.parked[0].id, "crow-test", "previous session parked");
 
     // The user switches away before session/new resolves.
     app.switch_to_session(0);
-    assert_eq!(app.session_id, "dsh-test");
+    assert_eq!(app.session_id, "crow-test");
     app.handle(
         AppEvent::Ctl(CtlEvent::SessionBound {
             session_id: "acp-9".into(),
@@ -511,7 +511,7 @@ fn session_bound_lands_on_the_tab_that_asked() {
     );
 
     assert_eq!(
-        app.session_id, "dsh-test",
+        app.session_id, "crow-test",
         "the bind must not hijack the viewed tab"
     );
     let slot = app
@@ -534,13 +534,13 @@ fn parked_session_idle_dispatches_its_own_queue() {
         blocks: vec![StagedBlock::Text("followup".into())],
     });
     app.apply_ui(crate::events::UiEvent::SessionStatus {
-        session: "dsh-test".into(),
+        session: "crow-test".into(),
         running: true,
     });
 
     app.handle(
         AppEvent::Ui(crate::events::UiEvent::SessionStatus {
-            session: "dsh-test".into(),
+            session: "crow-test".into(),
             running: false,
         }),
         &ctl,
@@ -548,7 +548,7 @@ fn parked_session_idle_dispatches_its_own_queue() {
 
     match commands.try_recv() {
         Ok(Cmd::Prompt { session_id, text }) => {
-            assert_eq!(session_id, "dsh-test", "addressed by its own session id");
+            assert_eq!(session_id, "crow-test", "addressed by its own session id");
             assert_eq!(text, "followup");
         }
         other => panic!("expected the parked queue head to dispatch, got {other:?}"),
@@ -564,9 +564,12 @@ fn parked_session_idle_dispatches_its_own_queue() {
 #[test]
 fn tab_strip_renders_only_with_multiple_sessions() {
     let (mut app, ctl, _rx) = test_app();
+    // Untitled tabs label themselves with `short_id` — the first 8 chars.
+    let parked = short_id("crow-test");
+    assert_eq!(parked, "crow-tes");
     let single = crate::ui::dump_frame(&mut app, 100, 30);
     assert!(
-        !single.lines().next().unwrap_or_default().contains("· dsh-test"),
+        !single.lines().next().unwrap_or_default().contains(&format!("· {parked}")),
         "one session renders no tab strip:\n{single}"
     );
 
@@ -574,10 +577,10 @@ fn tab_strip_renders_only_with_multiple_sessions() {
     app.run_slash("new", "s-two", &ctl);
     let frame = crate::ui::dump_frame(&mut app, 100, 30);
     let row0 = frame.lines().next().unwrap_or_default();
-    assert!(row0.contains("dsh-test"), "parked tab label:\n{frame}");
+    assert!(row0.contains(&parked), "parked tab label:\n{frame}");
     assert!(row0.contains("s-two"), "live tab label:\n{frame}");
     assert!(
-        row0.contains("dsh-test \u{e0b0}") && row0.contains("s-two \u{e0b0}"),
+        row0.contains(&format!("{parked} \u{e0b0}")) && row0.contains("s-two \u{e0b0}"),
         "each tab ends in a Powerline arrow:\n{frame}"
     );
     assert!(!row0.contains('│'), "plain dividers are replaced:\n{frame}");
@@ -738,7 +741,7 @@ fn permission_ask_follows_its_session_across_tab_switches() {
     // Switching away must take the popup off screen with its session —
     // never leave it floating over the newly viewed tab.
     app.switch_to_session(0);
-    assert_eq!(app.session_id, "dsh-test");
+    assert_eq!(app.session_id, "crow-test");
     assert!(
         app.permission_ask.is_none(),
         "no stray popup on the tab just viewed"
@@ -775,11 +778,11 @@ fn permission_ask_follows_its_session_across_tab_switches() {
 #[test]
 fn ask_for_a_parked_session_waits_in_its_slot() {
     let (mut app, ctl, _rx) = test_app();
-    app.open_new_session("s-two".into(), true); // live s-two, dsh-test parked
+    app.open_new_session("s-two".into(), true); // live s-two, crow-test parked
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.handle(
         AppEvent::PermissionAsk {
-            session_id: "dsh-test".into(),
+            session_id: "crow-test".into(),
             title: "write".into(),
             options: ask_options(),
             reply: tx,
@@ -793,8 +796,8 @@ fn ask_for_a_parked_session_waits_in_its_slot() {
     let slot = app
         .parked
         .iter()
-        .find(|slot| slot.id == "dsh-test")
-        .expect("dsh-test parked");
+        .find(|slot| slot.id == "crow-test")
+        .expect("crow-test parked");
     assert!(slot.permission_ask.is_some(), "ask parked with its owner");
     let tabs = app.session_tabs();
     assert!(
@@ -917,7 +920,7 @@ fn painter_popups_park_with_their_session_and_resurface() {
     assert!(app.plugin_tree.is_none(), "/plugins left the screen too");
     assert!(
         app.parked[0].view_overlay.is_some(),
-        "/keys parked with dsh-test"
+        "/keys parked with crow-test"
     );
     assert!(app.parked[0].plugin_tree.is_some(), "/plugins parked too");
 
@@ -942,7 +945,7 @@ fn painter_popups_park_with_their_session_and_resurface() {
 fn tab_click_cancels_a_plugin_view_with_its_esc_event() {
     let (mut app, _demo_ctl, _rx) = test_app();
     let (ctl, commands) = crate::controller::tests::test_controller();
-    app.open_new_session("s-two".into(), true); // live s-two, dsh-test parked
+    app.open_new_session("s-two".into(), true); // live s-two, crow-test parked
     push_plugin_view(&mut app, &ctl, "plan-view", "step 1");
     assert!(app.view_overlay.is_some(), "plugin view opened");
     assert!(app.view_overlay.as_ref().unwrap().notify_plugin);
@@ -951,7 +954,7 @@ fn tab_click_cancels_a_plugin_view_with_its_esc_event() {
     app.tab_rects.push((ratatui::layout::Rect::new(0, 0, 10, 1), 0));
     app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 0), &ctl);
 
-    assert_eq!(app.session_id, "dsh-test", "switched to the clicked tab");
+    assert_eq!(app.session_id, "crow-test", "switched to the clicked tab");
     assert!(
         app.view_overlay.is_none(),
         "the compositor overlay did not ride along"
@@ -1010,14 +1013,14 @@ fn tab_click_cancels_a_plugin_select_carrying_the_selection_value() {
 fn plugin_null_ack_after_a_tab_switch_keeps_the_restored_painter_popup() {
     let (mut app, _demo_ctl, _rx) = test_app();
     let (ctl, _commands) = crate::controller::tests::test_controller();
-    app.push_keys(); // painter popup on dsh-test
-    app.open_new_session("s-two".into(), true); // parks it with dsh-test
+    app.push_keys(); // painter popup on crow-test
+    app.open_new_session("s-two".into(), true); // parks it with crow-test
     push_plugin_view(&mut app, &ctl, "status", "idle");
 
     // Click tab 0: the plugin view is cancelled and /keys resurfaces.
     app.tab_rects.push((ratatui::layout::Rect::new(0, 0, 10, 1), 0));
     app.handle_mouse(mouse(MouseEventKind::Down(MouseButton::Left), 2, 0), &ctl);
-    assert_eq!(app.session_id, "dsh-test");
+    assert_eq!(app.session_id, "crow-test");
     assert!(
         app.view_overlay.as_ref().is_some_and(|view| !view.notify_plugin),
         "the painter popup was restored"
@@ -1042,7 +1045,7 @@ fn close_removes_the_viewed_tab_and_views_a_neighbor() {
     let (mut app, _demo_ctl, _rx) = test_app();
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.demo = false;
-    app.open_new_session("s-two".into(), true); // live s-two, dsh-test parked
+    app.open_new_session("s-two".into(), true); // live s-two, crow-test parked
     app.open_new_session("s-three".into(), true); // live s-three (rightmost)
     while commands.try_recv().is_ok() {}
 
@@ -1052,7 +1055,7 @@ fn close_removes_the_viewed_tab_and_views_a_neighbor() {
     assert_eq!(app.session_tab_count(), 2);
     assert_eq!(
         app.parked.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
-        ["dsh-test"]
+        ["crow-test"]
     );
     match commands.try_recv() {
         Ok(crate::bus::Cmd::ForgetSession { session_id }) => {
@@ -1065,10 +1068,10 @@ fn close_removes_the_viewed_tab_and_views_a_neighbor() {
 #[test]
 fn close_leftmost_tab_keeps_the_same_slot_index() {
     let (mut app, _ctl, _rx) = test_app();
-    // Live dsh-test is the leftmost tab; s-two parked to its right.
+    // Live crow-test is the leftmost tab; s-two parked to its right.
     app.open_new_session("s-two".into(), true);
     app.switch_to_session(0);
-    assert_eq!(app.session_id, "dsh-test");
+    assert_eq!(app.session_id, "crow-test");
     app.transcript.push_user("left prompt".into(), false);
 
     app.run_slash("close", "", &_ctl);
@@ -1087,7 +1090,7 @@ fn close_refuses_the_last_tab() {
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.demo = false;
     app.run_slash("close", "", &ctl);
-    assert_eq!(app.session_id, "dsh-test");
+    assert_eq!(app.session_id, "crow-test");
     assert_eq!(app.session_tab_count(), 1);
     assert!(
         commands.try_recv().is_err(),
@@ -1117,7 +1120,7 @@ fn close_discards_draft_queue_and_cancels_the_parked_ask() {
     assert!(app.permission_ask.is_some());
 
     app.run_slash("close", "", &ctl);
-    assert_eq!(app.session_id, "dsh-test", "back on the parked tab");
+    assert_eq!(app.session_id, "crow-test", "back on the parked tab");
     assert_eq!(
         rx.blocking_recv().expect("ask reply"),
         PermissionAskReply::Cancelled,
@@ -1142,7 +1145,7 @@ fn close_of_an_unbound_tab_discards_its_coming_bind() {
     // Close the placeholder before session/new resolves.
     app.run_slash("close", "", &ctl);
     while commands.try_recv().is_ok() {} // drain close's ForgetSession
-    assert_eq!(app.session_id, "dsh-test", "back on the bound tab");
+    assert_eq!(app.session_id, "crow-test", "back on the bound tab");
 
     // The bind resolves after the close: it must be discarded (and its
     // session forgotten), never rebind the viewed tab.
@@ -1154,10 +1157,10 @@ fn close_of_an_unbound_tab_discards_its_coming_bind() {
         &ctl,
     );
     assert_eq!(
-        app.session_id, "dsh-test",
+        app.session_id, "crow-test",
         "a dead bind must not hijack the viewed tab"
     );
-    assert!(!app.session_bound || app.session_id == "dsh-test");
+    assert!(!app.session_bound || app.session_id == "crow-test");
     match commands.try_recv() {
         Ok(crate::bus::Cmd::ForgetSession { session_id }) => {
             assert_eq!(session_id, "acp-late");
@@ -1181,9 +1184,9 @@ fn close_of_an_unbound_tab_discards_its_coming_bind() {
 #[test]
 fn composer_draft_scroll_model_and_banner_are_bound_to_the_tab() {
     let (mut app, ctl, _rx) = test_app();
-    app.input.insert_str("draft for dsh-test");
+    app.input.insert_str("draft for crow-test");
     app.scroll_up = 42;
-    app.selected_model = Some("deepseek-v3".into());
+    app.selected_model = Some("acme-v3".into());
     app.show_banner = false; // this tab already prompted
 
     // A fresh tab starts clean — no draft, no scroll, no model pick.
@@ -1196,10 +1199,10 @@ fn composer_draft_scroll_model_and_banner_are_bound_to_the_tab() {
 
     // Round trip restores everything as left.
     app.switch_to_session(0);
-    assert_eq!(app.session_id, "dsh-test");
-    assert_eq!(app.input.lines().join(""), "draft for dsh-test");
+    assert_eq!(app.session_id, "crow-test");
+    assert_eq!(app.input.lines().join(""), "draft for crow-test");
     assert_eq!(app.scroll_up, 42);
-    assert_eq!(app.selected_model.as_deref(), Some("deepseek-v3"));
+    assert_eq!(app.selected_model.as_deref(), Some("acme-v3"));
     assert!(!app.show_banner);
 }
 
@@ -1208,11 +1211,11 @@ fn shell_output_lands_in_the_session_that_ran_it() {
     let (mut app, ctl, _rx) = test_app();
     app.run_local_shell("echo hello".into());
     let (shell_id, session, _cell, _gen) = app.shell_pending[0].clone();
-    assert_eq!(session, "dsh-test");
+    assert_eq!(session, "crow-test");
 
     // Switch away while the command is still running.
     app.open_new_session("s-two".into(), true);
-    assert!(app.shell_pending[0].1 == "dsh-test");
+    assert!(app.shell_pending[0].1 == "crow-test");
 
     app.handle(
         AppEvent::ShellDone {
@@ -1237,7 +1240,7 @@ fn shell_output_lands_in_the_session_that_ran_it() {
 fn deferred_steer_settles_into_the_owning_parked_slot() {
     let (mut app, ctl, _rx) = test_app();
     app.open_new_session("s-two".into(), true); // live s-two
-    app.switch_to_session(0); // back on dsh-test
+    app.switch_to_session(0); // back on crow-test
     // A Send Now is in flight for the viewed session; the user then leaves.
     app.pending_steer_cells.insert(
         77,
@@ -1248,7 +1251,7 @@ fn deferred_steer_settles_into_the_owning_parked_slot() {
             gen: app.transcript.gen(),
         },
     );
-    app.switch_to_session(1); // away again: entry parked with dsh-test
+    app.switch_to_session(1); // away again: entry parked with crow-test
     assert_eq!(app.session_id, "s-two");
 
     // The agent defers the steer while its owner is parked: the follow-up
@@ -1263,8 +1266,8 @@ fn deferred_steer_settles_into_the_owning_parked_slot() {
     let slot = app
         .parked
         .iter()
-        .find(|slot| slot.id == "dsh-test")
-        .expect("dsh-test parked");
+        .find(|slot| slot.id == "crow-test")
+        .expect("crow-test parked");
     assert!(
         slot.pending_steer_cells.is_empty(),
         "settled entry removed from its slot"
@@ -1292,7 +1295,7 @@ fn deferred_steer_settles_into_the_owning_parked_slot() {
         }),
         &ctl,
     );
-    let slot = app.parked.iter().find(|s| s.id == "dsh-test").unwrap();
+    let slot = app.parked.iter().find(|s| s.id == "crow-test").unwrap();
     assert!(slot.pending_steer_cells.is_empty());
     assert_eq!(slot.prompt_queue.len(), 1, "accepted steer stays sent");
 }
@@ -1314,7 +1317,7 @@ fn error_on_an_unbound_tab_does_not_burn_the_queued_prompts() {
     app.handle(
         AppEvent::Ctl(CtlEvent::SessionError {
             session_id: app.session_id.clone(),
-            message: "prompt: unknown session dsh-x".into(),
+            message: "prompt: unknown session crow-x".into(),
         }),
         &ctl,
     );
@@ -1386,13 +1389,13 @@ fn startup_bind_while_a_new_is_in_flight_lands_on_the_parked_startup_tab() {
     let cfg = test_cfg();
     let (tx, _rx) = std::sync::mpsc::channel::<AppEvent>();
     let (ctl, _commands) = crate::controller::tests::test_controller();
-    let mut app = App::new(Some(Theme::dark()), cfg, "dsh-start".into(), false, false, tx);
+    let mut app = App::new(Some(Theme::dark()), cfg, "crow-start".into(), false, false, tx);
     // The user /new's before the startup session/new resolved: the startup
-    // tab (dsh-start) is parked and unbound; the placeholder is live.
+    // tab (crow-start) is parked and unbound; the placeholder is live.
     app.transcript.push_user("existing conversation".into(), false);
     app.run_slash("new", "", &ctl);
     let placeholder = app.session_id.clone();
-    assert_eq!(app.parked[0].id, "dsh-start");
+    assert_eq!(app.parked[0].id, "crow-start");
 
     // The unrequested startup bind arrives first. It must rebind the
     // parked startup tab — never consume the /new placeholder's FIFO slot.
@@ -1427,13 +1430,13 @@ fn session_errors_land_in_the_owning_parked_transcript() {
     let (mut app, ctl, _rx) = test_app();
     app.open_new_session("s-two".into(), true); // live s-two
     for slot in &mut app.parked {
-        if slot.id == "dsh-test" {
+        if slot.id == "crow-test" {
             slot.prompt_pending = true;
         }
     }
     app.handle(
         AppEvent::Ctl(CtlEvent::SessionError {
-            session_id: "dsh-test".into(),
+            session_id: "crow-test".into(),
             message: "prompt: boom".into(),
         }),
         &ctl,
@@ -1443,7 +1446,7 @@ fn session_errors_land_in_the_owning_parked_transcript() {
         !live_text.contains("boom"),
         "a parked session's failure must not spill onto the viewed tab"
     );
-    let slot = app.parked.iter_mut().find(|s| s.id == "dsh-test").unwrap();
+    let slot = app.parked.iter_mut().find(|s| s.id == "crow-test").unwrap();
     assert!(!slot.prompt_pending, "the failed session's delivery settles");
     let parked_text = transcript_text(&mut slot.transcript);
     assert!(parked_text.contains("boom"), "notice lands in its own tab");
@@ -1466,7 +1469,7 @@ fn session_slash_prev_next_cycle_tabs_and_view_shows_info() {
 
     // next from the last wraps to the first.
     app.run_slash("session", "next", &ctl);
-    assert_eq!(app.session_id, "dsh-test");
+    assert_eq!(app.session_id, "crow-test");
 
     // prev from the first wraps to the last.
     app.run_slash("session", "prev", &ctl);
@@ -1504,12 +1507,13 @@ fn tab_strip_renders_overflow_indicator_when_narrow() {
     let frame = crate::ui::dump_frame(&mut app, 30, 15);
     let row0 = frame.lines().next().unwrap_or_default();
     assert!(row0.contains('+'), "overflow indicator rendered in:\n{row0}");
-    assert!(row0.contains("dsh-test"), "head tab on screen:\n{row0}");
+    assert!(row0.contains(&short_id("crow-test")), "head tab on screen:\n{row0}");
 }
 
-/// 8 sessions (dsh-test + sess-01..sess-07). Tab 0 is 13 display cols
-/// (`dsh-test` + padding/arrow), the rest 12 (`sess-0X` + padding/arrow),
-/// so a 64-col row shows a window of five tabs and overflows.
+/// 8 sessions (crow-test + sess-01..sess-07). Tab 0 is 13 display cols
+/// (its untitled label is the 8-char `short_id` `crow-tes`, + padding/arrow),
+/// the rest 12 (`sess-0X` + padding/arrow), so a 64-col row shows a window
+/// of five tabs and overflows.
 fn open_eight_tabs() -> (App, Controller, Receiver<AppEvent>) {
     let (mut app, ctl, rx) = test_app();
     for i in 1..8 {
@@ -1546,7 +1550,7 @@ fn click_tab(app: &mut App, ctl: &Controller, tab: usize) {
 
 fn id_of(tab: usize) -> String {
     if tab == 0 {
-        "dsh-test".into()
+        "crow-test".into()
     } else {
         format!("sess-{tab:02}")
     }
@@ -1576,7 +1580,7 @@ fn mouse_edge_clicks_walk_the_strip_to_every_tab_and_back() {
         );
     }
     click_tab(&mut app, &ctl, 0);
-    assert_eq!(app.session_id, "dsh-test", "back on the first session");
+    assert_eq!(app.session_id, "crow-test", "back on the first session");
     assert_eq!(app.tab_strip_offset, 0, "tab 0 cannot nudge left");
     assert_eq!(strip_window(&mut app), vec![0, 1, 2, 3, 4], "head window");
 
@@ -1650,7 +1654,7 @@ fn queue_edit_survives_tab_switch_and_keeps_background_queue_paused() {
     app.input.set("edited".into());
     app.open_new_session("second".into(), true);
     app.handle(AppEvent::Ui(crate::events::UiEvent::SessionStatus {
-        session: "dsh-test".into(), running: false,
+        session: "crow-test".into(), running: false,
     }), &ctl);
     assert!(!commands.try_iter().any(|cmd| matches!(cmd, Cmd::Prompt { .. })),
         "the background queue stays paused until the edit is saved or cancelled");
@@ -1662,7 +1666,7 @@ fn queue_edit_survives_tab_switch_and_keeps_background_queue_paused() {
         Cmd::Prompt { session_id, text } => Some((session_id, text)),
         _ => None,
     }).collect();
-    assert_eq!(prompts, vec![("dsh-test".into(), "edited".into())]);
+    assert_eq!(prompts, vec![("crow-test".into(), "edited".into())]);
 }
 
 #[test]
@@ -1671,7 +1675,7 @@ fn operation_failure_does_not_finish_live_or_parked_prompts() {
     app.state = RunState::Running;
     app.open_new_session("second".into(), true);
     app.state = RunState::Running;
-    for session in ["dsh-test", "second"] {
+    for session in ["crow-test", "second"] {
         app.handle(AppEvent::Ctl(CtlEvent::SessionOpFailed {
             session_id: session.into(), message: "unsupported config option".into(),
         }), &ctl);

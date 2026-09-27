@@ -7,7 +7,7 @@ fn kill_does_not_deadlock_when_stdout_closed_but_process_keeps_running() {
     // blocking wait() at stdout EOF — kill() needs that lock to SIGKILL a
     // wedged runtime, and the UI thread calls kill() on Esc.
     use std::os::unix::fs::PermissionsExt;
-    let script = std::env::temp_dir().join(format!("martty-proto-wedge-{}", std::process::id()));
+    let script = std::env::temp_dir().join(format!("crow-proto-wedge-{}", std::process::id()));
     std::fs::write(&script, "#!/bin/sh\nexec 1>&-\nsleep 30\n").expect("write stub runtime");
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).expect("chmod");
 

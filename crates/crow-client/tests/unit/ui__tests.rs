@@ -8,7 +8,7 @@ fn fresh_root() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "dsh-tui-ui-{}-{}",
+        "crow-ui-{}-{}",
         std::process::id(),
         N.fetch_add(1, Ordering::Relaxed),
     ));
@@ -18,18 +18,18 @@ fn fresh_root() -> String {
 
 fn test_app() -> App {
     let cfg = RuntimeConfig {
-        bin: "dsh-runtime".into(),
+        bin: "crow-runtime".into(),
         workspace: "/tmp".into(),
         session_root: fresh_root(),
         startup_session: None,
     };
     let (tx, _rx) = mpsc::channel();
-    App::new(Some(Theme::dark()), cfg, "dsh-test".into(), true, false, tx)
+    App::new(Some(Theme::dark()), cfg, "crow-test".into(), true, false, tx)
 }
 
 fn live_test_app() -> App {
     let cfg = RuntimeConfig {
-        bin: "dsh-acp".into(),
+        bin: "crow-acp".into(),
         workspace: "/tmp".into(),
         session_root: fresh_root(),
         startup_session: None,
@@ -47,7 +47,7 @@ fn file_menu_popup_renders_above_the_composer() {
     app.input.insert_str("@");
     // A small controlled workspace: [../, src/, README.md].
     let ws = std::env::temp_dir().join(format!(
-        "dsh-tui-ui-file-menu-{}",
+        "crow-ui-file-menu-{}",
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&ws);
@@ -122,7 +122,7 @@ fn composer_is_a_rounded_box_surface() {
 fn composer_cap_persistently_shows_the_workspace() {
     let mut app = test_app();
     app.show_banner = false;
-    app.cfg.workspace = "/work/acme/projects/deepseek-harness-tui-plan-view".into();
+    app.cfg.workspace = "/work/acme/projects/crow-client-plan-view".into();
 
     let frame = dump_frame(&mut app, 120, 20);
     let cap = frame
@@ -131,7 +131,7 @@ fn composer_cap_persistently_shows_the_workspace() {
         .expect("composer cap");
 
     assert!(
-        cap.contains("· /work/acme/projects/deepseek-harness-tui-plan-view"),
+        cap.contains("· /work/acme/projects/crow-client-plan-view"),
         "{cap}"
     );
 }
@@ -140,7 +140,7 @@ fn composer_cap_persistently_shows_the_workspace() {
 fn composer_cap_preserves_the_workspace_tail_on_narrow_terminals() {
     let mut app = test_app();
     app.show_banner = false;
-    app.cfg.workspace = "/work/acme/very-long-directory-name/deepseek-harness".into();
+    app.cfg.workspace = "/work/acme/very-long-directory-name-here/crow-client".into();
 
     let frame = dump_frame(&mut app, 60, 20);
     let cap = frame
@@ -148,14 +148,14 @@ fn composer_cap_preserves_the_workspace_tail_on_narrow_terminals() {
         .find(|line| line.contains('⛶'))
         .expect("composer cap");
 
-    assert!(cap.contains("· …/deepseek-harness"), "{cap}");
+    assert!(cap.contains("· …/crow-client"), "{cap}");
 }
 
 #[test]
 fn composer_cap_shows_git_branch_after_the_project_path() {
     let mut app = test_app();
     app.show_banner = false;
-    app.cfg.workspace = "/work/acme/martty".into();
+    app.cfg.workspace = "/work/acme/client".into();
     app.git_branch = Some("ui-tweak".into());
 
     let frame = dump_frame(&mut app, 120, 20);
@@ -163,7 +163,7 @@ fn composer_cap_shows_git_branch_after_the_project_path() {
         .lines()
         .find(|line| line.contains('⛶'))
         .expect("composer cap");
-    assert!(cap.contains("· /work/acme/martty:ui-tweak"), "{cap}");
+    assert!(cap.contains("· /work/acme/client:ui-tweak"), "{cap}");
 
     // No git (or not a repository): path only, no branch tag.
     app.git_branch = None;
@@ -172,15 +172,15 @@ fn composer_cap_shows_git_branch_after_the_project_path() {
         .lines()
         .find(|line| line.contains('⛶'))
         .expect("composer cap");
-    assert!(cap.contains("· /work/acme/martty"), "{cap}");
-    assert!(!cap.contains("martty:"), "{cap}");
+    assert!(cap.contains("· /work/acme/client"), "{cap}");
+    assert!(!cap.contains("client:"), "{cap}");
 }
 
 #[test]
 fn composer_cap_drops_git_branch_on_narrow_terminals() {
     let mut app = test_app();
     app.show_banner = false;
-    app.cfg.workspace = "/work/acme/martty".into();
+    app.cfg.workspace = "/work/acme/client".into();
     app.git_branch = Some("a-long-branch-name".into());
 
     let frame = dump_frame(&mut app, 60, 20);
@@ -192,7 +192,7 @@ fn composer_cap_drops_git_branch_on_narrow_terminals() {
         !cap.contains(":a-long-branch-name"),
         "branch must yield when the terminal is narrow: {cap}"
     );
-    assert!(cap.contains("· /work/acme/martty"), "{cap}");
+    assert!(cap.contains("· /work/acme/client"), "{cap}");
 }
 
 #[test]
@@ -328,15 +328,15 @@ fn model_chip_prefers_fresh_pick_until_a_turn_realizes_it() {
     };
     let mut app = test_app();
     // A previous turn streamed on pro; the user just picked flash.
-    app.transcript.last_model = Some("deepseek-v4-pro".into());
-    app.selected_model = Some("deepseek-v4-flash".into());
+    app.transcript.last_model = Some("acme-v4-pro".into());
+    app.selected_model = Some("acme-v4-flash".into());
     let s = flat(status_right(&app));
-    assert!(s.contains("deepseek-v4-flash"), "{s}");
-    assert!(!s.contains("deepseek-v4-pro"), "{s}");
+    assert!(s.contains("acme-v4-flash"), "{s}");
+    assert!(!s.contains("acme-v4-pro"), "{s}");
     // Without a pick, the streamed model rules.
     app.selected_model = None;
     let s = flat(status_right(&app));
-    assert!(s.contains("deepseek-v4-pro"), "{s}");
+    assert!(s.contains("acme-v4-pro"), "{s}");
 }
 
 #[test]
@@ -361,7 +361,7 @@ fn live_meta_row_hides_session_options_until_session_bound() {
     assert_eq!(flat_line(status_title(&app)), "");
     let pending = flat_spans(status_right(&app));
     assert!(!pending.contains("/keys"), "{pending}");
-    assert!(!pending.contains("deepseek-chat"), "{pending}");
+    assert!(!pending.contains("acme-chat"), "{pending}");
     assert!(!pending.contains("high"), "{pending}");
 
     let (ctl, _commands) = crate::controller::tests::test_controller();
@@ -376,14 +376,14 @@ fn live_meta_row_hides_session_options_until_session_bound() {
     let bound_left = flat_line(status_title(&app));
     assert!(bound_left.contains("minimal"), "{bound_left}");
     assert!(bound_left.contains("Full access"), "{bound_left}");
-    assert!(!flat_spans(status_right(&app)).contains("deepseek-chat"));
+    assert!(!flat_spans(status_right(&app)).contains("acme-chat"));
     app.handle(
         crate::bus::AppEvent::Ui(crate::events::UiEvent::SessionModel {
-            session: "acp-session".into(), model: "deepseek-chat".into(),
+            session: "acp-session".into(), model: "acme-chat".into(),
         }), &ctl,
     );
     let bound_right = flat_spans(status_right(&app));
-    assert!(bound_right.contains("deepseek-chat"), "{bound_right}");
+    assert!(bound_right.contains("acme-chat"), "{bound_right}");
     assert!(bound_right.contains("high"), "{bound_right}");
 }
 
@@ -445,7 +445,7 @@ fn codex_model_chip_waits_for_acp_then_uses_the_reported_session_model() {
     app.session_bound = true;
 
     let pending = flat(status_right(&app));
-    assert!(!pending.contains("deepseek-chat"), "{pending}");
+    assert!(!pending.contains("gpt-5.6-codex"), "{pending}");
 
     let (ctl, _commands) = crate::controller::tests::test_controller();
     app.handle(
@@ -458,17 +458,17 @@ fn codex_model_chip_waits_for_acp_then_uses_the_reported_session_model() {
 
     let reported = flat(status_right(&app));
     assert!(reported.contains("gpt-5.6-codex"), "{reported}");
-    assert!(!reported.contains("deepseek-chat"), "{reported}");
+    assert_eq!(displayed_model(&app).as_deref(), Some("gpt-5.6-codex"));
 }
 
 #[test]
-fn live_deepseek_landing_also_uses_acp_instead_of_startup_provider_and_model() {
+fn live_landing_also_uses_acp_instead_of_startup_provider_and_model() {
     let mut app = live_test_app();
-    app.server_info = Some("dsh-acp".into());
+    app.server_info = Some("crow-acp".into());
     assert_eq!(welcome_model(&app), "waiting for ACP");
     assert_eq!(displayed_model(&app), None);
-    app.session_model = Some("current-deepseek-model".into());
-    assert_eq!(welcome_model(&app), "current-deepseek-model");
+    app.session_model = Some("current-agent-model".into());
+    assert_eq!(welcome_model(&app), "current-agent-model");
 }
 
 #[test]
@@ -488,14 +488,14 @@ fn failed_connection_landing_has_target_and_error_not_waiting_or_credentials() {
 #[test]
 fn attached_landing_does_not_guess_runtime_before_initialize_or_after_failure() {
     let mut app = live_test_app();
-    app.cfg.bin = "dsh-acp".into();
+    app.cfg.bin = "crow-acp".into();
     app.server_info = None;
     for state in [crate::app::RunState::Starting, crate::app::RunState::Idle] {
         app.state = state;
         let text = welcome_info_lines(&app).iter().flat_map(|line| line.spans.iter())
             .map(|span| span.content.as_ref()).collect::<String>();
-        assert!(!text.contains("dsh-acp"), "{text}");
-        assert!(!text.contains("deepseek-chat"), "{text}");
+        assert!(!text.contains("crow-acp"), "{text}");
+        assert_eq!(displayed_model(&app), None, "{text}");
         assert!(text.contains("waiting for ACP"), "{text}");
     }
 }
@@ -503,15 +503,15 @@ fn attached_landing_does_not_guess_runtime_before_initialize_or_after_failure() 
 #[test]
 fn new_tab_landing_never_falls_back_to_old_runtime_or_auth() {
     let mut app = live_test_app();
-    app.server_info = Some("dsh-acp".into());
+    app.server_info = Some("crow-acp".into());
     app.auth.status = crate::acp_auth::AuthStatus::Configured;
     app.auth.method_name = Some("Old credential".into());
     let (ctl, _commands) = crate::controller::tests::test_controller();
     app.handle(crate::bus::AppEvent::Ctl(crate::bus::CtlEvent::NewSessionRequested), &ctl);
     let text = welcome_info_lines(&app).iter().flat_map(|line| line.spans.iter())
         .map(|span| span.content.as_ref()).collect::<String>();
-    assert!(!text.contains("dsh-acp"), "{text}");
-    assert!(!text.contains("deepseek-chat"), "{text}");
+    assert!(!text.contains("crow-acp"), "{text}");
+    assert!(text.contains("waiting for ACP"), "{text}");
     assert!(!text.contains("Old credential"), "{text}");
 }
 
@@ -541,7 +541,7 @@ fn welcome_auth_distinguishes_pending_and_failed_authenticate() {
     let failed = flat(welcome_info_lines(&app));
     assert!(failed.contains("sign-in failed"), "{failed}");
     assert!(failed.contains("/auth"), "{failed}");
-    assert!(!failed.contains("host dsh"), "{failed}");
+    assert!(failed.contains("Log in with Google"), "{failed}");
 }
 
 #[test]
@@ -560,12 +560,12 @@ fn welcome_info_uses_the_active_acp_runtime_and_reported_session_model() {
     let pending = flat(welcome_info_lines(&app));
     assert!(pending.contains("waiting for ACP"), "{pending}");
     assert!(pending.contains("codex-acp"), "{pending}");
-    assert!(!pending.contains("deepseek-chat"), "{pending}");
+    assert!(!pending.contains("gpt-5.6-sol"), "{pending}");
 
     app.session_model = Some("gpt-5.6-sol".into());
     let reported = flat(welcome_info_lines(&app));
     assert!(reported.contains("gpt-5.6-sol"), "{reported}");
-    assert!(!reported.contains("deepseek-chat"), "{reported}");
+    assert!(!reported.contains("waiting for ACP"), "{reported}");
 }
 
 #[test]
@@ -851,7 +851,7 @@ fn native_agent_rail_expands_only_during_selection() {
     app.show_banner = false;
     app.subagents.push(crate::app::SubagentView {
         id: "child-1".into(),
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         label: "subagent 1".into(),
         running: true,
         failed: false,
@@ -859,7 +859,7 @@ fn native_agent_rail_expands_only_during_selection() {
     });
     app.subagents.push(crate::app::SubagentView {
         id: "child-2".into(),
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         label: "subagent 2".into(),
         running: false,
         failed: false,
@@ -904,7 +904,7 @@ fn native_agent_rail_expands_only_during_selection() {
         "collapsed Agent rail sits immediately above composer meta:\n{collapsed}"
     );
 
-    app.agent_selection = Some("dsh-test".into());
+    app.agent_selection = Some("crow-test".into());
     let running_marker = app.spinner();
     let expanded = dump_frame(&mut app, 100, 24);
     assert!(
@@ -924,7 +924,7 @@ fn native_agent_rail_auto_closes_once_every_task_has_ended() {
     app.show_banner = false;
     app.subagents.push(crate::app::SubagentView {
         id: "child-1".into(),
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         label: "subagent 1".into(),
         running: false,
         failed: false,
@@ -932,7 +932,7 @@ fn native_agent_rail_auto_closes_once_every_task_has_ended() {
     });
     app.subagents.push(crate::app::SubagentView {
         id: "child-2".into(),
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         label: "subagent 2".into(),
         running: false,
         failed: false,
@@ -969,7 +969,7 @@ fn plugin_agent_navigation_sits_above_composer_meta_with_general_theme_tokens() 
     app.show_banner = false;
     app.subagents.push(crate::app::SubagentView {
         id: "child-1".into(),
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         label: "subagent 1".into(),
         running: true,
         failed: false,
@@ -977,7 +977,7 @@ fn plugin_agent_navigation_sits_above_composer_meta_with_general_theme_tokens() 
     });
     app.subagents.push(crate::app::SubagentView {
         id: "child-2".into(),
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         label: "subagent 2".into(),
         running: false,
         failed: false,
@@ -993,7 +993,7 @@ fn plugin_agent_navigation_sits_above_composer_meta_with_general_theme_tokens() 
                 "rev": 1,
                 "nodes": [
                     { "id": "agents-view:label", "kind": "generic", "title": "· Agents", "body": "", "tone": "caption" },
-                    { "id": "agents-view:agent-dsh-test", "kind": "generic", "title": "▸ main", "body": "", "tone": "brand", "selected": true },
+                    { "id": "agents-view:agent-crow-test", "kind": "generic", "title": "▸ main", "body": "", "tone": "brand", "selected": true },
                     { "id": "agents-view:agent-child-1", "kind": "generic", "title": "subagent 1", "body": "", "status": "running", "tone": "fg" },
                     { "id": "agents-view:agent-child-2", "kind": "generic", "title": "subagent 2", "body": "", "status": "done", "tone": "fg" },
                     { "id": "agents-view:switch", "kind": "generic", "title": "←/→ · enter · esc close", "body": "", "tone": "brand_soft" }
@@ -1097,7 +1097,7 @@ fn plugin_agent_navigation_sits_above_composer_meta_with_general_theme_tokens() 
                 "rev": 2,
                 "nodes": [
                     { "id": "agents-view:label", "kind": "generic", "title": "· Agents", "body": "", "tone": "caption" },
-                    { "id": "agents-view:agent-dsh-test", "kind": "generic", "title": "• main", "body": "", "tone": "brand_soft" },
+                    { "id": "agents-view:agent-crow-test", "kind": "generic", "title": "• main", "body": "", "tone": "brand_soft" },
                     { "id": "agents-view:agent-child-1", "kind": "generic", "title": "subagent 1", "body": "", "status": "running", "tone": "fg" },
                     { "id": "agents-view:agent-child-2", "kind": "generic", "title": "▸ subagent 2", "body": "", "tone": "brand", "selected": true },
                     { "id": "agents-view:switch", "kind": "generic", "title": "←/→ · enter · esc close", "body": "", "tone": "brand_soft" }
@@ -1130,7 +1130,7 @@ fn native_agent_selection_reverses_the_focused_agent() {
     app.show_banner = false;
     app.subagents.push(crate::app::SubagentView {
         id: "child-1".into(),
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         label: "subagent 1".into(),
         running: true,
         failed: false,
@@ -1163,13 +1163,13 @@ fn native_agent_completion_uses_a_neutral_status_glyph() {
     app.show_banner = false;
     app.subagents.push(crate::app::SubagentView {
         id: "child-1".into(),
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         label: "subagent 1".into(),
         running: false,
         failed: false,
         transcript: crate::transcript::Transcript::new("child-1".into()),
     });
-    app.agent_selection = Some("dsh-test".into());
+    app.agent_selection = Some("crow-test".into());
 
     let backend = TestBackend::new(100, 24);
     let mut terminal = Terminal::new(backend).expect("test terminal");
@@ -1191,7 +1191,7 @@ fn narrow_agent_navigation_keeps_the_active_item_and_switch_action() {
     for index in 1..=4 {
         app.subagents.push(crate::app::SubagentView {
             id: format!("child-{index}"),
-            parent: "dsh-test".into(),
+            parent: "crow-test".into(),
             label: format!("subagent {index}"),
             running: true,
             failed: false,
@@ -1208,7 +1208,7 @@ fn narrow_agent_navigation_keeps_the_active_item_and_switch_action() {
                 "rev": 1,
                 "nodes": [
                     { "id": "agents-view:label", "kind": "generic", "title": "· Agents", "body": "", "tone": "caption" },
-                    { "id": "agents-view:agent-dsh-test", "kind": "generic", "title": "main", "body": "", "tone": "fg" },
+                    { "id": "agents-view:agent-crow-test", "kind": "generic", "title": "main", "body": "", "tone": "fg" },
                     { "id": "agents-view:agent-child-1", "kind": "generic", "title": "subagent 1", "body": "", "tone": "fg" },
                     { "id": "agents-view:agent-child-2", "kind": "generic", "title": "subagent 2", "body": "", "tone": "fg" },
                     { "id": "agents-view:agent-child-3", "kind": "generic", "title": "subagent 3", "body": "", "tone": "fg" },
@@ -1280,7 +1280,7 @@ fn child_view_replaces_the_composer_with_read_only_navigation() {
     });
     app.subagents.push(crate::app::SubagentView {
         id: "child-1".into(),
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         label: "subagent 1".into(),
         running: true,
         failed: false,
@@ -1305,7 +1305,7 @@ fn active_running_child_does_not_show_the_main_idle_state() {
     app.show_banner = false;
     app.subagents.push(crate::app::SubagentView {
         id: "child-1".into(),
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         label: "subagent 1".into(),
         running: true,
         failed: false,
@@ -1325,7 +1325,7 @@ fn hidden_tool_arguments_replace_thinking_with_the_working_placeholder() {
     app.state = RunState::Running;
     app.transcript
         .apply(crate::events::UiEvent::ReasoningDelta {
-            session: "dsh-test".into(),
+            session: "crow-test".into(),
             text: "I will launch several tools".into(),
         });
     assert!(
@@ -1335,7 +1335,7 @@ fn hidden_tool_arguments_replace_thinking_with_the_working_placeholder() {
 
     app.transcript
         .apply(crate::events::UiEvent::ToolCallPreparing {
-            session: "dsh-test".into(),
+            session: "crow-test".into(),
         });
 
     let line = state_line(&app).expect("working placeholder while tool arguments stream");
@@ -1347,7 +1347,7 @@ fn hidden_tool_arguments_replace_thinking_with_the_working_placeholder() {
     assert!(rendered.contains("working"), "{rendered}");
 
     app.transcript.apply(crate::events::UiEvent::ToolCall {
-        session: "dsh-test".into(),
+        session: "crow-test".into(),
         call_id: "call-1".into(),
         name: "subagent".into(),
         arguments: r#"{"description":"task"}"#.into(),
@@ -2060,9 +2060,9 @@ fn session_picker_rows_align_label_and_meta_columns() {
                 provider: None,
             },
             PickerItem {
-                id: "dsh-alp".into(),
+                id: "crow-alp".into(),
                 label: "fix failing tests".into(),
-                meta: "dsh-alp  · just now · 1 turn".into(),
+                meta: "crow-alp · just now · 1 turn".into(),
                 provider: None,
             },
         ],
@@ -2220,7 +2220,7 @@ fn model_picker_marks_only_the_current_provider_model_pair() {
     let mut app = test_app();
     app.show_banner = false;
     app.session_provider = Some("coding-plan-b".into());
-    app.session_model = Some("deepseek-v4".into());
+    app.session_model = Some("acme-v4".into());
     app.picker = Some(Picker {
         offset: 0,
         kind: PickerKind::Model,
@@ -2228,15 +2228,15 @@ fn model_picker_marks_only_the_current_provider_model_pair() {
         sel: 1,
         items: vec![
             PickerItem {
-                id: "deepseek-v4".into(),
-                label: "deepseek-v4".into(),
-                meta: "coding-plan-a · DeepSeek V4".into(),
+                id: "acme-v4".into(),
+                label: "acme-v4".into(),
+                meta: "coding-plan-a · Acme V4".into(),
                 provider: Some("coding-plan-a".into()),
             },
             PickerItem {
-                id: "deepseek-v4".into(),
-                label: "deepseek-v4".into(),
-                meta: "coding-plan-b · DeepSeek V4".into(),
+                id: "acme-v4".into(),
+                label: "acme-v4".into(),
+                meta: "coding-plan-b · Acme V4".into(),
                 provider: Some("coding-plan-b".into()),
             },
         ],
@@ -2351,11 +2351,11 @@ fn model_picker_marks_the_streamed_model_when_it_differs_from_the_session_model(
     use crate::app::{Picker, PickerItem, PickerKind};
     let mut app = test_app();
     app.show_banner = false;
-    // A turn streamed on `deepseek-v4-pro` while the agent's session snapshot
+    // A turn streamed on `acme-v4-pro` while the agent's session snapshot
     // still names the model it bound with: the picker must mark the running
     // model (issue #102).
-    app.session_model = Some("deepseek-v4-flash".into());
-    app.transcript.last_model = Some("deepseek-v4-pro".into());
+    app.session_model = Some("acme-v4-flash".into());
+    app.transcript.last_model = Some("acme-v4-pro".into());
     app.picker = Some(Picker {
         offset: 0,
         kind: PickerKind::Model,
@@ -2363,14 +2363,14 @@ fn model_picker_marks_the_streamed_model_when_it_differs_from_the_session_model(
         sel: 1,
         items: vec![
             PickerItem {
-                id: "deepseek-v4-flash".into(),
-                label: "deepseek-v4-flash".into(),
+                id: "acme-v4-flash".into(),
+                label: "acme-v4-flash".into(),
                 meta: String::new(),
                 provider: None,
             },
             PickerItem {
-                id: "deepseek-v4-pro".into(),
-                label: "deepseek-v4-pro".into(),
+                id: "acme-v4-pro".into(),
+                label: "acme-v4-pro".into(),
                 meta: String::new(),
                 provider: None,
             },
@@ -2381,7 +2381,7 @@ fn model_picker_marks_the_streamed_model_when_it_differs_from_the_session_model(
     let marked: Vec<&str> = frame.lines().filter(|line| line.contains("✓")).collect();
     assert_eq!(marked.len(), 1, "one current model:\n{frame}");
     assert!(
-        marked[0].contains("deepseek-v4-pro"),
+        marked[0].contains("acme-v4-pro"),
         "the running model is marked: {}\n{frame}",
         marked[0]
     );
@@ -2458,8 +2458,8 @@ fn slash_model_menu_marks_the_running_model() {
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     let mut app = test_app();
     app.show_banner = false;
-    app.session_model = Some("deepseek-v4-flash".into());
-    app.transcript.last_model = Some("deepseek-v4-pro".into());
+    app.session_model = Some("acme-v4-flash".into());
+    app.transcript.last_model = Some("acme-v4-pro".into());
     let (ctl, _commands) = crate::controller::tests::test_controller();
     // The menu's rows are the agent's catalog; the client contributes no ids.
     app.handle(
@@ -2468,13 +2468,13 @@ fn slash_model_menu_marks_the_running_model() {
             models: vec![
                 crate::bus::CatalogModel {
                     provider: "agent".into(),
-                    id: "deepseek-v4-flash".into(),
+                    id: "acme-v4-flash".into(),
                     name: "V4 Flash".into(),
                     vision: false,
                 },
                 crate::bus::CatalogModel {
                     provider: "agent".into(),
-                    id: "deepseek-v4-pro".into(),
+                    id: "acme-v4-pro".into(),
                     name: "V4 Pro".into(),
                     vision: true,
                 },
@@ -2526,7 +2526,7 @@ fn streaming_preserves_the_viewport_after_the_user_scrolls_up() {
         app.transcript.push_user(format!("history {i}"), false);
     }
     app.transcript.apply(crate::events::UiEvent::TextDelta {
-        session: "dsh-test".into(),
+        session: "crow-test".into(),
         text: "stream 0".into(),
     });
 
@@ -2536,7 +2536,7 @@ fn streaming_preserves_the_viewport_after_the_user_scrolls_up() {
     let anchored_top = app.chat_view.top;
 
     app.transcript.apply(crate::events::UiEvent::TextDelta {
-        session: "dsh-test".into(),
+        session: "crow-test".into(),
         text: (1..=12).map(|i| format!("\nstream {i}")).collect(),
     });
     let frame = dump_frame(&mut app, 100, 14);
@@ -3373,7 +3373,7 @@ fn empty_plugin_dock_snapshot_hides_the_agents_row_after_tasks_end() {
     app.show_banner = false;
     app.subagents.push(crate::app::SubagentView {
         id: "child-1".into(),
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         label: "subagent 1".into(),
         running: false,
         failed: false,
@@ -3845,19 +3845,19 @@ fn draw_prunes_scrollback_past_the_high_mark_and_keeps_the_tail() {
             let i = app.transcript.cells.len();
             app.transcript.push_user(format!("prompt {i}"), false);
             app.transcript.apply(UiEvent::AssistantFinal {
-                session: "dsh-test".into(),
+                session: "crow-test".into(),
                 text: format!("answer {i}\n"),
                 model: Some("m".into()),
             });
             app.transcript.apply(UiEvent::ToolCall {
-                session: "dsh-test".into(),
+                session: "crow-test".into(),
                 call_id: format!("c{i}"),
                 name: "bash".into(),
                 arguments: format!(r#"{{"command":"turn {i}"}}"#),
                 diff: None,
             });
             app.transcript.apply(UiEvent::ToolResult {
-                session: "dsh-test".into(),
+                session: "crow-test".into(),
                 call_id: format!("c{i}"),
                 is_error: false,
                 text: (0..40).map(|k| format!("{pad}{k}")).collect::<Vec<_>>().join("\n"),

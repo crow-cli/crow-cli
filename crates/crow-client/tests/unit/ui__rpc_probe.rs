@@ -5,16 +5,16 @@ use std::sync::mpsc;
 
 fn probe_app() -> App {
     let cfg = RuntimeConfig {
-        bin: "dsh-runtime".into(),
+        bin: "crow-runtime".into(),
         workspace: "/w".into(),
         session_root: std::env::temp_dir()
-            .join(format!("dsh-tui-rpc-probe-{}", std::process::id()))
+            .join(format!("crow-rpc-probe-{}", std::process::id()))
             .to_string_lossy()
             .into_owned(),
         startup_session: None,
     };
     let (tx, _rx) = mpsc::channel();
-    App::new(Some(Theme::dark()), cfg, "dsh-test".into(), true, false, tx)
+    App::new(Some(Theme::dark()), cfg, "crow-test".into(), true, false, tx)
 }
 
 fn push_view(app: &mut App, ctl: &crate::controller::Controller, text: &str) {
@@ -198,7 +198,7 @@ fn plan_review_elicitation_renders_markdown_and_scrolls() {
     let mut app = probe_app();
     app.show_banner = false;
     let (ctl, _commands) = test_controller();
-    // The real plan-review path: dsh-acp folds userQuestions into one
+    // The real plan-review path: the agent folds userQuestions into one
     // standard ACP form field whose description carries the full plan
     // markdown (question + detail).
     let detail = (0..60)

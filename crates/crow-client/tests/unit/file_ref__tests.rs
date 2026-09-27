@@ -15,7 +15,7 @@ impl TempRoot {
         use std::sync::atomic::{AtomicU64, Ordering};
         static N: AtomicU64 = AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
-            "martty-file-ref-{name}-{}-{}",
+            "crow-file-ref-{name}-{}-{}",
             std::process::id(),
             N.fetch_add(1, Ordering::Relaxed),
         ));
@@ -228,7 +228,7 @@ fn open_lists_the_workspace() {
 
 #[test]
 fn open_fails_silently_for_a_missing_workspace() {
-    let missing = std::env::temp_dir().join("does-not-exist-martty-file-ref");
+    let missing = std::env::temp_dir().join("does-not-exist-crow-file-ref");
     assert!(FileMenu::open(&missing, 0, &token("")).is_none());
 }
 

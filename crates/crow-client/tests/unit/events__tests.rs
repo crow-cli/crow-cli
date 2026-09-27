@@ -375,14 +375,14 @@ fn assistant_final_with_text_and_model() {
                         {"type": "tool-call", "text": "ignored"},
                         {"type": "text", "text": "world"}
                     ],
-                    "source": {"model": "deepseek-v3"}}}}}),
+                    "source": {"model": "acme-v3"}}}}}),
     );
     assert_eq!(
         ev,
         vec![UiEvent::AssistantFinal {
             session: "s".into(),
             text: "hello world".into(),
-            model: Some("deepseek-v3".into()),
+            model: Some("acme-v3".into()),
         }]
     );
 }
@@ -840,7 +840,7 @@ fn available_plan_command_keeps_its_standard_config_action() {
 #[test]
 fn catalog_prefers_agent_id_and_flattens_groups() {
     let options = json!([
-        {"type": "select", "id": "model", "category": "model", "options": [{"value": "deepseek/m1", "name": "M1"}]},
+        {"type": "select", "id": "model", "category": "model", "options": [{"value": "acme/m1", "name": "M1"}]},
         {"type": "select", "id": "agent", "options": [
             {"group": "system", "name": "System", "options": [
                 {"value": "studio", "name": "Studio", "description": "inspect"},
@@ -961,7 +961,7 @@ fn the_final_chunks_meta_survives_a_merge() {
                 "sessionUpdate": "agent_message_chunk",
                 "content": { "type": "text", "text": "" },
                 "messageId": "1:1",
-                "_meta": { "dsh": { "event": "assistant_message", "model": "deepseek-v4-flash" } },
+                "_meta": { "acme": { "event": "assistant_message", "model": "acme-v4-flash" } },
             }),
         ),
     ];
@@ -971,7 +971,7 @@ fn the_final_chunks_meta_survives_a_merge() {
         panic!("rpc")
     };
     assert_eq!(params["update"]["content"]["text"], "body");
-    assert_eq!(params["update"]["_meta"]["dsh"]["model"], "deepseek-v4-flash");
+    assert_eq!(params["update"]["_meta"]["acme"]["model"], "acme-v4-flash");
 }
 
 fn bare_tool_update(session: &str, call: &str, status: &str) -> crate::bus::AppEvent {

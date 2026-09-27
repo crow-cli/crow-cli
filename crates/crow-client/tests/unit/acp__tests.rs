@@ -708,7 +708,7 @@ async fn client_compositor_command_does_not_require_agent_extension_capability()
     cmd_tx
         .send(Cmd::InvokePluginCommand {
             name: "harness".into(),
-            args: "path-dsh-acp".into(),
+            args: "path-crow-acp".into(),
         })
         .expect("invoke local Client command");
 
@@ -718,7 +718,7 @@ async fn client_compositor_command_does_not_require_agent_extension_capability()
         .expect("invocation request");
     assert_eq!(method, crate::ext::COMMAND_INVOKE);
     assert_eq!(params["name"], "harness");
-    assert_eq!(params["args"], "path-dsh-acp");
+    assert_eq!(params["args"], "path-crow-acp");
 
     cmd_tx.send(Cmd::ActiveSession { session_id: Some("s1".into()) }).unwrap();
     let active = tokio::time::timeout(Duration::from_secs(1), invoke_rx.recv()).await;
@@ -826,7 +826,7 @@ async fn harness_new_action_uses_the_native_new_tab_flow_without_reinitializing(
     cmd_tx
         .send(Cmd::InvokePluginCommand {
             name: "harness".into(),
-            args: "builtin-dsh".into(),
+            args: "builtin-agent".into(),
         })
         .expect("switch Harness");
 
@@ -1231,7 +1231,7 @@ async fn form_auth_stays_configured_when_the_startup_session_succeeds() {
 
     let sessions = Arc::new(AtomicUsize::new(0));
     let mut meta = serde_json::Map::new();
-    meta.insert("api-key".into(), json!({ "provider": "deepseek" }));
+    meta.insert("api-key".into(), json!({ "provider": "acme" }));
     let agent = Agent
         .builder()
         .name("already-authenticated-mock")
@@ -1242,7 +1242,7 @@ async fn form_auth_stays_configured_when_the_startup_session_succeeds() {
                         .agent_capabilities(AgentCapabilities::new())
                         .agent_info(Implementation::new("already-authenticated-mock", "0"))
                         .auth_methods(vec![AuthMethod::Agent(
-                            AuthMethodAgent::new("api-key", "DeepSeek API key").meta(meta.clone()),
+                            AuthMethodAgent::new("api-key", "Acme API key").meta(meta.clone()),
                         )]),
                 )
             },
@@ -3506,7 +3506,7 @@ fn cmd_session_resolution_honors_carried_id_falls_back_and_rejects_unknown() {
     // Before the first session exists, any carried id is a local placeholder
     // with no server meaning yet; it resolves to "no session" like "".
     let empty = HashMap::<String, SessionHandle>::new();
-    assert!(resolve_cmd_session(&empty, &None, "dsh-draft", "prompt")
+    assert!(resolve_cmd_session(&empty, &None, "crow-draft", "prompt")
         .expect("placeholder")
         .is_none());
     assert!(resolve_cmd_session(&empty, &None, "", "prompt")
@@ -3519,7 +3519,7 @@ fn bind_session_registers_current_and_adopts_pending_prompts() {
     let mut sessions = HashMap::<String, SessionHandle>::new();
     let mut current = None;
     let mut pending = VecDeque::from([Cmd::Prompt {
-        session_id: "dsh-draft".into(),
+        session_id: "crow-draft".into(),
         text: "early".into(),
     }]);
 
