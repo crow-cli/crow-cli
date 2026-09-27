@@ -168,6 +168,5 @@ src/crow_cli/memory/    shared SQL persistence (sqlite default, PostgreSQL suppo
 
 ## License
 
-crow-cli is licensed under the GNU Affero General Public License v3.0
-(AGPL-3.0-or-later). See [LICENSE.md](./LICENSE.md).
+MIT — see [LICENSE.md](./LICENSE.md).
 
