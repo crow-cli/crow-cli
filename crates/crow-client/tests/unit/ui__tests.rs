@@ -1635,14 +1635,14 @@ fn welcome_hero_slot_replaces_only_the_crow_cli_lockup() {
             "rev": 1,
             "nodes": [
                 {
-                    "id": "deepseek-logo:logo",
+                    "id": "crow-hero:logo",
                     "kind": "logo",
-                    "name": "deepseek"
+                    "name": "crow"
                 },
                 {
-                    "id": "deepseek-logo:hint",
+                    "id": "crow-hero:hint",
                     "kind": "text",
-                    "text": "Into the Unknown",
+                    "text": "hero slot hint",
                     "tone": "fg_tertiary"
                 }
             ]
@@ -1657,9 +1657,8 @@ fn welcome_hero_slot_replaces_only_the_crow_cli_lockup() {
     );
     let frame = dump_frame(&mut app, 140, 60);
 
-    assert!(frame.contains("▄▄▄███▀"), "XL whale:\n{frame}");
-    assert!(frame.contains('░'), "hollow HARNESS:\n{frame}");
-    assert!(frame.contains("Into the Unknown"), "tagline:\n{frame}");
+    assert!(frame.contains("└────────────┘"), "crow lockup:\n{frame}");
+    assert!(frame.contains("hero slot hint"), "hero hint:\n{frame}");
     assert!(
         !frame.contains("https://crow-ai.dev"),
         "crow-ai.dev hero replaced:\n{frame}"
@@ -1690,14 +1689,14 @@ fn welcome_slot_updates_do_not_hide_an_existing_conversation() {
                 "rev": 1,
                 "nodes": [
                     {
-                        "id": "deepseek-logo:logo",
+                        "id": "crow-hero:logo",
                         "kind": "logo",
-                        "name": "deepseek"
+                        "name": "crow"
                     },
                     {
-                        "id": "deepseek-logo:hint",
+                        "id": "crow-hero:hint",
                         "kind": "text",
-                        "text": "Into the Unknown",
+                        "text": "hero slot hint",
                         "tone": "fg_tertiary"
                     }
                 ]
@@ -1763,69 +1762,49 @@ fn welcome_info_slot_replaces_only_the_native_information_region() {
 }
 
 #[test]
-fn deepseek_hero_preserves_the_original_whale_geometry() {
-    let mut app = test_app();
-    app.slot_snapshots.insert(
-        "welcome.hero".into(),
-        serde_json::from_value(serde_json::json!({
+fn a_brand_logo_name_is_not_a_tui_primitive() {
+    // The whale was brand art, not a theme, so the primitive that drew it went
+    // with it. `crow` and `crow-term` are the only logo names this client
+    // accepts; a brand name is rejected at validation rather than silently
+    // drawn, and an agent that still advertises one gets a clear error.
+    fn hero(name: &str) -> serde_json::Value {
+        serde_json::json!({
             "protocol": 0,
             "slot": "welcome.hero",
             "rev": 1,
             "nodes": [
-                { "id": "deepseek-logo:logo", "kind": "logo", "name": "deepseek" },
-                {
-                    "id": "deepseek-logo:hint",
-                    "kind": "text",
-                    "text": "Into the Unknown",
-                    "tone": "fg_tertiary"
-                }
+                { "id": "hero:logo", "kind": "logo", "name": name },
+                { "id": "hero:hint", "kind": "text", "text": "hint" }
             ]
-        }))
-        .expect("DeepSeek hero snapshot"),
-    );
-    let plain = banner_lines(&app, 140)
-        .into_iter()
-        .map(|line| {
-            line.spans
-                .iter()
-                .map(|span| span.content.as_ref())
-                .collect::<String>()
         })
-        .collect::<Vec<_>>();
-    let first = plain
-        .iter()
-        .find(|line| line.contains("▄▄▄███▀"))
-        .expect("first XL whale row");
-    let second = plain
-        .iter()
-        .find(|line| line.contains("▄▄████████"))
-        .expect("second XL whale row");
-    let first_x = first.find('▄').expect("first whale pixel");
-    let second_x = second.find('▄').expect("second whale pixel");
+    }
 
-    assert_eq!(first_x - second_x, 13, "all whale rows share one outer pad");
-    assert!(
-        plain
-            .iter()
-            .any(|line| line.contains('█') && line.contains('░')),
-        "wide wordmark keeps solid DEEPSEEK beside hollow HARNESS"
-    );
+    for name in ["crow", "crow-term"] {
+        let snapshot = crate::slots::parse_snapshot(&hero(name))
+            .unwrap_or_else(|err| panic!("{name} is a logo primitive: {err}"));
+        assert!(snapshot.is_some(), "{name} parses into a snapshot");
+    }
+    for name in ["deepseek", "martty", "dsh", "whale"] {
+        let err = crate::slots::parse_snapshot(&hero(name))
+            .expect_err("a brand name is not a logo primitive");
+        assert_eq!(err, format!("unknown tui logo primitive: {name}"));
+    }
 }
 
 #[test]
-fn composed_deepseek_preset_keeps_balanced_outer_padding() {
+fn composed_hero_keeps_balanced_outer_padding() {
     let mut app = test_app();
     for (slot, nodes) in [
         (
             "welcome.hero",
             serde_json::json!([
-                { "id": "deepseek:logo", "kind": "logo", "name": "deepseek" },
-                { "id": "deepseek:hint", "kind": "text", "text": "Into the Unknown" }
+                { "id": "crow:logo", "kind": "logo", "name": "crow" },
+                { "id": "crow:hint", "kind": "text", "text": "hero slot hint" }
             ]),
         ),
         (
             "welcome.info",
-            serde_json::json!([{ "id": "deepseek:info", "kind": "welcomeinfo" }]),
+            serde_json::json!([{ "id": "crow:info", "kind": "welcomeinfo" }]),
         ),
     ] {
         app.slot_snapshots.insert(

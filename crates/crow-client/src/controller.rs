@@ -336,15 +336,15 @@ fn controller_loop(
                         session_id: Some(session_id.clone()),
                         models: vec![
                             CatalogModel {
-                                provider: "deepseek-official".into(),
-                                id: "deepseek-v4-flash".into(),
-                                name: "DeepSeek V4 Flash".into(),
+                                provider: "demo".into(),
+                                id: "demo-flash".into(),
+                                name: "Demo Flash".into(),
                                 vision: false,
                             },
                             CatalogModel {
-                                provider: "deepseek-official".into(),
-                                id: "deepseek-v4-pro".into(),
-                                name: "DeepSeek V4 Pro".into(),
+                                provider: "demo".into(),
+                                id: "demo-pro".into(),
+                                name: "Demo Pro".into(),
                                 vision: true,
                             },
                         ],
@@ -896,7 +896,7 @@ fn describe_server(result: &Value) -> String {
     let name = result
         .pointer("/serverInfo/name")
         .and_then(Value::as_str)
-        .unwrap_or("deepseek-harness");
+        .unwrap_or("agent");
     let version = result
         .pointer("/serverInfo/version")
         .and_then(Value::as_str)

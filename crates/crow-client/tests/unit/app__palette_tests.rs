@@ -1,5 +1,5 @@
 use super::*;
-use crate::theme::DEEPSEEK_450;
+use crate::theme::CROW_400;
 use ratatui::style::Color;
 use serde_json::json;
 use std::sync::mpsc::Receiver;
@@ -148,7 +148,7 @@ fn down(app: &mut App, ctl: &Controller) {
 fn starts_on_default_pack() {
     let (app, _ctl, _rx) = test_app();
     assert_eq!(app.active_palette_id, "default");
-    assert_eq!(app.theme.brand, DEEPSEEK_450);
+    assert_eq!(app.theme.brand, CROW_400);
     assert!(app.palettes.iter().any(|p| p.id == "default"));
 }
 
@@ -275,7 +275,7 @@ fn tui_palette_without_activate_registers_but_does_not_switch() {
     );
     assert!(app.palettes.iter().any(|p| p.id == "ember"));
     assert_eq!(app.active_palette_id, "default");
-    assert_eq!(app.theme.brand, DEEPSEEK_450);
+    assert_eq!(app.theme.brand, CROW_400);
 }
 
 #[test]
@@ -313,7 +313,7 @@ fn slash_theme_id_covers_mounted_plugin_pack() {
     );
     app.run_slash("theme", "default", &ctl);
     assert_eq!(app.active_palette_id, "default");
-    assert_eq!(app.theme.brand, DEEPSEEK_450);
+    assert_eq!(app.theme.brand, CROW_400);
     app.run_slash("theme", "ember", &ctl);
     assert_eq!(app.active_palette_id, "ember");
     assert_eq!(app.theme.brand, Color::Rgb(247, 140, 60));
@@ -521,7 +521,7 @@ fn invalid_palette_keeps_previous_theme() {
         &ctl,
     );
     assert_eq!(app.active_palette_id, "default");
-    assert_eq!(app.theme.brand, DEEPSEEK_450);
+    assert_eq!(app.theme.brand, CROW_400);
 }
 
 #[test]
@@ -565,7 +565,7 @@ fn theme_dialog_arrows_preview_and_only_enter_commits() {
 
     // Home jumps back onto the committed row → the preview is gone.
     app.handle(AppEvent::Term(Event::Key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE))), &ctl);
-    assert_eq!(app.theme.brand, DEEPSEEK_450);
+    assert_eq!(app.theme.brand, CROW_400);
     assert_eq!(app.active_palette_id, "default");
 
     // Back down to ember, then Enter confirms: dialog closes, ember commits.
@@ -589,14 +589,14 @@ fn theme_dialog_esc_reverts_the_preview_to_the_committed_theme() {
         &ctl,
     );
     app.run_slash("theme", "", &ctl);
-    assert_eq!(app.theme.brand, DEEPSEEK_450);
+    assert_eq!(app.theme.brand, CROW_400);
 
     // Preview ember with ↓…
     picker_walk_to(&mut app, &ctl, "ember");
     assert_eq!(app.theme.brand, Color::Rgb(247, 140, 60));
     // …Home back onto the committed row drops it again…
     app.handle(AppEvent::Term(Event::Key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE))), &ctl);
-    assert_eq!(app.theme.brand, DEEPSEEK_450);
+    assert_eq!(app.theme.brand, CROW_400);
     // …and one wheel notch previews the pack it lands on — Catppuccin Latte,
     // which owns a light mode, so the preview carries that mode with it.
     app.handle(
@@ -619,7 +619,7 @@ fn theme_dialog_esc_reverts_the_preview_to_the_committed_theme() {
     assert_eq!(app.active_palette_id, "default");
     assert_eq!(app.theme.mode, crate::theme::Mode::Dark);
     assert_eq!(
-        app.theme.brand, DEEPSEEK_450,
+        app.theme.brand, CROW_400,
         "Esc must revert the preview — arrows never confirm"
     );
 }
@@ -667,7 +667,7 @@ fn slash_theme_popup_previews_and_reverts_without_enter() {
     // committed theme and mode show again.
     down(&mut app, &ctl);
     assert_eq!(app.slash_theme_candidate(), None);
-    assert_eq!(app.theme.brand, DEEPSEEK_450);
+    assert_eq!(app.theme.brand, CROW_400);
     assert_eq!(app.theme.mode, crate::theme::Mode::Dark);
     assert_eq!(app.active_palette_id, "default");
 
@@ -678,7 +678,7 @@ fn slash_theme_popup_previews_and_reverts_without_enter() {
     assert!(!app.slash_completion_open());
     assert_eq!(app.theme.mode, crate::theme::Mode::Dark);
     assert_eq!(
-        app.theme.brand, DEEPSEEK_450,
+        app.theme.brand, CROW_400,
         "Esc must revert the popup preview"
     );
 }
@@ -750,7 +750,7 @@ fn dialog_stopped_pack_preview_is_transient_and_enter_holds_it_while_loading() {
     // Esc without Enter reverts the preview.
     app.handle(AppEvent::Term(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))), &client_ctl);
     assert!(app.picker.is_none());
-    assert_eq!(app.theme.brand, DEEPSEEK_450);
+    assert_eq!(app.theme.brand, CROW_400);
 
     // Enter confirms: the client registry is asked, and the previewed
     // colors stay on screen while the Plugin loads (no flash to default).
@@ -840,7 +840,7 @@ fn persisted_catppuccin_choice_is_restored_at_startup() {
 fn unknown_persisted_theme_falls_back_to_the_default_pack() {
     let (app, _rx) = restarted_app(json!({ "theme": "iceberg" }));
     assert_eq!(app.active_palette_id, "default");
-    assert_eq!(app.theme.brand, DEEPSEEK_450);
+    assert_eq!(app.theme.brand, CROW_400);
 }
 
 /// Committing a flavor enters the mode it owns and persists both halves of
@@ -859,7 +859,7 @@ fn slash_theme_commits_a_flavor_in_its_own_mode_and_persists_it() {
 }
 
 /// ctrl+t inside the family stays inside it: Macchiato toggles to its Latte
-/// slot rather than back to the DeepSeek default, and the pack stays put.
+/// slot rather than back to the crow purple default, and the pack stays put.
 #[test]
 fn ctrl_t_inside_a_flavor_toggles_to_its_latte_slot() {
     let (mut app, ctl, _rx) = test_app();

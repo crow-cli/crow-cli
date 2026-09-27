@@ -78,9 +78,9 @@ fn crow_cli_runs_a_gradient_per_word() {
                 assert_eq!(visible[1].style.fg, Some(theme.ok), "`-cli`");
                 continue;
             }
-            let (ocean_top, ocean_bottom) = match theme.mode {
-                Mode::Dark => (DEEPSEEK_50, theme.brand),
-                Mode::Light => (theme.brand, DEEPSEEK_200),
+            let (brand_top, brand_bottom) = match theme.mode {
+                Mode::Dark => (CROW_50, theme.brand),
+                Mode::Light => (theme.brand, CROW_200),
             };
             let (mint_top, mint_bottom) = match theme.mode {
                 Mode::Dark => (pale(theme.ok), theme.ok),
@@ -88,11 +88,11 @@ fn crow_cli_runs_a_gradient_per_word() {
             };
             let first = ink(&lines[0]);
             let last = ink(lines.last().unwrap());
-            assert_eq!(first[0].style.fg, Some(ocean_top), "`crow` opens pale");
+            assert_eq!(first[0].style.fg, Some(brand_top), "`crow` opens pale");
             assert_eq!(first[1].style.fg, Some(mint_top), "`-cli` opens pale");
             assert_eq!(
                 last[0].style.fg,
-                Some(ocean_bottom),
+                Some(brand_bottom),
                 "`crow` closes on brand"
             );
             assert_eq!(last[1].style.fg, Some(mint_bottom), "`-cli` closes on ok");

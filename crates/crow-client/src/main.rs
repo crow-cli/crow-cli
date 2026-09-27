@@ -10,7 +10,6 @@ mod bus;
 mod clipboard;
 mod controller;
 mod cordis;
-mod deepseek_logo;
 mod demo;
 mod diff;
 mod elicitation;
@@ -843,7 +842,7 @@ fn dump_frame(args: &Args, w: u16, h: u16) -> Result<()> {
     // Run one scripted demo turn synchronously through the real pipeline.
     app.transcript
         .push_user("查看这个仓库并修复失败的测试".into(), false);
-    app.show_banner = false; // dump simulates the post-submit look: no whale
+    app.show_banner = false; // dump simulates the post-submit look: the hero has dived
     app.state = RunState::Starting;
     demo::run_demo_turn(bus_tx, "crow-demo".into(), "inspect the repo".into());
     let deadline = std::time::Instant::now() + Duration::from_secs(8);

@@ -430,7 +430,7 @@ fn bold_headings_links_and_code_keep_their_styles() {
         let lines = render("# **Heading**\n\n**[docs](https://x.dev)** and **`code`**", &theme, tone, 80);
         let spans: Vec<_> = lines.iter().flat_map(|l| &l.spans).collect();
         let heading = spans.iter().find(|s| s.content == "Heading").unwrap();
-        assert_eq!(heading.style.fg, Some(DEEPSEEK_200));
+        assert_eq!(heading.style.fg, Some(CROW_200));
         assert!(heading.style.add_modifier.contains(Modifier::BOLD));
         let link = spans.iter().find(|s| s.content == "docs").unwrap();
         assert_eq!(link.style.fg, Some(theme.brand_soft));

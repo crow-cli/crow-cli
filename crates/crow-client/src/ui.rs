@@ -4109,18 +4109,6 @@ fn banner_lines(app: &App, width: u16) -> Vec<Line<'static>> {
             app.tone_mode,
             width as usize,
         ));
-    } else if app.ui_preset == "deepseek" {
-        out.extend(crate::deepseek_logo::lines(theme, width));
-        out.push(Line::default());
-        out.push(centered(
-            width,
-            vec![Span::styled(
-                app.locale.tr("Into the Unknown", "探索未知").to_string(),
-                Style::default()
-                    .fg(theme.fg_tertiary)
-                    .add_modifier(Modifier::BOLD),
-            )],
-        ));
     } else {
         out.extend(logo::crow_cli_logo_lines(theme, width));
         out.push(Line::default());

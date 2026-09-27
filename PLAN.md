@@ -311,7 +311,7 @@ failed**; `--dump-frame 100x34` byte-identical to the Phase-2 frame.
 
 ## Phase 4 — brand art out, the palette stays a palette
 
-4.1 **The deepseek logo is branding, not a theme.** Delete the
+[x] 4.1 **The deepseek logo is branding, not a theme.** Delete the
     `ui_preset == "deepseek"` banner branch (`ui.rs:4114-4125`, including the
     "Into the Unknown" / 探索未知 slogan), `src/deepseek_logo.rs` (10K) and its
     `mod` line (`main.rs:13`), `assets/martty-lockup.svg` and
@@ -322,8 +322,33 @@ failed**; `--dump-frame 100x34` byte-identical to the Phase-2 frame.
     `cargo run -- --dump-frame 100x34` diffed against the pre-phase frame — the
     banner must be the crow lockup in both, since `default` was already the
     preset; `grep -rn "deepseek_logo\|martty" src` → 0.
+    *Done:* the `ui_preset == "deepseek"` branch is gone (whale + "Into the
+    Unknown" / 探索未知), so `banner_lines` has two arms left: a `welcome.hero`
+    slot snapshot, else the crow lockup. `slots.rs` validates
+    `crow | crow-term` only and lost both the `name == "deepseek"` render arm
+    and `"martty"` from the crow arm. `mod deepseek_logo;` is out of `main.rs`.
+    *Corrections:* the branch was at `ui.rs:4112-4123`, not `4114-4125`. The
+    PLAN named two asset files; **nine** went, because the rest were unreferenced
+    DeepSeek/martty brand art with no code or doc link left —
+    `src/deepseek_logo.rs`, `assets/martty-lockup.{svg,png}`,
+    `assets/deepseek_favicon.{ico,png}`, `assets/tui-{whale,lockup,wordmark}.svg`,
+    `scripts/render-martty-lockup.swift`. `assets/` is now
+    `crow-cli-ascii.txt, pet, promo, screenshots`; `assets/screenshots/liang.png`
+    stays because it documents parked machinery. Four tests in
+    `tests/unit/ui__tests.rs` pinned the old art and were rewritten to pin the
+    new one, not deleted: the two `welcome.hero` slot tests now drive
+    `name:"crow"` with `crow-hero:*` ids and assert the crow lockup's
+    `└────────────┘` foot; `deepseek_hero_preserves_the_original_whale_geometry`
+    became `a_brand_logo_name_is_not_a_tui_primitive` (accepts `crow` /
+    `crow-term`, rejects `deepseek` / `martty` / `dsh` / `whale` with
+    `unknown tui logo primitive: {name}`); and
+    `composed_deepseek_preset_keeps_balanced_outer_padding` became
+    `composed_hero_keeps_balanced_outer_padding`. `grep -rn
+    "deepseek_logo\|martty" src` → **0**; `--dump-frame 100x34` byte-identical
+    to the Phase-3 frame (the banner never renders in it — `main.rs` sets
+    `show_banner = false`, and `default` was already the preset).
 
-4.2 **The default palette stops wearing DeepSeek blue.** `theme.rs`: the
+[x] 4.2 **The default palette stops wearing DeepSeek blue.** `theme.rs`: the
     `DEEPSEEK_50…900` ramp stays (it is a palette, and the mandate says a
     deepseek theme is fine) but becomes a *named* pack rather than the source
     of the builtin `default`'s `brand` / `brand_soft` (`theme.rs:174-175` dark,
@@ -337,12 +362,77 @@ failed**; `--dump-frame 100x34` byte-identical to the Phase-2 frame.
     `docs/fixtures/*.v0.json` palettes still load; `--dump-frame` eyeballed for
     the purple brand and diffed against the 4.1 frame — this is the one item in
     the sprint that changes what the product looks like, so it gets looked at.
+    *Done:* `CROW_50…CROW_900` is the house ramp and `default` wears it —
+    `DEFAULT_DARK.brand/brand_soft = CROW_400/CROW_300`, `DEFAULT_LIGHT =
+    CROW_600/CROW_500`. Every value is read off crow's own brand, not invented:
+    `CROW_200 #c4b5fd` and `CROW_300 #a78bfa` are `purple.css`'s link-hover and
+    link, `CROW_400 #8b5cf6` its admonition border, `CROW_800 #2600ab` its
+    button/border and the crow icon's own fill, `CROW_900 #1c005f` its page
+    background. The blue ramp keeps its constants and gains a section of its
+    own: `DEEPSEEK_DARK`/`DEEPSEEK_LIGHT` are `..DEFAULT_DARK`/`..DEFAULT_LIGHT`
+    with only the two brand slots overridden, so selecting the pack changes the
+    accent and nothing else; `PalettePack::deepseek()` (id `deepseek`, label
+    `DeepSeek Blue`, `preferred_mode: None`, source `static`) is appended last to
+    `builtin_packs()` and to `BUILTIN_PALETTE_IDS` — last because it is a
+    retained palette, not a family. `logo.rs` borrows `CROW_50`/`CROW_200` for
+    the lockup gradient and its `ocean_top`/`ocean_bottom` locals are now
+    `brand_top`/`brand_bottom`. The module doc says what the file is now.
+    *Correction:* the PLAN's verify assumed `theme__tests.rs` and
+    `app__palette_tests.rs` were written generically against
+    `BUILTIN_PALETTE_IDS`. They are not — **11 tests failed**, all pinning the
+    old blue as "what the default pack looks like": `brand_is_deepseek_blue` and
+    `default_toggled_still_uses_deepseek_blue` in `theme__tests.rs`, plus nine in
+    `app__palette_tests.rs` that import `DEEPSEEK_450` as shorthand for the
+    default dark brand. All were rewritten to pin crow purple
+    (`brand_is_crow_purple`, `default_toggled_still_uses_crow_purple`, and the
+    palette tests' import becoming `CROW_400`), and one test was **added**:
+    `the_deepseek_palette_survives_as_a_pack_and_nothing_more`, which is the
+    executable form of mandate rule 3 — the blue is reachable through the
+    `deepseek` pack and through nothing else, and that pack differs from
+    `default` in `brand` only. 940 → **941** tests.
+    `builtin_packs_are_the_catalog_the_menu_calls_builtin` passed untouched, as
+    predicted. The 8 `docs/fixtures/*.v0.json` gallery palettes still parse
+    (`gallery_fixtures_parse_both_modes`) — they carry their own hex, so the
+    ramp rename cannot reach them.
+    *Eyeballed:* `ui::dump_frame` emits `symbol()` only, so the plain frame is
+    colour-blind and stayed byte-identical — it cannot show this change. The
+    paint was captured instead by temporarily teaching `dump_frame` to emit
+    `38;2;r;g;b` SGR (reverted afterwards; `grep 'x1b\[38;2' src` → 0), and by
+    running under a clean `CROW_HOME` — the developer's own
+    `~/.agents/crow/settings.json` persists `"theme":
+    "catppuccin-macchiato"`, so the default pack never renders unless the
+    settings root is empty. Two frames, both with zero DeepSeek-ramp cells:
+    the banner frame's lockup `cr` half runs `#f4f1ff` (CROW_50) → `#8b5cf6`
+    (CROW_400) top to bottom against the unchanged mint `-cli` half
+    (`#afeac5` → `#4ed17e`), and the conversation frame's brand accents are
+    `#a78bfa` (CROW_300) on the `▎` blockquote bars and `#8b5cf6` (CROW_400) on
+    the composer `❯`. Structure identical throughout: same 35 rows.
 
-4.3 **`DeepSeekStyleSheet`** (`markdown.rs`, 5 sites) renamed to say what it
+[x] 4.3 **`DeepSeekStyleSheet`** (`markdown.rs`, 5 sites) renamed to say what it
     does. `markdown.rs`'s deepseek-harness references in comments likewise.
     *Verify:* `grep -rni deepseek src/markdown.rs` → 0; markdown render tests green.
+    *Done:* `ThemeStyleSheet` — it maps markdown onto whatever theme is active,
+    which is the truth of it now that the default is purple and five other
+    builtin packs exist. All 5 sites (the two `Options::new` call sites, the struct, the
+    impl, and the `CODE_FENCE_SENTINEL` doc that points at
+    `code_block_fence`), located with `ast_grep_py` and written with `edit`.
+    The module doc's two palette claims went with it — line 4 "maps its output
+    onto the DeepSeek palette" → "onto the active theme", line 24 "Colors stay
+    inside the DeepSeek palette: … brand-blue accents" → "inside the active
+    theme: … brand accents" — and `heading_style`'s six-step ramp now reads
+    `CROW_200…CROW_600` dark / `CROW_400…CROW_900` light under a "house purple
+    ramp" comment. `markdown__tests.rs:433` pinned the dark H1 colour as
+    `DEEPSEEK_200` and now pins `CROW_200`; that was the only test the rename
+    broke. `grep -rni deepseek src/markdown.rs` → **0**.
+    *Decision, recorded:* `theme.rs:780`'s field doc read
+    `--dsw-alias-brand-primary-new-color… — the DeepSeek blue accent`, and the
+    colour claim became false the moment `default` went purple, so the claim
+    went (`— the house accent`). The `--dsw-alias-*` token names themselves
+    stay: they are the CSS custom properties these tokens were mapped from, i.e.
+    provenance, and all 16 of them belong to the Phase 7.5 provenance sweep
+    rather than to this item.
 
-4.4 **`demo.rs`**: the two whale passages (lines ~277, ~419) and the three
+[x] 4.4 **`demo.rs`**: the two whale passages (lines ~277, ~419) and the three
     `"provider": "deepseek-official", "model": "deepseek-v4-flash"` payloads
     (~107, ~265, ~295) become crow-shaped; the `deepseek-harness SDK runtime`
     module doc (line 4) too. The demo is a rendering fixture — its content is
@@ -351,6 +441,44 @@ failed**; `--dump-frame 100x34` byte-identical to the Phase-2 frame.
     *Verify:* `cargo run -- --demo --dump-frame 100x34` renders the same cell
     kinds as before (diff the frame against the pre-change one: same structure,
     new words); `grep -rni "deepseek\|whale" src/demo.rs` → 0.
+    *Done:* the module doc now says the shape is the **crow-cli agent
+    runtime**'s. All three `assistant/message` payloads advertise
+    `"provider": "demo", "model": "demo-flash"` — a demo fixture should not
+    claim a real provider it is not, and `demo` matches the `runtime demo` line
+    the banner already prints. Both whale passages became crow passages ("the
+    crow cocked its head, cawed once in approval, and flew off" / "…and flew
+    back to the wire"), and the 🐋 went with them. `grep -rni
+    "deepseek\|whale" src/demo.rs` → **0**.
+    *Also done, same category, not in the PLAN:* `controller.rs`'s demo-only
+    `Cmd::FetchCatalog` fixture advertised `deepseek-official` /
+    `deepseek-v4-flash` / `deepseek-v4-pro` and is now `demo` / `demo-flash` /
+    `demo-pro` (`Demo Flash`, `Demo Pro`, vision flags unchanged); and
+    `describe_server`'s `.unwrap_or("deepseek-harness")` — the name shown when
+    an ACP server does not identify itself — is now `.unwrap_or("agent")`,
+    because a client that owns no model config has no business asserting which
+    harness it is talking to. No test pinned either.
+    *Not touched, deliberately:* `whale` survives elsewhere in `src/` as the
+    **liang pet's** XS half-block fallback (`pet.rs:12,470`, `ui.rs:407,1668`,
+    `theme.rs:865 whale_gradient`) — that is parked machinery under mandate
+    rule 4, not brand art. `app.rs:248`'s `show_banner` doc did get fixed: it
+    still advertised a "whale + wordmark" banner that 4.1 deleted.
+    *Frame:* `--dump-frame 100x34` diffs against the Phase-3 frame in exactly
+    two places and keeps all 35 rows — the concluding sentence re-wraps onto the
+    same two lines with the new words, and the composer's model chip reads
+    `demo-flash · demo` instead of `deepseek-v4-flash · demo`. `--demo` and
+    plain remain byte-identical to each other.
+
+**Phase 4 gate result:** `cargo check --locked --tests -j 6` rc 0, exactly the 3
+pre-existing warnings; `cargo test --locked --bin crow -j 6` → **941 passed, 0
+failed** (940 → 941: one test added, four rewritten in 4.1, twelve repointed in
+4.2/4.3, none deleted); `--dump-frame 100x34` byte-identical to the Phase-3
+frame through 4.1–4.3, then a two-line textual diff in 4.4 with the structure
+intact. `grep -rni deepseek src` → **37**, and every one is accounted for:
+33 in `theme.rs` (the retained ramp, its two token maps and its pack — mandate
+rule 3), 2 in `pet.rs:1,5` (the parked liang homage, rule 4), and the four
+provenance module docs `events.rs:1`, `transcript.rs:3`, `file_ref.rs:3`,
+`proto.rs:1` (Phase 7.5). `grep -rn martty src` → **0**. The 3 remaining
+`\bdsh\b` hits (`acp_auth.rs:114`, `cordis.rs:33-34`) are Phase 5's.
 
 **Commit:** `refactor(client)!: crow brand art and crow purple default; the deepseek ramp stays as a palette`
 

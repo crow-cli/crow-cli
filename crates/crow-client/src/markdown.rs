@@ -1,7 +1,7 @@
 //! Markdown rendering for assistant text, built on tui-markdown.
 //!
 //! tui-markdown (pulldown-cmark) owns CommonMark + GFM parsing and block
-//! structure; this module maps its output onto the DeepSeek palette through a
+//! structure; this module maps its output onto the active theme through a
 //! custom `StyleSheet`, then post-processes the rendered lines:
 //!
 //! - body runs follow the caller's [`ToneMode`]: the default single tone
@@ -21,8 +21,8 @@
 //!   share what remains proportionally — and cell text soft-wraps across box
 //!   rows, so long cells stay readable instead of truncating with an ellipsis.
 //!
-//! Colors stay inside the DeepSeek palette: grayscale body text, brand-blue
-//! accents for links and headings, red reserved for errors. The two-tone
+//! Colors stay inside the active theme: grayscale body text, brand accents
+//! for links and headings, red reserved for errors. The two-tone
 //! body pass is an opt-in [`ToneMode::Two`]; the default single tone
 //! renders every body run in the main `fg`.
 
@@ -35,8 +35,7 @@ use unicode_width::UnicodeWidthStr;
 use std::borrow::Cow;
 
 use crate::theme::{
-    Theme, DEEPSEEK_200, DEEPSEEK_300, DEEPSEEK_400, DEEPSEEK_450, DEEPSEEK_500, DEEPSEEK_600,
-    DEEPSEEK_800, DEEPSEEK_900,
+    Theme, CROW_200, CROW_300, CROW_400, CROW_450, CROW_500, CROW_600, CROW_800, CROW_900,
 };
 
 /// Body-color scheme for rendered markdown: whether CJK and Latin/digit
@@ -79,7 +78,7 @@ pub fn render(text: &str, theme: &Theme, tone: ToneMode, width: usize) -> Vec<Li
     // Strip them so the base glyph falls back to its text presentation.
     let text = strip_emoji_variation_selectors(text);
     let options =
-        Options::new(DeepSeekStyleSheet(*theme)).image_fallback(ImageFallback::AltTextAndUrl);
+        Options::new(ThemeStyleSheet(*theme)).image_fallback(ImageFallback::AltTextAndUrl);
     let parsed = tui_markdown::from_str_with_options(&text, &options);
 
     let mut out: Vec<Line<'static>> = Vec::new();
@@ -123,7 +122,7 @@ pub fn render(text: &str, theme: &Theme, tone: ToneMode, width: usize) -> Vec<Li
                 // Token colors come from `highlight`, one entry per source
                 // line; a line it has nothing for keeps the plain code style.
                 let highlighted = crate::highlight::code_block(&content, lang, theme);
-                let plain = DeepSeekStyleSheet(*theme).code();
+                let plain = ThemeStyleSheet(*theme).code();
                 for (index, raw) in content.lines().enumerate() {
                     let segs = match highlighted.get(index) {
                         Some(runs) => runs
@@ -246,16 +245,16 @@ pub fn render_reasoning(
 }
 
 /// Sentinel prefix that marks fence delimiter lines (see
-/// `DeepSeekStyleSheet::code_block_fence`). Two NUL bytes: never produced
+/// `ThemeStyleSheet::code_block_fence`). Two NUL bytes: never produced
 /// by real markdown content.
 const CODE_FENCE_SENTINEL: &str = "\u{0}\u{0}";
 
-/// tui-markdown style sheet mapping markdown constructs onto the DeepSeek
-/// palette. Only non-default choices are overridden.
+/// tui-markdown style sheet mapping markdown constructs onto the active
+/// crow theme. Only non-default choices are overridden.
 #[derive(Clone)]
-struct DeepSeekStyleSheet(Theme);
+struct ThemeStyleSheet(Theme);
 
-impl StyleSheet for DeepSeekStyleSheet {
+impl StyleSheet for ThemeStyleSheet {
     fn heading(&self, level: u8) -> Style {
         heading_style(&self.0, level as usize)
     }
@@ -1252,24 +1251,24 @@ fn split_script(text: &str) -> Vec<(String, bool)> {
 
 fn heading_style(theme: &Theme, level: usize) -> Style {
     use crate::theme::Mode;
-    // Headings run down the DeepSeek blue ramp (bright → deep) so each
-    // "size" reads as a distinct color instead of a muddy gray.
+    // Headings run down the house purple ramp (bright → deep) so each "size"
+    // reads as a distinct color instead of a muddy gray.
     let color = match theme.mode {
         Mode::Dark => match level {
-            1 => DEEPSEEK_200,
-            2 => DEEPSEEK_300,
-            3 => DEEPSEEK_400,
-            4 => DEEPSEEK_450,
-            5 => DEEPSEEK_500,
-            _ => DEEPSEEK_600,
+            1 => CROW_200,
+            2 => CROW_300,
+            3 => CROW_400,
+            4 => CROW_450,
+            5 => CROW_500,
+            _ => CROW_600,
         },
         Mode::Light => match level {
-            1 => DEEPSEEK_400,
-            2 => DEEPSEEK_450,
-            3 => DEEPSEEK_500,
-            4 => DEEPSEEK_600,
-            5 => DEEPSEEK_800,
-            _ => DEEPSEEK_900,
+            1 => CROW_400,
+            2 => CROW_450,
+            3 => CROW_500,
+            4 => CROW_600,
+            5 => CROW_800,
+            _ => CROW_900,
         },
     };
     Style::default().fg(color).add_modifier(Modifier::BOLD)

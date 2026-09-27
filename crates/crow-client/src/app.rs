@@ -245,7 +245,8 @@ pub struct App {
     pub(crate) prompt_flash_lines: Option<(usize, usize)>,
     pub state: RunState,
     pub state_note: String,
-    /// Welcome banner (whale + wordmark) — shown until the first real prompt.
+    /// Welcome banner (hero lockup + session facts) — shown until the first
+    /// real prompt.
     pub show_banner: bool,
     /// Pixel-art Liang at the composer's right edge (`/liang` toggles him).
     /// Off by default — `/liang on` summons him.
