@@ -495,7 +495,15 @@ fn main() -> Result<()> {
     // input thread, no alt screen to leave.
     #[cfg(feature = "gui")]
     if args.gui {
-        return gui::run_crow_app(start);
+        let session_id = start.app.session_id.clone();
+        let demo = start.app.demo;
+        gui::run_crow_app(start)?;
+        // Same out-of-band handoff as the TTY tail below: the caller grabs the
+        // live session id for `--session-id` resume. stderr, never stdout.
+        if !demo {
+            eprintln!("session {}", session_id);
+        }
+        return Ok(());
     }
     let Startup { mut app, controller, bus_tx, bus_rx } = start;
 
