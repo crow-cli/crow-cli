@@ -49,6 +49,15 @@ if TYPE_CHECKING:
 #: actually write.
 _SUBCOMMANDS = frozenset({"clear", "pause", "resume"})
 
+#: The two universal "explain this to me" gestures, and the only other words
+#: that are not objectives. ``/goal help`` falling through to :func:`_set` was
+#: the one way this command could fail by SUCCEEDING: it armed a
+#: self-continuing loop on an objective nobody wrote, and the person who typed
+#: it got a goal they did not ask for and a session that kept spending turns on
+#: it. Same whole-argument rule as ``_SUBCOMMANDS`` — ``/goal help me port the
+#: widget`` is an objective, and a good one.
+_HELP = frozenset({"help", "?"})
+
 #: What ``resume`` picks back up: the two statuses that mean "the work is
 #: unfinished and the reason it stopped has been addressed". A budget-limited
 #: goal has spent its rope, so resuming it without more would stop again on the
@@ -63,7 +72,7 @@ _NO_GOAL = "No goal is set on this session."
 @register_slash_command(
     "goal",
     "Set, show or stop the goal this session keeps working on"
-    " (/goal | /goal <objective> | /goal clear|pause|resume)",
+    " (/goal | /goal <objective> | /goal help|clear|pause|resume)",
 )
 async def goal_command(session: AgentSession, args: str, agent: Any) -> str:
     """Show the goal, set one, or move it. Never raises."""
@@ -78,6 +87,10 @@ async def goal_command(session: AgentSession, args: str, agent: Any) -> str:
     try:
         if not args:
             return _show(engine, session_id, agent._config.goal.max_turns)
+        if args in _HELP:
+            # Before the transitions and before _set, and it touches no state:
+            # asking what a command does must not be a way of running it.
+            return _help(agent._config.goal)
         if args in _SUBCOMMANDS:
             return _transition(engine, session_id, args)
         return _set(engine, session_id, args, agent._config.goal)
@@ -173,4 +186,52 @@ def _transition(engine, session_id: str, verb: str) -> str:
     return (
         f'Goal resumed from {row.status}: "{row.objective}"\n'
         "This session continues it again at the next idle."
+    )
+
+
+def _help(goal_config: Any) -> str:
+    """What ``/goal`` does, with THIS config's ceilings rather than placeholders.
+
+    The numbers are the reason to ask. "Up to ``max_turns`` turns" restates a
+    config key the person cannot see from here; "at most 25" is the fact that
+    decides whether they want the loop running at all. Same rule as
+    :func:`crow_cli.agent2.goal.progress` — one rendering of one truth, so the
+    help text and the status line cannot drift apart.
+    """
+    turns = (
+        f"at most {goal_config.max_turns} continuation turns"
+        if goal_config.max_turns
+        else "no turn ceiling"
+    )
+    tokens = (
+        f"at most {goal_config.max_tokens:,} tokens"
+        if goal_config.max_tokens
+        else "no token ceiling"
+    )
+    return "\n".join(
+        [
+            "/goal — the goal this session keeps working on",
+            "",
+            "  /goal               show the goal and how far it has got",
+            "  /goal <objective>   set a fresh one and start continuing it",
+            "  /goal pause         stop continuing; objective and spend are kept",
+            "  /goal resume        pick a paused or blocked goal back up",
+            "  /goal clear         delete the goal; this session stops for good",
+            "  /goal help          this text",
+            "",
+            "An active goal makes the session send itself another turn whenever one"
+            " ends, until the model calls goal_done or goal_blocked. Ceilings"
+            f" here: {turns}, {tokens}. A continuation turn that ran no tools"
+            " ends the goal too — no observable progress.",
+            "",
+            "help, clear, pause and resume count only as the WHOLE argument:"
+            ' "/goal clear the build cache" sets an objective called "clear the'
+            ' build cache".',
+            "",
+            "The model has its own side of this: goal_start arms a goal,"
+            " goal_done and goal_blocked end one, goal_reset deletes one that"
+            " has stopped. A paused goal is the user's brake and stays that way"
+            " — goal_start refuses to re-arm it, so it takes /goal resume,"
+            " /goal clear, or a goal_reset from the model.",
+        ]
     )
