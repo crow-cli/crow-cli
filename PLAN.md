@@ -1103,19 +1103,148 @@ of old brand art; nothing was added.
 
 ## Phase 8 — the whole gate, and the record
 
-8.1 `cargo check --locked --tests -j 6` and `cargo test --locked --bin crow -j 6`
+[x] 8.1 `cargo check --locked --tests -j 6` and `cargo test --locked --bin crow -j 6`
     from clean; the 3 pre-existing warnings still exactly 3.
-8.2 `cargo build --release -j 6`, then drive the shipped binary the way
+    *Done:* rc 0 / **941 passed, 0 failed**, exactly **3** warnings — unused
+    `Path` @ `main__cli_args_tests.rs:2`, unused `ctl` @ `ui__tests.rs:3602`,
+    non-snake-case `dd_kills_the_line_and_gg_G_jump` @
+    `input__vim__tests.rs:74` — all three on **stderr** in short format, zero
+    warning lines on stdout. Same three lines, same bindings as the Phase-7
+    gate.
+    *"From clean" was made to mean something,* because cargo replays stored
+    warnings for a unit it considers `Fresh`, so a cached green and a built
+    green are byte-identical in the output. Three steps, in order: (a) artifact
+    mtimes compared against the last source edit; (b) a syntax error injected
+    into `src/pet.rs` → check rc **101** in 7.4 s, which proves the gate
+    actually compiles this crate rather than replaying it (restored at once;
+    tree clean afterwards); (c) this crate's debug artifacts deleted by hand —
+    `target/debug/{.fingerprint/crow-client-*,deps/crow-*,crow,incremental/crow-*}`,
+    27 paths, **23.7 GiB** reclaimed — leaving every third-party dep in place
+    and running no `cargo clean` anywhere (AGENTS.md forbids it and the target
+    dir is shared with the other worktrees). Rebuilt from that state: bin test
+    **941 passed** in 86.5 s with the 3 warnings freshly compiled, check rc 0 /
+    3 warnings in 8.2 s. Warm re-run at the end of the phase: check 0.2 s, bin
+    test 3.4 s — same 3, same 941.
+[x] 8.2 `cargo build --release -j 6`, then drive the shipped binary the way
     `tests/startup_session_e2e.rs` does — a real PTY against
     `tests/fixtures/stub_acp_agent.py` — and `cargo run --release -- --demo`
     plus `--dump-frame` eyeballed.
-8.3 The Python side is untouched by this sprint, but the repo is one workspace:
+    *Done:* `cargo build --release -j 6` rc 0 in 127.9 s →
+    `target/release/crow`, 11,896,024 bytes, carrying exactly one warning — the
+    known-deliberate `field ui_preset is never read` (`app.rs:177`, recorded
+    under the Phase 5 gate, kept because the settings patch-write would
+    otherwise drop `uiPreset`).
+    The e2e suite was then run **in release**, which is the only way to point it
+    at the shipped binary: `tests/startup_session_e2e.rs:309` hardcodes
+    `env!("CARGO_BIN_EXE_crow")` with no env override, so the profile is what
+    selects the path. `cargo test --release --locked --test
+    startup_session_e2e -j 6` → **12 passed, 0 failed** (1.78 s of test, 97.9 s
+    wall including the release harness build). That it drove the release binary
+    and not the debug one is checked, not assumed: the harness
+    `target/release/deps/startup_session_e2e-9bd8c126ff9ce174` contains the
+    bytes `target/release/crow` and does **not** contain `target/debug/crow`.
+    The other three integration tests followed in release — `cli_help` 3,
+    `sigterm_cleanup` 1, `tcp_attach` 1 — so **17** release tests green, and
+    the debug profile re-ran the same four at the same counts (3 / 12 / 1 / 1).
+    `--dump-frame 100x34` from the release binary → 1815 chars / 35 rows / 2819
+    bytes on disk, **byte-identical** to `/tmp/rebrand-p4-baseline.frame` (saved
+    as `/tmp/rebrand-p8-release.frame`); the debug binary re-checked in the same
+    pass, also byte-identical. `--help` → 1484 chars, crow-branded, zero
+    `DEEPSEEK`.
+    `--demo` was driven on a **real PTY**, not a pipe, because a TUI that sees a
+    non-tty stdout takes different branches: a local `pty_drive()` helper
+    (openpty → fork → setsid/TIOCSCTTY → TIOCSWINSZ 110×30 →
+    `execve(target/release/crow)`, 5 s of captured output, SIGTERM, `waitpid`)
+    → exit code **0**, 5897 chars. On screen: the `CROW_CLI` block wordmark
+    (`logo.rs:15-22` — both the `██▓▓▓▒▒░░░░░▒▓` and the `└────────────┘` rows
+    are present in the capture; this is *not* `assets/crow-cli-ascii.txt`,
+    which no `include_str!` anywhere reads), `https://crow-ai.dev`,
+    `version crow 0.1.0`, `runtime demo`, `model waiting for ACP`,
+    `mode demo — scripted turns, no API calls`, `session crow-65c7c5f0`,
+    `/keys shortcuts`, `esc interrupt`. Zero occurrences of `deepseek`,
+    `martty`, `dsh` or `api key` in 5897 chars of live UI: the demo never asks
+    anyone for a credential.
+[x] 8.3 The Python side is untouched by this sprint, but the repo is one workspace:
     `uv run pytest tests/unit -q` from the worktree root, to prove it.
-8.4 `TODO.md` and `PLAN.md` fully checked, each with its evidence line; the
+    *Done:* **788 passed**, rc 0, 27.4 s. "Untouched" is proven rather than
+    asserted: across the 95 files this branch changes, `git diff --stat
+    $(git merge-base HEAD main) HEAD -- '*.py' pyproject.toml tests/ src/`
+    returns exactly one entry — the *deletion* of
+    `crates/crow-client/assets/promo/build.py` (105 lines, Phase 7's
+    unrunnable promo script). Nothing under `src/crow_cli/` or `tests/` moved.
+    *The first run was red, and the red was chased instead of waved off:*
+    1 failed / 787 passed —
+    `tests/unit/test_tools_web.py::test_run_screenshot_rides_the_row`,
+    Playwright `Page.captureScreenshot: Unable to capture screenshot` against a
+    local `http://127.0.0.1:37717/js`. "Environmental" is a claim that needs
+    evidence, so three independent checks: (a) the test passes alone, 1.8 s;
+    (b) the full suite re-runs green, 788 passed; (c) the branch changes zero
+    Python. All three agree — a headless-Chromium screenshot flaking under the
+    load of a 788-test run, not a regression.
+[x] 8.4 `TODO.md` and `PLAN.md` fully checked, each with its evidence line; the
     deferred list intact with its reasons.
-8.5 Report: what changed, what was verified, what is deferred, and the one
+    *Done:* PLAN 8.1–8.5 each carry their evidence (this block) and TODO's Gate
+    section gains a **Phase 8 gate result** paragraph after Phase 7's. The
+    deferred list is intact at five items with their reasons — the LICENSE
+    attribution line, `crate/target`'s 71 GiB, the Cordis/plugin subsystem's
+    existence, `locale.rs`'s bilingual-by-construction rule, the legacy
+    JSON-RPC attach path — plus the open `- [ ]` LICENSE scope bullet. There is
+    no Phase 8 bullet in the scope capture to tick, and that is correct: Phase 8
+    adds no scope, it re-proves Phases 1–7 against the shipped artifact, and
+    every bullet it re-proves was already `[x]`.
+    One source fix rode along — the only non-documentation change of the phase.
+    The root `Cargo.toml:14-18` comment over `[profile.devlocal]` advertised
+    `DSH_TUI_CARGO_PROFILE=devlocal`, a `scripts/devlocalinstall.sh` that does
+    not exist (`scripts/` is ten Python migration and e2e scripts), and "the
+    shipped npm packages", which left in Phase 5 (`crates/crow-client/npm/` does
+    not exist). It now names only what is real: `cargo build --profile devlocal`
+    while iterating, and `[profile.release]` (fat LTO, stripped) as what ships.
+    The profile itself is real and untouched, and `devlocal` still appears in
+    `scripts/collect-freeze-diag.sh:12` — correctly, since that is a `pgrep`
+    process matcher for a running binary's path, not a build instruction.
+[x] 8.5 Report: what changed, what was verified, what is deferred, and the one
     visible difference a user will notice (the default palette is purple now,
     and the binary no longer asks anyone for a DeepSeek key).
+    *Done:* delivered as the sprint's closing report. The one visible difference
+    a user meets: **the default palette is crow purple, and the binary never
+    asks anyone for a DeepSeek key** — credentials belong to the agent, and ACP
+    `authenticate` is the only sign-in story. Verified on the *shipped* release
+    binary, not on a debug build: `--help` (1484 chars) offers no credential
+    flag and names no brand; `--demo` on a real PTY reports
+    `model waiting for ACP` with zero occurrences of `api key`; and Phase 1's
+    pin `child_env_carries_no_provider_and_no_credentials` still holds inside
+    the 941.
+
+**Phase 8 gate result:** both profiles, same green. *Debug* — `cargo check
+--locked --tests -j 6` rc 0 with exactly the 3 permanent warnings (unused
+`Path` @ `main__cli_args_tests.rs:2`, unused `ctl` @ `ui__tests.rs:3602`,
+non-snake-case `dd_kills_the_line_and_gg_G_jump` @ `input__vim__tests.rs:74`,
+all on stderr in short format); `cargo test --locked --bin crow -j 6` → **941
+passed, 0 failed**; `cli_help` 3, `startup_session_e2e` 12, `sigterm_cleanup`
+1, `tcp_attach` 1. *Release* — `cargo build --release -j 6` rc 0 with only the
+deliberate `field ui_preset is never read`; the same four integration tests
+against the shipped binary → 3 / **12** / 1 / 1, **17** release tests green.
+`--dump-frame 100x34` → 1815 chars / 35 rows / 2819 bytes, **byte-identical**
+to `/tmp/rebrand-p4-baseline.frame` from *both* binaries (release saved as
+`/tmp/rebrand-p8-release.frame`). `--help` 1484 chars, no brand, no credential
+flag. `--demo` on a real PTY: exit 0, crow wordmark, `version crow 0.1.0`,
+`model waiting for ACP`, and zero hits for `deepseek` / `martty` / `dsh` /
+`api key`. Python: `uv run pytest tests/unit -q` → **788 passed**.
+
+The debug green is a *built* green, not a replayed one, and 8.1 records how that
+was established rather than asserted: an injected syntax error in `src/pet.rs`
+turned the gate red in 7.4 s (rc 101), then this crate's 27 debug artifact
+paths were deleted by hand — 23.7 GiB, deps untouched, no `cargo clean` — and
+the 941 plus the 3 warnings were recompiled from scratch in 86.5 s. The release
+green is pointed at the right artifact by construction and then verified: the
+e2e harness bakes `env!("CARGO_BIN_EXE_crow")` at
+`tests/startup_session_e2e.rs:309`, and
+`target/release/deps/startup_session_e2e-9bd8c126ff9ce174` contains
+`target/release/crow` and not `target/debug/crow`. One red was seen all phase
+and it was not this gate's: a Playwright screenshot flake under load in the
+Python suite, disproved three ways in 8.3.
+
+**Commit:** `chore(client): phase 8 — the shipped binary, driven`
 
 ---
 

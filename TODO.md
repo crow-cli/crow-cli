@@ -136,6 +136,52 @@ band: `bash -n scripts/collect-freeze-diag.sh` rc 0, the palette schema and all
 10 `docs/fixtures/*.json` re-parsed, and `git log -S` for the two historical
 claims 7.1/7.5 rest on.
 
+**Phase 8 gate result:** the whole gate, in both profiles, on the artifact that
+ships. *Debug:* check rc 0 with exactly those 3 warnings (same three lines, same
+bindings, all on stderr in short format); `cargo test --locked --bin crow -j 6`
+→ **941 passed, 0 failed**; `cli_help` 3, `startup_session_e2e` 12,
+`sigterm_cleanup` 1, `tcp_attach` 1; `--dump-frame 100x34` → 1815 chars / 35
+rows / 2819 bytes, byte-identical to `/tmp/rebrand-p4-baseline.frame`.
+*Release:* `cargo build --release -j 6` rc 0 in 128 s → `target/release/crow`,
+11.9 MB, one warning — the deliberate `field ui_preset is never read`
+(`app.rs:177`); the same four integration tests re-run with `--release` → 3 /
+**12** / 1 / 1, so **17** tests drove the shipped binary; its `--dump-frame` is
+byte-identical to the same baseline (saved `/tmp/rebrand-p8-release.frame`);
+`--help` 1484 chars with no brand and no credential flag; `--demo` on a **real
+PTY** (openpty/fork/`execve`, TIOCSWINSZ 110×30, 5 s, SIGTERM) exits **0**
+showing the crow wordmark, `https://crow-ai.dev`, `version crow 0.1.0`,
+`runtime demo`, `model waiting for ACP`, `mode demo — scripted turns, no API
+calls`, `session crow-65c7c5f0` — and **zero** occurrences of `deepseek`,
+`martty`, `dsh` or `api key` in 5897 chars of live UI. *Python:*
+`uv run pytest tests/unit -q` from the worktree root → **788 passed**.
+The release e2e really points at the release binary: the harness bakes
+`env!("CARGO_BIN_EXE_crow")` (`tests/startup_session_e2e.rs:309`, no env
+override, so the profile selects the path), and
+`target/release/deps/startup_session_e2e-9bd8c126ff9ce174` contains the bytes
+`target/release/crow` and not `target/debug/crow`.
+*Recorded because a cached green looks exactly like a real one:* 8.1 did not
+trust the warm artifacts. A syntax error injected into `src/pet.rs` turned check
+rc **101** in 7.4 s (proving the gate compiles this crate, then restored); then
+only this crate's debug artifacts were deleted by hand —
+`target/debug/{.fingerprint/crow-client-*,deps/crow-*,crow,incremental/crow-*}`,
+27 paths, **23.7 GiB** reclaimed, every third-party dep left in place and no
+`cargo clean` (AGENTS.md forbids it; the target dir is shared) — and from that
+state the 941 and the 3 warnings were recompiled in 86.5 s / 8.2 s. Warm
+timings for comparison: check 0.2–1.7 s, bin test 3.4–13 s.
+*One red, chased not waved off:* the first Python run was 1 failed / 787 passed
+— `test_tools_web.py::test_run_screenshot_rides_the_row`, Playwright
+`Page.captureScreenshot: Unable to capture screenshot`. Disproved as a
+load flake three ways: it passes alone in 1.8 s, the full suite re-runs **788
+passed**, and the branch changes zero Python (`git diff --stat` over
+merge-base…HEAD for `*.py`/`src/`/`tests/` returns one entry — the *deletion*
+of `crates/crow-client/assets/promo/build.py`).
+*The phase's one source change* is the root `Cargo.toml:14-18` comment over
+`[profile.devlocal]`, which advertised `DSH_TUI_CARGO_PROFILE=devlocal`, a
+nonexistent `scripts/devlocalinstall.sh` and "the shipped npm packages" (gone in
+Phase 5). It now names only what exists; the profile itself is untouched, and
+`collect-freeze-diag.sh:12`'s `devlocal` stays — that is a `pgrep` path matcher,
+not a build instruction.
+
 ## Scope capture (unordered)
 
 - [x] **The client stops owning provider/model/credentials.** `MODEL_PRESETS`
