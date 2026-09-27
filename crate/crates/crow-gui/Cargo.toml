@@ -19,6 +19,7 @@ required-features = ["web"]
 
 [dependencies]
 anyhow = "1"
+bitflags = "2"
 log = "0.4"
 # default-features = false: ratatui's default feature set pulls the crossterm
 # backend, which does not compile for wasm32-unknown-unknown (its terminal/sys.rs
@@ -27,7 +28,6 @@ log = "0.4"
 ratatui = { version = "0.30.2", default-features = false, features = ["std", "underline-color"] }
 ratatui-wgpu = "0.5"
 winit = "0.30"
-wgpu = "28.0.0"
 wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 js-sys = { version = "0.3", optional = true }
@@ -37,6 +37,18 @@ web-sys = { version = "0.3", optional = true, features = [
     "Window", "Document", "Element", "HtmlCanvasElement",
     "CssStyleDeclaration", "DomRect",
 ] }
+
+# Native: the wgpu adapter/device request is async and we have a thread to block
+# on. futures-lite's block_on is the same one ratatui-wgpu uses in its tests.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+futures-lite = "2"
+
+# Web: wgpu is named directly only here (Backends::GL + SurfaceTarget::Canvas),
+# and winit's ControlFlow::WaitUntil carries web_time::Instant on this target --
+# std's Instant is not implemented for wasm32-unknown-unknown.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = "28.0.0"
+web-time = "1"
 
 [features]
 default = []

@@ -55,9 +55,20 @@ def browser_page(served_web):
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page(viewport={"width": 1280, "height": 720})
+        # The runner reports failures through `log` (console_log), not through
+        # the probe object, so capture the console to make a timeout diagnosable.
+        console = []
+        page.on("console", lambda m: console.append(f"[{m.type}] {m.text}"))
+        page.on("pageerror", lambda e: console.append(f"[pageerror] {e}"))
         page.goto(served_web)
-        page.wait_for_function("window.__crowProbe && window.__crowProbe.ready === true",
-                               timeout=30_000)
+        try:
+            page.wait_for_function("window.__crowProbe && window.__crowProbe.ready === true",
+                                   timeout=30_000)
+        except Exception as exc:
+            raise AssertionError(
+                "backend never became ready: "
+                f"{exc}\nconsole:\n" + "\n".join(console)
+            ) from None
         yield page
         browser.close()
 

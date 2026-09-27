@@ -787,8 +787,10 @@ name = "crow-gui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bitflags 2.13.2",
  "console_error_panic_hook",
  "console_log",
+ "futures-lite",
  "js-sys",
  "log",
  "ratatui",
@@ -796,6 +798,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "web-time",
  "wgpu",
  "winit",
 ]
