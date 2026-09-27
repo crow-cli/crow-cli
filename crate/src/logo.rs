@@ -1,10 +1,10 @@
 //! The crow-cli lockup as terminal art.
 //!
-//! `crow` carries the brand gradient (pale → brand in dark mode, brand →
-//! pale in light); `-cli` runs its own ramp in the theme's `ok` hue — mint in
-//! every builtin pack, the complement of the pink-and-blue `crow` — so the two
-//! words read as two hues rather than one flat ink. Wide terminals get the
-//! full wordmark; narrower ones degrade to plain bold text.
+//! `cr` carries the brand gradient (pale → brand in dark mode, brand →
+//! pale in light); `ow` runs its own ramp in the theme's `ok` hue — mint in
+//! every builtin pack, the complement of the pink-and-blue `cr` — so the two
+//! halves of the word read as two hues rather than one flat ink. Wide
+//! terminals get the full wordmark; narrower ones degrade to plain bold text.
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -13,22 +13,23 @@ use crate::theme::{lerp, Mode, Theme, DEEPSEEK_200, DEEPSEEK_50};
 
 /// The crow-cli wordmark, 6 rows of [`ART_WIDTH`] columns.
 pub const CROW_CLI: [&str; 6] = [
-	r#"                                                   __    "#,
-	r#"  ___   _ __   ___   __  __  __              __   /\_\   "#,
-	r#" /'___\/\`'__\/ __`\/\ \/\ \/\ \  _______  /'__`\ \/\ \  "#,
-	r#"/\ \__/\ \ \//\ \L\ \ \ \_/ \_/ \/\______\/\ \L\.\_\ \ \ "#,
-	r#"\ \____\\ \_\\ \____/\ \___x___/'\/______/\ \__/.\_\\ \_\"#,
-	r#" \/____/ \/_/ \/___/  \/__//__/            \/__/\/_/ \/_/"#,
+	r#"██▓▓▓▒▒░░░░░▒▓ ██▓▓▓▒▒░░░░░▒▓ ██▓▓▓▒▒░░░░░▒▓ ██▓▓▓       ░░░▒▓"#,
+	r#"█▓▓▒▒────░░▒▓▓ █▓▓▒▒────░░▒▓▓ █▓▓▒▒────░░▒▓▓ █▓▓▒▒       ░░▒▓▓"#,
+	r#"▄▄▄▄▄          ▄▄▄▄▄▄▄▄▄▄▄▄▄  ▄▄▄▄▄    ▄▄▄▄▄ ▄▄▄▄▄  ▄▄▄  ▄▄▄▄▄"#,
+	r#"▓▓▓▓▓    ▄▄▄▄▄ ▓▓▓▓▓────▓▓▓▓▓ ▓▓▓▓▓    ▓▓▓▓▓ ▓▓▓▓▓  ▓▓▓  ▓▓▓▓▓"#,
+	r#"▒▒▒▒▒▒▒▒▒▒▒▒▒▒ ▒▒▒▒▒    ▒▒▒▒▒ ▒▒▒▒▒▒▒▒▒▒▒▒▒▒ ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒"#,
+	r#"└────────────┘ └───┘    └───┘ └────────────┘ └───────────────┘"#,
 ];
 
 /// Columns per row of [`CROW_CLI`]. Rows stay rectangular so centering
 /// cannot shear the wordmark.
-const ART_WIDTH: usize = 57;
+const ART_WIDTH: usize = 62;
 
-/// The column `crow` ends on: everything before it takes the gradient,
-/// `-cli` from here on takes the terminal ink. The hyphen box top lives in
-/// row 2 at columns 34-40, so the split hands the whole box to `-cli`.
-const ART_SPLIT: usize = 34;
+/// The column `ow` opens on: `cr` — plus the gutter column that follows it
+/// — takes the brand gradient, `ow` from here on takes the `ok` ramp. The
+/// letter pairs sit either side of the blank column 29, so the split hands
+/// the air to `cr` and starts `ow` on ink.
+const ART_SPLIT: usize = 30;
 
 /// The wordmark as plain text, for terminals too narrow for the art.
 const WORDMARK: &str = "crow-cli";
@@ -76,8 +77,8 @@ fn split_logo_lines(
         .collect()
 }
 
-/// The crow-cli logo rows, split into a gradient `crow` and a gradient
-/// `-cli`, centered to `width`. Terminals too narrow for the wordmark get the
+/// The crow-cli logo rows, split into a gradient `cr` and a gradient
+/// `ow`, centered to `width`. Terminals too narrow for the wordmark get the
 /// same two hues as plain bold text.
 pub fn crow_cli_logo_lines(theme: &Theme, width: u16) -> Vec<Line<'static>> {
     if width < ART_WIDTH as u16 + 2 {

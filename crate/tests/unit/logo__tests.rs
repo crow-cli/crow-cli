@@ -28,8 +28,8 @@ fn crow_cli_tiers() {
     let wide = crow_cli_logo_lines(&theme, 80);
     assert_eq!(wide.len(), CROW_CLI.len());
     assert!(
-        !wide.iter().any(|line| text(line).contains('█')),
-        "the old block art is gone: {:?}",
+        wide.iter().any(|line| text(line).contains('█')),
+        "the block lockup is live: {:?}",
         wide.iter().map(text).collect::<Vec<_>>()
     );
     let pad = " ".repeat((80 - ART_WIDTH) / 2);
@@ -62,8 +62,8 @@ fn crow_cli_tiers() {
     );
 }
 
-/// `crow` carries the brand gradient while `-cli` runs its own ramp in the
-/// theme's `ok` hue, so the two words never collapse into one ink.
+/// `cr` carries the brand gradient while `ow` runs its own ramp in the
+/// theme's `ok` hue, so the two halves never collapse into one ink.
 #[test]
 fn crow_cli_runs_a_gradient_per_word() {
     for theme in [Theme::dark(), Theme::light()] {
@@ -108,8 +108,8 @@ fn crow_cli_runs_a_gradient_per_word() {
     }
 }
 
-/// The two-tone split is lossless, and it lands on the word boundary: the
-/// hyphen box belongs to `-cli`, so the gradient stops at the `w`.
+/// The two-tone split is lossless, and it lands on the letter boundary: the
+/// gutter column stays with `cr`, so the gradient stops after the `r`.
 #[test]
 fn crow_cli_split_reassembles_the_wordmark() {
     let theme = Theme::dark();
@@ -124,12 +124,8 @@ fn crow_cli_split_reassembles_the_wordmark() {
     }
 
     for (index, row) in CROW_CLI.iter().enumerate() {
-        let (crow, cli) = split_row(row, ART_SPLIT);
-        assert!(!crow.contains("______"), "row {index} leaks the hyphen");
-        assert_eq!(
-            cli.contains("______"),
-            (2..=4).contains(&index),
-            "row {index}"
-        );
+        let (cr, ow) = split_row(row, ART_SPLIT);
+        assert!(cr.ends_with(' '), "row {index} hands the gutter to `ow`");
+        assert!(!ow.starts_with(' '), "row {index} opens `ow` on air");
     }
 }
