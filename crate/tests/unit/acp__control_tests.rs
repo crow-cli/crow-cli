@@ -1,0 +1,535 @@
+use super::*;
+use agent_client_protocol::schema::v1::{
+    AgentCapabilities, InitializeRequest, InitializeResponse, NewSessionResponse, PromptResponse,
+    SetSessionConfigOptionResponse, StopReason,
+};
+
+#[tokio::test(start_paused = true)]
+async fn browser_auth_outlives_the_short_control_deadline() {
+    use agent_client_protocol::schema::v1::AuthenticateResponse;
+    let (release, release_rx) = tokio::sync::watch::channel(false);
+    let (started, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
+    let agent = Agent.builder().on_receive_request(
+        async move |_req: AuthenticateRequest, responder, cx| {
+            let _ = started.send(());
+            let mut release_rx = release_rx.clone();
+            cx.spawn(async move {
+                release_rx.wait_for(|ready| *ready).await.unwrap();
+                responder.respond(AuthenticateResponse::new())
+            })?;
+            Ok(())
+        }, on_receive_request!(),
+    );
+    Client.builder().connect_with(agent, move |cx: ConnectionTo<Agent>| async move {
+        let (bus, _events) = std::sync::mpsc::channel();
+        let (done, mut done_rx) = tokio::sync::mpsc::unbounded_channel();
+        let methods = parse_auth_methods(&json!([{"id":"login", "name":"Browser login"}]),
+            &[], "/tmp", &Default::default());
+        let mut workers = ControlWorkers::default();
+        workers.enqueue(Cmd::Authenticate { method_id: "login".into(), values: Default::default() },
+            &cx, &bus, &Arc::new(Mutex::new(Surface::default())), &methods, &None,
+            std::path::Path::new("/tmp"), false, false, false, &done);
+        started_rx.recv().await.unwrap();
+        tokio::time::advance(Duration::from_secs(19 * 60)).await;
+        for _ in 0..5 { tokio::task::yield_now().await; }
+        assert!(done_rx.try_recv().is_err(), "browser login must have twenty minutes");
+        release.send(true).unwrap();
+        match done_rx.recv().await.unwrap() {
+            ControlFinish::Authenticated { result, .. } => assert!(result.is_ok()),
+            _ => panic!("expected authenticate result"),
+        }
+        Ok(())
+    }).await.unwrap();
+}
+
+async fn wait_event(rx: &Receiver<AppEvent>, predicate: impl Fn(&AppEvent) -> bool) {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            while let Ok(event) = rx.try_recv() {
+                if predicate(&event) {
+                    return;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .expect("expected scheduler event");
+}
+
+/// Stall one control request while another session prompts, finishes, and
+/// cancels. For config, also check same-session prompts cannot overtake it.
+async fn check_slow_control(config: bool) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let count = Arc::new(AtomicUsize::new(0));
+    let (blocked_tx, mut blocked_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (release_tx, release_rx) = tokio::sync::watch::channel(false);
+    let (cancel_tx, mut cancel_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (prompt_tx, mut prompt_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (prompt_release_tx, prompt_release_rx) = tokio::sync::watch::channel(false);
+    let agent = Agent
+        .builder()
+        .on_receive_request(
+            async move |req: InitializeRequest, responder, _cx| {
+                responder.respond(
+                    InitializeResponse::new(req.protocol_version)
+                        .agent_capabilities(AgentCapabilities::new()),
+                )
+            },
+            on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let blocked = blocked_tx.clone();
+                let release = release_rx.clone();
+                async move |_req: NewSessionRequest, responder, cx| {
+                    let index = count.fetch_add(1, Ordering::SeqCst) + 1;
+                    let mut release = release.clone();
+                    if index > 2 {
+                        let _ = blocked.send(());
+                        cx.spawn(async move {
+                            release.wait_for(|ready| *ready).await.unwrap();
+                            responder.respond(NewSessionResponse::new(SessionId::new(format!(
+                                "s{index}"
+                            ))))
+                        })?;
+                        Ok(())
+                    } else {
+                        responder
+                            .respond(NewSessionResponse::new(SessionId::new(format!("s{index}"))))
+                    }
+                }
+            },
+            on_receive_request!(),
+        )
+        .on_receive_request(
+            {
+                let blocked = blocked_tx;
+                let release = release_rx;
+                async move |_req: SetSessionConfigOptionRequest, responder, cx| {
+                    let _ = blocked.send(());
+                    let mut release = release.clone();
+                    cx.spawn(async move {
+                        release.wait_for(|ready| *ready).await.unwrap();
+                        responder.respond(SetSessionConfigOptionResponse::new(vec![]))
+                    })?;
+                    Ok(())
+                }
+            },
+            on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |req: PromptRequest, responder, cx| {
+                let _ = prompt_tx.send(req.session_id.to_string());
+                let mut release = prompt_release_rx.clone();
+                cx.spawn(async move {
+                    release.wait_for(|ready| *ready).await.unwrap();
+                    responder.respond(PromptResponse::new(StopReason::EndTurn))
+                })?;
+                Ok(())
+            },
+            on_receive_request!(),
+        )
+        .on_receive_notification(
+            async move |req: CancelNotification, _cx| {
+                let _ = cancel_tx.send(req.session_id.to_string());
+                Ok(())
+            },
+            on_receive_notification!(),
+        );
+    let cfg = RuntimeConfig {
+        bin: "demo".into(),
+        cordis: "demo".into(),
+        workspace: "/tmp".into(),
+        session_root: "/tmp".into(),
+        provider: "test".into(),
+        model: "test".into(),
+        max_tokens: None,
+        base_url: None,
+        api_key: None,
+        startup_session: None,
+    };
+    let (bus, events) = std::sync::mpsc::channel();
+    let (cmds, commands) = std::sync::mpsc::channel();
+    let task = tokio::spawn(connect(agent, cfg, bus, commands));
+    wait_event(&events, |event| matches!(event, AppEvent::Ctl(CtlEvent::SessionBound { session_id, .. }) if session_id == "s1")).await;
+    cmds.send(Cmd::NewSession { requester: None }).unwrap();
+    wait_event(&events, |event| matches!(event, AppEvent::Ctl(CtlEvent::SessionBound { session_id, .. }) if session_id == "s2")).await;
+    cmds.send(if config {
+        Cmd::SetConfigOption {
+            session_id: "s2".into(),
+            config_id: "model".into(),
+            value: "next".into(),
+        }
+    } else {
+        Cmd::NewSession { requester: None }
+    })
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), blocked_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    if config {
+        cmds.send(Cmd::Prompt {
+            session_id: "s2".into(),
+            text: "after config".into(),
+        })
+        .unwrap();
+    }
+    cmds.send(Cmd::Prompt {
+        session_id: "s1".into(),
+        text: "other session".into(),
+    })
+    .unwrap();
+    let started = tokio::time::timeout(Duration::from_secs(3), prompt_rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        started, "s1",
+        "other sessions progress, same-session prompts wait for config"
+    );
+    cmds.send(Cmd::Interrupt {
+        session_id: "s1".into(),
+    })
+    .unwrap();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(3), cancel_rx.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        "s1"
+    );
+    prompt_release_tx.send(true).unwrap();
+    wait_event(&events, |event| matches!(event, AppEvent::Ui(crate::events::UiEvent::TurnEnd { session, .. }) if session == "s1")).await;
+    if config {
+        assert!(
+            prompt_rx.try_recv().is_err(),
+            "s2 still waits for its config response"
+        );
+        release_tx.send(true).unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(3), prompt_rx.recv())
+                .await
+                .unwrap()
+                .unwrap(),
+            "s2"
+        );
+    }
+    // Shutdown must also work with the setup request still stalled.
+    cmds.send(Cmd::Shutdown).unwrap();
+    tokio::time::timeout(Duration::from_secs(3), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn slow_session_creation_does_not_block_other_session_prompts_or_cancel() {
+    check_slow_control(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn slow_config_only_blocks_following_prompts_on_its_own_session() {
+    check_slow_control(true).await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn prompts_and_steers_outlive_the_control_request_deadline() {
+    let (release, release_rx) = tokio::sync::watch::channel(false);
+    let (started, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
+    let agent = Agent.builder().on_receive_request(
+        async move |_req: PromptRequest, responder, cx| {
+            let _ = started.send(());
+            let mut release_rx = release_rx.clone();
+            cx.spawn(async move {
+                release_rx.wait_for(|ready| *ready).await.unwrap();
+                responder.respond(PromptResponse::new(StopReason::EndTurn))
+            })?;
+            Ok(())
+        },
+        on_receive_request!(),
+    );
+    Client
+        .builder()
+        .connect_with(agent, move |cx: ConnectionTo<Agent>| async move {
+            let (bus, _) = std::sync::mpsc::channel();
+            let (done, mut done_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (steer_done, mut steer_rx) = tokio::sync::mpsc::unbounded_channel();
+            let task = spawn_session_prompt(
+                cx.clone(),
+                bus,
+                SessionId::new("s"),
+                vec!["work".into()],
+                ParkedPromptKind::Text("work".into()),
+                1,
+                done,
+            );
+            spawn_steer_prompt(
+                cx,
+                SessionId::new("s"),
+                vec!["follow up".into()],
+                2,
+                steer_done,
+            );
+            started_rx.recv().await.unwrap();
+            started_rx.recv().await.unwrap();
+            tokio::time::advance(REQUEST_DEADLINE + Duration::from_secs(1)).await;
+            for _ in 0..5 {
+                tokio::task::yield_now().await;
+            }
+            assert!(
+                matches!(
+                    done_rx.try_recv(),
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+                ),
+                "healthy prompt timed out"
+            );
+            assert!(
+                matches!(
+                    steer_rx.try_recv(),
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty)
+                ),
+                "healthy steer timed out"
+            );
+            release.send(true).unwrap();
+            assert!(done_rx.recv().await.unwrap().result.stopped());
+            assert!(steer_rx.recv().await.unwrap().result.stopped());
+            task.await.unwrap();
+            Ok(())
+        })
+        .await
+        .unwrap();
+}
+
+fn model_switch_agent(reject: bool) -> impl ConnectTo<Client> + 'static {
+    Agent
+        .builder()
+        .on_receive_request(
+            async move |req: InitializeRequest, responder, _cx| {
+                responder.respond(
+                    InitializeResponse::new(req.protocol_version)
+                        .agent_capabilities(AgentCapabilities::new()),
+                )
+            },
+            on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |_req: NewSessionRequest, responder, _cx| {
+                responder.respond(NewSessionResponse::new(SessionId::new("s1")))
+            },
+            on_receive_request!(),
+        )
+        .on_receive_request(
+            async move |_req: SetSessionConfigOptionRequest, responder, _cx| {
+                if reject {
+                    responder.respond_with_error(AcpError::new(-32602, "unknown model"))
+                } else {
+                    responder.respond(SetSessionConfigOptionResponse::new(vec![]))
+                }
+            },
+            on_receive_request!(),
+        )
+}
+
+fn model_switch_cfg() -> RuntimeConfig {
+    RuntimeConfig {
+        bin: "demo".into(),
+        cordis: "demo".into(),
+        workspace: "/tmp".into(),
+        session_root: "/tmp".into(),
+        provider: "test".into(),
+        model: "test".into(),
+        max_tokens: None,
+        base_url: None,
+        api_key: None,
+        startup_session: None,
+    }
+}
+
+/// A rejected `/model` switch used to be dropped silently while the UI kept
+/// showing the optimistic pick. It must report the failure for rollback.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rejected_model_switch_reports_failure() {
+    let (bus, events) = std::sync::mpsc::channel();
+    let (cmds, commands) = std::sync::mpsc::channel();
+    let task = tokio::spawn(connect(model_switch_agent(true), model_switch_cfg(), bus, commands));
+    wait_event(&events, |event| {
+        matches!(event, AppEvent::Ctl(CtlEvent::SessionBound { session_id, .. }) if session_id == "s1")
+    })
+    .await;
+    cmds.send(Cmd::SelectModel {
+        session_id: "s1".into(),
+        provider: None,
+        model: Some("ghost".into()),
+        effort: None,
+    })
+    .unwrap();
+    wait_event(&events, |event| {
+        matches!(
+            event,
+            AppEvent::Ctl(CtlEvent::ModelSwitchFailed {
+                session_id,
+                model: Some(model),
+                ..
+            }) if session_id == "s1" && model == "ghost"
+        )
+    })
+    .await;
+    let _ = cmds.send(Cmd::Shutdown);
+    let _ = tokio::time::timeout(Duration::from_secs(2), task).await;
+}
+
+/// A successful switch folds the response's `configOptions` back (Catalog
+/// event) instead of relying on a follow-up notification.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn accepted_model_switch_folds_config_response() {
+    let (bus, events) = std::sync::mpsc::channel();
+    let (cmds, commands) = std::sync::mpsc::channel();
+    let task = tokio::spawn(connect(model_switch_agent(false), model_switch_cfg(), bus, commands));
+    wait_event(&events, |event| {
+        matches!(event, AppEvent::Ctl(CtlEvent::SessionBound { session_id, .. }) if session_id == "s1")
+    })
+    .await;
+    cmds.send(Cmd::SelectModel {
+        session_id: "s1".into(),
+        provider: None,
+        model: Some("next".into()),
+        effort: None,
+    })
+    .unwrap();
+    wait_event(&events, |event| {
+        matches!(
+            event,
+            AppEvent::Ctl(CtlEvent::Catalog { session_id: Some(sid), .. }) if sid == "s1"
+        )
+    })
+    .await;
+    let _ = cmds.send(Cmd::Shutdown);
+    let _ = tokio::time::timeout(Duration::from_secs(2), task).await;
+}
+
+
+/// The commands that never build a typed ACP request.
+///
+/// A v2 connection used to fall through to its catch-all for these and put
+/// `acp2: AgentsSnapshot { … } is not supported on a v2 connection` in the
+/// transcript — and the app sends both snapshots on a timer, so that was one
+/// error row per tick for the life of the session. They are Client chrome: the
+/// queue and the agent list are projections of state this process already owns,
+/// and neither protocol has a request for them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn version_neutral_commands_are_handled_without_a_typed_request() {
+    let (seen_tx, mut seen_rx) = tokio::sync::mpsc::unbounded_channel::<(String, Value)>();
+    let agent = Agent.builder().on_receive_request(
+        async move |request: UntypedMessage, responder, _cx| {
+            let _ = seen_tx.send((request.method().to_string(), request.params().clone()));
+            responder.respond(json!({ "ok": true }))
+        },
+        on_receive_request!(),
+    );
+    let (bus, events) = std::sync::mpsc::channel::<AppEvent>();
+    Client
+        .builder()
+        .connect_with(agent, move |cx: ConnectionTo<Agent>| async move {
+            let queue = Cmd::QueueSnapshot {
+                snapshot: crate::bus::QueueSnapshot {
+                    count: 2,
+                    items: vec![crate::bus::QueueSnapshotItem {
+                        id: 7,
+                        ordinal: 1,
+                        summary: "the queued prompt".into(),
+                    }],
+                    selected_id: Some(7),
+                    editing_id: None,
+                    delete_confirm: false,
+                },
+            };
+            let agents = Cmd::AgentsSnapshot {
+                snapshot: crate::bus::AgentsSnapshot {
+                    active_id: "s1".into(),
+                    selected_id: None,
+                    items: vec![crate::bus::AgentsSnapshotItem {
+                        id: "s1".into(),
+                        label: "Session 1".into(),
+                        kind: "session".into(),
+                        status: "idle".into(),
+                        current: true,
+                    }],
+                },
+            };
+            let active = Cmd::ActiveSession {
+                session_id: Some("s1".into()),
+            };
+            let compositor = Arc::new(Mutex::new(Surface {
+                client_compositor: true,
+                ..Surface::default()
+            }));
+
+            assert!(
+                run_version_neutral(&queue, &cx, &bus, &compositor).await,
+                "the queue snapshot belongs to neither protocol"
+            );
+            let (method, params) = seen_rx.recv().await.expect("the compositor got the queue");
+            assert_eq!(method, crate::cordis::QUEUE_UPDATE);
+            assert_eq!(params["count"], json!(2));
+            assert_eq!(params["items"][0]["summary"], json!("the queued prompt"));
+            assert_eq!(params["selectedId"], json!(7));
+
+            assert!(run_version_neutral(&agents, &cx, &bus, &compositor).await);
+            let (method, params) = seen_rx
+                .recv()
+                .await
+                .expect("the compositor got the agent list");
+            assert_eq!(method, crate::cordis::AGENTS_UPDATE);
+            assert_eq!(params["activeId"], json!("s1"));
+            assert_eq!(params["items"][0]["current"], json!(true));
+
+            assert!(run_version_neutral(&active, &cx, &bus, &compositor).await);
+            let (method, params) = seen_rx
+                .recv()
+                .await
+                .expect("the compositor got the active session");
+            assert_eq!(method, crate::cordis::SESSION_ACTIVE);
+            assert_eq!(params["sessionId"], json!("s1"));
+            assert_eq!(
+                compositor.lock().unwrap().active_session.as_deref(),
+                Some("s1"),
+                "the surface tracks the viewed session with or without a compositor"
+            );
+
+            // A direct native launch has no compositor to project into. Absence
+            // is silent: the snapshot is dropped, prompt flow is untouched, and
+            // nothing is reported as an error.
+            let bare = Arc::new(Mutex::new(Surface::default()));
+            for cmd in [&queue, &agents, &active] {
+                assert!(run_version_neutral(cmd, &cx, &bus, &bare).await);
+            }
+            for _ in 0..8 {
+                tokio::task::yield_now().await;
+            }
+            assert!(seen_rx.try_recv().is_err(), "no compositor, no extension call");
+
+            // Everything else still belongs to the version-specific stacks: a
+            // prompt is a different request in each spelling, and only those
+            // stacks know which one they are speaking.
+            let prompt = Cmd::Prompt {
+                session_id: "s1".into(),
+                text: "hi".into(),
+            };
+            assert!(
+                !run_version_neutral(&prompt, &cx, &bus, &compositor).await,
+                "a prompt is not version-neutral"
+            );
+
+            while let Ok(event) = events.try_recv() {
+                if let AppEvent::Ctl(CtlEvent::Error(message)) = event {
+                    panic!("a version-neutral command reported an error: {message}");
+                }
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
+}

@@ -1,0 +1,3894 @@
+use super::*;
+use crate::runtime::RuntimeConfig;
+use std::sync::mpsc;
+
+/// Unique session root per call — keeps the modes cache from leaking
+/// between tests and runs.
+fn fresh_root() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "dsh-tui-ui-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed),
+    ));
+    let _ = std::fs::create_dir_all(&dir);
+    dir.to_string_lossy().into_owned()
+}
+
+fn test_app() -> App {
+    let cfg = RuntimeConfig {
+        bin: "dsh-runtime".into(),
+        cordis: "cordis".into(),
+        workspace: "/tmp".into(),
+        session_root: fresh_root(),
+        provider: "deepseek".into(),
+        model: "deepseek-chat".into(),
+        max_tokens: None,
+        base_url: None,
+        api_key: None,
+        startup_session: None,
+    };
+    let (tx, _rx) = mpsc::channel();
+    App::new(Some(Theme::dark()), cfg, "dsh-test".into(), true, false, tx)
+}
+
+fn live_test_app() -> App {
+    let cfg = RuntimeConfig {
+        bin: "dsh-acp".into(),
+        cordis: "cordis".into(),
+        workspace: "/tmp".into(),
+        session_root: fresh_root(),
+        provider: "deepseek".into(),
+        model: "deepseek-chat".into(),
+        max_tokens: None,
+        base_url: None,
+        api_key: None,
+        startup_session: None,
+    };
+    let (tx, _rx) = mpsc::channel();
+    App::new(Some(Theme::dark()), cfg, "pending".into(), false, true, tx)
+}
+
+#[test]
+fn file_menu_popup_renders_above_the_composer() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    let mut app = test_app();
+    app.show_banner = false;
+    app.input.insert_str("@");
+    // A small controlled workspace: [../, src/, README.md].
+    let ws = std::env::temp_dir().join(format!(
+        "dsh-tui-ui-file-menu-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&ws);
+    std::fs::create_dir_all(ws.join("src")).expect("mkdir");
+    std::fs::write(ws.join("src/main.rs"), "").expect("write");
+    std::fs::write(ws.join("README.md"), "").expect("write");
+    let token = crate::file_ref::active_at_token("@", 1).expect("token");
+    app.cfg.workspace = ws.to_string_lossy().into_owned();
+    app.file_menu =
+        Some(crate::file_ref::FileMenu::open(&ws, 0, &token).expect("menu opens"));
+    let backend = TestBackend::new(80, 20);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    let buf = terminal.backend().buffer().clone();
+    let theme = app.theme;
+    let row_text = |y: u16| -> String {
+        (0..80).map(|x| buf[(x, y)].symbol().to_string()).collect()
+    };
+    // The popup sits above the composer box (rows 11..15 on this layout:
+    // 12 list rows cap to 3 entries + 2 border rows).
+    let title_row = row_text(11);
+    assert!(
+        title_row.contains("@") && title_row.contains("."),
+        "popup title shows the relative cwd: {title_row:?}"
+    );
+    let joined = [row_text(12), row_text(13), row_text(14)].join("\n");
+    assert!(
+        joined.contains("src/") && joined.contains("README.md"),
+        "entries listed: {joined:?}"
+    );
+    // The panel surface colors the popup; the selected row uses chip_bg.
+    assert_eq!(buf[(4, 12)].bg, theme.chip_bg, "selected row highlight");
+    assert_eq!(buf[(4, 13)].bg, theme.panel, "unselected rows keep panel");
+    // The highlight is unmistakable: a solid ▶ marker in the brand accent
+    // and the selected row text in brand + bold.
+    assert_eq!(buf[(3, 12)].symbol(), "▶", "bigger highlight marker");
+    assert_eq!(buf[(3, 12)].fg, theme.brand, "marker takes the accent");
+    let _ = std::fs::remove_dir_all(&ws);
+}
+
+#[test]
+fn composer_is_a_rounded_box_surface() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    let mut app = test_app();
+    app.show_banner = false;
+    let backend = TestBackend::new(80, 20);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    let buf = terminal.backend().buffer().clone();
+    let theme = app.theme;
+    // 80x20, no composer-dock contribution: the rounded box spans rows
+    // 15..19 — top border 15 (tip + · workspace), well 16..18, bottom
+    // border 19 carrying the meta row (`╰· Standard … ╯`).
+    assert_eq!(buf[(0, 15)].symbol(), "╭", "top-left corner");
+    assert_eq!(buf[(79, 15)].symbol(), "╮", "top-right corner");
+    assert_eq!(buf[(0, 19)].symbol(), "╰", "bottom-left corner");
+    assert_eq!(buf[(79, 19)].symbol(), "╯", "bottom-right corner");
+    assert_eq!(buf[(4, 15)].bg, theme.panel, "border row on the card");
+    assert_eq!(buf[(40, 16)].bg, theme.panel, "input well on panel surface");
+    assert_eq!(buf[(40, 17)].bg, theme.panel, "input well on panel surface");
+    assert_eq!(buf[(4, 18)].bg, theme.panel, "well fills the inner rows");
+    assert_eq!(
+        buf[(1, 19)].symbol(),
+        "·",
+        "meta row rides the bottom border with small dots"
+    );
+    assert_eq!(buf[(4, 10)].bg, theme.bg, "chat keeps the base background");
+}
+
+#[test]
+fn composer_cap_persistently_shows_the_workspace() {
+    let mut app = test_app();
+    app.show_banner = false;
+    app.cfg.workspace = "/work/acme/projects/deepseek-harness-tui-plan-view".into();
+
+    let frame = dump_frame(&mut app, 120, 20);
+    let cap = frame
+        .lines()
+        .find(|line| line.contains('⛶'))
+        .expect("composer cap");
+
+    assert!(
+        cap.contains("· /work/acme/projects/deepseek-harness-tui-plan-view"),
+        "{cap}"
+    );
+}
+
+#[test]
+fn composer_cap_preserves_the_workspace_tail_on_narrow_terminals() {
+    let mut app = test_app();
+    app.show_banner = false;
+    app.cfg.workspace = "/work/acme/very-long-directory-name/deepseek-harness".into();
+
+    let frame = dump_frame(&mut app, 60, 20);
+    let cap = frame
+        .lines()
+        .find(|line| line.contains('⛶'))
+        .expect("composer cap");
+
+    assert!(cap.contains("· …/deepseek-harness"), "{cap}");
+}
+
+#[test]
+fn composer_cap_shows_git_branch_after_the_project_path() {
+    let mut app = test_app();
+    app.show_banner = false;
+    app.cfg.workspace = "/work/acme/martty".into();
+    app.git_branch = Some("ui-tweak".into());
+
+    let frame = dump_frame(&mut app, 120, 20);
+    let cap = frame
+        .lines()
+        .find(|line| line.contains('⛶'))
+        .expect("composer cap");
+    assert!(cap.contains("· /work/acme/martty:ui-tweak"), "{cap}");
+
+    // No git (or not a repository): path only, no branch tag.
+    app.git_branch = None;
+    let frame = dump_frame(&mut app, 120, 20);
+    let cap = frame
+        .lines()
+        .find(|line| line.contains('⛶'))
+        .expect("composer cap");
+    assert!(cap.contains("· /work/acme/martty"), "{cap}");
+    assert!(!cap.contains("martty:"), "{cap}");
+}
+
+#[test]
+fn composer_cap_drops_git_branch_on_narrow_terminals() {
+    let mut app = test_app();
+    app.show_banner = false;
+    app.cfg.workspace = "/work/acme/martty".into();
+    app.git_branch = Some("a-long-branch-name".into());
+
+    let frame = dump_frame(&mut app, 60, 20);
+    let cap = frame
+        .lines()
+        .find(|line| line.contains('⛶'))
+        .expect("composer cap");
+    assert!(
+        !cap.contains(":a-long-branch-name"),
+        "branch must yield when the terminal is narrow: {cap}"
+    );
+    assert!(cap.contains("· /work/acme/martty"), "{cap}");
+}
+
+#[test]
+fn head_branch_parses_a_regular_repo_head() {
+    let root = fresh_root();
+    let git = std::path::Path::new(&root).join(".git");
+    std::fs::create_dir_all(&git).unwrap();
+    std::fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
+    assert_eq!(crate::ui::head_branch(&root), Some("main".into()));
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn head_branch_detached_head_has_no_branch() {
+    let root = fresh_root();
+    let git = std::path::Path::new(&root).join(".git");
+    std::fs::create_dir_all(&git).unwrap();
+    std::fs::write(
+        git.join("HEAD"),
+        "9fceb32d0f2d1d2f1d0f2d3a4b5c6d7e8f9a0b1c2\n",
+    )
+    .unwrap();
+    assert_eq!(crate::ui::head_branch(&root), None);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn head_branch_follows_a_gitdir_pointer_file() {
+    let root = fresh_root();
+    // Real `git worktree add` layout: the worktree holds only a `.git`
+    // file pointing at the main repo's `.git/worktrees/<name>` gitdir.
+    let gitdir = std::path::Path::new(&root).join("main/.git/worktrees/wt");
+    std::fs::create_dir_all(&gitdir).unwrap();
+    std::fs::write(gitdir.join("HEAD"), "ref: refs/heads/feature/x\n").unwrap();
+    let worktree = std::path::Path::new(&root).join("wt");
+    std::fs::create_dir_all(&worktree).unwrap();
+    std::fs::write(
+        worktree.join(".git"),
+        format!("gitdir: {}\n", gitdir.display()),
+    )
+    .unwrap();
+    assert_eq!(
+        crate::ui::head_branch(&worktree.to_string_lossy()),
+        Some("feature/x".into())
+    );
+
+    // Submodules write a relative pointer, resolved against `.git`'s parent.
+    let sub = std::path::Path::new(&root).join("sub");
+    std::fs::create_dir_all(sub.join("modules/m")).unwrap();
+    std::fs::write(sub.join("modules/m/HEAD"), "ref: refs/heads/dev\n").unwrap();
+    std::fs::write(sub.join(".git"), "gitdir: ./modules/m\n").unwrap();
+    assert_eq!(
+        crate::ui::head_branch(&sub.to_string_lossy()),
+        Some("dev".into())
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn head_branch_without_git_or_head_means_no_branch() {
+    let root = fresh_root();
+    // No `.git` at all: not a repository.
+    assert_eq!(crate::ui::head_branch(&root), None);
+    // `.git` present but HEAD missing (fresh `git init` always writes
+    // HEAD, so this is a corrupt/partial checkout).
+    let git = std::path::Path::new(&root).join(".git");
+    std::fs::create_dir_all(&git).unwrap();
+    assert_eq!(crate::ui::head_branch(&root), None);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn active_image_background_clears_only_the_base_canvas() {
+    use ratatui::backend::TestBackend;
+    use ratatui::style::Color;
+    use ratatui::Terminal;
+
+    let mut app = test_app();
+    app.show_banner = false;
+    app.pet_pixels = true;
+    let mut palette: serde_json::Value =
+        serde_json::from_str(include_str!("../../docs/fixtures/demo-skin.v0.json")).unwrap();
+    palette["background"] = serde_json::json!({
+        "source": { "kind": "file", "path": "/opt/liang/stage-00.png" },
+        "fit": "cover",
+        "opacity": 0.42
+    });
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+    app.handle(
+        crate::bus::AppEvent::Rpc {
+            method: crate::cordis::THEME_UPDATE.into(),
+            params: serde_json::json!({
+                "protocol": 0,
+                "palette": palette,
+                "activate": true
+            }),
+        },
+        &ctl,
+    );
+
+    let backend = TestBackend::new(80, 20);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    let buf = terminal.backend().buffer();
+
+    assert_eq!(
+        buf[(4, 10)].bg,
+        Color::Reset,
+        "chat reveals the image layer"
+    );
+    assert_eq!(
+        buf[(0, 15)].symbol(),
+        "╭",
+        "the composer box sits on the image layer"
+    );
+    assert_eq!(
+        buf[(4, 15)].bg,
+        app.theme.panel,
+        "the box card is panel, not the image"
+    );
+    assert_eq!(
+        buf[(40, 17)].bg,
+        app.theme.panel,
+        "composer remains readable"
+    );
+}
+
+#[test]
+fn model_chip_prefers_fresh_pick_until_a_turn_realizes_it() {
+    let flat = |spans: Vec<Span>| -> String {
+        spans.iter().map(|s| s.content.as_ref()).collect::<String>()
+    };
+    let mut app = test_app();
+    // A previous turn streamed on pro; the user just picked flash.
+    app.transcript.last_model = Some("deepseek-v4-pro".into());
+    app.selected_model = Some("deepseek-v4-flash".into());
+    let s = flat(status_right(&app));
+    assert!(s.contains("deepseek-v4-flash"), "{s}");
+    assert!(!s.contains("deepseek-v4-pro"), "{s}");
+    // Without a pick, the streamed model rules.
+    app.selected_model = None;
+    let s = flat(status_right(&app));
+    assert!(s.contains("deepseek-v4-pro"), "{s}");
+}
+
+#[test]
+fn live_meta_row_hides_session_options_until_session_bound() {
+    let flat_line = |line: Line| -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
+    };
+    let flat_spans = |spans: Vec<Span>| -> String {
+        spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
+    };
+    let mut app = live_test_app();
+    app.modes.agent_preset = Some("minimal".into());
+    app.modes.permission = Some("danger-full-access".into());
+    app.modes.effort = Some("high".into());
+
+    assert_eq!(flat_line(status_title(&app)), "");
+    let pending = flat_spans(status_right(&app));
+    assert!(!pending.contains("/keys"), "{pending}");
+    assert!(!pending.contains("deepseek-chat"), "{pending}");
+    assert!(!pending.contains("high"), "{pending}");
+
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+    app.handle(
+        crate::bus::AppEvent::Ctl(crate::bus::CtlEvent::SessionBound {
+            session_id: "acp-session".into(),
+            notice: None,
+        }),
+        &ctl,
+    );
+
+    let bound_left = flat_line(status_title(&app));
+    assert!(bound_left.contains("minimal"), "{bound_left}");
+    assert!(bound_left.contains("Full access"), "{bound_left}");
+    assert!(!flat_spans(status_right(&app)).contains("deepseek-chat"));
+    app.handle(
+        crate::bus::AppEvent::Ui(crate::events::UiEvent::SessionModel {
+            session: "acp-session".into(), model: "deepseek-chat".into(),
+        }), &ctl,
+    );
+    let bound_right = flat_spans(status_right(&app));
+    assert!(bound_right.contains("deepseek-chat"), "{bound_right}");
+    assert!(bound_right.contains("high"), "{bound_right}");
+}
+
+#[test]
+fn context_meter_is_the_last_thing_the_narrow_meta_row_drops() {
+    let flat_line = |line: Line| -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
+    };
+    let mut app = live_test_app();
+    app.session_bound = true;
+    app.server_info = Some("crow-cli".into());
+    app.selected_model = Some("alibaba:qwen3.8-max".into());
+    app.modes.effort = Some("max".into());
+    app.transcript.context = Some(crate::transcript::ContextUsage {
+        used: 48_500,
+        size: 180_000,
+    });
+
+    let wide = flat_line(meta_line(&app, 160));
+    assert!(wide.contains("ctx 48.5K/180.0K 27%"), "{wide}");
+    assert!(wide.contains(" · max"), "{wide}");
+
+    // Shrink the row one cell at a time: hints, effort, harness and model fall
+    // away in that order, the meter folds to a bare percentage, and only a row
+    // too narrow for anything at all may lose it.
+    let mut seen_tiny = false;
+    let mut tiny_without_model = false;
+    let mut lost = false;
+    for w in (24..160).rev() {
+        let line = flat_line(meta_line(&app, w));
+        let has_full = line.contains("ctx 48.5K/180.0K 27%");
+        let has_tiny = line.contains("ctx 27%");
+        seen_tiny |= has_tiny;
+        tiny_without_model |= has_tiny && !line.contains("qwen");
+        if lost {
+            assert!(!has_full && !has_tiny, "w={w}: meter returned after being dropped: {line}");
+        } else if !has_full && !has_tiny {
+            lost = true;
+            assert!(!line.contains("qwen"), "w={w}: model outlived the meter: {line}");
+        } else {
+            assert!(!(has_full && seen_tiny), "w={w}: full meter after the compact one: {line}");
+        }
+    }
+    assert!(seen_tiny, "meter never folded to its compact form");
+    assert!(tiny_without_model, "meter never outlived the model chip");
+}
+
+#[test]
+fn codex_model_chip_waits_for_acp_then_uses_the_reported_session_model() {
+    let flat = |spans: Vec<Span>| -> String {
+        spans.iter().map(|s| s.content.as_ref()).collect::<String>()
+    };
+    let mut app = live_test_app();
+    app.cfg.bin = "npx -y @agentclientprotocol/codex-acp".into();
+    app.server_info = Some("@agentclientprotocol/codex-acp".into());
+    app.session_bound = true;
+
+    let pending = flat(status_right(&app));
+    assert!(!pending.contains("deepseek-chat"), "{pending}");
+
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+    app.handle(
+        crate::bus::AppEvent::Ui(crate::events::UiEvent::SessionModel {
+            session: app.session_id.clone(),
+            model: "gpt-5.6-codex".into(),
+        }),
+        &ctl,
+    );
+
+    let reported = flat(status_right(&app));
+    assert!(reported.contains("gpt-5.6-codex"), "{reported}");
+    assert!(!reported.contains("deepseek-chat"), "{reported}");
+}
+
+#[test]
+fn live_deepseek_landing_also_uses_acp_instead_of_startup_provider_and_model() {
+    let mut app = live_test_app();
+    app.server_info = Some("dsh-acp".into());
+    assert_eq!(welcome_model(&app), "waiting for ACP");
+    assert_eq!(displayed_model(&app), None);
+    app.session_model = Some("current-deepseek-model".into());
+    assert_eq!(welcome_model(&app), "current-deepseek-model");
+}
+
+#[test]
+fn failed_connection_landing_has_target_and_error_not_waiting_or_credentials() {
+    let mut app = live_test_app();
+    app.server_info = Some("Cline".into());
+    app.connection_error = Some("process exited (1)".into());
+    app.session_id = "unavailable".into();
+    let text = welcome_info_lines(&app).iter().flat_map(|line| line.spans.iter())
+        .map(|span| span.content.as_ref()).collect::<String>();
+    assert!(text.contains("Cline"), "{text}");
+    assert!(text.contains("connection failed"), "{text}");
+    assert!(!text.contains("waiting for ACP"), "{text}");
+    assert!(!text.contains("source not reported"), "{text}");
+}
+
+#[test]
+fn attached_landing_does_not_guess_runtime_before_initialize_or_after_failure() {
+    let mut app = live_test_app();
+    app.cfg.bin = "dsh-acp".into();
+    app.server_info = None;
+    for state in [crate::app::RunState::Starting, crate::app::RunState::Idle] {
+        app.state = state;
+        let text = welcome_info_lines(&app).iter().flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref()).collect::<String>();
+        assert!(!text.contains("dsh-acp"), "{text}");
+        assert!(!text.contains("deepseek-chat"), "{text}");
+        assert!(text.contains("waiting for ACP"), "{text}");
+    }
+}
+
+#[test]
+fn new_tab_landing_never_falls_back_to_old_runtime_or_auth() {
+    let mut app = live_test_app();
+    app.server_info = Some("dsh-acp".into());
+    app.auth.status = crate::acp_auth::AuthStatus::Configured;
+    app.auth.method_name = Some("Old credential".into());
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+    app.handle(crate::bus::AppEvent::Ctl(crate::bus::CtlEvent::NewSessionRequested), &ctl);
+    let text = welcome_info_lines(&app).iter().flat_map(|line| line.spans.iter())
+        .map(|span| span.content.as_ref()).collect::<String>();
+    assert!(!text.contains("dsh-acp"), "{text}");
+    assert!(!text.contains("deepseek-chat"), "{text}");
+    assert!(!text.contains("Old credential"), "{text}");
+}
+
+#[test]
+fn welcome_auth_unknown_source_does_not_claim_authenticate() {
+    let mut app = live_test_app();
+    app.auth = crate::acp_auth::configured_snapshot(vec![], None);
+    let lines = welcome_info_lines(&app);
+    let text = lines.iter().flat_map(|line| line.spans.iter())
+        .map(|span| span.content.as_ref()).collect::<String>();
+    assert!(text.contains("source not reported"), "{text}");
+    assert!(!text.contains("ACP authenticate"), "{text}");
+    assert!(text.contains("credentials "), "label and value need spacing: {text}");
+}
+
+#[test]
+fn welcome_auth_distinguishes_pending_and_failed_authenticate() {
+    let flat = |lines: Vec<Line>| lines.iter().flat_map(|line| line.spans.iter())
+        .map(|span| span.content.as_ref()).collect::<Vec<_>>().join("\n");
+    let mut app = live_test_app();
+    app.auth.status = crate::acp_auth::AuthStatus::SigningIn;
+    app.auth.method_name = Some("Log in with Google".into());
+    let pending = flat(welcome_info_lines(&app));
+    assert!(pending.contains("signing in"), "{pending}");
+    assert!(!pending.contains("sign-in needed"), "{pending}");
+    app.auth.status = crate::acp_auth::AuthStatus::Failed;
+    let failed = flat(welcome_info_lines(&app));
+    assert!(failed.contains("sign-in failed"), "{failed}");
+    assert!(failed.contains("/auth"), "{failed}");
+    assert!(!failed.contains("host dsh"), "{failed}");
+}
+
+#[test]
+fn welcome_info_uses_the_active_acp_runtime_and_reported_session_model() {
+    let flat = |lines: Vec<Line>| -> String {
+        lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let mut app = live_test_app();
+    app.server_info = Some("@agentclientprotocol/codex-acp".into());
+
+    let pending = flat(welcome_info_lines(&app));
+    assert!(pending.contains("waiting for ACP"), "{pending}");
+    assert!(pending.contains("codex-acp"), "{pending}");
+    assert!(!pending.contains("deepseek-chat"), "{pending}");
+
+    app.session_model = Some("gpt-5.6-sol".into());
+    let reported = flat(welcome_info_lines(&app));
+    assert!(reported.contains("gpt-5.6-sol"), "{reported}");
+    assert!(!reported.contains("deepseek-chat"), "{reported}");
+}
+
+#[test]
+fn status_shortcut_hints_follow_their_values_and_use_key_styling() {
+    let flat = |line: &Line| -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
+    };
+    let mut app = test_app();
+
+    app.locale = crate::locale::Locale::Zh;
+    let zh_line = status_title(&app);
+    let zh = flat(&zh_line);
+    assert!(
+        zh.contains("Standard mode ctrl+shift+a · 工作区可写 shift+tab"),
+        "{zh}"
+    );
+    assert!(!zh.contains("permission"), "{zh}");
+    assert!(!zh.contains("权限"), "{zh}");
+
+    app.locale = crate::locale::Locale::En;
+    let en_line = status_title(&app);
+    let en = flat(&en_line);
+    assert!(
+        en.contains("Standard mode ctrl+shift+a · Workspace Write shift+tab"),
+        "{en}"
+    );
+    assert!(!en.contains("permission"), "{en}");
+    assert!(!en.contains("access"), "{en}");
+
+    let key_spans = en_line
+        .spans
+        .iter()
+        .filter(|span| span.content.contains('+'))
+        .collect::<Vec<_>>();
+    assert_eq!(key_spans.len(), 2, "{en}");
+    assert!(key_spans.iter().all(|span| {
+        span.style.fg == Some(app.theme.fg_tertiary)
+            && !span.style.add_modifier.contains(Modifier::BOLD)
+    }));
+    let value_spans = en_line
+        .spans
+        .iter()
+        .filter(|span| {
+            span.content.contains("Standard mode") || span.content.contains("Workspace Write")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(value_spans.len(), 2, "{en}");
+    assert!(value_spans
+        .iter()
+        .all(|span| span.style.fg == Some(app.theme.fg_tertiary)));
+    // Issue #77: the shortcut hints share the light tertiary tone of the
+    // mode labels and the composer stats dock readout (no brand accent).
+    assert_eq!(key_spans[0].style.fg, value_spans[0].style.fg);
+}
+
+#[test]
+fn cordis_protocol_id_is_rendered_as_creator() {
+    let mut app = test_app();
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+    app.handle(
+        crate::bus::AppEvent::Ctl(crate::bus::CtlEvent::Catalog {
+            session_id: None,
+            models: Vec::new(),
+            presets: vec![crate::bus::CatalogPreset {
+                id: "cordis".into(),
+                name: "Creator from ACP".into(),
+                description: String::new(),
+                broken: false,
+            }],
+        }),
+        &ctl,
+    );
+    app.modes.agent_preset = Some("cordis".into());
+
+    let rendered = status_title(&app)
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+
+    assert!(rendered.contains("Creator from ACP"), "{rendered}");
+    assert!(!rendered.contains("cordis"), "{rendered}");
+}
+
+#[test]
+fn meta_row_hints_follow_the_state_machine() {
+    let flat = |spans: Vec<Span>| -> String {
+        spans.iter().map(|s| s.content.as_ref()).collect::<String>()
+    };
+    let mut app = test_app();
+    // idle · empty → no dock hint at all (no /keys; ctrl+k belongs to the editor)
+    let s = flat(context_hints(&app));
+    assert!(s.is_empty(), "{s}");
+    assert!(!s.contains("keys"), "{s}");
+    // idle · draft → enter sends
+    app.input.set("hello".into());
+    let s = flat(context_hints(&app));
+    assert!(s.contains("⏎ send"), "{s}");
+    assert!(!s.contains("keys"), "{s}");
+    // idle · slash recommendations own Enter/Esc; shell drafts relabel Enter
+    app.input.set("/mo".into());
+    let s = flat(context_hints(&app));
+    assert!(s.contains("⏎ select") && s.contains("esc close"), "{s}");
+    app.input.set("!ls".into());
+    assert!(flat(context_hints(&app)).contains("⏎ shell"));
+    // running · empty → interrupt only
+    app.state = RunState::Running;
+    app.input.clear();
+    let s = flat(context_hints(&app));
+    assert!(s.contains("esc interrupt"), "{s}");
+    assert!(!s.contains("⏎"), "{s}");
+    // running · draft → queue + send-now + interrupt
+    app.input.set("follow-up".into());
+    let s = flat(context_hints(&app));
+    assert!(
+        s.contains("⏎ queue") && s.contains("ctrl+⏎ steer") && s.contains("esc interrupt"),
+        "{s}"
+    );
+}
+
+#[test]
+fn meta_row_hints_explain_queue_edit_and_delete_confirmation() {
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+
+    let flat = |spans: Vec<Span>| -> String {
+        spans.iter().map(|s| s.content.as_ref()).collect::<String>()
+    };
+    let mut app = test_app();
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+    app.state = RunState::Running;
+    app.input.set("queued draft".into());
+    app.handle(
+        crate::bus::AppEvent::Term(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        ))),
+        &ctl,
+    );
+    app.handle(
+        crate::bus::AppEvent::Term(Event::Key(KeyEvent::new(KeyCode::Up, KeyModifiers::ALT))),
+        &ctl,
+    );
+
+    let selecting = flat(context_hints(&app));
+    assert!(selecting.contains("↑↓ choose"), "{selecting}");
+    assert!(selecting.contains("⏎ edit"), "{selecting}");
+    assert!(selecting.contains("esc close"), "{selecting}");
+    app.handle(
+        crate::bus::AppEvent::Term(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        ))),
+        &ctl,
+    );
+
+    let edit = flat(context_hints(&app));
+    assert!(edit.contains("⏎ save"), "{edit}");
+    assert!(edit.contains("^d delete"), "{edit}");
+    assert!(edit.contains("esc cancel"), "{edit}");
+
+    app.handle(
+        crate::bus::AppEvent::Term(Event::Key(KeyEvent::new(
+            KeyCode::Char('d'),
+            KeyModifiers::CONTROL,
+        ))),
+        &ctl,
+    );
+    let confirm = flat(context_hints(&app));
+    assert!(confirm.contains("⏎ delete"), "{confirm}");
+    assert!(confirm.contains("esc back"), "{confirm}");
+}
+
+#[test]
+fn usage_footer_shows_turn_stats_and_cache() {
+    let mut app = test_app();
+    app.show_banner = false;
+    app.slot_snapshots.insert(
+            "conversation.composer.dock".into(),
+            serde_json::from_value(serde_json::json!({
+                "protocol": 0,
+                "slot": "conversation.composer.dock",
+                "rev": 1,
+                "nodes": [
+                    { "id": "stats:tokens", "kind": "generic", "title": "Input 1.8K tok · Output 412 tok", "body": "" },
+                    { "id": "stats:counts", "kind": "generic", "title": "1 turn · 67 steps", "body": "" },
+                    { "id": "stats:cache", "kind": "generic", "title": "Cache hit 65%", "body": "" }
+                ]
+            })).expect("slot snapshot"),
+        );
+    let frame = dump_frame(&mut app, 100, 20);
+    let footer = frame.lines().last().expect("footer row");
+    assert!(footer.contains("1 turn"), "{footer}");
+    assert!(footer.contains("67 steps"), "{footer}");
+    assert!(footer.contains("Cache hit 65%"), "{footer}");
+    assert!(footer.contains("Input 1.8K tok"), "{footer}");
+    assert!(footer.contains("Output 412 tok"), "{footer}");
+}
+
+#[test]
+fn empty_stats_slot_still_reserves_the_composer_footer_row() {
+    let mut app = test_app();
+    app.show_banner = false;
+    let _ = dump_frame(&mut app, 100, 24);
+    let without_footer = app.chat_view.area.height;
+    app.slot_snapshots.insert(
+        "conversation.composer.dock".into(),
+        serde_json::from_value(serde_json::json!({
+            "protocol": 0,
+            "slot": "conversation.composer.dock",
+            "rev": 1,
+            "nodes": []
+        }))
+        .expect("empty stats slot snapshot"),
+    );
+
+    let _ = dump_frame(&mut app, 100, 24);
+
+    assert_eq!(
+        app.chat_view.area.height + 1,
+        without_footer,
+        "the future status row stays reserved before stats arrive"
+    );
+}
+
+#[test]
+fn usage_footer_drops_sections_on_narrow_screens() {
+    let mut app = test_app();
+    app.show_banner = false;
+    app.slot_snapshots.insert(
+            "conversation.composer.dock".into(),
+            serde_json::from_value(serde_json::json!({
+                "protocol": 0,
+                "slot": "conversation.composer.dock",
+                "rev": 1,
+                "nodes": [
+                    { "id": "stats:tokens", "kind": "generic", "title": "Input 1.8K tok · Output 412 tok", "body": "" },
+                    { "id": "stats:counts", "kind": "generic", "title": "1 turn · 67 steps", "body": "" },
+                    { "id": "stats:cache", "kind": "generic", "title": "Cache hit 65%", "body": "" },
+                    { "id": "stats:time", "kind": "generic", "title": "LLM 15m9s · Tool call 0s", "body": "" },
+                    { "id": "stats:speed", "kind": "generic", "title": "TTFT avg 1.5s · 0.5 tok/s", "body": "" }
+                ]
+            })).expect("slot snapshot"),
+        );
+
+    // Narrow: low-priority timing sections are dropped, tokens survive.
+    let footer = dump_frame(&mut app, 40, 20);
+    let footer = footer.lines().last().expect("footer row");
+    assert!(footer.contains("Input"), "tokens survive: {footer}");
+    assert!(footer.contains("Output"), "tokens survive: {footer}");
+    assert!(
+        !footer.contains("TTFT"),
+        "TTFT dropped when narrow: {footer}"
+    );
+    assert!(!footer.contains("LLM"), "LLM dropped when narrow: {footer}");
+}
+
+#[test]
+fn native_agent_rail_expands_only_during_selection() {
+    let mut app = test_app();
+    app.show_banner = false;
+    app.subagents.push(crate::app::SubagentView {
+        id: "child-1".into(),
+        parent: "dsh-test".into(),
+        label: "subagent 1".into(),
+        running: true,
+        failed: false,
+        transcript: crate::transcript::Transcript::new("child-1".into()),
+    });
+    app.subagents.push(crate::app::SubagentView {
+        id: "child-2".into(),
+        parent: "dsh-test".into(),
+        label: "subagent 2".into(),
+        running: false,
+        failed: false,
+        transcript: crate::transcript::Transcript::new("child-2".into()),
+    });
+
+    let collapsed = dump_frame(&mut app, 100, 24);
+    assert!(
+        collapsed.contains("· Agents · 1/2  ↓ expand"),
+        "the keyboard hint stays beside the summary:\n{collapsed}"
+    );
+    assert!(!collapsed.contains("click"), "{collapsed}");
+    assert!(!collapsed.contains("subagent 1"), "{collapsed}");
+    assert!(!collapsed.contains("subagent 2"), "{collapsed}");
+    let before_spinner = collapsed
+        .lines()
+        .find(|line| line.contains("Agents ·"))
+        .expect("collapsed Agent rail")
+        .to_string();
+    app.tick();
+    let after_tick = dump_frame(&mut app, 100, 24);
+    let after_spinner = after_tick
+        .lines()
+        .find(|line| line.contains("Agents ·"))
+        .expect("collapsed Agent rail after tick");
+    assert_eq!(
+        before_spinner, after_spinner,
+        "the collapsed summary has no redundant spinner prefix"
+    );
+    let collapsed_lines = collapsed.lines().collect::<Vec<_>>();
+    let collapsed_agents_y = collapsed_lines
+        .iter()
+        .position(|line| line.contains("Agents ·"))
+        .expect("collapsed Agent rail");
+    let collapsed_meta_y = collapsed_lines
+        .iter()
+        .position(|line| line.contains("· Standard"))
+        .expect("composer meta");
+    assert_eq!(
+        collapsed_agents_y + 1,
+        collapsed_meta_y,
+        "collapsed Agent rail sits immediately above composer meta:\n{collapsed}"
+    );
+
+    app.agent_selection = Some("dsh-test".into());
+    let running_marker = app.spinner();
+    let expanded = dump_frame(&mut app, 100, 24);
+    assert!(
+        expanded.contains(&format!("{running_marker} subagent 1")),
+        "{expanded}"
+    );
+    assert!(expanded.contains("✓ subagent 2"), "{expanded}");
+    assert!(expanded.contains("esc close"), "{expanded}");
+}
+
+#[test]
+fn native_agent_rail_auto_closes_once_every_task_has_ended() {
+    // Issue #80: the native rail is only a live-progress surface. When no
+    // subagent is running and none failed, it closes instead of leaving a
+    // static summary; an inline selection reopens it.
+    let mut app = test_app();
+    app.show_banner = false;
+    app.subagents.push(crate::app::SubagentView {
+        id: "child-1".into(),
+        parent: "dsh-test".into(),
+        label: "subagent 1".into(),
+        running: false,
+        failed: false,
+        transcript: crate::transcript::Transcript::new("child-1".into()),
+    });
+    app.subagents.push(crate::app::SubagentView {
+        id: "child-2".into(),
+        parent: "dsh-test".into(),
+        label: "subagent 2".into(),
+        running: false,
+        failed: false,
+        transcript: crate::transcript::Transcript::new("child-2".into()),
+    });
+
+    let frame = dump_frame(&mut app, 100, 24);
+    assert!(
+        !frame.contains("Agents ·"),
+        "all tasks finished → the native rail auto-closes:\n{frame}"
+    );
+
+    // An active inline selection keeps the rail visible after the tasks end.
+    app.agent_selection = Some("child-1".into());
+    let expanded = dump_frame(&mut app, 100, 24);
+    assert!(
+        expanded.contains("subagent 1"),
+        "selection reopens the rail:\n{expanded}"
+    );
+
+    // A failed task keeps the summary visible as a failure surface.
+    app.agent_selection = None;
+    app.subagents[1].failed = true;
+    let failed = dump_frame(&mut app, 100, 24);
+    assert!(failed.contains("Agents · 2/2"), "{failed}");
+}
+
+#[test]
+fn plugin_agent_navigation_sits_above_composer_meta_with_general_theme_tokens() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    let mut app = test_app();
+    app.show_banner = false;
+    app.subagents.push(crate::app::SubagentView {
+        id: "child-1".into(),
+        parent: "dsh-test".into(),
+        label: "subagent 1".into(),
+        running: true,
+        failed: false,
+        transcript: crate::transcript::Transcript::new("child-1".into()),
+    });
+    app.subagents.push(crate::app::SubagentView {
+        id: "child-2".into(),
+        parent: "dsh-test".into(),
+        label: "subagent 2".into(),
+        running: false,
+        failed: false,
+        transcript: crate::transcript::Transcript::new("child-2".into()),
+    });
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+    app.handle(
+        crate::bus::AppEvent::Rpc {
+            method: crate::cordis::SLOTS_UPDATE.into(),
+            params: serde_json::json!({
+                "protocol": 0,
+                "slot": "conversation.navigation.dock",
+                "rev": 1,
+                "nodes": [
+                    { "id": "agents-view:label", "kind": "generic", "title": "· Agents", "body": "", "tone": "caption" },
+                    { "id": "agents-view:agent-dsh-test", "kind": "generic", "title": "▸ main", "body": "", "tone": "brand", "selected": true },
+                    { "id": "agents-view:agent-child-1", "kind": "generic", "title": "subagent 1", "body": "", "status": "running", "tone": "fg" },
+                    { "id": "agents-view:agent-child-2", "kind": "generic", "title": "subagent 2", "body": "", "status": "done", "tone": "fg" },
+                    { "id": "agents-view:switch", "kind": "generic", "title": "←/→ · enter · esc close", "body": "", "tone": "brand_soft" }
+                ]
+            }),
+        },
+        &ctl,
+    );
+    app.handle(
+        crate::bus::AppEvent::Rpc {
+            method: crate::cordis::SLOTS_UPDATE.into(),
+            params: serde_json::json!({
+                "protocol": 0,
+                "slot": "conversation.composer.dock",
+                "rev": 1,
+                "nodes": [{ "id": "stats:counts", "kind": "generic", "title": "4 turns", "body": "" }]
+            }),
+        },
+        &ctl,
+    );
+
+    let backend = TestBackend::new(100, 24);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    let buf = terminal.backend().buffer().clone();
+    let frame = (0..24)
+        .map(|y| (0..100).map(|x| buf[(x, y)].symbol()).collect::<String>())
+        .collect::<Vec<_>>();
+    let meta_y = frame
+        .iter()
+        .position(|line| line.contains("Standard"))
+        .expect("composer meta");
+    let agents_y = frame
+        .iter()
+        .position(|line| line.contains("· Agents"))
+        .expect("Agent dock");
+    let stats_y = frame
+        .iter()
+        .position(|line| line.contains("4 turns"))
+        .expect("stats dock");
+
+    assert_eq!(
+        agents_y + 1,
+        meta_y,
+        "Agent navigation sits immediately above composer meta:\n{}",
+        frame.join("\n")
+    );
+    assert_eq!(
+        stats_y,
+        meta_y + 1,
+        "stats remain outside navigation:\n{}",
+        frame.join("\n")
+    );
+    let meta_x = frame[meta_y].find("· Standard").expect("meta alignment");
+    let agents_x = frame[agents_y].find("· Agents").expect("Agent alignment");
+    assert_eq!(
+        agents_x,
+        meta_x,
+        "TUI rows share one left content edge:\n{}",
+        frame.join("\n")
+    );
+    assert_eq!(
+        buf[(0, meta_y as u16)].symbol(),
+        "╰",
+        "composer meta closes the shared card"
+    );
+    assert_eq!(
+        buf[(0, agents_y as u16)].symbol(),
+        "│",
+        "navigation remains inside the shared card"
+    );
+    assert_eq!(
+        buf[(99, agents_y as u16)].symbol(),
+        "│",
+        "navigation remains inside the shared card"
+    );
+
+    let active_x = frame[agents_y].find("▸ main").expect("active agent") as u16;
+    let finished_x = frame[agents_y].find("subagent 2").expect("finished agent") as u16;
+    assert_eq!(buf[(active_x, agents_y as u16)].fg, app.theme.brand);
+    assert_eq!(buf[(finished_x, agents_y as u16)].fg, app.theme.fg);
+    let finished_status_x = (0..100)
+        .find(|x| buf[(*x, agents_y as u16)].symbol() == "✓")
+        .expect("finished Agent status");
+    assert_eq!(
+        buf[(finished_status_x, agents_y as u16)].fg,
+        app.theme.caption
+    );
+    assert!(
+        frame[agents_y].contains("esc close"),
+        "the expanded rail explains how to collapse:\n{}",
+        frame.join("\n")
+    );
+
+    app.handle(
+        crate::bus::AppEvent::Rpc {
+            method: crate::cordis::SLOTS_UPDATE.into(),
+            params: serde_json::json!({
+                "protocol": 0,
+                "slot": "conversation.navigation.dock",
+                "rev": 2,
+                "nodes": [
+                    { "id": "agents-view:label", "kind": "generic", "title": "· Agents", "body": "", "tone": "caption" },
+                    { "id": "agents-view:agent-dsh-test", "kind": "generic", "title": "• main", "body": "", "tone": "brand_soft" },
+                    { "id": "agents-view:agent-child-1", "kind": "generic", "title": "subagent 1", "body": "", "status": "running", "tone": "fg" },
+                    { "id": "agents-view:agent-child-2", "kind": "generic", "title": "▸ subagent 2", "body": "", "tone": "brand", "selected": true },
+                    { "id": "agents-view:switch", "kind": "generic", "title": "←/→ · enter · esc close", "body": "", "tone": "brand_soft" }
+                ]
+            }),
+        },
+        &ctl,
+    );
+    terminal
+        .draw(|f| draw(f, &mut app))
+        .expect("draw selection frame");
+    let selecting = terminal.backend().buffer();
+    let selected_x = (0..100)
+        .find(|x| selecting[(*x, agents_y as u16)].symbol() == "▸")
+        .expect("focused Agent marker");
+    assert!(
+        selecting[(selected_x, agents_y as u16)]
+            .modifier
+            .contains(ratatui::style::Modifier::REVERSED),
+        "focused Agent is visibly reversed during inline selection"
+    );
+}
+
+#[test]
+fn native_agent_selection_reverses_the_focused_agent() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    let mut app = test_app();
+    app.show_banner = false;
+    app.subagents.push(crate::app::SubagentView {
+        id: "child-1".into(),
+        parent: "dsh-test".into(),
+        label: "subagent 1".into(),
+        running: true,
+        failed: false,
+        transcript: crate::transcript::Transcript::new("child-1".into()),
+    });
+    app.agent_selection = Some("child-1".into());
+
+    let backend = TestBackend::new(100, 24);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    let buf = terminal.backend().buffer();
+    let focused = (0..24)
+        .flat_map(|y| (0..100).map(move |x| (x, y)))
+        .find(|(x, y)| buf[(*x, *y)].symbol() == "▸")
+        .expect("focused Agent marker");
+    assert!(
+        buf[focused]
+            .modifier
+            .contains(ratatui::style::Modifier::REVERSED),
+        "native fallback uses the same strong selection state"
+    );
+}
+
+#[test]
+fn native_agent_completion_uses_a_neutral_status_glyph() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    let mut app = test_app();
+    app.show_banner = false;
+    app.subagents.push(crate::app::SubagentView {
+        id: "child-1".into(),
+        parent: "dsh-test".into(),
+        label: "subagent 1".into(),
+        running: false,
+        failed: false,
+        transcript: crate::transcript::Transcript::new("child-1".into()),
+    });
+    app.agent_selection = Some("dsh-test".into());
+
+    let backend = TestBackend::new(100, 24);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    let buf = terminal.backend().buffer();
+    let status = (0..24)
+        .flat_map(|y| (0..100).map(move |x| (x, y)))
+        .find(|(x, y)| buf[(*x, *y)].symbol() == "✓")
+        .expect("completed Agent glyph");
+    assert_eq!(buf[status].fg, app.theme.caption);
+    assert_eq!(buf[(status.0 + 2, status.1)].fg, app.theme.fg);
+}
+
+#[test]
+fn narrow_agent_navigation_keeps_the_active_item_and_switch_action() {
+    let mut app = test_app();
+    app.show_banner = false;
+    app.active_subagent = Some("child-4".into());
+    for index in 1..=4 {
+        app.subagents.push(crate::app::SubagentView {
+            id: format!("child-{index}"),
+            parent: "dsh-test".into(),
+            label: format!("subagent {index}"),
+            running: true,
+            failed: false,
+            transcript: crate::transcript::Transcript::new(format!("child-{index}")),
+        });
+    }
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+    app.handle(
+        crate::bus::AppEvent::Rpc {
+            method: crate::cordis::SLOTS_UPDATE.into(),
+            params: serde_json::json!({
+                "protocol": 0,
+                "slot": "conversation.navigation.dock",
+                "rev": 1,
+                "nodes": [
+                    { "id": "agents-view:label", "kind": "generic", "title": "· Agents", "body": "", "tone": "caption" },
+                    { "id": "agents-view:agent-dsh-test", "kind": "generic", "title": "main", "body": "", "tone": "fg" },
+                    { "id": "agents-view:agent-child-1", "kind": "generic", "title": "subagent 1", "body": "", "tone": "fg" },
+                    { "id": "agents-view:agent-child-2", "kind": "generic", "title": "subagent 2", "body": "", "tone": "fg" },
+                    { "id": "agents-view:agent-child-3", "kind": "generic", "title": "subagent 3", "body": "", "tone": "fg" },
+                    { "id": "agents-view:agent-child-4", "kind": "generic", "title": "▸ subagent 4", "body": "", "tone": "brand", "selected": true },
+                    { "id": "agents-view:switch", "kind": "generic", "title": "←/→ · enter · esc close", "body": "", "tone": "brand_soft", "action": { "kind": "command", "name": "agents", "args": "" } }
+                ]
+            }),
+        },
+        &ctl,
+    );
+
+    let frame = dump_frame(&mut app, 50, 20);
+    let rail = frame
+        .lines()
+        .find(|line| line.contains("Agents"))
+        .expect("navigation rail");
+    assert!(
+        rail.contains("▸ subagent 4"),
+        "active item survives:\n{frame}"
+    );
+    assert!(
+        rail.contains("esc close"),
+        "trailing action survives:\n{frame}"
+    );
+}
+
+#[test]
+fn short_terminal_keeps_navigation_before_optional_telemetry() {
+    let mut app = test_app();
+    app.show_banner = false;
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+    for (slot, id, title) in [
+        ("conversation.navigation.dock", "agents:active", "▸ main"),
+        ("conversation.composer.dock", "stats:counts", "4 turns"),
+    ] {
+        app.handle(
+            crate::bus::AppEvent::Rpc {
+                method: crate::cordis::SLOTS_UPDATE.into(),
+                params: serde_json::json!({
+                    "protocol": 0,
+                    "slot": slot,
+                    "rev": 1,
+                    "nodes": [{ "id": id, "kind": "generic", "title": title, "body": "" }]
+                }),
+            },
+            &ctl,
+        );
+    }
+
+    let frame = dump_frame(&mut app, 80, 20);
+    assert!(
+        frame.contains("▸ main"),
+        "navigation remains operable:\n{frame}"
+    );
+    assert!(
+        !frame.contains("4 turns"),
+        "optional telemetry yields its row first on short terminals:\n{frame}"
+    );
+}
+
+#[test]
+fn child_view_replaces_the_composer_with_read_only_navigation() {
+    let mut app = test_app();
+    app.show_banner = false;
+    let mut transcript = crate::transcript::Transcript::new("child-1".into());
+    transcript.apply(crate::events::UiEvent::TextDelta {
+        session: "child-1".into(),
+        text: "child-only output".into(),
+    });
+    app.subagents.push(crate::app::SubagentView {
+        id: "child-1".into(),
+        parent: "dsh-test".into(),
+        label: "subagent 1".into(),
+        running: true,
+        failed: false,
+        transcript,
+    });
+    app.active_subagent = Some("child-1".into());
+
+    let frame = dump_frame(&mut app, 100, 24);
+    assert!(frame.contains("child-only output"), "{frame}");
+    assert!(frame.contains("read-only"), "{frame}");
+    assert!(frame.contains("esc back"), "{frame}");
+    assert!(
+        !frame.contains("describe what you want to build"),
+        "{frame}"
+    );
+    assert!(!frame.contains("send a prompt"), "{frame}");
+}
+
+#[test]
+fn active_running_child_does_not_show_the_main_idle_state() {
+    let mut app = test_app();
+    app.show_banner = false;
+    app.subagents.push(crate::app::SubagentView {
+        id: "child-1".into(),
+        parent: "dsh-test".into(),
+        label: "subagent 1".into(),
+        running: true,
+        failed: false,
+        transcript: crate::transcript::Transcript::new("child-1".into()),
+    });
+    app.active_subagent = Some("child-1".into());
+
+    let frame = dump_frame(&mut app, 100, 24);
+    assert!(frame.contains("working"), "{frame}");
+    assert!(!frame.contains("● idle"), "{frame}");
+}
+
+#[test]
+fn hidden_tool_arguments_replace_thinking_with_the_working_placeholder() {
+    let mut app = test_app();
+    app.show_banner = false;
+    app.state = RunState::Running;
+    app.transcript
+        .apply(crate::events::UiEvent::ReasoningDelta {
+            session: "dsh-test".into(),
+            text: "I will launch several tools".into(),
+        });
+    assert!(
+        state_line(&app).is_none(),
+        "live reasoning owns the thinking row"
+    );
+
+    app.transcript
+        .apply(crate::events::UiEvent::ToolCallPreparing {
+            session: "dsh-test".into(),
+        });
+
+    let line = state_line(&app).expect("working placeholder while tool arguments stream");
+    let rendered = line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    assert!(rendered.contains("working"), "{rendered}");
+
+    app.transcript.apply(crate::events::UiEvent::ToolCall {
+        session: "dsh-test".into(),
+        call_id: "call-1".into(),
+        name: "subagent".into(),
+        arguments: r#"{"description":"task"}"#.into(),
+        diff: None,
+    });
+    let frame = dump_frame(&mut app, 100, 24);
+    assert!(
+        frame.contains("subagent"),
+        "complete tool request still renders: {frame}"
+    );
+    assert!(
+        frame.contains("┌─ json") && frame.contains("\"description\": \"task\""),
+        "complete request body remains visible, framed as a code block: {frame}"
+    );
+}
+
+#[test]
+fn elicitation_wait_uses_the_state_line_without_claiming_the_agent_is_working() {
+    use crate::app::ElicitationAskOverlay;
+    use crate::elicitation::{ElicitationForm, ElicitationFormState};
+
+    let mut app = test_app();
+    app.state = RunState::Running;
+    app.elicitation_ask = Some(ElicitationAskOverlay {
+        form: ElicitationFormState::new(ElicitationForm {
+            message: "The agent needs your input.".into(),
+            fields: Vec::new(),
+        }),
+        scroll: 0,
+        reply: None,
+    });
+
+    let line = state_line(&app).expect("input wait state");
+    let rendered = line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+
+    assert!(rendered.contains("waiting for input"), "{rendered}");
+    assert!(!rendered.contains("working"), "{rendered}");
+}
+
+#[test]
+fn long_input_wraps_in_the_well() {
+    let mut app = test_app();
+    app.show_banner = false;
+    app.input.set("a".repeat(50));
+    app.input.set_cursor_char(50);
+    // 40x12 → composer height 4 → a 2-row input well, 36 text cols wide.
+    let frame = dump_frame(&mut app, 40, 12);
+    let wrapped = frame.lines().filter(|l| l.contains("aaaa")).count();
+    assert!(wrapped >= 2, "input should wrap across well rows:\n{frame}");
+}
+
+/// The caret is a buffer cell (a steady reversed block), so it moves
+/// atomically with the frame diff and can never be blinked off by a
+/// scroll-heavy redraw. Returns the reversed cells of one drawn frame.
+fn caret_cells(app: &mut App, width: u16, height: u16) -> Vec<(u16, u16)> {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    let backend = TestBackend::new(width, height);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|f| draw(f, app)).expect("draw frame");
+    let buf = terminal.backend().buffer();
+    let mut cells = Vec::new();
+    for y in 0..height {
+        for x in 0..width {
+            if buf[(x, y)].modifier.contains(Modifier::REVERSED) {
+                cells.push((x, y));
+            }
+        }
+    }
+    cells
+}
+
+#[test]
+fn empty_composer_paints_the_caret_on_the_placeholder() {
+    let mut app = test_app();
+    app.show_banner = false;
+    let cells = caret_cells(&mut app, 80, 20);
+    assert_eq!(cells, vec![(3, 16)], "caret right of the ❯ prompt");
+}
+
+#[test]
+fn composer_caret_follows_the_cursor_end_and_mid_draft() {
+    let mut app = test_app();
+    app.show_banner = false;
+    app.input.set("hello".into());
+    app.input.set_cursor_char(5);
+    // One past the draft: a reversed blank cell, never a hardware cursor.
+    assert_eq!(caret_cells(&mut app, 80, 20), vec![(8, 16)]);
+    app.input.set_cursor_char(2);
+    assert_eq!(caret_cells(&mut app, 80, 20), vec![(5, 16)]);
+}
+
+#[test]
+fn composer_caret_sits_on_wide_graphemes() {
+    let mut app = test_app();
+    app.show_banner = false;
+    app.input.set("中".into());
+    app.input.set_cursor_char(0);
+    // The reversed style rides the grapheme's start cell — terminals paint
+    // the full two-column glyph with it, so the block caret covers 中.
+    assert_eq!(caret_cells(&mut app, 80, 20), vec![(3, 16)]);
+    // Cursor after the wide char: the caret is the blank cell past it.
+    app.input.set_cursor_char(1);
+    assert_eq!(caret_cells(&mut app, 80, 20), vec![(5, 16)]);
+}
+
+/// The hardware-cursor park target (`app.caret_cell`) must always equal the
+/// cell the frame painted the soft caret on: `main` parks the hidden
+/// hardware cursor there after every draw so IME candidate popups anchor at
+/// the caret (issue #66).
+#[test]
+fn caret_cell_tracks_the_painted_caret_in_the_composer() {
+    let mut app = test_app();
+    app.show_banner = false;
+    // Empty well: caret right of the ❯ prompt.
+    assert_eq!(caret_cells(&mut app, 80, 20), vec![(3, 16)]);
+    assert_eq!(app.caret_cell, Some((3, 16)));
+    // Draft end and mid-draft.
+    app.input.set("hello".into());
+    app.input.set_cursor_char(5);
+    assert_eq!(caret_cells(&mut app, 80, 20), vec![(8, 16)]);
+    assert_eq!(app.caret_cell, Some((8, 16)));
+    app.input.set_cursor_char(2);
+    assert_eq!(caret_cells(&mut app, 80, 20), vec![(5, 16)]);
+    assert_eq!(app.caret_cell, Some((5, 16)));
+}
+
+#[test]
+fn caret_cell_follows_wrapped_rows_and_hides_with_the_caret() {
+    let mut app = test_app();
+    app.show_banner = false;
+    // The well is 76 cells wide at 80x20; 77 chars wrap to a second row.
+    app.input.set("a".repeat(77));
+    app.input.set_cursor_char(77);
+    assert_eq!(caret_cells(&mut app, 80, 20), vec![(4, 17)]);
+    assert_eq!(app.caret_cell, Some((4, 17)));
+    // While elicitation owns input the composer paints no caret and no
+    // park target — the field's own caret takes over: the frame's only
+    // reversed cell is the field caret and the park target rides it, never
+    // the composer well row (y=16 at 80x20).
+    let mut app = test_app();
+    app.show_banner = false;
+    app.input.set("draft".into());
+    app.elicitation_ask = Some(crate::app::ElicitationAskOverlay {
+        form: crate::elicitation::ElicitationFormState::new(crate::elicitation::ElicitationForm {
+            message: "m".into(),
+            fields: vec![crate::elicitation::ElicitationField {
+                name: "f".into(),
+                custom_name: None,
+                title: "t".into(),
+                description: None,
+                required: true,
+                kind: crate::elicitation::ElicitationFieldKind::Text { default: None },
+            }],
+        }),
+        scroll: 0,
+        reply: None,
+    });
+    let cells = caret_cells(&mut app, 80, 20);
+    assert_eq!(app.caret_cell, cells.first().copied(), "park rides the field caret");
+    assert!(
+        cells.iter().all(|(_, y)| *y != 16),
+        "composer well shows no caret while elicitation owns input"
+    );
+}
+
+#[test]
+fn multiline_input_breaks_on_newlines() {
+    let mut app = test_app();
+    app.show_banner = false;
+    app.input.set("hello\nworld".into());
+    app.input.set_cursor_char("hello\nworld".chars().count());
+    let frame = dump_frame(&mut app, 40, 12);
+    let hello = frame
+        .lines()
+        .position(|l| l.contains("hello"))
+        .expect("first line");
+    let world = frame
+        .lines()
+        .position(|l| l.contains("world"))
+        .expect("second line");
+    assert!(
+        world > hello,
+        "hard newline pushes the second line down:\n{frame}"
+    );
+}
+
+#[test]
+fn composer_grows_to_show_a_multiline_draft_until_its_cap() {
+    let mut app = test_app();
+    app.show_banner = false;
+    let _ = dump_frame(&mut app, 100, 30);
+    let empty_chat_height = app.chat_view.area.height;
+
+    app.input.set("one\ntwo\nthree\nfour\nfive\nsix".into());
+    let frame = dump_frame(&mut app, 100, 30);
+
+    assert!(
+        app.chat_view.area.height < empty_chat_height,
+        "composer should take rows from chat as the draft grows:\n{frame}"
+    );
+    assert!(frame.contains("one") && frame.contains("six"), "{frame}");
+}
+
+#[test]
+fn empty_welcome_screen_has_balanced_outer_vertical_padding() {
+    let mut app = test_app();
+    let _ = dump_frame(&mut app, 120, 50);
+    let first_content = app
+        .chat_view
+        .lines
+        .iter()
+        .position(|line| !line.trim().is_empty())
+        .expect("welcome content");
+    let last_content = app
+        .chat_view
+        .lines
+        .iter()
+        .rposition(|line| !line.trim().is_empty())
+        .expect("welcome content");
+    let top = first_content;
+    let bottom = app.chat_view.area.height as usize - last_content - 1;
+
+    assert!(
+        top.abs_diff(bottom) <= 1,
+        "welcome block must be vertically centered: top={top}, bottom={bottom}"
+    );
+}
+
+#[test]
+fn welcome_and_conversation_are_two_states_without_a_mixed_third_state() {
+    let mut app = test_app();
+    app.transcript.push_notice(
+        crate::transcript::NoticeLevel::Info,
+        "local UI notice".into(),
+    );
+
+    let frame = dump_frame(&mut app, 140, 60);
+
+    assert!(
+        frame.contains("https://crow-ai.dev"),
+        "Welcome is visible:\n{frame}"
+    );
+    assert!(
+        !frame.contains("local UI notice"),
+        "transcript must not share the Welcome state:\n{frame}"
+    );
+    let first = app
+        .chat_view
+        .lines
+        .iter()
+        .position(|line| !line.trim().is_empty())
+        .expect("welcome content");
+    let last = app
+        .chat_view
+        .lines
+        .iter()
+        .rposition(|line| !line.trim().is_empty())
+        .expect("welcome content");
+    let bottom = app.chat_view.area.height as usize - last - 1;
+    assert!(
+        first.abs_diff(bottom) <= 1,
+        "Welcome remains centered: top={first}, bottom={bottom}"
+    );
+}
+
+#[test]
+fn harness_new_tab_displays_the_landing_page_and_preserves_old_transcript() {
+    let mut app = live_test_app();
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+    app.show_banner = false;
+    app.transcript.push_user("old Harness turn".into(), false);
+
+    app.handle(crate::bus::AppEvent::Ctl(crate::bus::CtlEvent::NewSessionRequested), &ctl);
+
+    assert!(app.show_banner);
+    assert!(app.transcript.cells.is_empty());
+    assert_eq!(app.session_tabs().len(), 2);
+    let frame = dump_frame(&mut app, 140, 60);
+    assert!(frame.contains("https://crow-ai.dev"), "landing page is visible:\n{frame}");
+    assert!(!frame.contains("old Harness turn"), "{frame}");
+    // Selecting the first tab uses the same public command path as the TUI.
+    app.input.set("/session prev".into());
+    app.handle(crate::bus::AppEvent::Term(crossterm::event::Event::Key(crossterm::event::KeyEvent::new(
+        crossterm::event::KeyCode::Enter, crossterm::event::KeyModifiers::NONE,
+    ))), &ctl);
+    let frame = dump_frame(&mut app, 140, 60);
+    assert!(frame.contains("old Harness turn"), "{frame}");
+}
+
+#[test]
+fn welcome_hero_slot_replaces_only_the_crow_cli_lockup() {
+    let mut app = test_app();
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+    app.handle(
+        crate::bus::AppEvent::Rpc {
+            method: crate::cordis::SLOTS_UPDATE.into(),
+            params: serde_json::json!({
+            "protocol": 0,
+            "slot": "welcome.hero",
+            "rev": 1,
+            "nodes": [
+                {
+                    "id": "deepseek-logo:logo",
+                    "kind": "logo",
+                    "name": "deepseek"
+                },
+                {
+                    "id": "deepseek-logo:hint",
+                    "kind": "text",
+                    "text": "Into the Unknown",
+                    "tone": "fg_tertiary"
+                }
+            ]
+            }),
+        },
+        &ctl,
+    );
+
+    assert!(
+        app.show_banner,
+        "preset changes keep an existing Welcome visible"
+    );
+    let frame = dump_frame(&mut app, 140, 60);
+
+    assert!(frame.contains("▄▄▄███▀"), "XL whale:\n{frame}");
+    assert!(frame.contains('░'), "hollow HARNESS:\n{frame}");
+    assert!(frame.contains("Into the Unknown"), "tagline:\n{frame}");
+    assert!(
+        !frame.contains("https://crow-ai.dev"),
+        "crow-ai.dev hero replaced:\n{frame}"
+    );
+    assert!(frame.contains("crow "), "version row remains:\n{frame}");
+    assert!(
+        frame.contains("/help commands"),
+        "help row remains:\n{frame}"
+    );
+}
+
+#[test]
+fn welcome_slot_updates_do_not_hide_an_existing_conversation() {
+    let mut app = test_app();
+    app.show_banner = false;
+    app.transcript.push_notice(
+        crate::transcript::NoticeLevel::Info,
+        "conversation remains visible".into(),
+    );
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+
+    app.handle(
+        crate::bus::AppEvent::Rpc {
+            method: crate::cordis::SLOTS_UPDATE.into(),
+            params: serde_json::json!({
+                "protocol": 0,
+                "slot": "welcome.hero",
+                "rev": 1,
+                "nodes": [
+                    {
+                        "id": "deepseek-logo:logo",
+                        "kind": "logo",
+                        "name": "deepseek"
+                    },
+                    {
+                        "id": "deepseek-logo:hint",
+                        "kind": "text",
+                        "text": "Into the Unknown",
+                        "tone": "fg_tertiary"
+                    }
+                ]
+            }),
+        },
+        &ctl,
+    );
+
+    assert!(
+        !app.show_banner,
+        "UI preset changes must not re-enter Welcome"
+    );
+    let frame = dump_frame(&mut app, 140, 60);
+    assert!(
+        frame.contains("conversation remains visible"),
+        "conversation remains rendered after the preset slot changes:\n{frame}"
+    );
+}
+
+#[test]
+fn welcome_info_slot_replaces_only_the_native_information_region() {
+    let mut app = test_app();
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+    app.handle(
+        crate::bus::AppEvent::Rpc {
+            method: crate::cordis::SLOTS_UPDATE.into(),
+            params: serde_json::json!({
+                "protocol": 0,
+                "slot": "welcome.info",
+                "rev": 1,
+                "nodes": [{
+                    "id": "custom-info:copy",
+                    "kind": "text",
+                    "text": "Custom welcome information",
+                    "tone": "fg_secondary"
+                }]
+            }),
+        },
+        &ctl,
+    );
+
+    assert!(
+        app.show_banner,
+        "preset changes keep an existing Welcome visible"
+    );
+    let frame = dump_frame(&mut app, 140, 60);
+    assert!(
+        frame.contains("https://crow-ai.dev"),
+        "Hero remains:\n{frame}"
+    );
+    assert!(
+        frame.contains("Custom welcome information"),
+        "custom info:\n{frame}"
+    );
+    assert!(
+        !frame.contains("crow "),
+        "native version row replaced:\n{frame}"
+    );
+    assert!(
+        !frame.contains("/help commands"),
+        "native help row replaced:\n{frame}"
+    );
+}
+
+#[test]
+fn deepseek_hero_preserves_the_original_whale_geometry() {
+    let mut app = test_app();
+    app.slot_snapshots.insert(
+        "welcome.hero".into(),
+        serde_json::from_value(serde_json::json!({
+            "protocol": 0,
+            "slot": "welcome.hero",
+            "rev": 1,
+            "nodes": [
+                { "id": "deepseek-logo:logo", "kind": "logo", "name": "deepseek" },
+                {
+                    "id": "deepseek-logo:hint",
+                    "kind": "text",
+                    "text": "Into the Unknown",
+                    "tone": "fg_tertiary"
+                }
+            ]
+        }))
+        .expect("DeepSeek hero snapshot"),
+    );
+    let plain = banner_lines(&app, 140)
+        .into_iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>();
+    let first = plain
+        .iter()
+        .find(|line| line.contains("▄▄▄███▀"))
+        .expect("first XL whale row");
+    let second = plain
+        .iter()
+        .find(|line| line.contains("▄▄████████"))
+        .expect("second XL whale row");
+    let first_x = first.find('▄').expect("first whale pixel");
+    let second_x = second.find('▄').expect("second whale pixel");
+
+    assert_eq!(first_x - second_x, 13, "all whale rows share one outer pad");
+    assert!(
+        plain
+            .iter()
+            .any(|line| line.contains('█') && line.contains('░')),
+        "wide wordmark keeps solid DEEPSEEK beside hollow HARNESS"
+    );
+}
+
+#[test]
+fn composed_deepseek_preset_keeps_balanced_outer_padding() {
+    let mut app = test_app();
+    for (slot, nodes) in [
+        (
+            "welcome.hero",
+            serde_json::json!([
+                { "id": "deepseek:logo", "kind": "logo", "name": "deepseek" },
+                { "id": "deepseek:hint", "kind": "text", "text": "Into the Unknown" }
+            ]),
+        ),
+        (
+            "welcome.info",
+            serde_json::json!([{ "id": "deepseek:info", "kind": "welcomeinfo" }]),
+        ),
+    ] {
+        app.slot_snapshots.insert(
+            slot.into(),
+            serde_json::from_value(serde_json::json!({
+                "protocol": 0,
+                "slot": slot,
+                "rev": 1,
+                "nodes": nodes
+            }))
+            .expect("preset slot snapshot"),
+        );
+    }
+
+    let _ = dump_frame(&mut app, 140, 60);
+    let first = app
+        .chat_view
+        .lines
+        .iter()
+        .position(|line| !line.trim().is_empty())
+        .expect("welcome content");
+    let last = app
+        .chat_view
+        .lines
+        .iter()
+        .rposition(|line| !line.trim().is_empty())
+        .expect("welcome content");
+    let bottom = app.chat_view.area.height as usize - last - 1;
+    assert!(
+        first.abs_diff(bottom) <= 1,
+        "composed welcome must be centered: top={first}, bottom={bottom}"
+    );
+}
+
+#[test]
+fn pet_rect_geometry() {
+    let mut app = test_app();
+    let area = Rect::new(0, 0, 100, 34);
+    // Off by default (issue #37): `/liang on` summons him.
+    assert_eq!(pet_rect(area, &app), None, "liang is off by default");
+    app.pet_visible = true;
+    // 34 rows → 5-row composer → 4-row pet (192:208 sprite → 7 cols),
+    // inset one row/column so the rounded box border stays intact.
+    assert_eq!(pet_rect(area, &app), Some(Rect::new(92, 29, 7, 4)));
+    app.pet_visible = false;
+    assert_eq!(pet_rect(area, &app), None, "/liang off hides him");
+    app.pet_visible = true;
+    let narrow = Rect::new(0, 0, 50, 34);
+    assert_eq!(
+        pet_rect(narrow, &app),
+        None,
+        "narrow terminals keep their columns"
+    );
+}
+
+#[test]
+fn pet_rides_above_the_stats_dock() {
+    let mut app = test_app();
+    app.pet_visible = true;
+    app.slot_snapshots.insert(
+        "conversation.composer.dock".into(),
+        serde_json::from_value(serde_json::json!({
+            "protocol": 0,
+            "slot": "conversation.composer.dock",
+            "rev": 1,
+            "nodes": [
+                { "id": "stats:cache", "kind": "generic", "title": "Cache hit 65%", "body": "" }
+            ]
+        }))
+        .expect("slot snapshot"),
+    );
+    let main = Rect::new(0, 0, 100, 26);
+    let dock_h = composer_dock_height(&app, main.height, false);
+    assert_eq!(dock_h, 1, "dock fits on a 26-row terminal");
+    // Anchored to the box bottom (dock row excluded): one row higher
+    // than without the dock.
+    let with_dock = Rect::new(
+        main.x,
+        main.y,
+        main.width,
+        main.height.saturating_sub(dock_h),
+    );
+    assert_eq!(pet_rect(with_dock, &app), Some(Rect::new(92, 20, 7, 4)));
+    app.slot_snapshots.remove("conversation.composer.dock");
+    let without_dock = Rect::new(main.x, main.y, main.width, main.height);
+    assert_eq!(pet_rect(without_dock, &app), Some(Rect::new(92, 21, 7, 4)));
+}
+
+#[test]
+fn draw_records_the_pet_anchor_for_the_kitty_reconciler() {
+    let mut app = test_app();
+    app.show_banner = false;
+    app.pet_visible = true;
+    app.pet_pixels = true;
+    // One draw: the anchor is recorded with the idle flag; main() reconciles
+    // the kitty placement against exactly this value.
+    let _ = dump_frame(&mut app, 100, 34);
+    let (rect, working) = app.pet_want.expect("pet anchor recorded");
+    assert_eq!(
+        Some(rect),
+        pet_rect(Rect::new(0, 0, 100, 34), &app),
+        "anchor matches the pet geometry at this size"
+    );
+    assert!(!working, "idle app draws the idle sprite");
+
+    app.state = RunState::Running;
+    let _ = dump_frame(&mut app, 100, 34);
+    assert!(app.pet_want.expect("pet anchor").1, "working flag follows");
+
+    // Char-whale fallback (no kitty protocol): nothing recorded, the kitty
+    // reconciler stays silent.
+    app.pet_pixels = false;
+    let _ = dump_frame(&mut app, 100, 34);
+    assert_eq!(app.pet_want, None, "no kitty pixels, no anchor");
+}
+
+#[test]
+fn pet_stays_inside_the_box_when_the_stats_dock_shows() {
+    let mut app = test_app();
+    app.pet_visible = true;
+    app.show_banner = false;
+    app.slot_snapshots.insert(
+        "conversation.composer.dock".into(),
+        serde_json::from_value(serde_json::json!({
+            "protocol": 0,
+            "slot": "conversation.composer.dock",
+            "rev": 1,
+            "nodes": [
+                { "id": "stats:cache", "kind": "generic", "title": "Cache hit 65%", "body": "" }
+            ]
+        }))
+        .expect("slot snapshot"),
+    );
+    let frame = dump_frame(&mut app, 100, 26);
+    let dock_line = frame.lines().last().expect("dock row");
+    assert!(dock_line.contains("Cache hit 65%"), "{dock_line}");
+    assert!(
+        !dock_line.contains("▄███"),
+        "pet must not overlap the dock: {dock_line}"
+    );
+    assert!(
+        frame.contains("▄███▄█▄▄"),
+        "pet still visible inside the box:\n{frame}"
+    );
+}
+
+#[test]
+fn pet_falls_back_to_half_blocks_and_toggles() {
+    let mut app = test_app();
+    app.pet_visible = true;
+    app.show_banner = false;
+    // pet_pixels=false (no kitty graphics): XS art at the right edge,
+    // inside the box border.
+    let frame = dump_frame(&mut app, 100, 34);
+    assert!(
+        frame.contains("▄███▄█▄▄"),
+        "XS whale flush inside the box:\n{frame}"
+    );
+
+    // A pixel-protocol terminal draws nothing — the image goes on top.
+    app.pet_pixels = true;
+    let frame = dump_frame(&mut app, 100, 34);
+    assert!(
+        !frame.contains("▄███"),
+        "cells stay clear for the PNG:\n{frame}"
+    );
+
+    // /pet off → gone entirely.
+    app.pet_pixels = false;
+    app.pet_visible = false;
+    let frame = dump_frame(&mut app, 100, 34);
+    assert!(!frame.contains("▄███"), "hidden by /pet:\n{frame}");
+}
+
+#[test]
+fn mode_picker_renders_modes_and_marks_the_current_one() {
+    use crate::app::{Picker, PickerItem, PickerKind, AGENT_MODES};
+    let mut app = test_app();
+    app.show_banner = false;
+    app.modes.agent_preset = Some("minimal".into());
+    app.picker = Some(Picker {
+        offset: 0,
+        kind: PickerKind::Mode,
+        title: " agent mode · enter select · esc close ".into(),
+        sel: 2,
+        items: AGENT_MODES
+            .iter()
+            .map(|(id, name, desc)| PickerItem {
+                id: id.to_string(),
+                label: name.to_string(),
+                meta: desc.to_string(),
+                provider: None,
+            })
+            .collect(),
+    });
+    let frame = dump_frame(&mut app, 100, 30);
+    for name in ["Standard mode", "Code mode", "Minimal mode", "Creator mode"] {
+        assert!(frame.contains(name), "{name} listed in the picker\n{frame}");
+    }
+    let minimal_row = frame
+        .lines()
+        .find(|l| l.contains("Minimal mode"))
+        .expect("minimal row");
+    assert!(
+        minimal_row.contains("Minimal mode ✓"),
+        "current mode marked: {minimal_row}"
+    );
+    assert!(
+        minimal_row.contains("▸"),
+        "selection marker on the current row"
+    );
+    assert!(
+        frame.contains("bash + str_replace_editor"),
+        "descriptions visible\n{frame}"
+    );
+}
+
+#[test]
+fn session_picker_rows_align_label_and_meta_columns() {
+    use crate::app::{Picker, PickerItem, PickerKind, PICKER_LABEL_COL};
+    let mut app = test_app();
+    app.show_banner = false;
+    app.picker = Some(Picker {
+        offset: 0,
+        kind: PickerKind::Session,
+        title: " resume session · 2 sessions · enter select · esc close ".into(),
+        sel: 0,
+        items: vec![
+            PickerItem {
+                id: "276b7574-b12c-488e-958b-f9673b67fba9".into(),
+                label: "查看session历史命令的可行性".into(),
+                meta: "276b7574 · 2h · 3 turns".into(),
+                provider: None,
+            },
+            PickerItem {
+                id: "dsh-alp".into(),
+                label: "fix failing tests".into(),
+                meta: "dsh-alp  · just now · 1 turn".into(),
+                provider: None,
+            },
+        ],
+    });
+    let frame = dump_frame(&mut app, 100, 30);
+    let ascii_row = frame
+        .lines()
+        .find(|l| l.contains("fix failing tests"))
+        .expect("ascii row");
+    // Wide chars dump as char + continuation cell, so locate the CJK
+    // row by its meta instead of the raw label.
+    let cjk_row = frame
+        .lines()
+        .find(|l| l.contains("276b7574 · 2h"))
+        .unwrap_or_else(|| panic!("cjk row missing:\n{frame}"));
+    // Dump cells contribute exactly one char each, so the column of a
+    // marker is the char count before its byte offset (`find` alone
+    // returns byte indices, which differ for multi-byte CJK labels).
+    let meta_col = |row: &str| row.find('·').map(|i| row[..i].chars().count()).unwrap_or(0);
+    assert_eq!(
+        meta_col(ascii_row),
+        meta_col(cjk_row),
+        "meta column lines up:\n{ascii_row}\n{cjk_row}\ncols: {} vs {}",
+        meta_col(ascii_row),
+        meta_col(cjk_row),
+    );
+    assert!(
+        ascii_row.chars().count() >= 2 + PICKER_LABEL_COL + 8,
+        "label column padded to {PICKER_LABEL_COL}"
+    );
+}
+
+#[test]
+fn picker_window_follows_the_selection_and_shows_a_scrollbar() {
+    use crate::app::{Picker, PickerItem, PickerKind};
+    let mut app = test_app();
+    app.show_banner = false;
+    let items: Vec<PickerItem> = (0..40)
+        .map(|i| PickerItem {
+            id: format!("sess-{i:02}"),
+            label: format!("session {i:02}"),
+            meta: format!("meta {i:02}"),
+            provider: None,
+        })
+        .collect();
+    app.picker = Some(Picker {
+        offset: 0,
+        kind: PickerKind::Session,
+        title: " resume session · 40 sessions · enter select · esc close ".into(),
+        sel: 0,
+        items,
+    });
+
+    // 24-row terminal: the popup caps at 22 rows and must scroll.
+    let top = dump_frame(&mut app, 100, 24);
+    assert!(top.contains("session 00"), "head row visible:\n{top}");
+    assert!(!top.contains("session 39"), "tail not visible yet:\n{top}");
+    // The rounded border stays intact: the scrollbar lives in its own
+    // column inside the popup, between the rows and the right border.
+    assert!(top.contains("╮"), "top-right corner intact:\n{top}");
+    assert!(top.contains("║"), "scrollbar track shown:\n{top}");
+    assert!(
+        top.lines()
+            .any(|l| l.contains("session 00") && l.trim_end().ends_with('│')),
+        "right border column intact next to the scrollbar:\n{top}"
+    );
+
+    // Jump to the tail: the window follows, so the last row is
+    // reachable instead of being clipped out of the paragraph.
+    app.picker.as_mut().unwrap().sel = 39;
+    let tail = dump_frame(&mut app, 100, 24);
+    assert!(tail.contains("session 39"), "tail row visible:\n{tail}");
+    assert!(!tail.contains("session 00"), "head scrolled away:\n{tail}");
+    assert!(tail.contains("█"), "scrollbar thumb shown:\n{tail}");
+    assert!(tail.contains("╰"), "bottom corners intact:\n{tail}");
+    assert_eq!(app.picker_page_rows, 20, "page size = visible rows");
+}
+
+#[test]
+fn picker_selection_highlights_the_whole_row() {
+    use crate::app::{Picker, PickerItem, PickerKind};
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    let mut app = test_app();
+    app.show_banner = false;
+    app.picker = Some(Picker {
+        offset: 0,
+        kind: PickerKind::Session,
+        title: " resume session · 2 sessions ".into(),
+        sel: 0,
+        items: vec![
+            PickerItem {
+                id: "a".into(),
+                label: "first".into(),
+                meta: "meta a".into(),
+                provider: None,
+            },
+            PickerItem {
+                id: "b".into(),
+                label: "second".into(),
+                meta: "meta b".into(),
+                provider: None,
+            },
+        ],
+    });
+    let backend = TestBackend::new(80, 20);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal.draw(|f| draw(f, &mut app)).expect("draw");
+    let buf = terminal.backend().buffer();
+    let chip = app.theme.chip_bg;
+    // Cells hold single symbols, so search rows by joining them first.
+    let row_of = |needle: &str| {
+        (0..20u16)
+            .find(|&r| {
+                (0..80u16)
+                    .map(|c| buf[(c, r)].symbol())
+                    .collect::<String>()
+                    .contains(needle)
+            })
+            .unwrap_or_else(|| panic!("row with {needle:?} not found"))
+    };
+    // The selected row: marker, label, meta and the tail padding all
+    // carry the chip background — the highlight spans the whole line.
+    let sel_row = row_of("first");
+    let marker_col = (0..80u16)
+        .find(|&c| buf[(c, sel_row)].symbol() == "▸")
+        .expect("selection marker");
+    let right_border = (marker_col..80u16)
+        .find(|&c| buf[(c, sel_row)].symbol() == "│")
+        .expect("popup right border");
+    for c in marker_col..right_border {
+        assert_eq!(
+            buf[(c, sel_row)].style().bg,
+            Some(chip),
+            "selected row cell {c} carries the highlight bg"
+        );
+    }
+    // The unselected row keeps the panel background.
+    let other_row = row_of("second");
+    for c in 0..80u16 {
+        let cell = &buf[(c, other_row)];
+        if !cell.symbol().trim().is_empty() {
+            assert_ne!(
+                cell.style().bg,
+                Some(chip),
+                "unselected row cell {c} must not carry the highlight bg"
+            );
+        }
+    }
+}
+
+#[test]
+fn model_picker_marks_only_the_current_provider_model_pair() {
+    use crate::app::{Picker, PickerItem, PickerKind};
+    let mut app = test_app();
+    app.show_banner = false;
+    app.cfg.provider = "coding-plan-b".into();
+    app.cfg.model = "deepseek-v4".into();
+    app.picker = Some(Picker {
+        offset: 0,
+        kind: PickerKind::Model,
+        title: " model ".into(),
+        sel: 1,
+        items: vec![
+            PickerItem {
+                id: "deepseek-v4".into(),
+                label: "deepseek-v4".into(),
+                meta: "coding-plan-a · DeepSeek V4".into(),
+                provider: Some("coding-plan-a".into()),
+            },
+            PickerItem {
+                id: "deepseek-v4".into(),
+                label: "deepseek-v4".into(),
+                meta: "coding-plan-b · DeepSeek V4".into(),
+                provider: Some("coding-plan-b".into()),
+            },
+        ],
+    });
+
+    let frame = dump_frame(&mut app, 100, 24);
+    let marked: Vec<&str> = frame.lines().filter(|line| line.contains("✓")).collect();
+    assert_eq!(
+        marked.len(),
+        1,
+        "only one provider/model row is current:\n{frame}"
+    );
+    assert!(
+        marked[0].contains("coding-plan-b"),
+        "current marker follows the provider: {}",
+        marked[0]
+    );
+}
+
+/// The ↥ jump flash (issue #103): for ~5 s after a jump the jumped
+/// prompt's bubble rows are highlighted like a picker's selected row —
+/// chip background wash and the text in the brand tone; after the window
+/// the next tick clears it and the next frame restores the normal bubble.
+#[test]
+fn prompt_jump_flash_washes_the_jumped_prompt_then_restores() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    let mut app = test_app();
+    app.show_banner = false;
+    app.transcript.push_user("alpha prompt".into(), false);
+    app.transcript.push_notice(
+        crate::transcript::NoticeLevel::Info,
+        "filler row".into(),
+    );
+    app.transcript.push_user("beta prompt".into(), false);
+    let beta_cell = app
+        .transcript
+        .cells
+        .iter()
+        .rposition(|cell| matches!(cell.kind, crate::transcript::CellKind::User { .. }))
+        .expect("second user prompt");
+
+    // Locate the first cell of an ASCII needle in the rendered buffer.
+    let text_cell = |buf: &ratatui::buffer::Buffer, needle: &str| -> Option<(u16, u16)> {
+        for y in 0..buf.area.height {
+            let row: String = (0..buf.area.width)
+                .map(|x| buf[(x, y)].symbol().chars().next().unwrap_or(' '))
+                .collect();
+            if let Some(x) = row.find(needle) {
+                return Some((x as u16, y as u16));
+            }
+        }
+        None
+    };
+
+    let backend = TestBackend::new(100, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let theme = app.theme;
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    let (bx, by) = text_cell(terminal.backend().buffer(), "beta prompt")
+        .expect("beta prompt rendered");
+
+    // Frame 1, no flash: the bubble keeps its normal colors.
+    let buf = terminal.backend().buffer().clone();
+    assert_eq!(buf[(bx, by)].bg, theme.bubble_bg, "idle bubble background");
+    assert_eq!(buf[(bx, by)].fg, theme.bubble_fg, "idle bubble text");
+
+    // Arm the flash for the second prompt and redraw: its rows carry the
+    // chip wash with the text in the brand tone, while the other prompt
+    // stays untouched.
+    app.prompt_flash = Some((
+        beta_cell,
+        std::time::Instant::now() + crate::app::PROMPT_FLASH_TTL,
+    ));
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    let buf = terminal.backend().buffer().clone();
+    assert_eq!(buf[(bx, by)].bg, theme.chip_bg, "jumped prompt washed");
+    assert_eq!(buf[(bx, by)].fg, theme.brand, "jumped prompt text brand");
+    let (ax, ay) = text_cell(terminal.backend().buffer(), "alpha prompt")
+        .expect("alpha prompt rendered");
+    assert_ne!(
+        buf[(ax, ay)].bg, theme.chip_bg,
+        "the other prompt keeps its background"
+    );
+    assert_ne!(
+        buf[(ax, ay)].fg, theme.brand,
+        "the other prompt keeps its text color"
+    );
+
+    // Expire the flash: the tick clears it and the next frame restores the
+    // ordinary bubble look.
+    app.prompt_flash = Some((
+        beta_cell,
+        std::time::Instant::now() - crate::app::PROMPT_FLASH_TTL,
+    ));
+    app.tick();
+    assert!(app.prompt_flash.is_none(), "tick cleared the expired flash");
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    let buf = terminal.backend().buffer().clone();
+    assert_eq!(
+        buf[(bx, by)].bg, theme.bubble_bg,
+        "flash restored the normal bubble background"
+    );
+    assert_eq!(
+        buf[(bx, by)].fg, theme.bubble_fg,
+        "flash restored the normal bubble text"
+    );
+}
+
+#[test]
+fn model_picker_marks_the_streamed_model_when_it_differs_from_config() {
+    use crate::app::{Picker, PickerItem, PickerKind};
+    let mut app = test_app();
+    app.show_banner = false;
+    // A turn streamed on `deepseek-v4-pro` while the config still names the
+    // fallback: the picker must mark the running model (issue #102).
+    app.cfg.model = "deepseek-v4-flash".into();
+    app.transcript.last_model = Some("deepseek-v4-pro".into());
+    app.picker = Some(Picker {
+        offset: 0,
+        kind: PickerKind::Model,
+        title: " model ".into(),
+        sel: 1,
+        items: vec![
+            PickerItem {
+                id: "deepseek-v4-flash".into(),
+                label: "deepseek-v4-flash".into(),
+                meta: String::new(),
+                provider: None,
+            },
+            PickerItem {
+                id: "deepseek-v4-pro".into(),
+                label: "deepseek-v4-pro".into(),
+                meta: String::new(),
+                provider: None,
+            },
+        ],
+    });
+
+    let frame = dump_frame(&mut app, 100, 24);
+    let marked: Vec<&str> = frame.lines().filter(|line| line.contains("✓")).collect();
+    assert_eq!(marked.len(), 1, "one current model:\n{frame}");
+    assert!(
+        marked[0].contains("deepseek-v4-pro"),
+        "the running model is marked: {}\n{frame}",
+        marked[0]
+    );
+    assert!(
+        marked[0].contains("▸"),
+        "highlight follows the running model: {}",
+        marked[0]
+    );
+}
+
+#[test]
+fn effort_picker_marks_and_highlights_the_current_effort() {
+    use crate::app::{Picker, PickerItem, PickerKind};
+    let mut app = test_app();
+    app.show_banner = false;
+    app.modes.effort = Some("max".into());
+    app.picker = Some(Picker {
+        offset: 0,
+        kind: PickerKind::Effort,
+        title: " reasoning effort · enter select · esc close ".into(),
+        sel: 2,
+        items: ["off", "high", "max"]
+            .iter()
+            .map(|e| PickerItem {
+                id: e.to_string(),
+                label: e.to_string(),
+                meta: String::new(),
+                provider: None,
+            })
+            .collect(),
+    });
+
+    let frame = dump_frame(&mut app, 100, 24);
+    let max_row = frame
+        .lines()
+        .find(|l| l.contains("max"))
+        .expect("max row listed");
+    assert!(max_row.contains("max ✓"), "current effort marked: {max_row}");
+    assert!(
+        max_row.contains("▸"),
+        "highlight on the active effort: {max_row}"
+    );
+}
+
+#[test]
+fn slash_effort_menu_marks_and_highlights_the_active_effort() {
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    let mut app = test_app();
+    app.show_banner = false;
+    app.modes.effort = Some("max".into());
+    app.input.set("/effort".into());
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+    app.handle(
+        crate::bus::AppEvent::Term(Event::Key(KeyEvent::new(
+            KeyCode::Char(' '),
+            KeyModifiers::NONE,
+        ))),
+        &ctl,
+    );
+
+    // The typed `/effort ` option menu opens on the effort in effect.
+    let frame = dump_frame(&mut app, 100, 30);
+    let marked: Vec<&str> = frame.lines().filter(|line| line.contains('✓')).collect();
+    assert_eq!(marked.len(), 1, "only the active effort is marked:\n{frame}");
+    assert!(
+        marked[0].contains("max") && marked[0].contains("▸"),
+        "highlight and ✓ sit on the active effort: {}\n{frame}",
+        marked[0]
+    );
+}
+
+#[test]
+fn slash_model_menu_marks_the_running_model() {
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    let mut app = test_app();
+    app.show_banner = false;
+    app.cfg.model = "deepseek-v4-flash".into();
+    app.transcript.last_model = Some("deepseek-v4-pro".into());
+    app.input.set("/model".into());
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+    app.handle(
+        crate::bus::AppEvent::Term(Event::Key(KeyEvent::new(
+            KeyCode::Char(' '),
+            KeyModifiers::NONE,
+        ))),
+        &ctl,
+    );
+
+    // The inline `/model ` list leads with the running model, marked ✓ and
+    // highlighted, instead of the config default.
+    let frame = dump_frame(&mut app, 100, 30);
+    let marked: Vec<&str> = frame.lines().filter(|line| line.contains('✓')).collect();
+    assert_eq!(marked.len(), 1, "only the running model is marked:\n{frame}");
+    assert!(
+        marked[0].contains("deepseek-v4-pro") && marked[0].contains("▸"),
+        "highlight and ✓ sit on the running model: {}\n{frame}",
+        marked[0]
+    );
+}
+
+#[test]
+fn scroll_up_survives_draw_and_shows_indicator() {
+    let mut app = test_app();
+    app.show_banner = false;
+    for i in 0..40 {
+        app.transcript.push_user(format!("line {i}"), false);
+    }
+    app.scroll_by(20);
+    let frame = dump_frame(&mut app, 100, 14);
+    assert!(app.scroll_up > 0, "scroll_up clamped to zero");
+    assert!(frame.contains("↓"), "scroll indicator missing:\n{frame}");
+}
+
+#[test]
+fn streaming_preserves_the_viewport_after_the_user_scrolls_up() {
+    let mut app = test_app();
+    app.show_banner = false;
+    app.state = RunState::Running;
+    for i in 0..40 {
+        app.transcript.push_user(format!("history {i}"), false);
+    }
+    app.transcript.apply(crate::events::UiEvent::TextDelta {
+        session: "dsh-test".into(),
+        text: "stream 0".into(),
+    });
+
+    let _ = dump_frame(&mut app, 100, 14);
+    app.scroll_by(20);
+    let _ = dump_frame(&mut app, 100, 14);
+    let anchored_top = app.chat_view.top;
+
+    app.transcript.apply(crate::events::UiEvent::TextDelta {
+        session: "dsh-test".into(),
+        text: (1..=12).map(|i| format!("\nstream {i}")).collect(),
+    });
+    let frame = dump_frame(&mut app, 100, 14);
+
+    assert_eq!(
+        app.chat_view.top, anchored_top,
+        "streaming must not move a manually detached viewport:\n{frame}"
+    );
+}
+
+#[test]
+fn draw_fills_the_chat_view_snapshot() {
+    let mut app = test_app();
+    let _ = dump_frame(&mut app, 84, 40);
+    assert!(app.chat_view.area.width > 0, "chat pane rect captured");
+    assert!(
+        !app.chat_view.lines.is_empty(),
+        "plain-text layout captured for mouse selection"
+    );
+    assert!(
+        app.chat_view
+            .lines
+            .iter()
+            .any(|l| l.contains("https://crow-ai.dev")),
+        "snapshot mirrors rendered content"
+    );
+}
+
+#[test]
+fn selection_overlay_reverses_cells() {
+    use crate::app::{SelPoint, Selection};
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    let mut app = test_app();
+    app.show_banner = false;
+    app.transcript
+        .push_user("hello selection world".into(), false);
+    let backend = TestBackend::new(60, 12);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    // First draw fills chat_view; then select and draw again.
+    terminal.draw(|f| draw(f, &mut app)).expect("warmup");
+    let line = app
+        .chat_view
+        .lines
+        .iter()
+        .position(|l| l.contains("hello"))
+        .expect("user line in layout");
+    app.sel = Some(Selection {
+        anchor: SelPoint { line, col: 0 },
+        head: SelPoint { line, col: 8 },
+    });
+    terminal.draw(|f| draw(f, &mut app)).expect("redraw");
+    let buf = terminal.backend().buffer();
+    let row = app.chat_view.area.y + (line - app.chat_view.top) as u16;
+    let x = app.chat_view.area.x;
+    let reversed = (0..9u16)
+        .filter(|c| {
+            buf[(x + c, row)]
+                .modifier
+                .contains(ratatui::style::Modifier::REVERSED)
+        })
+        .count();
+    assert_eq!(reversed, 9, "anchor..=head cells are highlighted");
+    assert_eq!(
+        app.selection_text(app.sel.unwrap()),
+        crate::app::slice_by_cells(&app.chat_view.lines[line], 0, 9).trim_end(),
+        "copied text matches the highlighted cells"
+    );
+}
+
+#[test]
+fn permission_ask_overlay_lists_kind_name_and_title() {
+    use crate::app::PermissionAskOverlay;
+    use crate::bus::PermissionAskOption;
+    let mut app = test_app();
+    app.show_banner = false;
+    app.permission_ask = Some(PermissionAskOverlay {
+        title: "bash".into(),
+        sel: 1,
+        options: vec![
+            PermissionAskOption {
+                option_id: "reject".into(),
+                kind: "reject_once".into(),
+                name: "Reject".into(),
+            },
+            PermissionAskOption {
+                option_id: "allow".into(),
+                kind: "allow_once".into(),
+                name: "Allow once".into(),
+            },
+        ],
+        reply: None,
+    });
+    let frame = dump_frame(&mut app, 100, 30);
+    assert!(frame.contains("bash"), "tool title in overlay\n{frame}");
+    assert!(frame.contains("Reject"), "option name\n{frame}");
+    assert!(frame.contains("Allow once"), "option name\n{frame}");
+    assert!(frame.contains("reject_once"), "option kind\n{frame}");
+    assert!(frame.contains("allow_once"), "option kind\n{frame}");
+    let allow_row = frame
+        .lines()
+        .find(|l| l.contains("Allow once"))
+        .expect("allow row");
+    assert!(
+        allow_row.contains("▸"),
+        "selection on allow_once: {allow_row}"
+    );
+}
+
+#[test]
+fn plugin_slider_overlay_renders_track_marks_and_keyboard_affordances() {
+    use crate::app::{SliderMark, SliderOverlay};
+
+    let mut app = test_app();
+    app.show_banner = false;
+    app.slider_overlay = Some(SliderOverlay {
+        id: "liang-effort".into(),
+        title: "Liang reasoning effort".into(),
+        min: 0.0,
+        max: 30.0,
+        step: 1.0,
+        marks: vec![
+            SliderMark {
+                value: 0.0,
+                id: Some("off".into()),
+                label: "Off".into(),
+            },
+            SliderMark {
+                value: 15.0,
+                id: Some("high".into()),
+                label: "High".into(),
+            },
+            SliderMark {
+                value: 30.0,
+                id: Some("max".into()),
+                label: "Max".into(),
+            },
+        ],
+        snap_to_marks: true,
+        value: 16.0,
+    });
+
+    let frame = dump_frame(&mut app, 100, 30);
+
+    assert!(frame.contains("Liang reasoning effort"), "title\n{frame}");
+    for label in ["Off", "High", "Max"] {
+        assert!(frame.contains(label), "mark {label}\n{frame}");
+    }
+    assert!(frame.contains("16 / 30"), "current numeric value\n{frame}");
+    assert!(
+        frame.contains("←/→ preview")
+            && frame.contains("enter apply")
+            && frame.contains("esc cancel"),
+        "keyboard affordances\n{frame}"
+    );
+}
+
+#[test]
+fn plugin_view_overlay_renders_markdown_and_uses_wide_screens() {
+    use crate::app::ViewOverlay;
+    let mut app = test_app();
+    app.show_banner = false;
+    app.view_overlay = Some(ViewOverlay {
+            id: "plan-view".into(),
+            title: "Plan".into(),
+            nodes: vec![crate::slots::TuiNode::Markdown {
+                id: "content".into(),
+                text: "## Plan · 1/2\n\n- [x] Inspect · priority · high\n- [ ] **Implement** · priority · medium"
+                    .into(),
+                streaming: false,
+            }],
+            scroll: 0,
+            notify_plugin: true,
+        });
+    let frame = dump_frame(&mut app, 160, 30);
+    // The plan review renders through the full markdown pipeline: the
+    // heading loses its `#` markers, checkboxes become status glyphs,
+    // and the task list survives.
+    assert!(frame.contains("Plan · 1/2"), "heading:\n{frame}");
+    assert!(frame.contains("✓ Inspect"), "checked item:\n{frame}");
+    assert!(frame.contains("○ Implement"), "pending item:\n{frame}");
+    assert!(frame.contains("Implement"), "pending item:\n{frame}");
+    // Wide terminals: the review pane exceeds the old 84-column cap.
+    let title_line = frame
+        .lines()
+        .find(|l| l.contains("esc close"))
+        .expect("overlay title row");
+    let left = title_line.find('╭').expect("left corner");
+    let right = title_line.rfind('╮').expect("right corner");
+    assert!(
+        right - left > 84,
+        "wide overlay expected, got {} cols: {title_line}",
+        right - left
+    );
+}
+
+#[test]
+fn elicitation_overlay_renders_a_real_question_form() {
+    use crate::app::ElicitationAskOverlay;
+    use crate::elicitation::{
+        ElicitationField, ElicitationFieldKind, ElicitationForm, ElicitationFormState,
+        ElicitationOption,
+    };
+
+    let mut app = test_app();
+    app.show_banner = false;
+    app.elicitation_ask = Some(ElicitationAskOverlay {
+        form: ElicitationFormState::new(ElicitationForm {
+            message: "The agent needs your input.".into(),
+            fields: vec![ElicitationField {
+                name: "question_0".into(),
+                custom_name: Some("question_0_custom".into()),
+                title: "Target".into(),
+                description: Some("Where should this run?".into()),
+                required: true,
+                kind: ElicitationFieldKind::Single {
+                    options: vec![
+                        ElicitationOption {
+                            value: "local".into(),
+                            label: "Local".into(),
+                            description: Some("Run here.".into()),
+                            custom: false,
+                        },
+                        ElicitationOption {
+                            value: "other".into(),
+                            label: "Other".into(),
+                            description: None,
+                            custom: true,
+                        },
+                    ],
+                    default: None,
+                },
+            }],
+        }),
+        scroll: 0,
+        reply: None,
+    });
+
+    let frame = dump_frame(&mut app, 100, 30);
+
+    assert!(frame.contains("Target"), "field header\n{frame}");
+    assert!(
+        frame.contains("Where should this run?"),
+        "question\n{frame}"
+    );
+    assert!(frame.contains("Local"), "choice\n{frame}");
+    assert!(frame.contains("Other"), "custom choice\n{frame}");
+    assert!(frame.contains("enter"), "keyboard affordance\n{frame}");
+}
+
+#[test]
+fn elicitation_text_field_owns_the_terminal_cursor_instead_of_the_composer() {
+    use crate::app::ElicitationAskOverlay;
+    use crate::elicitation::{
+        ElicitationField, ElicitationFieldKind, ElicitationForm, ElicitationFormState,
+    };
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    let mut app = test_app();
+    app.show_banner = false;
+    app.input.insert_str("composer draft");
+    let mut form = ElicitationFormState::new(ElicitationForm {
+        message: "The agent needs your input.".into(),
+        fields: vec![ElicitationField {
+            name: "answer".into(),
+            custom_name: None,
+            title: "Answer".into(),
+            description: None,
+            required: true,
+            kind: ElicitationFieldKind::Text { default: None },
+        }],
+    });
+    form.fields[0].input.insert_str("overlay answer");
+    app.elicitation_ask = Some(ElicitationAskOverlay {
+        form,
+        scroll: 0,
+        reply: None,
+    });
+
+    let backend = TestBackend::new(100, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    let buffer = terminal.backend().buffer();
+    let answer_row = (0..30)
+        .find(|y| {
+            (0..100)
+                .map(|x| buffer[(x as u16, *y)].symbol())
+                .collect::<String>()
+                .contains("overlay answer")
+        })
+        .expect("elicitation text field");
+    let answer_line = (0..100)
+        .map(|x| buffer[(x, answer_row)].symbol())
+        .collect::<String>();
+    let answer_byte = answer_line.find("overlay answer").expect("answer text");
+    let answer_start = answer_line[..answer_byte].width() as u16;
+    // The caret is a buffer cell: a reversed block one past the field text
+    // (the cursor sits at the end of "overlay answer").
+    let caret_x = answer_start + "overlay answer".width() as u16;
+    assert!(
+        buffer[(caret_x, answer_row)]
+            .modifier
+            .contains(ratatui::style::Modifier::REVERSED),
+        "elicitation field paints its own caret cell"
+    );
+    assert_eq!(
+        app.caret_cell,
+        Some((caret_x, answer_row)),
+        "hardware cursor parks on the elicitation field caret"
+    );
+    // The composer draft keeps no caret while the overlay owns input.
+    let composer_row = (0..30)
+        .find(|y| {
+            (0..100)
+                .map(|x| buffer[(x as u16, *y)].symbol())
+                .collect::<String>()
+                .contains("composer draft")
+        })
+        .expect("composer draft visible behind the overlay");
+    let draft_line = (0..100)
+        .map(|x| buffer[(x, composer_row)].symbol())
+        .collect::<String>();
+    let draft_byte = draft_line.find("composer draft").expect("draft text");
+    let draft_start = draft_line[..draft_byte].width() as u16;
+    let draft_end = draft_start + "composer draft".width() as u16;
+    assert!(
+        !(0..100).any(|x| {
+            x >= draft_start && x <= draft_end && buffer[(x, composer_row)].modifier.contains(ratatui::style::Modifier::REVERSED)
+        }),
+        "composer shows no caret while elicitation owns input"
+    );
+}
+
+fn box_line(line: &str) -> &str {
+    let trimmed = line.trim_start_matches(' ');
+    trimmed
+        .strip_prefix('│')
+        .and_then(|rest| rest.strip_suffix('│'))
+        .unwrap_or(trimmed)
+}
+
+fn grouped_select_test_app(count: usize, selected: usize) -> App {
+    let mut app = test_app();
+    let options: Vec<_> = (0..count).map(|index| serde_json::json!({
+        "value": format!("item-{index:02}"), "label": format!("Candidate {index:02}"),
+        "description": "An ACP agent",
+        "group": if index < count / 2 { "Downloaded" } else { "Not downloaded" },
+    })).collect();
+    let mut select: crate::app::SelectOverlay = serde_json::from_value(serde_json::json!({
+        "id": "catalog", "title": "Harnesses", "value": format!("item-{selected:02}"),
+        "searchable": true, "options": options,
+    })).expect("select snapshot");
+    select.sel = selected;
+    app.select_overlay = Some(select);
+    app
+}
+
+fn select_only_frame(app: &App, width: u16, height: u16) -> String {
+    let backend = ratatui::backend::TestBackend::new(width, height);
+    let mut terminal = ratatui::Terminal::new(backend).expect("test terminal");
+    terminal.draw(|frame| draw_plugin_select(frame, app, frame.area())).expect("select frame");
+    let buffer = terminal.backend().buffer();
+    (0..height).map(|y| (0..width).map(|x| buffer[(x, y)].symbol())
+        .collect::<String>()).collect::<Vec<_>>().join("\n")
+}
+
+#[test]
+fn grouped_select_overlay_separates_groups_without_selectable_heading_rows() {
+    let app = grouped_select_test_app(4, 0);
+    let frame = select_only_frame(&app, 70, 22);
+    assert_eq!(frame.matches("Downloaded").count(), 1, "one first-group heading:\n{frame}");
+    assert_eq!(frame.matches("Not downloaded").count(), 1, "one second-group heading:\n{frame}");
+    let rows: Vec<_> = frame.lines().collect();
+    for label in ["Downloaded", "Not downloaded"] {
+        let heading = rows.iter().find(|line| line.contains(label)).expect("heading");
+        assert!(heading.contains('─'), "heading has a divider:\n{frame}");
+        assert!(!heading.contains('○') && !heading.contains('●'), "heading is not an option:\n{frame}");
+    }
+    assert_eq!(frame.matches('○').count(), 3, "only real unselected options:\n{frame}");
+    assert_eq!(frame.matches('●').count(), 1, "one real selected option:\n{frame}");
+}
+
+#[test]
+fn grouped_select_overlay_scrolls_with_the_selection_and_repeats_visible_group_title() {
+    let mut app = grouped_select_test_app(40, 39);
+    let frame = select_only_frame(&app, 70, 12);
+    assert!(frame.contains("Not downloaded"), "window repeats its group heading:\n{frame}");
+    assert!(frame.contains("▸ ● Candidate 39"), "selected row stays visible:\n{frame}");
+    assert!(!frame.contains("Downloaded"), "offscreen group heading is not retained:\n{frame}");
+    app.select_overlay.as_mut().unwrap().query = "candidate 39".into();
+    let frame = select_only_frame(&app, 70, 12);
+    assert!(frame.contains("Not downloaded"), "filtered result keeps its heading:\n{frame}");
+    assert!(!frame.contains("Candidate 38"), "nonmatches excluded:\n{frame}");
+    app.select_overlay.as_mut().unwrap().query = "no such candidate".into();
+    let frame = select_only_frame(&app, 70, 12);
+    assert!(frame.contains("No matches"), "empty filter state:\n{frame}");
+    assert!(!frame.contains("Not downloaded"), "no empty group headings:\n{frame}");
+}
+
+#[test]
+fn grouped_select_overlay_small_terminals_prioritize_the_actual_choice() {
+    let mut app = grouped_select_test_app(40, 39);
+    // The overlay can omit decorative headings when only one body row remains.
+    let frame = select_only_frame(&app, 34, 7);
+    assert!(frame.contains("▸ ● Candidate 39"), "heading cannot replace the selected row:\n{frame}");
+    assert_eq!(frame.lines().count(), 7);
+    app.select_overlay.as_mut().unwrap().searchable = false;
+    let frame = select_only_frame(&app, 22, 12);
+    assert!(frame.contains("Not downloa…"), "long heading ellipsized within the narrow panel:\n{frame}");
+    assert!(frame.lines().all(|line| line.chars().count() == 22), "all rows stay inside the screen:\n{frame}");
+}
+
+#[test]
+fn select_overlay_ellipsizes_long_rows_and_previews_the_selection() {
+    use crate::app::{SelectOption, SelectOverlay};
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    let mut app = test_app();
+    app.show_banner = false;
+    let (ctl, commands) = crate::controller::tests::test_controller();
+    let long_label = "非常长的选项标签，用于验证省略号截断与选中项预览换行".repeat(3);
+    let long_desc = "这个描述也很长，说明超宽描述同样会被省略号截断而不是硬切".repeat(3);
+    let label_head: String = long_label.chars().take(10).collect();
+    app.select_overlay = Some(SelectOverlay {
+        id: "ui-preset".into(),
+        title: "UI preset".into(),
+        searchable: false,
+        query: String::new(),
+        value: "long".into(),
+        sel: 0,
+        options: vec![
+            SelectOption {
+                deletable: false,
+                value: "long".into(),
+                disabled: false,
+                label: long_label,
+                description: Some(long_desc),
+                group: None,
+            },
+            SelectOption {
+                deletable: false,
+                value: "short".into(),
+                disabled: false,
+                label: "Short".into(),
+                description: Some("second option".into()),
+                group: None,
+            },
+        ],
+    });
+
+    let frame = dump_frame(&mut app, 60, 30);
+    let lines: Vec<&str> = frame.lines().collect();
+    // Selected row: markers + ellipsized label that stays inside the box.
+    let row = lines
+        .iter()
+        .map(|line| box_line(line))
+        .find(|line| line.contains("▸ ●"))
+        .expect("selected row");
+    assert!(row.contains('…'), "long label ellipsized:\n{frame}");
+    // TestBackend renders each double-width cell as `char + phantom
+    // space`, so the row's char count equals its cell span.
+    assert!(
+        row.chars().count() <= 54,
+        "row cells {} must fit the box; row: {row:?}\n{frame}",
+        row.chars().count()
+    );
+    // The description row is ellipsized too, never hard-clipped.
+    assert!(
+        lines
+            .iter()
+            .map(|line| box_line(line))
+            .any(|line| line.starts_with("    ") && line.contains('…')),
+        "description ellipsized:\n{frame}"
+    );
+    // Preview carries the full label head of the highlighted option.
+    let hint = lines
+        .iter()
+        .position(|line| line.contains("enter apply"))
+        .expect("hint line");
+    let preview: String = lines[hint.saturating_sub(3)..hint]
+        .iter()
+        .map(|line| box_line(line))
+        .collect();
+    // Drop the phantom spaces TestBackend inserts after double-width
+    // cells before comparing against the CJK head.
+    let compact: String = preview.chars().filter(|c| *c != ' ').collect();
+    assert!(
+        compact.contains(&label_head),
+        "preview carries the full label head:\n{frame}"
+    );
+    assert!(
+        preview.contains(" — "),
+        "preview joins label and description:\n{frame}"
+    );
+
+    // Down moves the highlight; the preview follows the selection.
+    app.handle(
+        crate::bus::AppEvent::Term(Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))),
+        &ctl,
+    );
+    let frame = dump_frame(&mut app, 60, 30);
+    let lines: Vec<&str> = frame.lines().collect();
+    let hint = lines
+        .iter()
+        .position(|line| line.contains("enter apply"))
+        .expect("hint line");
+    assert_eq!(
+        box_line(lines[hint - 1]).trim_end(),
+        "Short — second option",
+        "preview follows the selection:\n{frame}"
+    );
+    assert!(
+        lines
+            .iter()
+            .map(|line| box_line(line))
+            .any(|line| line.contains("▸ ●") && line.contains("Short")),
+        "highlight moved:\n{frame}"
+    );
+
+    // Enter submits the highlighted value; the overlay closes.
+    app.handle(
+        crate::bus::AppEvent::Term(Event::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        ))),
+        &ctl,
+    );
+    assert!(app.select_overlay.is_none(), "overlay closed after submit");
+    assert!(matches!(
+        commands.recv_timeout(std::time::Duration::from_secs(1)),
+        Ok(crate::bus::Cmd::PluginOverlayEvent { id, event, value })
+            if id == "ui-preset"
+                && event == "change"
+                && value == Some(serde_json::json!("short"))
+    ));
+    assert!(matches!(
+        commands.recv_timeout(std::time::Duration::from_secs(1)),
+        Ok(crate::bus::Cmd::PluginOverlayEvent { id, event, value })
+            if id == "ui-preset"
+                && event == "submit"
+                && value == Some(serde_json::json!("short"))
+    ));
+}
+
+#[test]
+fn select_overlay_preview_wraps_and_caps_three_lines() {
+    use crate::app::{SelectOption, SelectOverlay};
+    let mut app = test_app();
+    app.show_banner = false;
+    app.select_overlay = Some(SelectOverlay {
+        id: "long".into(),
+        title: "Long".into(),
+        searchable: false,
+        query: String::new(),
+        value: "v".into(),
+        sel: 0,
+        options: vec![SelectOption {
+            deletable: false,
+            disabled: false,
+            value: "v".into(),
+            label: "x".repeat(400),
+            description: None,
+            group: None,
+        }],
+    });
+
+    let frame = dump_frame(&mut app, 40, 30);
+    let lines: Vec<&str> = frame.lines().collect();
+    let hint = lines
+        .iter()
+        .position(|line| line.contains("enter apply"))
+        .expect("hint line");
+    let preview: Vec<&str> = lines[hint.saturating_sub(3)..hint]
+        .iter()
+        .map(|line| box_line(line))
+        .collect();
+    assert_eq!(preview.len(), 3, "preview capped at three lines:\n{frame}");
+    assert!(
+        preview[0].starts_with("xxx"),
+        "preview starts with the label:\n{frame}"
+    );
+    assert!(
+        preview[2].ends_with('…'),
+        "capped preview ends with ellipsis:\n{frame}"
+    );
+    for line in preview {
+        assert!(line.width() <= 34, "preview line fits the box:\n{frame}");
+    }
+}
+
+#[test]
+fn composer_glow_bar_is_gone_and_prompt_tints_while_working() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    let mut app = test_app();
+    app.show_banner = false;
+    let backend = TestBackend::new(80, 20);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let theme = app.theme;
+
+    // Idle: the prompt stays brand blue.
+    app.state = crate::app::RunState::Idle;
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    let buf = terminal.backend().buffer().clone();
+    let prompt_cell = buf
+        .content
+        .iter()
+        .find(|cell| cell.symbol() == "❯")
+        .expect("composer prompt");
+    assert_eq!(prompt_cell.fg, theme.brand, "idle prompt stays brand blue");
+
+    // Working: the glow bar (brand `▎` column) is gone and the prompt
+    // turns amber — the old glow's indicator role (issue #27).
+    app.state = crate::app::RunState::Running;
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    let buf = terminal.backend().buffer().clone();
+    for cell in buf.content.iter() {
+        assert_ne!(cell.symbol(), "▎", "glow bar must not render while running");
+    }
+    let prompt_cell = buf
+        .content
+        .iter()
+        .find(|cell| cell.symbol() == "❯")
+        .expect("composer prompt");
+    assert_eq!(prompt_cell.fg, theme.warn, "working prompt turns amber");
+}
+
+#[test]
+fn composer_dock_title_uses_the_tertiary_tone() {
+    let app = test_app();
+    let theme = app.theme;
+    let node = crate::slots::TuiNode::Generic {
+        id: "stats".into(),
+        title: "1.2k tokens".into(),
+        body: String::new(),
+        status: Some("ok".into()),
+        tone: None,
+        selected: false,
+        action: None,
+    };
+    let spans = compact_node_spans(&node, &theme, crate::markdown::ToneMode::Single, 60, '⣋').expect("generic spans");
+    let title = spans
+        .iter()
+        .find(|s| s.content == "1.2k tokens")
+        .expect("title span");
+    assert_eq!(
+        title.style.fg,
+        Some(theme.fg_tertiary),
+        "dock text sits one tone lighter"
+    );
+}
+
+#[test]
+fn composer_control_rows_share_one_left_gutter() {
+    let mut app = test_app();
+    app.show_banner = false;
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+    for (slot, nodes) in [
+        (
+            "conversation.input.dock",
+            serde_json::json!([
+                { "id": "plan:summary", "kind": "generic", "title": "· Plan", "body": "2/4", "status": "running", "tone": "caption" },
+                { "id": "plan:focus", "kind": "generic", "title": "Collect results", "body": "", "tone": "caption" }
+            ]),
+        ),
+        (
+            "conversation.navigation.dock",
+            serde_json::json!([
+                { "id": "agents:summary", "kind": "generic", "title": "· Agents", "body": "0/4", "status": "running", "tone": "caption" },
+                { "id": "agents:switch", "kind": "generic", "title": "↓ expand", "body": "", "tone": "caption" }
+            ]),
+        ),
+    ] {
+        app.handle(
+            crate::bus::AppEvent::Rpc {
+                method: crate::cordis::SLOTS_UPDATE.into(),
+                params: serde_json::json!({
+                    "protocol": 0,
+                    "slot": slot,
+                    "rev": 1,
+                    "nodes": nodes,
+                }),
+            },
+            &ctl,
+        );
+    }
+
+    let frame = dump_frame(&mut app, 100, 24);
+    assert!(
+        frame.contains("· Plan · 2/4 · Collect results"),
+        "Plan summary stays quiet while only its progress pulses:\n{frame}"
+    );
+    assert!(
+        frame.contains("· Agents · 0/4  ↓ expand"),
+        "Agent summary uses the same compact grammar:\n{frame}"
+    );
+
+    let lines = frame.lines().collect::<Vec<_>>();
+    let plan_x = lines
+        .iter()
+        .find(|line| line.contains("· Plan"))
+        .and_then(|line| line.find("· Plan"))
+        .expect("Plan marker");
+    let input_x = lines
+        .iter()
+        .find(|line| line.contains("describe what you want to build"))
+        .and_then(|line| line.find('❯'))
+        .expect("composer prompt");
+    let agents_x = lines
+        .iter()
+        .find(|line| line.contains("· Agents"))
+        .and_then(|line| line.find("· Agents"))
+        .expect("Agents marker");
+    let meta_x = lines
+        .iter()
+        .find(|line| line.contains("· Standard"))
+        .and_then(|line| line.find("· Standard"))
+        .expect("composer metadata marker");
+    assert_eq!(
+        (plan_x, input_x, agents_x, meta_x),
+        (plan_x, plan_x, plan_x, plan_x)
+    );
+}
+
+#[test]
+fn compact_running_progress_pulses_without_a_spinner_prefix() {
+    let app = test_app();
+    let node = crate::slots::TuiNode::Generic {
+        id: "agents".into(),
+        title: "· Agents".into(),
+        body: "0/2".into(),
+        status: Some("running".into()),
+        tone: Some("caption".into()),
+        selected: false,
+        action: None,
+    };
+
+    let soft = compact_node_spans(&node, &app.theme, crate::markdown::ToneMode::Single, 60, '⠋').expect("generic spans");
+    let bright = compact_node_spans(&node, &app.theme, crate::markdown::ToneMode::Single, 60, '⠴').expect("generic spans");
+    let text = |spans: &[Span]| {
+        spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
+    };
+
+    assert_eq!(text(&soft), "· Agents · 0/2");
+    assert_eq!(text(&bright), "· Agents · 0/2");
+    assert_eq!(soft[0].style.fg, Some(app.theme.caption));
+    assert_eq!(
+        soft.last().expect("progress").style.fg,
+        Some(app.theme.brand_soft)
+    );
+    assert_eq!(
+        bright.last().expect("progress").style.fg,
+        Some(app.theme.brand)
+    );
+}
+
+#[test]
+fn composer_textarea_renders_chips_selection_and_multiline_drafts() {
+    // Chip restyle lands on the buffer cells with the theme's bubble colors.
+    let mut app = test_app();
+    app.show_banner = false;
+    app.pending_images
+        .add(
+            "x.png".into(),
+            "/tmp/x.png".into(),
+            "image/png".into(),
+            vec![137, 80, 78, 71, 13, 10, 26, 10],
+        )
+        .expect("stage");
+    app.input.set("x [image 1] y".into());
+    let backend = ratatui::backend::TestBackend::new(50, 15);
+    let mut terminal = ratatui::Terminal::new(backend).expect("test terminal");
+    terminal.draw(|f| draw(f, &mut app)).expect("draw");
+    let buf = terminal.backend().buffer().clone();
+    let mut chip_cells = 0usize;
+    for row in 0..15u16 {
+        for col in 0..50u16 {
+            if buf[(col, row)].symbol() == "[" {
+                let style = buf[(col, row)].style();
+                assert_eq!(style.fg, Some(app.theme.bubble_fg));
+                assert_eq!(style.bg, Some(app.theme.bubble_bg));
+                chip_cells += 1;
+            }
+        }
+    }
+    assert!(chip_cells >= 1, "chip styled cells found");
+
+    // Drag selection paints reversed cells over the dragged range.
+    let mut app = test_app();
+    app.show_banner = false;
+    app.input.set("hello world".into());
+    app.input_area = Rect::new(1, 10, 48, 3);
+    app.input_top = 0;
+    app.input_sel = Some(crate::app::InputSel {
+        anchor: (0, 1),
+        head: (0, 4),
+    });
+    let backend = ratatui::backend::TestBackend::new(50, 15);
+    let mut terminal = ratatui::Terminal::new(backend).expect("test terminal");
+    terminal.draw(|f| draw(f, &mut app)).expect("draw");
+    let buf = terminal.backend().buffer().clone();
+    let reversed = (0..15u16)
+        .flat_map(|row| (0..50u16).map(move |col| (col, row)))
+        .filter(|&(col, row)| buf[(col, row)].style().add_modifier.contains(Modifier::REVERSED))
+        .count();
+    assert!(reversed >= 4, "selection covers the dragged cells: {reversed}");
+
+    // Hard newlines stack draft lines in the well.
+    let mut app = test_app();
+    app.show_banner = false;
+    app.input.set("line one\nline two".into());
+    let frame = dump_frame(&mut app, 50, 15);
+    let first = frame
+        .lines()
+        .position(|l| l.contains("line one"))
+        .expect("first line");
+    let second = frame
+        .lines()
+        .position(|l| l.contains("line two"))
+        .expect("second line");
+    assert!(second > first, "hard newline stacks lines");
+}
+
+#[test]
+fn empty_plugin_dock_snapshot_hides_the_agents_row_after_tasks_end() {
+    // Issue #80 end-to-end shape: all subagent views are finished and the
+    // Client panel published an EMPTY navigation.dock snapshot (the
+    // auto-close payload). The native rail must not take over as a
+    // fallback while the plugin owns the slot, so the row disappears.
+    let mut app = test_app();
+    app.show_banner = false;
+    app.subagents.push(crate::app::SubagentView {
+        id: "child-1".into(),
+        parent: "dsh-test".into(),
+        label: "subagent 1".into(),
+        running: false,
+        failed: false,
+        transcript: crate::transcript::Transcript::new("child-1".into()),
+    });
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+    app.handle(
+        crate::bus::AppEvent::Rpc {
+            method: crate::cordis::SLOTS_UPDATE.into(),
+            params: serde_json::json!({
+                "protocol": 0,
+                "slot": "conversation.navigation.dock",
+                "rev": 7,
+                "nodes": [],
+            }),
+        },
+        &ctl,
+    );
+
+    let frame = dump_frame(&mut app, 100, 24);
+    assert!(
+        !frame.contains("Agents"),
+        "plugin-owned empty dock must hide the row, not fall back to the native rail:\n{frame}"
+    );
+    assert!(
+        !frame.contains("subagent 1"),
+        "no native rail entries either:\n{frame}"
+    );
+}
+
+use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+fn mouse(kind: MouseEventKind, x: u16, y: u16) -> MouseEvent {
+    MouseEvent {
+        kind,
+        column: x,
+        row: y,
+        modifiers: KeyModifiers::NONE,
+    }
+}
+
+/// Issue #92: the composer well's top-right corner carries a mouse-only,
+/// always-visible `⛶` on the composer card's top-right border — outside
+/// the text well, so a full draft never hides it; hover highlights it.
+/// No key binding.
+#[test]
+fn expand_button_is_hover_revealed_and_toggles_the_well() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    let mut app = test_app();
+    app.show_banner = false;
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+    let backend = TestBackend::new(100, 34);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+
+    let area = ratatui::layout::Rect::new(0, 0, 100, 34);
+    let auto = resolved_composer_height(area, &app);
+    let btn = app.expand_btn.expect("records the expand button rect");
+    assert_eq!(btn.width, 3, "small hit block, no frame");
+    assert_eq!(btn.height, 1);
+    // The glyph sits on the card's cap row (its top border), never on the
+    // text well.
+    assert!(btn.y < app.input_area.y, "outside the well: cap row");
+
+    // Clicking pins the well to the amplified height.
+    app.handle_mouse(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            btn.x + 1,
+            btn.y,
+        ),
+        &ctl,
+    );
+    assert!(app.input_expanded);
+    let expanded = resolved_composer_height(area, &app);
+    assert!(
+        expanded > auto,
+        "expanded well {expanded} must exceed the auto height {auto}"
+    );
+    assert_eq!(expanded, 34 * 5 / 8, "amplified to 5/8 of the main area");
+
+    // Clicking again restores the draft-following auto height.
+    app.handle_mouse(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            btn.x + 1,
+            btn.y,
+        ),
+        &ctl,
+    );
+    assert!(!app.input_expanded);
+    assert_eq!(resolved_composer_height(area, &app), auto);
+}
+
+/// The button's hit-test survives the hover-reveal (it never paints over
+/// the caret placement: clicking it must not move the caret).
+#[test]
+fn expand_button_click_does_not_place_the_caret() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    let mut app = test_app();
+    app.show_banner = false;
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+    app.input.set("hello".into());
+    let backend = TestBackend::new(100, 34);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    let btn = app.expand_btn.expect("button rect");
+    let before = app.input.cursor_char();
+    app.handle_mouse(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            btn.x + 1,
+            btn.y,
+        ),
+        &ctl,
+    );
+    assert_eq!(
+        app.input.cursor_char(),
+        before,
+        "button click toggles the well, never the caret"
+    );
+    assert!(app.input_expanded);
+}
+
+/// The idle `⛶` is always painted on the card's top-right; hovering turns
+/// it into the brightened glyph on a small chip block; the pointer leaving
+/// restores the quiet tone.
+#[test]
+fn expand_button_idle_glyph_and_hover_icon() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    let mut app = test_app();
+    app.show_banner = false;
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+    let backend = TestBackend::new(100, 34);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    let btn = app.expand_btn.expect("button rect");
+
+    // Idle: the `⛶` glyph is visible in the quiet caption tone, on the
+    // cap row next to the card corner — a full draft cannot reach it.
+    let buf = terminal.backend().buffer().clone();
+    let theme = app.theme;
+    assert_eq!(buf[(0, btn.y)].symbol(), "╭", "cap row of the card");
+    assert_eq!(
+        buf[(btn.x + 1, btn.y)].symbol(),
+        "⛶",
+        "idle state keeps the expand glyph visible"
+    );
+    assert_eq!(buf[(btn.x + 1, btn.y)].fg, theme.caption);
+    assert_eq!(buf[(btn.x + 2, btn.y)].symbol(), " ", "one cell between glyph and corner");
+
+    // Hover: the same glyph brightened to the strongest foreground — no
+    // BOLD, no background chip; the brightness shift alone is the affordance.
+    app.handle_mouse(mouse(MouseEventKind::Moved, btn.x + 2, btn.y), &ctl);
+    assert!(app.hover_expand_btn);
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    let buf = terminal.backend().buffer().clone();
+    assert_ne!(
+        buf[(btn.x, btn.y)].bg,
+        theme.chip_bg,
+        "no hover background chip"
+    );
+    assert_eq!(
+        buf[(btn.x + 1, btn.y)].symbol(),
+        "⛶",
+        "the same glyph, occupied exactly one cell"
+    );
+    assert_eq!(
+        buf[(btn.x + 1, btn.y)].fg,
+        theme.fg,
+        "hover brightens the glyph to the strongest foreground"
+    );
+    assert_eq!(
+        buf[(btn.x + 3, btn.y)].symbol(),
+        "╮",
+        "the glyph sits right next to the card's top-right corner"
+    );
+    assert_eq!(buf[(btn.x + 1, btn.y)].bg, buf[(btn.x, btn.y)].bg, "no background change on hover");
+    assert_eq!(
+        buf[(btn.x, btn.y)].symbol(),
+        " ",
+        "no frame characters anywhere"
+    );
+
+    // Expanded: the same cell keeps the same glyph (one icon, two states).
+    app.handle_mouse(
+        mouse(
+            MouseEventKind::Down(MouseButton::Left),
+            btn.x + 2,
+            btn.y,
+        ),
+        &ctl,
+    );
+    assert!(app.input_expanded);
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    let buf = terminal.backend().buffer().clone();
+    let btn2 = app.expand_btn.expect("button rect after expanding");
+    assert_eq!(buf[(btn2.x + 1, btn2.y)].symbol(), "⛶");
+
+    // The pointer leaves: back to the quiet glyph, block gone.
+    app.handle_mouse(mouse(MouseEventKind::Moved, 5, 5), &ctl);
+    assert!(!app.hover_expand_btn);
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    let buf = terminal.backend().buffer().clone();
+    let idle_btn = app.expand_btn.expect("button rect when idle");
+    assert_eq!(
+        buf[(idle_btn.x + 1, idle_btn.y)].symbol(),
+        "⛶",
+        "idle glyph restored when the pointer leaves"
+    );
+    assert_eq!(buf[(idle_btn.x, idle_btn.y)].bg, theme.panel, "block cleared");
+}
+
+/// A full draft cannot reach the border-mounted glyph: with the well
+/// completely filled, the cap row's right corner still shows `⛶` on
+/// untouched title text.
+#[test]
+fn expand_button_survives_a_full_draft() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    let mut app = test_app();
+    app.show_banner = false;
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+    // Fill the well: auto height 4 rows, well 3 rows × ~96 columns.
+    app.input.set(" word".repeat(60));
+    let backend = TestBackend::new(100, 34);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    let buf = terminal.backend().buffer().clone();
+    let theme = app.theme;
+    let btn = app.expand_btn.expect("button rect");
+    assert_eq!(
+        buf[(btn.x + 1, btn.y)].symbol(),
+        "⛶",
+        "full draft: the glyph stays on the border"
+    );
+    assert_eq!(buf[(btn.x + 1, btn.y)].fg, theme.caption);
+    // The well rows themselves carry no button glyph.
+    assert_ne!(buf[(btn.x + 2, app.input_area.y)].symbol(), "⛶");
+}
+
+/// The ↥ user-prompt jump button (issue #103) renders between the project
+/// path and the ⛶ expand glyph — spaces on both sides — and hovers the
+/// same way: quiet caption tone idle, brightest foreground on hover.
+#[test]
+fn prompt_jump_button_sits_between_path_and_expand_and_hovers() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    let mut app = test_app();
+    app.show_banner = false;
+    let (ctl, _commands) = crate::controller::tests::test_controller();
+    let backend = TestBackend::new(100, 34);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    let buf = terminal.backend().buffer().clone();
+    let theme = app.theme;
+    let expand = app.expand_btn.expect("expand rect");
+    let jump = app.prompt_jump_btn.expect("jump rect");
+
+    // Geometry: ↥ (space) ⛶ (space) ╮ — the jump glyph one cell left of
+    // the expand glyph with a space in between, and a space before it.
+    assert_eq!(jump.y, expand.y, "both buttons share the cap row");
+    assert_eq!(jump.x + jump.width, expand.x, "jump rect tucked left of expand");
+    assert_eq!(buf[(jump.x + 1, jump.y)].symbol(), "↥");
+    assert_eq!(buf[(expand.x - 2, expand.y)].symbol(), " ", "space before ↥");
+    assert_eq!(buf[(expand.x, expand.y)].symbol(), " ", "space between ↥ and ⛶");
+    assert_eq!(buf[(expand.x + 1, expand.y)].symbol(), "⛶");
+    assert_eq!(buf[(jump.x + 1, jump.y)].fg, theme.caption, "idle tone");
+
+    // Hover brightens the ↥ glyph.
+    app.handle_mouse(mouse(MouseEventKind::Moved, jump.x + 1, jump.y), &ctl);
+    assert!(app.hover_prompt_jump_btn);
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    let buf = terminal.backend().buffer().clone();
+    assert_eq!(
+        buf[(jump.x + 1, jump.y)].fg,
+        theme.fg,
+        "hover brightens the ↥ glyph"
+    );
+    // Leaving restores the quiet glyph.
+    app.handle_mouse(mouse(MouseEventKind::Moved, 5, 5), &ctl);
+    assert!(!app.hover_prompt_jump_btn);
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    let buf = terminal.backend().buffer().clone();
+    assert_eq!(
+        buf[(jump.x + 1, jump.y)].fg,
+        theme.caption,
+        "idle tone restored when the pointer leaves"
+    );
+}
+
+/// Regression: a full queue shelf plus an expanded draft used to push the
+/// composer past the frame; `draw_input` then wrote the prompt gutter at
+/// y == frame height and ratatui's `Buffer::index_of` panicked
+/// (`index outside of buffer`). The chrome stack must compress instead.
+#[test]
+fn overflowing_chrome_stack_keeps_the_composer_inside_the_frame() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    let mut app = test_app();
+    app.show_banner = false;
+    app.queued = 12;
+    app.input
+        .set((0..30).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n"));
+    let backend = TestBackend::new(80, 22);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    assert!(
+        app.input_area.height > 0,
+        "the composer must keep at least one row: {:?}",
+        app.input_area,
+    );
+    assert!(
+        app.input_area.bottom() <= 22,
+        "composer escaped the 22-row frame: {:?}",
+        app.input_area,
+    );
+    assert!(app.chat_view.area.bottom() <= 22);
+}
+
+/// The 20-row / 8-queued configuration sat exactly at the old boundary; it
+/// must keep fitting (and must not panic) without extra compression.
+#[test]
+fn queue_shelf_and_expanded_draft_at_the_old_boundary_still_fit() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    let mut app = test_app();
+    app.show_banner = false;
+    app.queued = 8;
+    app.input
+        .set((0..30).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n"));
+    let backend = TestBackend::new(80, 20);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    assert!(
+        app.input_area.bottom() <= 20,
+        "composer escaped the 20-row frame: {:?}",
+        app.input_area,
+    );
+}
+
+/// A roomy terminal must keep a real conversation area: the compression pass
+/// only engages when the chrome stack actually overflows.
+#[test]
+fn roomy_chrome_stack_keeps_the_conversation_visible() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    let mut app = test_app();
+    app.show_banner = false;
+    app.queued = 3;
+    app.input.set("one\ntwo\nthree\nfour\nfive".into());
+    let backend = TestBackend::new(100, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    assert!(
+        app.chat_view.area.height > 0,
+        "chat collapsed on a terminal with room to spare",
+    );
+    assert!(app.input_area.bottom() <= 30);
+}
+
+#[test]
+fn harness_name_precedes_model_without_registry_image() {
+    let mut app = live_test_app();
+    app.session_bound = true;
+    app.server_info = Some("Custom Harness".into());
+    app.selected_model = Some("example-model".into());
+    let text: String = status_right(&app).iter().map(|span| span.content.as_ref()).collect();
+    assert!(text.contains("Custom Harness · example-model"), "{text}");
+    // Nothing negotiated, nothing claimed. A connection that never reported a
+    // protocol (demo, legacy attach) must not borrow the v1 tag by default —
+    // `harness_name_precedes_model_without_registry_image` is the pin that it
+    // does not, since a defaulted tag would read "Custom Harness acp · ".
+    assert!(app.protocol_tag.is_none());
+}
+
+#[test]
+fn the_negotiated_protocol_badges_the_harness_name() {
+    let flat = |app: &App| -> String {
+        status_right(app).iter().map(|span| span.content.as_ref()).collect()
+    };
+    let mut app = live_test_app();
+    app.session_bound = true;
+    app.server_info = Some("stub-agent".into());
+    app.selected_model = Some("example-model".into());
+
+    // The agent's own name cannot tell the two stacks apart: a v1 and a v2
+    // recipe for the same binary report the same `agentInfo.name`, and after
+    // `initialize` nothing else on the wire distinguishes them. The tag is the
+    // only readable answer to "which protocol am I actually on", spelled the
+    // way `Negotiated::describe()` spells it for `--check-runtime`.
+    app.protocol_tag = Some("acp");
+    assert!(flat(&app).contains("stub-agent acp · example-model"), "{}", flat(&app));
+    app.protocol_tag = Some("acp2");
+    assert!(flat(&app).contains("stub-agent acp2 · example-model"), "{}", flat(&app));
+
+    // The badge is connection chrome, so an unbound session shows neither name
+    // nor tag rather than a tag floating on its own.
+    app.session_bound = false;
+    assert!(!flat(&app).contains("acp2"), "{}", flat(&app));
+}
+
+#[test]
+fn harness_icon_is_session_scoped_and_falls_back_on_non_pixel_terminals() {
+    let mut app = live_test_app();
+    app.session_bound = true;
+    app.session_id = "alpha".into();
+    app.server_info = Some("Alpha ACP".into());
+    app.selected_model = Some("example-model".into());
+    let snapshot = crate::slots::parse_snapshot(&serde_json::json!({
+        "protocol": 0, "slot": "conversation.harness", "nodes": [{
+            "id": "harness:alpha", "kind": "image", "name": "Alpha Harness",
+            "mime": "image/png", "dataBase64": crate::pet::base64(crate::pet::LIANG_IDLE_PNG)
+        }]
+    })).unwrap().unwrap();
+    app.harness_badge = crate::harness_badge::parse(&snapshot);
+    assert!(status_right(&app).iter().any(|s| s.content == "Alpha Harness · "));
+    app.pet_pixels = true;
+    // Use a small valid PNG; the painter rejects oversized Registry images.
+    let mut png = Vec::new();
+    image::DynamicImage::new_rgba8(16, 16).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+    let snapshot = crate::slots::parse_snapshot(&serde_json::json!({
+        "protocol": 0, "slot": "conversation.harness", "nodes": [{
+            "id": "harness:alpha", "kind": "image", "name": "Alpha Harness",
+            "mime": "image/png", "dataBase64": crate::pet::base64(&png)
+        }]
+    })).unwrap().unwrap();
+    app.harness_badge = crate::harness_badge::parse(&snapshot);
+    let line = meta_line(&app, 100);
+    layout_harness_icon(&mut app, &line, Rect::new(1, 20, 100, 1));
+    assert!(app.harness_thumb.is_some());
+    assert_eq!(app.harness_thumb.as_ref().unwrap().rect.height, 1);
+    let mut pixel_terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+    pixel_terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+    let rect = app.harness_thumb.as_ref().unwrap().rect;
+    assert_eq!(pixel_terminal.backend().buffer()[(rect.x, rect.y)].symbol(), "\u{2007}");
+    app.session_id = "beta".into();
+    app.server_info = Some("Beta Harness".into());
+    let text: String = status_right(&app).iter().map(|s| s.content.as_ref()).collect();
+    assert!(text.contains("Beta Harness · example-model"));
+    assert!(!text.contains(HARNESS_IMAGE_SPACE));
+    let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+    terminal.draw(|frame| draw(frame, &mut app)).unwrap();
+    assert!(app.harness_thumb.is_none());
+}
+
+
+/// End-to-end for the scrollback bound: a real frame past the high mark prunes
+/// the oldest rows, keeps the tail on screen, says so in the tip line, and
+/// then leaves the session alone — the hysteresis band, not a per-frame chop.
+#[test]
+fn draw_prunes_scrollback_past_the_high_mark_and_keeps_the_tail() {
+    use crate::events::UiEvent;
+    use crate::transcript::PRUNE_HIGH_ROWS;
+    use crate::transcript::PRUNE_LOW_ROWS;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    let theme = Theme::dark();
+    let tone = crate::markdown::ToneMode::Single;
+    let mut app = test_app();
+    app.show_banner = false;
+    let pad = "a row of tool output that wraps when the pane is narrow. ";
+    loop {
+        for _ in 0..24 {
+            let i = app.transcript.cells.len();
+            app.transcript.push_user(format!("prompt {i}"), false);
+            app.transcript.apply(UiEvent::AssistantFinal {
+                session: "dsh-test".into(),
+                text: format!("answer {i}\n"),
+                model: Some("m".into()),
+            });
+            app.transcript.apply(UiEvent::ToolCall {
+                session: "dsh-test".into(),
+                call_id: format!("c{i}"),
+                name: "bash".into(),
+                arguments: format!(r#"{{"command":"turn {i}"}}"#),
+                diff: None,
+            });
+            app.transcript.apply(UiEvent::ToolResult {
+                session: "dsh-test".into(),
+                call_id: format!("c{i}"),
+                is_error: false,
+                text: (0..40).map(|k| format!("{pad}{k}")).collect::<Vec<_>>().join("\n"),
+                error: None,
+            });
+        }
+        if app.transcript.row_count(&theme, tone, 100, ' ', false) > PRUNE_HIGH_ROWS {
+            break;
+        }
+    }
+    app.transcript.push_user("TAILMARKER".into(), false);
+    let cells_before = app.transcript.cells.len();
+    let rows_before = app.transcript.row_count(&theme, tone, 100, ' ', false);
+    assert!(rows_before > PRUNE_HIGH_ROWS);
+    app.tip = None;
+
+    let backend = TestBackend::new(100, 24);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+
+    let cells_after = app.transcript.cells.len();
+    assert!(cells_after < cells_before, "the frame did not prune");
+    let rows_after = app.transcript.row_count(&theme, tone, 100, ' ', false);
+    assert!(rows_after <= PRUNE_LOW_ROWS, "pruned to {rows_after}, above the low mark");
+    let (tip, _) = app.tip.as_ref().expect("the prune should announce itself");
+    assert!(tip.contains("pruned"), "tip {tip:?}");
+
+    // The tail is still on screen, and the oldest prompt is gone.
+    let screen = terminal
+        .backend()
+        .buffer()
+        .content()
+        .iter()
+        .map(|c| c.symbol())
+        .collect::<String>();
+    assert!(screen.contains("TAILMARKER"), "the newest prompt scrolled off");
+    assert!(!screen.contains("prompt 0 "), "the pruned head is still painted");
+
+    // Hysteresis: the very next frame has nothing to do.
+    app.tip = None;
+    terminal.draw(|f| draw(f, &mut app)).expect("draw frame");
+    assert_eq!(app.transcript.cells.len(), cells_after, "pruned twice in a row");
+    assert!(app.tip.is_none(), "a second prune announced itself inside the band");
+}

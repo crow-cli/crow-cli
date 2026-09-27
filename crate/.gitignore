@@ -1,0 +1,12 @@
+/target
+/dist
+/npm-martty
+/.venv
+/npm/vendor
+/npm/node_modules
+/host/node_modules
+/host/skills/tui-plugin-development-workspace
+*.tgz
+__pycache__/
+.DS_Store
+/.pi-subagents
