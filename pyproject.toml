@@ -1,6 +1,6 @@
 [project]
 name = "crow-cli"
-version = "0.1.45"
+version = "0.1.46"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -69,7 +69,6 @@ dev = [
     "pytest>=9.0.2",
     "pytest-asyncio>=0.23.0",
     "pyinstaller>=6.0.0",
-    "pyte>=0.8.2",
 ]
 
 [tool.pytest.ini_options]

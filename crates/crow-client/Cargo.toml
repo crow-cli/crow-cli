@@ -2,7 +2,7 @@
 name = "crow-client"
 version = "0.1.0"
 edition = "2021"
-description = "Terminal-native ACP client for AI coding agents"
+description = "ACP client TUI"
 license = "MIT"
 repository = "https://github.com/crow-cli/crow-cli"
 homepage = "https://crow-ai.dev"
