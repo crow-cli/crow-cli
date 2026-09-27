@@ -230,7 +230,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // on top, one meta row — run state + mode/permission chips + model — at
     // the bottom). The old shortcut-hints row is gone (`/keys` carries that).
     let child_view = app.active_subagent.is_some();
-    let approval_h = if !child_view && !app.pending_cordis_approvals.is_empty() && main.height >= 12
+    let approval_h = if !child_view && !app.pending_plugin_approvals.is_empty() && main.height >= 12
     {
         1
     } else {
@@ -348,7 +348,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     draw_chat(f, app, chat);
     if approval_h > 0 {
-        draw_cordis_approval(f, app, approval);
+        draw_plugin_approval(f, app, approval);
     }
     if queue_shelf_h > 0 {
         draw_queue_shelf(f, app, queue_shelf);
@@ -439,12 +439,12 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
 }
 
-fn draw_cordis_approval(f: &mut Frame, app: &App, area: Rect) {
-    let Some(approval) = app.pending_cordis_approvals.first() else {
+fn draw_plugin_approval(f: &mut Frame, app: &App, area: Rect) {
+    let Some(approval) = app.pending_plugin_approvals.first() else {
         return;
     };
     let theme = app.theme;
-    let count = app.pending_cordis_approvals.len();
+    let count = app.pending_plugin_approvals.len();
     let line = Line::from(vec![
         Span::styled(
             format!(" ⚠ 1/{count} {} · ", approval.name),
@@ -2161,13 +2161,15 @@ fn layout_harness_icon(app: &mut App, line: &Line, area: Rect) {
     }
 }
 
+/// The model to show in the meta chip: the explicit pick, then the model that
+/// actually streamed, then the one the agent reported for this session. `None`
+/// until the agent says — the client has no model of its own to display.
 fn displayed_model(app: &App) -> Option<String> {
     if app.connection_error.is_some() { return None; }
     app.selected_model
         .clone()
         .or_else(|| app.transcript.last_model.clone())
         .or_else(|| app.session_model.clone())
-        .or_else(|| app.demo.then(|| app.cfg.model.clone()))
 }
 
 fn active_runtime(app: &App) -> &str {
@@ -2180,14 +2182,7 @@ fn welcome_model(app: &App) -> String {
     if app.connection_error.is_some() {
         return app.locale.tr("unavailable", "不可用").into();
     }
-    if app.demo {
-        return format!(
-            "{} · {}",
-            app.cfg.provider,
-            app.session_model.as_deref().unwrap_or(&app.cfg.model)
-        );
-    }
-    app.session_model.clone().unwrap_or_else(|| {
+    displayed_model(app).unwrap_or_else(|| {
         app.locale
             .tr("waiting for ACP", "等待 ACP 上报")
             .to_string()
@@ -3656,7 +3651,7 @@ fn draw_model_picker(f: &mut Frame, app: &mut App, screen: Rect) {
     // Current-identity ids, precomputed so the row builder below never
     // borrows `app` (the ListView render needs a mutable picker).
     let current_model = app.current_model();
-    let current_provider = app.cfg.provider.clone();
+    let current_provider = app.session_provider.clone();
     let current_mode = app.current_mode();
     let current_palette = app.active_palette_id.clone();
     let current_permission = app.current_permission().to_string();
@@ -3664,10 +3659,13 @@ fn draw_model_picker(f: &mut Frame, app: &mut App, screen: Rect) {
     let is_current = move |item: &crate::app::PickerItem| match kind {
         crate::app::PickerKind::Model => {
             item.id == current_model
-                && item
-                    .provider
-                    .as_deref()
-                    .is_none_or(|provider| provider == current_provider)
+                && match (&item.provider, &current_provider) {
+                    // A row that carries no provider, or a session whose
+                    // provider the agent never stated: the id is the only fact
+                    // there is to match on.
+                    (None, _) | (_, None) => true,
+                    (Some(row), Some(session)) => row == session,
+                }
         }
         crate::app::PickerKind::Mode => item.id == current_mode,
         crate::app::PickerKind::Theme => item.id == current_palette,
@@ -3678,8 +3676,8 @@ fn draw_model_picker(f: &mut Frame, app: &mut App, screen: Rect) {
         }
         crate::app::PickerKind::Session
         | crate::app::PickerKind::Auth
-        | crate::app::PickerKind::CordisPlugin
-        | crate::app::PickerKind::CordisApproval
+        | crate::app::PickerKind::DynamicPlugin
+        | crate::app::PickerKind::PluginApproval
         // The harness picker marks its active row in the meta column, which is
         // where the recipe lives; a ✓ would only repeat it.
         | crate::app::PickerKind::Harness
@@ -4111,18 +4109,6 @@ fn banner_lines(app: &App, width: u16) -> Vec<Line<'static>> {
             app.tone_mode,
             width as usize,
         ));
-    } else if app.ui_preset == "deepseek" {
-        out.extend(crate::deepseek_logo::lines(theme, width));
-        out.push(Line::default());
-        out.push(centered(
-            width,
-            vec![Span::styled(
-                app.locale.tr("Into the Unknown", "探索未知").to_string(),
-                Style::default()
-                    .fg(theme.fg_tertiary)
-                    .add_modifier(Modifier::BOLD),
-            )],
-        ));
     } else {
         out.extend(logo::crow_cli_logo_lines(theme, width));
         out.push(Line::default());
@@ -4238,28 +4224,16 @@ fn welcome_info_lines(app: &App) -> Vec<Line<'static>> {
             app.locale.tr("credentials", "凭据"),
             detail,
         ));
-    } else if app.attached {
+    } else {
+        // The agent owns its credentials; this client never sees a key, so the
+        // only honest line is that the source is not ours to report. Demo says
+        // the same thing — it has no agent and no key either.
         out.push(kv(
             app.locale.tr("credentials", "凭据"),
             app.locale
                 .tr("managed by Agent · source not reported", "由 Agent 管理 · 来源未上报")
                 .into(),
         ));
-    } else if let Some(source) = app.cfg.credential_source() {
-        out.push(kv(app.locale.tr("credentials", "凭据"), source.into()));
-    } else {
-        out.push(Line::from(vec![
-            Span::styled("  ⚠ ".to_string(), Style::default().fg(theme.warn)),
-            Span::styled(
-                app.locale
-                    .tr(
-                        "DEEPSEEK_API_KEY not set — export it, or relaunch with --demo",
-                        "未设置 DEEPSEEK_API_KEY — 请导出变量，或使用 --demo 重启",
-                    )
-                    .to_string(),
-                Style::default().fg(theme.warn_soft()),
-            ),
-        ]));
     }
     out.push(Line::from(Span::styled(
         app.locale

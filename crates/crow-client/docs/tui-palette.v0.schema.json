@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://openma.ai/dsh-tui/tui-palette.v0.schema.json",
-  "title": "dsh-tui palette protocol 0",
-  "$comment": "Plugin ABI for tuiTheme.register. Transport method names are not part of this schema.",
+  "$id": "https://crow-ai.dev/crow-client/tui-palette.v0.schema.json",
+  "title": "crow-client palette protocol 0",
+  "$comment": "Palette ABI: what a pack must carry to be selectable. Transport method names are not part of this schema.",
   "type": "object",
   "additionalProperties": false,
   "required": ["id", "label", "dark", "light"],

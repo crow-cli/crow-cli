@@ -8,18 +8,24 @@ suite, `scripts/real-agent-e2e.py` and `scripts/check-release-tag.mjs` are
 deleted, not dormant. If a commit message, an old note here, or your own
 recollection points at one of them, it is stale.
 
-There is no Cordis host, no dsh profile, no client-plugin tree, no
-`ctx.acpClient`, no agent pool and no second process. The user runs
-`./target/release/crow` directly.
+There is no plugin host, no profile system, no client-plugin tree, no
+`ctx.acpClient`, no agent pool and no second process. Nothing answers the
+`_crow/tui/*` extension family in `src/ext.rs` either, which is why four slash
+commands are parked (below). The user runs `./target/release/crow` directly.
 
 What *is* still vestigial, and exactly where:
 
-- `src/theme.rs` is a 1:1 map of DeepSeek's web design tokens;
-  `src/deepseek_logo.rs` and `assets/martty-lockup.svg` are the same story.
-- `/plugins`, `/cordis-plugins`, `/ui` and `/liang` are live slash commands
-  aimed at a plugin host that no longer exists. `src/cordis.rs` and
-  `src/slots.rs` are the receiving end.
-- **Anything that "arrives from a Cordis slot snapshot" never arrives.**
+- `src/theme.rs` is the palette layer and nothing else: the house ramp
+  `CROW_50…CROW_900`, the six `BUILTIN_PALETTE_IDS` packs (`default` wears the
+  house ramp; four Catppuccin flavors; one retained blue pack, listed last
+  because it is the odd one out), and the protocol-0 parse. There is no logo
+  module and no lockup asset anywhere in the tree.
+- `/plugins`, `/dynamic-plugins`, `/ui` and `/liang` are **parked, not live**:
+  commented out of `SLASH_COMMANDS` at their alphabetical positions, each with a
+  note naming the machinery that is still compiled and tested. `src/ext.rs` is
+  the wire-name table for the host that does not exist; `src/slots.rs` and
+  `src/pet.rs` are the receiving ends. `run_slash` still resolves all four.
+- **Anything that "arrives from a compositor slot snapshot" never arrives.**
   `app.harness_badge` is fed from the `conversation.harness` slot in
   `src/app/pump.rs`, so it is permanently empty. Chrome, badges and palettes
   must be driven from the Rust side (`CtlEvent` / `AppEvent`), never from a
@@ -31,9 +37,17 @@ What *is* still vestigial, and exactly where:
 
 Consequences that have already bitten an agent:
 
-- **There is no plugin command namespace to collide with.** Slash commands are
-  exactly `SLASH_COMMANDS` in `src/app/slash_catalog.rs`, resolved client-side
-  in the painter. A builtin name is the only thing that exists.
+- **The `/` namespace has three sources, and builtins win.** `SLASH_COMMANDS`
+  in `src/app/slash_catalog.rs` is resolved client-side in the painter. The
+  agent's `availableCommands` arrive as host skills in the same menu
+  (`skills_from_available_commands` at `events.rs:950`, fed from
+  `acp.rs:1804-1819` and `acp/v2.rs:785`) — that path is live, and this
+  repo's own agent uses it (`src/crow_cli/agent/main.py:566`). A compositor
+  could also push client plugin commands over
+  `_crow/tui/commands/update`; nothing does, so that source is parked with the
+  four commands above. Both non-builtin sources are filtered against the
+  builtin names (`app/slash.rs:43,74`), so a builtin can never be shadowed,
+  and each group stays alphabetical.
 - **The Rust suite is the only gate.** There is no other suite, and no CI.
 
 Read [`README.md`](README.md) for what this repo is becoming versus what it is
@@ -41,8 +55,8 @@ today. [`docs/README.md`](docs/README.md) indexes what is left in `docs/`.
 
 ## Commands & verification
 
-- **Rust is the only gate**: `cargo test --locked` and `cargo check --locked --tests`. `scripts/cargo-guard.sh` wraps cargo with cache-size and disk guards (`DSH_TUI_RUST_CACHE_MAX_GIB`); there is no Makefile, so call it directly or just run cargo. No clippy/fmt gate exists. Never run repo-wide `cargo fmt` — `acp.rs`, `app.rs` and `ui.rs` carry hundreds of pre-existing rustfmt markers; format only files that are entirely new, and check `rustfmt --check` line numbers against `git diff -U0` for existing ones.
-- ⛔ `scripts/cargo-guard.sh` must **never** auto-clean the target dir. It used to `cargo clean` `$DSH_TUI_CARGO_TARGET_DIR` (= `$PWD/target`) at 20 GiB and deleted a release build mid-test-run. Over the limit it warns; pruning is explicit (`cargo-guard.sh prune`). The user builds with bare `cargo build --release -j 6` into `$PWD/target` and tests from it. Do not reintroduce auto-clean.
+- **Rust is the only gate**: `cargo test --locked` and `cargo check --locked --tests`. `scripts/cargo-guard.sh` wraps cargo with cache-size and disk guards (`CROW_RUST_CACHE_MAX_GIB`); there is no Makefile, so call it directly or just run cargo. No clippy/fmt gate exists. Never run repo-wide `cargo fmt` — `acp.rs`, `app.rs` and `ui.rs` carry hundreds of pre-existing rustfmt markers; format only files that are entirely new, and check `rustfmt --check` line numbers against `git diff -U0` for existing ones.
+- ⛔ `scripts/cargo-guard.sh` must **never** auto-clean the target dir. It used to `cargo clean` `$CROW_CARGO_TARGET_DIR` (= `$PWD/target`) at 20 GiB and deleted a release build mid-test-run. Over the limit it warns; pruning is explicit (`cargo-guard.sh prune`). The user builds with bare `cargo build --release -j 6` into `$PWD/target` and tests from it. Do not reintroduce auto-clean.
 - Linker OOM: on small-RAM machines `cc`/`ld` can get killed (signal 9) linking the test binary. Retry with `RUSTFLAGS="-C link-arg=-fuse-ld=mold" cargo test` (mold is much lighter). `release` uses `lto = true` and is slow — verify with debug builds.
 - Rust unit tests live in `tests/unit/*__tests.rs` but are wired in by a `#[cfg(test)] #[path = "../tests/unit/…"] mod tests;` include at the bottom of the owning `src/*.rs` file — add that include for new test files.
 - No-TTY visual check: `cargo run -- --dump-frame 100x34` renders the canned demo frame as text; useful to diff transcript/markdown output before and after a rendering change.
@@ -52,7 +66,7 @@ today. [`docs/README.md`](docs/README.md) indexes what is left in `docs/`.
 ## Release & versioning
 
 - The version lives in one file: `Cargo.toml`. There is no npm package, no release-tag checker and no `.github/` — CI for this repo is not set up yet.
-- `CHANGELOG.md`, `PLAN.md` and `TODO.md` were Martty-era and have been deleted. There is no changelog process; do not recreate one without being asked.
+- `CHANGELOG.md` went with the rest of the fork's release scaffolding. There is no changelog process; do not recreate one without being asked. `PLAN.md` and `TODO.md` at the repo root are the rebrand sprint's working documents — they are supposed to be there, and they get updated as each phase lands.
 
 ## crow architecture — the constraints that ARE real
 
@@ -87,10 +101,11 @@ today. [`docs/README.md`](docs/README.md) indexes what is left in `docs/`.
   **patch, never rewrite** (`serde_json` `preserve_order` is on transitively, so
   key order survives), create-if-absent, and **quarantine** a non-empty
   unparseable file rather than replace it.
-- crow is a **binary crate**, edition 2021, rustc 1.95 → avoid
-  `let_chains`. Unit tests live in `tests/unit/*__tests.rs` and are wired in by
-  a `#[cfg(test)] #[path = "../tests/unit/…"] mod …;` include at the bottom of
-  the owning `src/*.rs` (from `src/acp/*.rs` the path is `../../tests/unit/…`).
+- crow is a **binary crate**, edition 2021, built with rustc 1.98 → avoid
+  `let_chains` (they are edition-2024-only). Unit tests live in
+  `tests/unit/*__tests.rs` and are wired in by a `#[cfg(test)]
+  #[path = "../tests/unit/…"] mod …;` include at the bottom of the owning
+  `src/*.rs` (from `src/acp/*.rs` the path is `../../tests/unit/…`).
   Test modules sit inside the source module, so `use super::*` reaches private
   items. `cargo test --lib` fails — use `--bin crow`.
 - Slash commands are `SLASH_COMMANDS` in `src/app/slash_catalog.rs`, **name-sorted and a test

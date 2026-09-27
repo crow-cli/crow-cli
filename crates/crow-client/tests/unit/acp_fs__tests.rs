@@ -23,7 +23,7 @@ fn inside_cwd_is_the_root_or_a_child_not_a_sibling_prefix() {
 #[test]
 fn write_then_read_round_trip_inside_temp() {
     let dir = std::env::temp_dir().join(format!(
-        "dsh-tui-fs-{}-{}",
+        "crow-fs-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

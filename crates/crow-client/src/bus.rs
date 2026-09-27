@@ -137,8 +137,8 @@ pub enum CtlEvent {
     },
     /// Read-only Loader inventory, matching the Web plugin list.
     StaticPlugins { plugins: Vec<StaticPluginItem> },
-    /// Dynamic Cordis plugins owned by the current Host Agent.
-    CordisPlugins { plugins: Vec<CordisPluginItem> },
+    /// Dynamic plugins owned by the current Host Agent.
+    DynamicPlugins { plugins: Vec<DynamicPluginItem> },
     /// ACP session modes (permission / `session/set_mode`).
     SessionModes {
         session_id: Option<String>,
@@ -239,9 +239,9 @@ pub struct StaticPluginItem {
     pub fiber_phase: Option<String>,
 }
 
-/// One backend-owned dynamic Cordis plugin exposed to the TUI picker.
+/// One backend-owned dynamic plugin exposed to the TUI picker.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CordisPluginItem {
+pub struct DynamicPluginItem {
     pub id: String,
     pub name: String,
     pub package_id: String,
@@ -249,10 +249,10 @@ pub struct CordisPluginItem {
     pub approval_request_id: Option<String>,
 }
 
-/// One model-requested dynamic Cordis activation awaiting a user decision.
+/// One model-requested dynamic activation awaiting a user decision.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PendingCordisApproval {
+pub struct PendingPluginApproval {
     pub request_id: String,
     pub agent_id: String,
     pub plugin_id: String,
@@ -280,8 +280,8 @@ pub struct CatalogModel {
 }
 
 /// One advertised composition choice (`agent` / `preset` / `agent-preset`,
-/// or the first extra uncategorized select). Demo seeds stock ids including
-/// `cordis`.
+/// or the first extra uncategorized select). The demo catalog seeds the stock
+/// ids from `AGENT_MODES`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CatalogPreset {
     pub id: String,
@@ -407,18 +407,18 @@ pub enum Cmd {
     },
     /// Fetch the Host's read-only Loader inventory.
     FetchStaticPlugins,
-    /// Fetch dynamic Cordis plugins owned by this Agent from the Host registry.
-    FetchCordisPlugins {
+    /// Fetch the dynamic plugins owned by this Agent from the Host registry.
+    FetchDynamicPlugins {
         agent_id: String,
     },
     /// Stop or restore one backend-owned dynamic plugin.
-    SetCordisPluginEnabled {
+    SetDynamicPluginEnabled {
         agent_id: String,
         plugin_id: String,
         enabled: bool,
     },
-    /// Answer one pending model-requested dynamic Cordis activation.
-    RespondCordisApproval {
+    /// Answer one pending model-requested dynamic activation.
+    RespondPluginApproval {
         request_id: String,
         decision: String,
     },
@@ -428,7 +428,7 @@ pub enum Cmd {
         name: String,
         args: String,
     },
-    /// Publish client-owned Queue state to the local Cordis compositor. This
+    /// Publish client-owned Queue state to the local compositor. This
     /// is presentation state, never an ACP Session prompt or update.
     QueueSnapshot {
         snapshot: QueueSnapshot,
@@ -459,10 +459,13 @@ pub enum Cmd {
         event: String,
         value: Option<Value>,
     },
+    /// Ask the agent which reasoning efforts the session's model offers.
+    /// Both facts come from the agent (catalog entry / reported session
+    /// model); `None` means the client has not been told yet.
     FetchEfforts {
         session_id: String,
-        provider: String,
-        model: String,
+        provider: Option<String>,
+        model: Option<String>,
     },
     SetPermission {
         session_id: String,

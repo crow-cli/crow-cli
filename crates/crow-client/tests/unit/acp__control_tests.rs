@@ -139,14 +139,8 @@ async fn check_slow_control(config: bool) {
         );
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "test".into(),
-        model: "test".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus, events) = std::sync::mpsc::channel();
@@ -336,14 +330,8 @@ fn model_switch_agent(reject: bool) -> impl ConnectTo<Client> + 'static {
 fn model_switch_cfg() -> RuntimeConfig {
     RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "test".into(),
-        model: "test".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     }
 }
@@ -472,7 +460,7 @@ async fn version_neutral_commands_are_handled_without_a_typed_request() {
                 "the queue snapshot belongs to neither protocol"
             );
             let (method, params) = seen_rx.recv().await.expect("the compositor got the queue");
-            assert_eq!(method, crate::cordis::QUEUE_UPDATE);
+            assert_eq!(method, crate::ext::QUEUE_UPDATE);
             assert_eq!(params["count"], json!(2));
             assert_eq!(params["items"][0]["summary"], json!("the queued prompt"));
             assert_eq!(params["selectedId"], json!(7));
@@ -482,7 +470,7 @@ async fn version_neutral_commands_are_handled_without_a_typed_request() {
                 .recv()
                 .await
                 .expect("the compositor got the agent list");
-            assert_eq!(method, crate::cordis::AGENTS_UPDATE);
+            assert_eq!(method, crate::ext::AGENTS_UPDATE);
             assert_eq!(params["activeId"], json!("s1"));
             assert_eq!(params["items"][0]["current"], json!(true));
 
@@ -491,7 +479,7 @@ async fn version_neutral_commands_are_handled_without_a_typed_request() {
                 .recv()
                 .await
                 .expect("the compositor got the active session");
-            assert_eq!(method, crate::cordis::SESSION_ACTIVE);
+            assert_eq!(method, crate::ext::SESSION_ACTIVE);
             assert_eq!(params["sessionId"], json!("s1"));
             assert_eq!(
                 compositor.lock().unwrap().active_session.as_deref(),

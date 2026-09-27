@@ -1,6 +1,6 @@
 use super::*;
 use crate::bus::{
-    CatalogModel, CatalogPreset, CordisPluginItem, PendingCordisApproval, SessionListItem,
+    CatalogModel, CatalogPreset, DynamicPluginItem, PendingPluginApproval, SessionListItem,
     StaticPluginItem,
 };
 use std::sync::mpsc::Receiver;
@@ -10,7 +10,7 @@ fn fresh_root() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "dsh-tui-mode-{}-{}",
+        "crow-mode-{}-{}",
         std::process::id(),
         N.fetch_add(1, Ordering::Relaxed),
     ));
@@ -21,14 +21,8 @@ fn fresh_root() -> String {
 fn test_cfg() -> RuntimeConfig {
     RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: fresh_root(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     }
 }
@@ -37,14 +31,14 @@ fn test_app() -> (App, Controller, Receiver<AppEvent>) {
     let cfg = test_cfg();
     let (tx, rx) = std::sync::mpsc::channel::<AppEvent>();
     let ctl = Controller::start(cfg.clone(), true, None, tx.clone());
-    let app = App::new(Some(Theme::dark()), cfg, "dsh-test".into(), true, false, tx);
+    let app = App::new(Some(Theme::dark()), cfg, "crow-test".into(), true, false, tx);
     (app, ctl, rx)
 }
 
 #[test]
 fn legacy_mode_cache_is_neither_read_nor_written() {
     let cfg = test_cfg();
-    let cache = std::path::Path::new(&cfg.session_root).join("dsh-tui-modes.json");
+    let cache = std::path::Path::new(&cfg.session_root).join("crow-modes.json");
     let legacy = serde_json::json!({
         "workspaces": {
             cfg.workspace.clone(): {
@@ -90,28 +84,16 @@ fn legacy_mode_cache_is_neither_read_nor_written() {
 #[test]
 fn selected_model_clears_once_a_turn_streams_on_it() {
     let (mut app, ctl, _rx) = test_app();
-    app.set_model("deepseek-v4-pro".into(), &ctl);
-    assert_eq!(app.selected_model.as_deref(), Some("deepseek-v4-pro"));
+    app.set_model("acme-v4-pro".into(), &ctl);
+    assert_eq!(app.selected_model.as_deref(), Some("acme-v4-pro"));
     // The next turn streams on the picked model → the pick is realized
     // and the stream fact takes over.
-    app.transcript.last_model = Some("deepseek-v4-pro".into());
+    app.transcript.last_model = Some("acme-v4-pro".into());
     app.handle(AppEvent::Ctl(CtlEvent::TuiOpDone("noop".into())), &ctl);
     assert_eq!(
         app.selected_model, None,
         "realized pick defers to the stream"
     );
-}
-
-#[test]
-fn slash_menu_offers_the_dynamic_plugin_manager() {
-    let (mut app, _ctl, _rx) = test_app();
-    app.input.set("/plug".into());
-
-    let matches = app.slash_matches();
-
-    assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0].name, "plugins");
-    assert_eq!(matches[0].usage, "/plugins");
 }
 
 #[test]
@@ -129,12 +111,21 @@ fn slash_menu_offers_the_client_language_switch() {
 #[test]
 fn lang_switch_repaints_immediately_and_persists_for_the_workspace() {
     let cfg = test_cfg();
-    let legacy = std::path::Path::new(&cfg.session_root).join("dsh-tui-settings.json");
+    let root = std::path::Path::new(&cfg.session_root);
+    let current = root.join("settings.json");
     std::fs::write(
-        &legacy,
-        r#"{"language":"en","uiPreset":"deepseek","defaultHarness":"crow-cli"}"#,
+        &current,
+        r#"{"language":"en","uiPreset":"crow","defaultHarness":"crow-cli"}"#,
     )
     .expect("seed UI preset selection");
+    // The file this test used to seed instead. `legacy_settings_paths` is
+    // gone, so it must be neither read nor migrated nor overwritten.
+    let legacy = root.join("dsh-tui-settings.json");
+    std::fs::write(
+        &legacy,
+        r#"{"language":"en","uiPreset":"abandoned","defaultHarness":"nope"}"#,
+    )
+    .expect("seed an abandoned settings file");
     let (tx, _rx) = std::sync::mpsc::channel::<AppEvent>();
     let (ctl, _commands) = crate::controller::tests::test_controller();
     let mut app = App::new(
@@ -162,22 +153,19 @@ fn lang_switch_repaints_immediately_and_persists_for_the_workspace() {
         frame.replace(' ', "").contains("描述你想构建的内容"),
         "{frame}"
     );
-    assert_eq!(restarted.ui_preset, "deepseek", "/lang preserves UI Preset");
-    let current = std::path::Path::new(&restarted.cfg.session_root).join("settings.json");
-    assert!(
-        current.is_file(),
-        "legacy settings migrate to the current filename"
-    );
-    assert!(
-        legacy.is_file(),
-        "migration preserves the legacy settings file"
-    );
+    assert_eq!(restarted.ui_preset, "crow", "/lang preserves UI Preset");
     let saved: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(current).expect("read migrated settings"))
-            .unwrap();
+        serde_json::from_str(&std::fs::read_to_string(&current).expect("read settings")).unwrap();
     assert_eq!(
         saved["defaultHarness"], "crow-cli",
         "/lang preserves Client-owned settings"
+    );
+    let abandoned: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&legacy).expect("legacy file untouched"))
+            .unwrap();
+    assert_eq!(
+        abandoned["uiPreset"], "abandoned",
+        "the abandoned settings file is neither read nor migrated"
     );
 }
 
@@ -226,7 +214,7 @@ fn settings_save_preserves_unknown_keys_and_cleans_up_temp_files() {
     let current = dir.join("settings.json");
     std::fs::write(
         &current,
-        r#"{"uiPreset":"deepseek","theme":"ember","harnesses":[{"id":"x"}],"customKey":7}"#,
+        r#"{"uiPreset":"acme-compositor","theme":"ember","harnesses":[{"id":"x"}],"customKey":7}"#,
     )
     .expect("seed settings");
     #[cfg(unix)]
@@ -244,7 +232,7 @@ fn settings_save_preserves_unknown_keys_and_cleans_up_temp_files() {
         serde_json::from_str(&std::fs::read_to_string(&current).expect("read settings"))
             .expect("settings parse");
     assert_eq!(saved["language"], "zh");
-    assert_eq!(saved["uiPreset"], "deepseek", "compositor key preserved");
+    assert_eq!(saved["uiPreset"], "acme-compositor", "compositor key preserved");
     assert_eq!(
         saved["theme"], "default",
         "the palette catalog owns `theme`: an id this binary does not carry falls back"
@@ -339,16 +327,16 @@ fn plugins_slash_fetches_the_static_loader_inventory() {
 }
 
 #[test]
-fn cordis_plugins_slash_fetches_the_dynamic_inventory() {
+fn dynamic_plugins_slash_fetches_the_dynamic_inventory() {
     let (mut app, _demo_ctl, _rx) = test_app();
     let (ctl, commands) = crate::controller::tests::test_controller();
 
-    app.run_slash("cordis-plugins", "", &ctl);
+    app.run_slash("dynamic-plugins", "", &ctl);
 
     let command = commands
         .recv_timeout(std::time::Duration::from_secs(1))
-        .expect("cordis-plugins slash sends a command");
-    assert!(matches!(command, Cmd::FetchCordisPlugins { agent_id } if agent_id == "dsh-test"));
+        .expect("dynamic-plugins slash sends a command");
+    assert!(matches!(command, Cmd::FetchDynamicPlugins { agent_id } if agent_id == "crow-test"));
 }
 
 #[test]
@@ -388,7 +376,7 @@ fn static_plugin_inventory_is_read_only_and_matches_web_status_fields() {
                 },
                 StaticPluginItem {
                     entry_id: "root/tool-bash".into(),
-                    module_name: "@deepseek-ai/dsh-tool-bash".into(),
+                    module_name: "@acme-ai/acme-tool-bash".into(),
                     enabled: false,
                     fiber_phase: None,
                 },
@@ -398,35 +386,35 @@ fn static_plugin_inventory_is_read_only_and_matches_web_status_fields() {
     );
     let frame = crate::ui::dump_frame(&mut grouped, 100, 20);
     assert!(frame.contains("core"), "provider bucket:\n{frame}");
-    assert!(frame.contains("@deepseek-ai"), "scoped provider:\n{frame}");
+    assert!(frame.contains("@acme-ai"), "scoped provider:\n{frame}");
     assert!(frame.contains("include"), "plugin leaf:\n{frame}");
-    assert!(frame.contains("dsh-tool-bash"), "scoped leaf:\n{frame}");
+    assert!(frame.contains("acme-tool-bash"), "scoped leaf:\n{frame}");
     assert!(frame.contains("enabled"), "leaf meta:\n{frame}");
     assert!(frame.contains("disabled"), "leaf meta:\n{frame}");
 }
 
 #[test]
-fn cordis_plugin_inventory_opens_a_running_stopped_and_pending_picker() {
+fn dynamic_plugin_inventory_opens_a_running_stopped_and_pending_picker() {
     let (mut app, ctl, _rx) = test_app();
 
     app.handle(
-        AppEvent::Ctl(CtlEvent::CordisPlugins {
+        AppEvent::Ctl(CtlEvent::DynamicPlugins {
             plugins: vec![
-                CordisPluginItem {
+                DynamicPluginItem {
                     id: "panel-1".into(),
                     name: "Status panel".into(),
                     package_id: "pkg-1".into(),
                     status: "running".into(),
                     approval_request_id: None,
                 },
-                CordisPluginItem {
+                DynamicPluginItem {
                     id: "theme-1".into(),
                     name: "Clay theme".into(),
                     package_id: "pkg-2".into(),
                     status: "stopped".into(),
                     approval_request_id: None,
                 },
-                CordisPluginItem {
+                DynamicPluginItem {
                     id: "dock-1".into(),
                     name: "Composer dock".into(),
                     package_id: "pkg-3".into(),
@@ -439,7 +427,7 @@ fn cordis_plugin_inventory_opens_a_running_stopped_and_pending_picker() {
     );
 
     let picker = app.picker.as_ref().expect("plugin picker opens");
-    assert!(matches!(picker.kind, PickerKind::CordisPlugin));
+    assert!(matches!(picker.kind, PickerKind::DynamicPlugin));
     assert_eq!(picker.items[0].label, "Status panel");
     assert_eq!(picker.items[0].meta, "dynamic · running · enter stop");
     assert_eq!(picker.items[1].meta, "dynamic · stopped · enter restore");
@@ -454,8 +442,8 @@ fn enter_toggles_a_plugin_and_reopens_the_backend_inventory() {
     let (mut app, _demo_ctl, _rx) = test_app();
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
-        AppEvent::Ctl(CtlEvent::CordisPlugins {
-            plugins: vec![CordisPluginItem {
+        AppEvent::Ctl(CtlEvent::DynamicPlugins {
+            plugins: vec![DynamicPluginItem {
                 id: "panel-1".into(),
                 name: "Status panel".into(),
                 package_id: "pkg-1".into(),
@@ -473,23 +461,23 @@ fn enter_toggles_a_plugin_and_reopens_the_backend_inventory() {
         .expect("plugin picker sends a toggle");
     assert!(matches!(
         command,
-        Cmd::SetCordisPluginEnabled { agent_id, plugin_id, enabled }
-            if agent_id == "dsh-test" && plugin_id == "panel-1" && !enabled
+        Cmd::SetDynamicPluginEnabled { agent_id, plugin_id, enabled }
+            if agent_id == "crow-test" && plugin_id == "panel-1" && !enabled
     ));
 }
 
 #[test]
-fn pending_cordis_approval_renders_above_tips_and_alt_shortcut_answers_it() {
+fn pending_plugin_approval_renders_above_tips_and_alt_shortcut_answers_it() {
     let (mut app, _demo_ctl, _rx) = test_app();
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::APPROVALS_UPDATE.into(),
+            method: crate::ext::APPROVALS_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "approvals": [{
                     "requestId": "approval-1",
-                    "agentId": "dsh-test",
+                    "agentId": "crow-test",
                     "pluginId": "panel-1",
                     "packageId": "pkg-1",
                     "mode": "run",
@@ -501,10 +489,10 @@ fn pending_cordis_approval_renders_above_tips_and_alt_shortcut_answers_it() {
         &ctl,
     );
     assert_eq!(
-        app.pending_cordis_approvals,
-        vec![PendingCordisApproval {
+        app.pending_plugin_approvals,
+        vec![PendingPluginApproval {
             request_id: "approval-1".into(),
-            agent_id: "dsh-test".into(),
+            agent_id: "crow-test".into(),
             plugin_id: "panel-1".into(),
             package_id: "pkg-1".into(),
             mode: "run".into(),
@@ -529,7 +517,7 @@ fn pending_cordis_approval_renders_above_tips_and_alt_shortcut_answers_it() {
         .expect("approval shortcut sends a decision");
     assert!(matches!(
         command,
-        Cmd::RespondCordisApproval { request_id, decision }
+        Cmd::RespondPluginApproval { request_id, decision }
             if request_id == "approval-1" && decision == "allow-future"
     ));
 }
@@ -538,7 +526,7 @@ fn pending_cordis_approval_renders_above_tips_and_alt_shortcut_answers_it() {
 fn child_session_updates_do_not_enter_the_parent_transcript() {
     let (mut app, _ctl, _rx) = test_app();
     app.apply_ui(crate::events::UiEvent::SubagentStarted {
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         child: "child-1".into(),
     });
     app.apply_ui(crate::events::UiEvent::TextDelta {
@@ -563,7 +551,7 @@ fn subagent_started_updates_navigation_without_a_timeline_notice() {
     let (mut app, _ctl, _rx) = test_app();
 
     app.apply_ui(crate::events::UiEvent::SubagentStarted {
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         child: "child-1".into(),
     });
 
@@ -585,7 +573,7 @@ fn subagent_started_updates_navigation_without_a_timeline_notice() {
 fn subagent_finished_updates_navigation_without_a_timeline_notice() {
     let (mut app, _ctl, _rx) = test_app();
     app.apply_ui(crate::events::UiEvent::SubagentStarted {
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         child: "child-1".into(),
     });
 
@@ -613,11 +601,11 @@ fn first_subagent_of_a_new_root_turn_archives_the_previous_batch() {
     app.show_banner = false;
 
     app.apply_ui(crate::events::UiEvent::TurnStart {
-        session: "dsh-test".into(),
+        session: "crow-test".into(),
         turn: 1,
     });
     app.apply_ui(crate::events::UiEvent::SubagentStarted {
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         child: "child-1".into(),
     });
     app.apply_ui(crate::events::UiEvent::SubagentFinished {
@@ -625,11 +613,11 @@ fn first_subagent_of_a_new_root_turn_archives_the_previous_batch() {
         failed: false,
     });
     app.apply_ui(crate::events::UiEvent::TurnStart {
-        session: "dsh-test".into(),
+        session: "crow-test".into(),
         turn: 2,
     });
     app.apply_ui(crate::events::UiEvent::SubagentStarted {
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         child: "child-2".into(),
     });
 
@@ -658,7 +646,7 @@ fn first_subagent_of_a_new_root_turn_archives_the_previous_batch() {
 fn a_running_subagent_keeps_the_spinner_advancing() {
     let (mut app, _ctl, _rx) = test_app();
     app.apply_ui(crate::events::UiEvent::SubagentStarted {
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         child: "child-1".into(),
     });
     let before = app.spinner_idx;
@@ -672,14 +660,14 @@ fn a_running_subagent_keeps_the_spinner_advancing() {
 fn down_on_an_empty_prompt_enters_inline_agent_navigation() {
     let (mut app, ctl, _rx) = test_app();
     app.apply_ui(crate::events::UiEvent::SubagentStarted {
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         child: "child-1".into(),
     });
 
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), &ctl);
 
     assert!(app.picker.is_none(), "Agent navigation has no popup");
-    assert_eq!(app.agent_selection.as_deref(), Some("dsh-test"));
+    assert_eq!(app.agent_selection.as_deref(), Some("crow-test"));
 }
 
 #[test]
@@ -687,12 +675,12 @@ fn agent_navigation_is_inline_when_the_view_plugin_is_available() {
     let (mut app, _demo_ctl, _rx) = test_app();
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.apply_ui(crate::events::UiEvent::SubagentStarted {
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         child: "child-1".into(),
     });
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::COMMANDS_UPDATE.into(),
+            method: crate::ext::COMMANDS_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "commands": [{
@@ -750,14 +738,14 @@ fn the_client_agents_selection_can_open_any_subagent_or_return_to_main() {
     let (mut app, ctl, _rx) = test_app();
     for child in ["child-1", "child-2"] {
         app.apply_ui(crate::events::UiEvent::SubagentStarted {
-            parent: "dsh-test".into(),
+            parent: "crow-test".into(),
             child: child.into(),
         });
     }
 
     app.handle(
         AppEvent::Rpc {
-            method: "_dsh/cordis/tui/agents/select".into(),
+            method: crate::ext::AGENTS_SELECT.into(),
             params: serde_json::json!({ "protocol": 0, "id": "child-2" }),
         },
         &ctl,
@@ -766,8 +754,8 @@ fn the_client_agents_selection_can_open_any_subagent_or_return_to_main() {
 
     app.handle(
         AppEvent::Rpc {
-            method: "_dsh/cordis/tui/agents/select".into(),
-            params: serde_json::json!({ "protocol": 0, "id": "dsh-test" }),
+            method: crate::ext::AGENTS_SELECT.into(),
+            params: serde_json::json!({ "protocol": 0, "id": "crow-test" }),
         },
         &ctl,
     );
@@ -776,7 +764,7 @@ fn the_client_agents_selection_can_open_any_subagent_or_return_to_main() {
     for action in ["begin", "next", "confirm"] {
         app.handle(
             AppEvent::Rpc {
-                method: crate::cordis::AGENTS_NAVIGATE.into(),
+                method: crate::ext::AGENTS_NAVIGATE.into(),
                 params: serde_json::json!({ "protocol": 0, "action": action }),
             },
             &ctl,
@@ -826,7 +814,7 @@ fn enter_from_the_agent_switcher_opens_the_child_transcript() {
     app.show_banner = false;
     app.transcript.push_user("main-only text".into(), false);
     app.apply_ui(crate::events::UiEvent::SubagentStarted {
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         child: "child-1".into(),
     });
     app.apply_ui(crate::events::UiEvent::TextDelta {
@@ -848,7 +836,7 @@ fn esc_from_a_child_transcript_returns_to_main() {
     app.show_banner = false;
     app.transcript.push_user("main-only text".into(), false);
     app.apply_ui(crate::events::UiEvent::SubagentStarted {
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         child: "child-1".into(),
     });
     app.apply_ui(crate::events::UiEvent::TextDelta {
@@ -870,7 +858,7 @@ fn esc_from_a_child_transcript_returns_to_main() {
 fn child_transcript_view_does_not_accept_composer_input() {
     let (mut app, ctl, _rx) = test_app();
     app.apply_ui(crate::events::UiEvent::SubagentStarted {
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         child: "child-1".into(),
     });
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), &ctl);
@@ -898,7 +886,7 @@ fn down_from_a_child_view_reenters_inline_agent_navigation() {
     let (mut app, ctl, _rx) = test_app();
     for child in ["child-1", "child-2"] {
         app.apply_ui(crate::events::UiEvent::SubagentStarted {
-            parent: "dsh-test".into(),
+            parent: "crow-test".into(),
             child: child.into(),
         });
     }
@@ -918,7 +906,7 @@ fn down_from_a_child_view_reenters_inline_agent_navigation() {
 fn q_from_a_child_transcript_returns_to_main() {
     let (mut app, ctl, _rx) = test_app();
     app.apply_ui(crate::events::UiEvent::SubagentStarted {
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         child: "child-1".into(),
     });
     app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), &ctl);
@@ -934,7 +922,7 @@ fn q_from_a_child_transcript_returns_to_main() {
 fn a_new_session_clears_the_previous_agent_views() {
     let (mut app, ctl, _rx) = test_app();
     app.apply_ui(crate::events::UiEvent::SubagentStarted {
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         child: "child-1".into(),
     });
     assert_eq!(app.subagents.len(), 1);
@@ -954,7 +942,7 @@ fn slash_agent_opens_the_agent_preset_picker() {
     let picker = app.picker.as_ref().expect("agent picker opens");
     assert!(matches!(picker.kind, PickerKind::Mode));
     let ids: Vec<&str> = picker.items.iter().map(|item| item.id.as_str()).collect();
-    assert_eq!(ids, ["standard", "code", "minimal", "cordis"]);
+    assert_eq!(ids, ["standard", "code", "minimal"]);
     assert_eq!(picker.sel, 0, "defaults to standard");
     assert_eq!(picker.items[0].label, "Standard mode");
 }
@@ -1064,8 +1052,8 @@ fn live_mode_picker_uses_advertised_composition_not_stock() {
             session_id: None,
             models: Vec::new(),
             presets: vec![CatalogPreset {
-                id: "cordis".into(),
-                name: "Creator from ACP".into(),
+                id: "studio".into(),
+                name: "Studio from ACP".into(),
                 description: "inspect".into(),
                 broken: false,
             }],
@@ -1075,8 +1063,8 @@ fn live_mode_picker_uses_advertised_composition_not_stock() {
     app.run_slash("agent", "", &ctl);
     let picker = app.picker.as_ref().expect("mode picker opens");
     let ids: Vec<&str> = picker.items.iter().map(|i| i.id.as_str()).collect();
-    assert_eq!(ids, ["cordis"]);
-    assert_eq!(picker.items[0].label, "Creator from ACP");
+    assert_eq!(ids, ["studio"]);
+    assert_eq!(picker.items[0].label, "Studio from ACP");
 }
 
 #[test]
@@ -1120,8 +1108,10 @@ fn host_catalog_replaces_mode_picker_items() {
 #[test]
 fn host_catalog_model_picker_distinguishes_duplicate_ids_by_provider() {
     let (mut app, ctl, _rx) = test_app();
-    app.cfg.provider = "coding-plan-b".into();
-    app.cfg.model = "deepseek-v4".into();
+    // Both facts are the agent's: the session model it reported, and the
+    // provider that came with the catalog row the user picked.
+    app.session_provider = Some("coding-plan-b".into());
+    app.session_model = Some("acme-v4".into());
     app.open_model_picker(&ctl);
     app.handle(
         AppEvent::Ctl(CtlEvent::Catalog {
@@ -1129,14 +1119,14 @@ fn host_catalog_model_picker_distinguishes_duplicate_ids_by_provider() {
             models: vec![
                 CatalogModel {
                     provider: "coding-plan-a".into(),
-                    id: "deepseek-v4".into(),
-                    name: "DeepSeek V4".into(),
+                    id: "acme-v4".into(),
+                    name: "Acme V4".into(),
                     vision: false,
                 },
                 CatalogModel {
                     provider: "coding-plan-b".into(),
-                    id: "deepseek-v4".into(),
-                    name: "DeepSeek V4".into(),
+                    id: "acme-v4".into(),
+                    name: "Acme V4".into(),
                     vision: false,
                 },
             ],
@@ -1146,23 +1136,23 @@ fn host_catalog_model_picker_distinguishes_duplicate_ids_by_provider() {
     );
 
     let picker = app.picker.as_ref().expect("model picker stays open");
-    assert_eq!(picker.items[0].meta, "coding-plan-a · DeepSeek V4");
-    assert_eq!(picker.items[1].meta, "coding-plan-b · DeepSeek V4");
-    assert_eq!(picker.sel, 1, "current provider and model identify the row");
+    assert_eq!(picker.items[0].meta, "coding-plan-a · Acme V4");
+    assert_eq!(picker.items[1].meta, "coding-plan-b · Acme V4");
+    assert_eq!(picker.sel, 1, "reported provider and model identify the row");
 }
 
 #[test]
-fn model_picker_highlights_the_streamed_model_not_the_config_default() {
+fn model_picker_highlights_the_streamed_model_not_the_reported_session_model() {
     let (mut app, ctl, _rx) = test_app();
-    // The config default is only a fallback: once a turn streamed on a
+    // The agent-reported model is only a fallback: once a turn streamed on a
     // different model, the picker must mark the running one (issue #102).
-    app.cfg.model = "deepseek-v4-flash".into();
-    app.transcript.last_model = Some("deepseek-v4-pro".into());
+    app.session_model = Some("acme-v4-flash".into());
+    app.transcript.last_model = Some("acme-v4-pro".into());
 
     app.open_model_picker(&ctl);
 
     let picker = app.picker.as_ref().expect("model picker opens");
-    assert_eq!(picker.items[0].id, "deepseek-v4-pro", "current row seeded");
+    assert_eq!(picker.items[0].id, "acme-v4-pro", "current row seeded");
     assert_eq!(picker.sel, 0, "highlight lands on the running model");
 }
 
@@ -1201,20 +1191,20 @@ fn effort_picker_falls_back_to_the_advertised_default() {
 fn slash_model_menu_preselects_the_running_model() {
     let (mut app, ctl, _rx) = test_app();
     // The inline option menu (typed `/model `) follows the same effective
-    // model as the picker: streamed model, not the config default (#102).
-    app.cfg.model = "deepseek-v4-flash".into();
-    app.transcript.last_model = Some("deepseek-v4-pro".into());
+    // model as the picker: streamed model, not the agent-reported one (#102).
+    app.session_model = Some("acme-v4-flash".into());
+    app.transcript.last_model = Some("acme-v4-pro".into());
     app.input.set("/model".into());
     app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE), &ctl);
 
     let menu = app.slash_matches();
-    assert_eq!(menu[0].completion.as_deref(), Some("/model deepseek-v4-pro"));
+    assert_eq!(menu[0].completion.as_deref(), Some("/model acme-v4-pro"));
     assert_eq!(app.slash_sel, 0, "highlight lands on the running model");
 
     // Enter on the opened menu picks the running model (no accidental
-    // switch back to the config default).
+    // switch back to the one the agent reported at bind).
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &ctl);
-    assert_eq!(app.cfg.model, "deepseek-v4-pro");
+    assert_eq!(app.current_model(), "acme-v4-pro");
 }
 
 #[test]
@@ -1249,21 +1239,21 @@ fn slash_effort_menu_preselects_the_effort_in_effect() {
 #[test]
 fn selecting_same_model_id_from_another_provider_switches_provider() {
     let (mut app, ctl, _rx) = test_app();
-    app.cfg.provider = "coding-plan-a".into();
-    app.cfg.model = "deepseek-v4".into();
+    app.session_provider = Some("coding-plan-a".into());
+    app.session_model = Some("acme-v4".into());
 
     app.select_model(
         PickerItem {
-            id: "deepseek-v4".into(),
-            label: "deepseek-v4".into(),
-            meta: "coding-plan-b · DeepSeek V4".into(),
+            id: "acme-v4".into(),
+            label: "acme-v4".into(),
+            meta: "coding-plan-b · Acme V4".into(),
             provider: Some("coding-plan-b".into()),
         },
         &ctl,
     );
 
-    assert_eq!(app.cfg.provider, "coding-plan-b");
-    assert_eq!(app.selected_model.as_deref(), Some("deepseek-v4"));
+    assert_eq!(app.session_provider.as_deref(), Some("coding-plan-b"));
+    assert_eq!(app.selected_model.as_deref(), Some("acme-v4"));
 }
 
 #[test]
@@ -1289,11 +1279,11 @@ fn preset_ack_folds_the_chip_and_new_session_waits_for_the_host_mode() {
     app.handle(
         AppEvent::Ctl(CtlEvent::PresetSet {
             session_id: String::new(),
-            preset: "cordis".into(),
+            preset: "studio".into(),
         }),
         &ctl,
     );
-    assert_eq!(app.modes.agent_preset.as_deref(), Some("cordis"));
+    assert_eq!(app.modes.agent_preset.as_deref(), Some("studio"));
     app.run_slash("new", "fresh", &ctl);
     assert_eq!(app.session_id, "fresh");
     assert!(
@@ -1473,10 +1463,10 @@ fn agent_preset_event_updates_chrome_without_adding_a_transcript_row() {
 
     app.apply_ui(crate::events::UiEvent::AgentPreset {
         session: app.session_id.clone(),
-        preset: "cordis".into(),
+        preset: "studio".into(),
     });
 
-    assert_eq!(app.modes.agent_preset.as_deref(), Some("cordis"));
+    assert_eq!(app.modes.agent_preset.as_deref(), Some("studio"));
     assert_eq!(app.transcript.cells.len(), cells_before);
 }
 
@@ -2007,13 +1997,13 @@ fn first_prompt_after_agent_ready_is_not_marked_queued() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Ctl(CtlEvent::Starting {
-            runtime: "dsh-acp".into(),
+            runtime: "crow-acp".into(),
         }),
         &ctl,
     );
     app.handle(
         AppEvent::Ctl(CtlEvent::Ready {
-            server: "dsh-acp".into(),
+            server: "crow-acp".into(),
         }),
         &ctl,
     );
@@ -2051,7 +2041,7 @@ fn startup_lifecycle_updates_state_without_adding_transcript_rows() {
 
     app.handle(
         AppEvent::Ctl(CtlEvent::Starting {
-            runtime: "/usr/local/bin/dsh-acp".into(),
+            runtime: "/usr/local/bin/crow-acp".into(),
         }),
         &ctl,
     );
@@ -2060,12 +2050,12 @@ fn startup_lifecycle_updates_state_without_adding_transcript_rows() {
 
     app.handle(
         AppEvent::Ctl(CtlEvent::Ready {
-            server: "dsh-acp".into(),
+            server: "crow-acp".into(),
         }),
         &ctl,
     );
     assert!(matches!(app.state, RunState::Idle));
-    assert_eq!(app.server_info.as_deref(), Some("dsh-acp"));
+    assert_eq!(app.server_info.as_deref(), Some("crow-acp"));
     assert_eq!(app.transcript.cells.len(), cells_before);
 }
 
@@ -2074,7 +2064,7 @@ fn first_prompt_during_runtime_start_is_active_and_only_the_second_queues() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Ctl(CtlEvent::Starting {
-            runtime: "dsh-acp".into(),
+            runtime: "crow-acp".into(),
         }),
         &ctl,
     );
@@ -2102,10 +2092,10 @@ fn terminal_lifecycle_events_release_a_pending_first_prompt() {
         AppEvent::RuntimeExited(None),
         AppEvent::Ctl(CtlEvent::Error("failed".into())),
         AppEvent::Ctl(CtlEvent::Interrupted {
-            session_id: "dsh-test".into(),
+            session_id: "crow-test".into(),
         }),
         AppEvent::Ui(crate::events::UiEvent::SessionStatus {
-            session: "dsh-test".into(),
+            session: "crow-test".into(),
             running: false,
         }),
     ];
@@ -2295,7 +2285,7 @@ fn interrupted_advances_one_client_followup_and_queues_later_input_behind_it() {
     app.send_agent_text("first followup".into(), &ctl);
     app.handle(
         AppEvent::Ctl(CtlEvent::Interrupted {
-            session_id: "dsh-test".into(),
+            session_id: "crow-test".into(),
         }),
         &ctl,
     );
@@ -2329,7 +2319,7 @@ fn interrupted_turn_renders_one_specific_terminal_notice() {
     );
     app.handle(
         AppEvent::Ctl(CtlEvent::Interrupted {
-            session_id: "dsh-test".into(),
+            session_id: "crow-test".into(),
         }),
         &ctl,
     );
@@ -2355,7 +2345,7 @@ fn staged_input_joins_a_surviving_fifo_after_interrupt() {
     app.send_agent_text("first followup".into(), &ctl);
     app.handle(
         AppEvent::Ctl(CtlEvent::Interrupted {
-            session_id: "dsh-test".into(),
+            session_id: "crow-test".into(),
         }),
         &ctl,
     );
@@ -2388,7 +2378,7 @@ fn send_now_can_steer_while_a_surviving_fifo_is_advancing() {
     app.send_agent_text("ordinary followup".into(), &ctl);
     app.handle(
         AppEvent::Ctl(CtlEvent::Interrupted {
-            session_id: "dsh-test".into(),
+            session_id: "crow-test".into(),
         }),
         &ctl,
     );
@@ -2521,7 +2511,7 @@ fn interrupted_turn_releases_one_client_queued_prompt() {
 
     app.handle(
         AppEvent::Ctl(CtlEvent::Interrupted {
-            session_id: "dsh-test".into(),
+            session_id: "crow-test".into(),
         }),
         &ctl,
     );
@@ -2627,7 +2617,7 @@ fn saving_a_selected_queue_edit_preserves_fifo_position() {
     app.handle(
         AppEvent::Ctl(CtlEvent::PromptQueued {
             message_id: "first".into(),
-            session_id: Some("dsh-test".into()),
+            session_id: Some("crow-test".into()),
         }),
         &ctl,
     );
@@ -3272,23 +3262,23 @@ fn client_plugin_command_catalog_does_not_interpret_legacy_theme_metadata() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::COMMANDS_UPDATE.into(),
+            method: crate::ext::COMMANDS_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "commands": [{
-                    "name": "liang-effort",
+                    "name": "effort-slider",
                     "description": "slide the reasoning effort",
-                    "whenTheme": "liang"
+                    "whenTheme": "no-such-theme"
                 }]
             }),
         },
         &ctl,
     );
 
-    app.input.set("/liang-eff".into());
+    app.input.set("/effort-sli".into());
     let matches = app.slash_matches();
     assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0].name, "liang-effort");
+    assert_eq!(matches[0].name, "effort-slider");
     assert_eq!(matches[0].desc, "slide the reasoning effort");
 }
 
@@ -3298,18 +3288,18 @@ fn client_plugin_command_invocation_stays_out_of_the_agent_prompt() {
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::COMMANDS_UPDATE.into(),
+            method: crate::ext::COMMANDS_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "commands": [{
-                    "name": "liang-effort",
+                    "name": "effort-slider",
                     "description": "slide the reasoning effort"
                 }]
             }),
         },
         &ctl,
     );
-    app.input.set("/liang-effort".into());
+    app.input.set("/effort-slider".into());
 
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &ctl);
 
@@ -3319,7 +3309,7 @@ fn client_plugin_command_invocation_stays_out_of_the_agent_prompt() {
     assert!(matches!(
         command,
         Cmd::InvokePluginCommand { name, args }
-            if name == "liang-effort" && args.is_empty()
+            if name == "effort-slider" && args.is_empty()
     ));
     assert!(app.input.is_empty());
 }
@@ -3331,12 +3321,12 @@ fn ui_plugin_catalog_reuses_the_upward_slash_menu_and_selects_over_acp() {
     app.show_banner = false;
     app.handle(
             AppEvent::Rpc {
-                method: crate::cordis::UI_UPDATE.into(),
+                method: crate::ext::UI_UPDATE.into(),
                 params: serde_json::json!({
                     "protocol": 0,
                     "plugins": [
-                        { "id": "default", "label": "Martty", "source": "static", "status": "active" },
-                        { "id": "deepseek", "label": "DeepSeek", "source": "dynamic", "status": "stopped" }
+                        { "id": "default", "label": "Alpha", "source": "static", "status": "active" },
+                        { "id": "beta", "label": "Beta", "source": "dynamic", "status": "stopped" }
                     ]
                 }),
             },
@@ -3346,15 +3336,15 @@ fn ui_plugin_catalog_reuses_the_upward_slash_menu_and_selects_over_acp() {
 
     let menu = app.slash_matches();
     assert_eq!(menu.len(), 2);
-    assert_eq!(menu[0].usage, "Martty");
-    assert_eq!(menu[1].usage, "DeepSeek");
+    assert_eq!(menu[0].usage, "Alpha");
+    assert_eq!(menu[1].usage, "Beta");
     assert_eq!(menu[1].desc, "dynamic · stopped");
-    assert_eq!(menu[1].completion.as_deref(), Some("/ui deepseek"));
+    assert_eq!(menu[1].completion.as_deref(), Some("/ui beta"));
 
     let frame = crate::ui::dump_frame(&mut app, 100, 28);
     let menu_y = frame
         .lines()
-        .position(|line| line.contains("DeepSeek"))
+        .position(|line| line.contains("Beta"))
         .unwrap();
     let input_y = frame
         .lines()
@@ -3370,7 +3360,7 @@ fn ui_plugin_catalog_reuses_the_upward_slash_menu_and_selects_over_acp() {
     assert!(matches!(
         commands.recv_timeout(std::time::Duration::from_secs(1)),
         Ok(Cmd::PluginUiSelected { agent_id, id })
-            if agent_id == "dsh-test" && id == "deepseek"
+            if agent_id == "crow-test" && id == "beta"
     ));
 }
 
@@ -3524,13 +3514,13 @@ fn plugin_slider_moves_between_effort_marks_for_material_preview() {
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "overlay": {
                     "kind": "slider",
-                    "id": "liang-effort",
-                    "title": "Liang reasoning effort",
+                    "id": "effort-slider",
+                    "title": "Reasoning effort",
                     "min": 0,
                     "max": 30,
                     "step": 1,
@@ -3559,7 +3549,7 @@ fn plugin_slider_moves_between_effort_marks_for_material_preview() {
     assert!(matches!(
         command,
         Cmd::PluginOverlayEvent { id, event, value }
-            if id == "liang-effort"
+            if id == "effort-slider"
                 && event == "change"
                 && value == Some(serde_json::json!(16.0))
     ));
@@ -3570,7 +3560,7 @@ fn select_delete_emits_only_for_an_eligible_visible_row() {
     let (mut app, _demo_ctl, _rx) = test_app();
     let (ctl, commands) = crate::controller::tests::test_controller();
     for code in [KeyCode::Delete, KeyCode::Backspace] {
-        app.handle(AppEvent::Rpc { method: crate::cordis::OVERLAY_UPDATE.into(), params: serde_json::json!({
+        app.handle(AppEvent::Rpc { method: crate::ext::OVERLAY_UPDATE.into(), params: serde_json::json!({
             "protocol": 0, "overlay": { "kind": "select", "id": "items", "title": "Items",
             "options": [
                 { "value": "current", "label": "Current", "disabled": true, "deletable": true },
@@ -3601,7 +3591,7 @@ fn select_delete_emits_only_for_an_eligible_visible_row() {
 fn searchable_select_backspace_edits_and_delete_never_targets_a_hidden_row() {
     let (mut app, _demo_ctl, _rx) = test_app();
     let (ctl, commands) = crate::controller::tests::test_controller();
-    app.handle(AppEvent::Rpc { method: crate::cordis::OVERLAY_UPDATE.into(), params: serde_json::json!({
+    app.handle(AppEvent::Rpc { method: crate::ext::OVERLAY_UPDATE.into(), params: serde_json::json!({
         "protocol": 0, "overlay": { "kind": "select", "id": "items", "title": "Items", "searchable": true,
         "options": [{ "value": "saved", "label": "Saved", "deletable": true }], "value": "saved" }
     }) }, &ctl);
@@ -3620,7 +3610,7 @@ fn searchable_select_backspace_edits_and_delete_never_targets_a_hidden_row() {
 fn disabled_plugin_choices_cannot_submit_from_picker_or_composer() {
     let (mut app, _demo_ctl, _rx) = test_app();
     let (ctl, commands) = crate::controller::tests::test_controller();
-    app.handle(AppEvent::Rpc { method: crate::cordis::OVERLAY_UPDATE.into(), params: serde_json::json!({
+    app.handle(AppEvent::Rpc { method: crate::ext::OVERLAY_UPDATE.into(), params: serde_json::json!({
         "protocol": 0, "overlay": { "kind": "select", "id": "current", "title": "Harness",
         "options": [{ "value": "live", "label": "Live (current)", "disabled": true }], "value": "live" }
     }) }, &ctl);
@@ -3646,7 +3636,7 @@ fn plugin_select_form_renders_rows_and_submits_the_selected_value() {
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "overlay": {
@@ -3657,13 +3647,13 @@ fn plugin_select_form_renders_rows_and_submits_the_selected_value() {
                     "options": [
                         {
                             "value": "default",
-                            "label": "Martty",
-                            "description": "Ocean blue terminal identity"
+                            "label": "Alpha",
+                            "description": "Cool blue terminal identity"
                         },
                         {
-                            "value": "deepseek",
-                            "label": "DeepSeek",
-                            "description": "Classic Harness identity"
+                            "value": "beta",
+                            "label": "Beta",
+                            "description": "Classic agent identity"
                         }
                     ]
                 }
@@ -3674,10 +3664,10 @@ fn plugin_select_form_renders_rows_and_submits_the_selected_value() {
 
     let frame = crate::ui::dump_frame(&mut app, 100, 30);
     assert!(frame.contains("UI preset"), "form title:\n{frame}");
-    assert!(frame.contains("Martty"), "first option:\n{frame}");
-    assert!(frame.contains("DeepSeek"), "second option:\n{frame}");
+    assert!(frame.contains("Alpha"), "first option:\n{frame}");
+    assert!(frame.contains("Beta"), "second option:\n{frame}");
     assert!(
-        frame.contains("Ocean blue terminal identity"),
+        frame.contains("Cool blue terminal identity"),
         "description:\n{frame}"
     );
 
@@ -3690,14 +3680,14 @@ fn plugin_select_form_renders_rows_and_submits_the_selected_value() {
         Ok(Cmd::PluginOverlayEvent { id, event, value })
             if id == "ui-preset"
                 && event == "change"
-                && value == Some(serde_json::json!("deepseek"))
+                && value == Some(serde_json::json!("beta"))
     ));
     assert!(matches!(
         commands.recv_timeout(std::time::Duration::from_secs(1)),
         Ok(Cmd::PluginOverlayEvent { id, event, value })
             if id == "ui-preset"
                 && event == "submit"
-                && value == Some(serde_json::json!("deepseek"))
+                && value == Some(serde_json::json!("beta"))
     ));
 }
 
@@ -3710,7 +3700,7 @@ fn plugin_select_search_filters_and_keeps_selected_rows_visible() {
         "description": "Available locally"
     })).collect();
     app.handle(AppEvent::Rpc {
-        method: crate::cordis::OVERLAY_UPDATE.into(),
+        method: crate::ext::OVERLAY_UPDATE.into(),
         params: serde_json::json!({ "protocol": 0, "overlay": {
             "kind": "select", "id": "catalog", "title": "Add Harness",
             "searchable": true, "value": "agent-00", "options": options
@@ -3748,7 +3738,7 @@ fn grouped_select_navigation_and_search_only_submit_real_options() {
     let (mut app, _demo_ctl, _rx) = test_app();
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(AppEvent::Rpc {
-        method: crate::cordis::OVERLAY_UPDATE.into(),
+        method: crate::ext::OVERLAY_UPDATE.into(),
         params: serde_json::json!({ "protocol": 0, "overlay": {
             "kind": "select", "id": "catalog", "title": "Harnesses", "searchable": true,
             "value": "a", "options": [
@@ -3788,7 +3778,7 @@ fn plugin_select_refresh_preserves_search_and_selected_value_across_reordering()
     let (ctl, commands) = crate::controller::tests::test_controller();
     let publish = |app: &mut App, id: &str, options: serde_json::Value| {
         app.handle(AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({ "protocol": 0, "overlay": {
                 "kind": "select", "id": id, "title": "Harnesses", "searchable": true,
                 "value": "a", "options": options,
@@ -3829,7 +3819,7 @@ fn plugin_select_refresh_does_not_keep_a_choice_that_stops_matching_the_filter()
     let (ctl, commands) = crate::controller::tests::test_controller();
     let publish = |app: &mut App, options: serde_json::Value| {
         app.handle(AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({ "protocol": 0, "overlay": {
                 "kind": "select", "id": "catalog", "title": "Harnesses", "searchable": true,
                 "value": "a", "options": options,
@@ -3859,13 +3849,13 @@ fn plugin_slider_enter_submits_the_effort_and_closes() {
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "overlay": {
                     "kind": "slider",
-                    "id": "liang-effort",
-                    "title": "Liang reasoning effort",
+                    "id": "effort-slider",
+                    "title": "Reasoning effort",
                     "min": 0,
                     "max": 30,
                     "step": 1,
@@ -3891,7 +3881,7 @@ fn plugin_slider_enter_submits_the_effort_and_closes() {
     assert!(matches!(
         command,
         Cmd::PluginOverlayEvent { id, event, value }
-            if id == "liang-effort"
+            if id == "effort-slider"
                 && event == "submit"
                 && value == Some(serde_json::json!(15.0))
     ));
@@ -3903,7 +3893,7 @@ fn plugin_slider_supports_a_plain_numeric_axis_without_marks() {
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "overlay": {
@@ -3941,7 +3931,7 @@ fn plugin_slider_left_steps_on_the_numeric_axis() {
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "overlay": {
@@ -3979,7 +3969,7 @@ fn plugin_slider_escape_cancels_and_closes() {
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "overlay": {
@@ -4014,7 +4004,7 @@ fn plugin_view_escape_closes_the_generic_node_modal() {
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "overlay": {
@@ -4117,7 +4107,7 @@ fn direct_plan_mode_facts_fold_once_into_client_state() {
 
     app.handle(
         AppEvent::Ui(crate::events::UiEvent::PlanMode {
-            session: "dsh-test".into(),
+            session: "crow-test".into(),
             active: true,
         }),
         &ctl,
@@ -4127,7 +4117,7 @@ fn direct_plan_mode_facts_fold_once_into_client_state() {
 
     app.handle(
         AppEvent::Ui(crate::events::UiEvent::PlanMode {
-            session: "dsh-test".into(),
+            session: "crow-test".into(),
             active: true,
         }),
         &ctl,
@@ -4146,7 +4136,7 @@ fn initial_default_plan_mode_does_not_add_an_off_notice() {
 
     app.handle(
         AppEvent::Ui(crate::events::UiEvent::PlanMode {
-            session: "dsh-test".into(),
+            session: "crow-test".into(),
             active: false,
         }),
         &ctl,
@@ -4164,22 +4154,22 @@ fn direct_ui_turn_facts_update_client_lifecycle() {
 
     app.handle(
         AppEvent::Ui(crate::events::UiEvent::TurnStart {
-            session: "dsh-test".into(),
+            session: "crow-test".into(),
             turn: 1,
         }),
         &ctl,
     );
     app.handle(
         AppEvent::Ctl(CtlEvent::PromptQueued {
-            message_id: "dsh-test".into(),
-            session_id: Some("dsh-test".into()),
+            message_id: "crow-test".into(),
+            session_id: Some("crow-test".into()),
         }),
         &ctl,
     );
 
     app.handle(
         AppEvent::Ui(crate::events::UiEvent::SessionStatus {
-            session: "dsh-test".into(),
+            session: "crow-test".into(),
             running: false,
         }),
         &ctl,
@@ -4267,7 +4257,7 @@ fn login_is_not_a_tui_builtin_so_the_agent_slash_ships() {
     );
     app.skills = vec![crate::bus::SkillInfo {
         name: "login".into(),
-        description: "Save a DeepSeek API key into the harness credential store".into(),
+        description: "Save an API key into the agent's credential store".into(),
         input_hint: None,
         config_action: None,
         client_command: false,
@@ -4294,17 +4284,17 @@ fn auth_slash_queues_terminal_launch_like_backchat_sign_in() {
     let methods = crate::acp_auth::parse_auth_methods(
         &serde_json::json!([{
             "id": "terminal-login",
-            "name": "Log in with a DeepSeek API key",
+            "name": "Log in with an Acme API key",
             "_meta": { "terminal-auth": { "args": ["login"], "env": {} } }
         }]),
-        &["dsh-acp".into()],
+        &["crow-acp".into()],
         "/tmp",
         &Default::default(),
     );
     app.auth = crate::acp_auth::needs_auth_snapshot(methods.clone(), methods.first(), None);
     app.run_slash("auth", "", &ctl);
     let launch = app.take_terminal_auth().expect("terminal auth");
-    assert_eq!(launch.command, "dsh-acp");
+    assert_eq!(launch.command, "crow-acp");
     assert_eq!(launch.args, ["login"]);
     assert_eq!(launch.method_id, "terminal-login");
 }
@@ -4391,6 +4381,70 @@ fn logout_is_hidden_from_the_slash_menu() {
 }
 
 #[test]
+fn liang_is_parked_out_of_the_menu_but_the_machinery_still_runs() {
+    // Unregistered, not amputated. The menu must not offer a branded pet, and
+    // the handler behind it must still work — so a crow pet is a swap of two
+    // sprites plus one uncommented registry entry, not a rebuild.
+    assert!(
+        !SLASH_COMMANDS.iter().any(|c| c.name == "liang"),
+        "/liang is parked: re-registering it is a decision, not a drive-by"
+    );
+    let (mut app, ctl, _rx) = test_app();
+    app.input.set("/liang".into());
+    assert!(
+        !app.slash_matches().iter().any(|m| m.name == "liang"),
+        "the parked pet is not offered in the slash menu"
+    );
+
+    app.run_slash("liang", "on", &ctl);
+    assert!(
+        app.pet_visible,
+        "run_slash still resolves — the machinery survived the unregistering"
+    );
+    app.run_slash("liang", "off", &ctl);
+    assert!(!app.pet_visible, "and still toggles back off");
+}
+
+#[test]
+fn the_plugin_commands_are_parked_out_of_the_menu_but_the_machinery_still_runs() {
+    // Parked exactly the way `/liang` above is: unregistered, not amputated.
+    // No agent advertises `_crow/tui`, so all three entries could only ever
+    // answer "agent does not advertise _crow/tui" — but every command,
+    // handler and projection behind them stays compiled. The two inventory
+    // fetches are driven by `plugins_slash_fetches_the_static_loader_inventory`
+    // and `dynamic_plugins_slash_fetches_the_dynamic_inventory`; the picker
+    // behind `/ui` has no other test, so it is asserted here.
+    for name in ["plugins", "dynamic-plugins", "ui"] {
+        assert!(
+            !SLASH_COMMANDS.iter().any(|command| command.name == name),
+            "/{name} is parked: re-registering it is a decision, not a drive-by"
+        );
+    }
+
+    let (mut app, ctl, _rx) = test_app();
+    for prefix in ["/plug", "/dynamic", "/ui"] {
+        app.input.set(prefix.into());
+        let matches = app.slash_matches();
+        let offered: Vec<&str> = matches.iter().map(|entry| entry.name.as_str()).collect();
+        assert!(
+            !offered
+                .iter()
+                .any(|name| ["plugins", "dynamic-plugins", "ui"].contains(name)),
+            "{prefix} still offers a parked plugin command: {offered:?}"
+        );
+    }
+
+    app.run_slash("ui", "", &ctl);
+    assert!(
+        matches!(
+            app.picker.as_ref().map(|picker| &picker.kind),
+            Some(PickerKind::UiPlugin)
+        ),
+        "run_slash still resolves — re-registering is one uncomment"
+    );
+}
+
+#[test]
 fn empty_auth_with_several_methods_opens_the_picker() {
     let (mut app, ctl, _rx) = test_app();
     app.demo = false;
@@ -4407,7 +4461,7 @@ fn empty_auth_with_several_methods_opens_the_picker() {
                 "_meta": { "api-key": { "provider": "openai" } }
             }
         ]),
-        &["dsh-acp".into()],
+        &["crow-acp".into()],
         "/tmp",
         &Default::default(),
     );
@@ -4441,7 +4495,7 @@ fn open_auth_preserves_draft_and_pending_fifo() {
                 "_meta": { "api-key": { "provider": "openai" } }
             }
         ]),
-        &["dsh-acp".into()],
+        &["crow-acp".into()],
         "/tmp",
         &Default::default(),
     );
@@ -4483,8 +4537,8 @@ fn auth_retry_does_not_consume_the_followup_fifo_marker() {
     );
     app.handle(
         AppEvent::Ctl(CtlEvent::PromptQueued {
-            message_id: "dsh-test".into(),
-            session_id: Some("dsh-test".into()),
+            message_id: "crow-test".into(),
+            session_id: Some("crow-test".into()),
         }),
         &ctl,
     );
@@ -4657,7 +4711,7 @@ fn acp_permission_ask_enter_selects_option_id() {
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.handle(
         AppEvent::PermissionAsk {
-            session_id: "dsh-test".into(),
+            session_id: "crow-test".into(),
             title: "bash".into(),
             options: ask_options(),
             reply: tx,
@@ -4682,7 +4736,7 @@ fn acp_permission_ask_esc_cancels() {
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.handle(
         AppEvent::PermissionAsk {
-            session_id: "dsh-test".into(),
+            session_id: "crow-test".into(),
             title: "bash".into(),
             options: ask_options(),
             reply: tx,
@@ -4709,7 +4763,7 @@ fn acp_elicitation_form_opens_and_returns_the_selected_value() {
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.handle(
         AppEvent::ElicitationAsk {
-            session_id: Some("dsh-test".into()),
+            session_id: Some("crow-test".into()),
             form: ElicitationForm {
                 message: "The agent needs your input.".into(),
                 fields: vec![ElicitationField {

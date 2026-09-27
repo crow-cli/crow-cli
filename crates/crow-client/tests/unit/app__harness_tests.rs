@@ -16,7 +16,7 @@ fn fresh_root() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "dsh-tui-harness-{}-{}",
+        "crow-harness-{}-{}",
         std::process::id(),
         N.fetch_add(1, Ordering::Relaxed),
     ));
@@ -46,19 +46,13 @@ fn seeded_app(settings: serde_json::Value) -> (App, Controller, Receiver<AppEven
     std::fs::write(&path, settings.to_string()).expect("seed settings.json");
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: root,
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (tx, rx) = std::sync::mpsc::channel::<AppEvent>();
     let ctl = Controller::start(cfg.clone(), true, None, tx.clone());
-    let app = App::new(Some(Theme::dark()), cfg, "dsh-test".into(), true, false, tx);
+    let app = App::new(Some(Theme::dark()), cfg, "crow-test".into(), true, false, tx);
     (app, ctl, rx)
 }
 

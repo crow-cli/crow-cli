@@ -375,14 +375,14 @@ fn assistant_final_with_text_and_model() {
                         {"type": "tool-call", "text": "ignored"},
                         {"type": "text", "text": "world"}
                     ],
-                    "source": {"model": "deepseek-v3"}}}}}),
+                    "source": {"model": "acme-v3"}}}}}),
     );
     assert_eq!(
         ev,
         vec![UiEvent::AssistantFinal {
             session: "s".into(),
             text: "hello world".into(),
-            model: Some("deepseek-v3".into()),
+            model: Some("acme-v3".into()),
         }]
     );
 }
@@ -563,7 +563,7 @@ fn tui_palette_notification_activates_ember() {
     let palette: Value =
         serde_json::from_str(include_str!("../../docs/fixtures/demo-skin.v0.json")).unwrap();
     let ev = parse_notification(
-        crate::cordis::THEME_UPDATE,
+        crate::ext::THEME_UPDATE,
         &json!({"protocol": 0, "palette": palette, "activate": true}),
     );
     match &ev[..] {
@@ -584,12 +584,12 @@ fn tui_palette_wrong_protocol_or_invalid_yields_nothing() {
     let palette: Value =
         serde_json::from_str(include_str!("../../docs/fixtures/demo-skin.v0.json")).unwrap();
     assert!(parse_notification(
-        crate::cordis::THEME_UPDATE,
+        crate::ext::THEME_UPDATE,
         &json!({"protocol": 1, "palette": palette, "activate": true})
     )
     .is_empty());
     assert!(parse_notification(
-        crate::cordis::THEME_UPDATE,
+        crate::ext::THEME_UPDATE,
         &json!({"protocol": 0, "palette": {"id": "x"}, "activate": true})
     )
     .is_empty());
@@ -635,7 +635,7 @@ fn session_update_maps_chunks_tools_and_agent_option() {
                 "sessionUpdate": "config_option_update",
                 "configOptions": [
                     {"type": "select", "id": "mode", "category": "mode", "currentValue": "read-only", "options": []},
-                    {"type": "select", "id": "agent", "currentValue": "cordis", "options": [{"value": "cordis", "name": "Cordis"}]},
+                    {"type": "select", "id": "agent", "currentValue": "studio", "options": [{"value": "studio", "name": "Studio"}]},
                     {"type": "select", "id": "effort", "currentValue": "max", "options": [{"value": "high", "name": "High"}, {"value": "max", "name": "Max"}]}
                 ]
             }
@@ -646,7 +646,7 @@ fn session_update_maps_chunks_tools_and_agent_option() {
         vec![
             UiEvent::AgentPreset {
                 session: "s".into(),
-                preset: "cordis".into()
+                preset: "studio".into()
             },
             UiEvent::ReasoningEffort {
                 session: "s".into(),
@@ -840,10 +840,10 @@ fn available_plan_command_keeps_its_standard_config_action() {
 #[test]
 fn catalog_prefers_agent_id_and_flattens_groups() {
     let options = json!([
-        {"type": "select", "id": "model", "category": "model", "options": [{"value": "deepseek/m1", "name": "M1"}]},
+        {"type": "select", "id": "model", "category": "model", "options": [{"value": "acme/m1", "name": "M1"}]},
         {"type": "select", "id": "agent", "options": [
             {"group": "system", "name": "System", "options": [
-                {"value": "cordis", "name": "Cordis", "description": "inspect"},
+                {"value": "studio", "name": "Studio", "description": "inspect"},
                 {"value": "broken", "name": "Broken", "description": "Broken: missing yaml"}
             ]}
         ]}
@@ -853,7 +853,7 @@ fn catalog_prefers_agent_id_and_flattens_groups() {
     assert_eq!(models.len(), 1);
     assert_eq!(models[0].id, "m1");
     assert_eq!(presets.len(), 2);
-    assert_eq!(presets[0].id, "cordis");
+    assert_eq!(presets[0].id, "studio");
     assert!(presets[1].broken);
 }
 
@@ -961,7 +961,7 @@ fn the_final_chunks_meta_survives_a_merge() {
                 "sessionUpdate": "agent_message_chunk",
                 "content": { "type": "text", "text": "" },
                 "messageId": "1:1",
-                "_meta": { "dsh": { "event": "assistant_message", "model": "deepseek-v4-flash" } },
+                "_meta": { "acme": { "event": "assistant_message", "model": "acme-v4-flash" } },
             }),
         ),
     ];
@@ -971,7 +971,7 @@ fn the_final_chunks_meta_survives_a_merge() {
         panic!("rpc")
     };
     assert_eq!(params["update"]["content"]["text"], "body");
-    assert_eq!(params["update"]["_meta"]["dsh"]["model"], "deepseek-v4-flash");
+    assert_eq!(params["update"]["_meta"]["acme"]["model"], "acme-v4-flash");
 }
 
 fn bare_tool_update(session: &str, call: &str, status: &str) -> crate::bus::AppEvent {

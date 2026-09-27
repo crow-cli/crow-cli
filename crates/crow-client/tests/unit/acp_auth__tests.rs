@@ -1,20 +1,20 @@
 use super::*;
 use serde_json::json;
 
-fn dsh_acp_methods() -> Value {
+fn crow_acp_methods() -> Value {
     json!([{
         "id": "terminal-login",
-        "name": "Log in with a DeepSeek API key",
-        "description": "Interactive terminal setup — saves the key to the harness credential store shared with the dsh Web UI",
+        "name": "Log in with an Acme API key",
+        "description": "Interactive terminal setup — saves the key to the agent's credential store",
         "_meta": { "terminal-auth": { "args": ["login"], "env": {} } }
     }])
 }
 
 #[test]
-fn dsh_acp_terminal_login_is_agent_with_terminal_launch() {
+fn crow_acp_terminal_login_is_agent_with_terminal_launch() {
     let methods = parse_auth_methods(
-        &dsh_acp_methods(),
-        &["dsh-acp".into()],
+        &crow_acp_methods(),
+        &["crow-acp".into()],
         "/tmp/ws",
         &BTreeMap::new(),
     );
@@ -23,7 +23,7 @@ fn dsh_acp_terminal_login_is_agent_with_terminal_launch() {
     assert_eq!(methods[0].type_name, "agent");
     assert!(!methods[0].form);
     let launch = methods[0].terminal_launch.as_ref().expect("terminal-auth");
-    assert_eq!(launch.command, "dsh-acp");
+    assert_eq!(launch.command, "crow-acp");
     assert_eq!(launch.args, ["login"]);
     assert_eq!(launch.method_id, "terminal-login");
 }
@@ -31,7 +31,7 @@ fn dsh_acp_terminal_login_is_agent_with_terminal_launch() {
 #[test]
 fn terminal_auth_without_command_keeps_agent_args() {
     let methods = parse_auth_methods(
-        &dsh_acp_methods(),
+        &crow_acp_methods(),
         &["crowterm-agent".into(), "--profile".into(), "acp".into()],
         "/tmp/ws",
         &BTreeMap::new(),
@@ -133,8 +133,8 @@ fn auth_required_error_matches_code() {
 #[test]
 fn needs_auth_notice_points_at_auth() {
     let methods = parse_auth_methods(
-        &dsh_acp_methods(),
-        &["dsh-acp".into()],
+        &crow_acp_methods(),
+        &["crow-acp".into()],
         "/tmp",
         &BTreeMap::new(),
     );
@@ -147,7 +147,7 @@ fn needs_auth_notice_points_at_auth() {
         !text.contains("/login"),
         "/login is the agent's slash, not a TUI command: {text}"
     );
-    assert!(text.contains("Log in with a DeepSeek API key"));
+    assert!(text.contains("Log in with an Acme API key"));
 }
 
 #[test]

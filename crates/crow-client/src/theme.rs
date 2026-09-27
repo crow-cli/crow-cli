@@ -1,17 +1,52 @@
-//! DeepSeek Harness Web UI design tokens, mapped 1:1 from
-//! `packages/client/ui-theme/src/styles/design-platform.css`.
+//! crow's design tokens: a static ramp plus semantic theme packs.
 //!
-//! Static palette (`--dsw-static-*`) plus semantic themes: a cold
-//! neutral-bluish base kept deliberately quiet, with a small reserved
-//! accent vocabulary — DeepSeek blue for brand/actions, gray-blue for
-//! hints, green for success/liveness, amber for attention, red for
-//! errors. Minimal, not monotone.
+//! The house ramp is [`CROW_50`]…[`CROW_900`], taken from crow's own brand —
+//! `docs/styles/purple.css` and `docs/img/crow-icon-purple.svg`. The builtin
+//! `default` pack wears it.
+//!
+//! The [`DEEPSEEK_50`]…[`DEEPSEEK_900`] ramp survives beside it as the
+//! `deepseek` palette pack, because a palette is a palette: it is selectable
+//! from `/theme`, it is simply no longer what crow wears by default and no
+//! longer the source of any other pack's tokens.
+//!
+//! Semantic themes sit on a cold neutral-bluish base kept deliberately quiet,
+//! with a small reserved accent vocabulary — the house purple for
+//! brand/actions, gray-blue for hints, green for success/liveness, amber for
+//! attention, red for errors. Minimal, not monotone.
 
 use ratatui::style::Color;
 use serde_json::Value;
 
 // --- static palette -------------------------------------------------------
 
+/// crow's house purple. The anchors are literal house colors: `CROW_200`,
+/// `CROW_300` and `CROW_400` are `purple.css`'s link-hover, link and
+/// admonition violets; `CROW_800` is `#2600ab`, the crow icon's own fill;
+/// `CROW_900` is the docs' page background. The steps between them are
+/// interpolated so the ramp has the same shape as the one it sits beside.
+#[allow(dead_code)]
+pub const CROW_50: Color = Color::Rgb(244, 241, 255);
+#[allow(dead_code)]
+pub const CROW_100: Color = Color::Rgb(233, 226, 254);
+#[allow(dead_code)]
+pub const CROW_200: Color = Color::Rgb(196, 181, 253);
+#[allow(dead_code)]
+pub const CROW_300: Color = Color::Rgb(167, 139, 250);
+#[allow(dead_code)]
+pub const CROW_400: Color = Color::Rgb(139, 92, 246);
+#[allow(dead_code)]
+pub const CROW_450: Color = Color::Rgb(124, 58, 237);
+#[allow(dead_code)]
+pub const CROW_500: Color = Color::Rgb(109, 40, 217);
+#[allow(dead_code)]
+pub const CROW_600: Color = Color::Rgb(91, 33, 182);
+#[allow(dead_code)]
+pub const CROW_800: Color = Color::Rgb(38, 0, 171);
+#[allow(dead_code)]
+pub const CROW_900: Color = Color::Rgb(28, 0, 95);
+
+/// The blue ramp the `deepseek` palette pack is built from. Kept as a palette,
+/// not as a brand: nothing outside that pack reads these.
 #[allow(dead_code)]
 pub const DEEPSEEK_50: Color = Color::Rgb(237, 243, 254);
 #[allow(dead_code)]
@@ -90,7 +125,7 @@ pub const AMBER_500: Color = Color::Rgb(245, 158, 11);
 pub const AMBER_600: Color = Color::Rgb(221, 134, 41);
 
 /// Blue-gray (slate) hint tones — gray first, a cool blue undertone;
-/// clearly quieter than the DeepSeek blues.
+/// clearly quieter than the brand ramp.
 pub const SLATE_400: Color = Color::Rgb(108, 122, 150);
 pub const SLATE_600: Color = Color::Rgb(84, 96, 120);
 
@@ -119,7 +154,7 @@ impl Mode {
     }
 }
 
-/// Closed token names for protocol 0 palettes (`tuiTheme.register` / Cordis theme update).
+/// Closed token names for protocol 0 palettes (`tuiTheme.register` / extension theme update).
 pub const TOKEN_NAMES: &[&str] = &[
     "bg",
     "surface",
@@ -171,8 +206,8 @@ const DEFAULT_DARK: TokenMap = TokenMap {
     fg_secondary: BLUISH_300,
     fg_tertiary: BLUISH_500,
     caption: BLUISH_600,
-    brand: DEEPSEEK_450,
-    brand_soft: DEEPSEEK_400,
+    brand: CROW_400,
+    brand_soft: CROW_300,
     bubble_bg: BLUISH_900,
     bubble_fg: BLUISH_75,
     border: BLUISH_850,
@@ -192,8 +227,8 @@ const DEFAULT_LIGHT: TokenMap = TokenMap {
     fg_secondary: BLUISH_750,
     fg_tertiary: BLUISH_700,
     caption: BLUISH_400,
-    brand: DEEPSEEK_500,
-    brand_soft: DEEPSEEK_450,
+    brand: CROW_600,
+    brand_soft: CROW_500,
     bubble_bg: BLUISH_75,
     bubble_fg: BLUISH_1000,
     border: BLUISH_200,
@@ -203,6 +238,24 @@ const DEFAULT_LIGHT: TokenMap = TokenMap {
     err: RED_600,
     hint: SLATE_600,
     chip_bg: BLUISH_100,
+};
+
+// --- deepseek -------------------------------------------------------------
+
+/// The blue brand the builtin `default` wore before the rebrand, kept as the
+/// `deepseek` palette pack. Everything but `brand` / `brand_soft` is the
+/// default pack's own map, so selecting it changes the accent and nothing
+/// else — which is exactly what "a deepseek theme is fine and dandy" means.
+const DEEPSEEK_DARK: TokenMap = TokenMap {
+    brand: DEEPSEEK_450,
+    brand_soft: DEEPSEEK_400,
+    ..DEFAULT_DARK
+};
+
+const DEEPSEEK_LIGHT: TokenMap = TokenMap {
+    brand: DEEPSEEK_500,
+    brand_soft: DEEPSEEK_450,
+    ..DEFAULT_LIGHT
 };
 
 // --- catppuccin -----------------------------------------------------------
@@ -310,6 +363,8 @@ pub const BUILTIN_PALETTE_IDS: &[&str] = &[
     "catppuccin-frappe",
     "catppuccin-macchiato",
     "catppuccin-mocha",
+    // Last because it is the odd one out: a retained palette, not a family.
+    "deepseek",
 ];
 
 /// Why a protocol-0 palette was rejected. Wrong `protocol` is not an error:
@@ -323,7 +378,7 @@ impl std::fmt::Display for PaletteError {
     }
 }
 
-/// A named dark/light token pack. Built-in `default` plus registered Cordis packs.
+/// A named dark/light token pack. Built-in `default` plus registered packs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PalettePack {
     pub id: String,
@@ -366,7 +421,7 @@ pub struct ThemeBackground {
     pub opacity: f64,
 }
 
-/// A parsed Cordis TUI theme update (`protocol` 0).
+/// A parsed TUI extension theme update (`protocol` 0).
 #[derive(Clone, Debug, PartialEq)]
 pub struct PaletteNotification {
     pub pack: PalettePack,
@@ -388,6 +443,23 @@ impl PalettePack {
         }
     }
 
+    /// The retained blue palette: the builtin `default`'s maps with DeepSeek
+    /// blue back in the brand slots. Owns no mode, exactly like `default`, so
+    /// ctrl+t still means dark ↔ light inside it.
+    pub fn deepseek() -> Self {
+        Self {
+            id: "deepseek".into(),
+            label: "DeepSeek Blue".into(),
+            plugin_id: None,
+            source: "static".into(),
+            loaded: true,
+            background: None,
+            preferred_mode: None,
+            dark: DEEPSEEK_DARK,
+            light: DEEPSEEK_LIGHT,
+        }
+    }
+
     /// One built-in Catppuccin flavor. `dark` is the flavor itself — Latte
     /// pairs with Mocha — and `light` is always Latte, so ctrl+t still means
     /// something inside the family: Macchiato ↔ Latte.
@@ -405,10 +477,11 @@ impl PalettePack {
         }
     }
 
-    /// Every pack the binary carries with no Plugin mounted: `default` plus
-    /// the four Catppuccin flavors. `default` is always first and always
-    /// present — the fallback for a persisted id this build does not know.
-    /// The ids are [`BUILTIN_PALETTE_IDS`], in the same order.
+    /// Every pack the binary carries with no Plugin mounted: `default`, the
+    /// four Catppuccin flavors, and the retained `deepseek` palette.
+    /// `default` is always first and always present — the fallback for a
+    /// persisted id this build does not know. The ids are
+    /// [`BUILTIN_PALETTE_IDS`], in the same order.
     pub fn builtin_packs() -> Vec<Self> {
         vec![
             Self::builtin_default(),
@@ -436,6 +509,7 @@ impl PalettePack {
                 CATPPUCCIN_MOCHA,
                 Mode::Dark,
             ),
+            Self::deepseek(),
         ]
     }
 
@@ -598,7 +672,7 @@ fn unit_field(value: Option<&Value>, default: f64, at: &str) -> Result<f64, Pale
     Ok(number)
 }
 
-/// Parse Cordis TUI theme-update params. `protocol != 0` (or missing) → `Ok(None)`.
+/// Parse TUI extension theme-update params. `protocol != 0` (or missing) → `Ok(None)`.
 pub fn parse_palette_notification(
     params: &Value,
 ) -> Result<Option<PaletteNotification>, PaletteError> {
@@ -684,43 +758,43 @@ fn parse_hex(s: &str) -> Option<Color> {
     Some(Color::Rgb(r, g, bl))
 }
 
-/// Semantic colors — a cold monochrome remap of the Web UI neutral-bluish
-/// scale (the alias slot names are kept for reference).
+/// Semantic colors — the slots every palette pack fills. The crow house
+/// ramp (`CROW_50…CROW_900`) is what `default` wears; a pack remaps these.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Theme {
     pub mode: Mode,
-    /// `--dsw-alias-bg-base`
+    /// the canvas background
     pub bg: Color,
-    /// `--dsw-alias-bg-layer-1`
+    /// one step above the canvas (reserved)
     #[allow(dead_code)]
     pub surface: Color,
-    /// `--dsw-alias-bg-layer-2` (panels, tool cards)
+    /// panels and tool cards
     pub panel: Color,
-    /// `--dsw-alias-label-primary`
+    /// primary text
     pub fg: Color,
-    /// `--dsw-alias-label-secondary`
+    /// secondary text
     pub fg_secondary: Color,
-    /// `--dsw-alias-label-tertiary`
+    /// tertiary text
     pub fg_tertiary: Color,
-    /// `--dsw-alias-label-caption`
+    /// captions and meta rows
     pub caption: Color,
-    /// `--dsw-alias-brand-primary-new-color…` — the DeepSeek blue accent
+    /// the house accent
     pub brand: Color,
-    /// `--dsw-alias-state-business-primary`
+    /// a quieter accent (selections, highlights)
     pub brand_soft: Color,
-    /// `--dsw-specific-bubble` (user message bubble)
+    /// the user message bubble
     pub bubble_bg: Color,
     /// text on the bubble
     pub bubble_fg: Color,
-    /// borders (`--dsw-alias-border-l2/l3` approximated on the layer stack)
+    /// borders, approximated on the layer stack
     pub border: Color,
-    /// `--dsw-alias-markdown-code-block`
+    /// markdown code block background
     pub code_bg: Color,
-    /// `--dsw-alias-state-success-primary` / secondary
+    /// success
     pub ok: Color,
-    /// `--dsw-alias-state-warn-primary` / label
+    /// warning
     pub warn: Color,
-    /// `--dsw-alias-state-error-primary`
+    /// error
     pub err: Color,
     /// Gray-blue hint text (tip banner, informational chips) — quieter
     /// than `brand_soft`, warmer than the neutral grays.

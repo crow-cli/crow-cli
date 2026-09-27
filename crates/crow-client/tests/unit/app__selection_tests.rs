@@ -6,7 +6,7 @@ fn fresh_root() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "dsh-tui-sel-{}-{}",
+        "crow-sel-{}-{}",
         std::process::id(),
         N.fetch_add(1, Ordering::Relaxed),
     ));
@@ -41,22 +41,16 @@ fn sel(a: (usize, usize), h: (usize, usize)) -> Selection {
 
 fn test_app() -> App {
     let cfg = RuntimeConfig {
-        bin: "dsh-runtime".into(),
-        cordis: "cordis".into(),
+        bin: "crow-runtime".into(),
         workspace: "/tmp".into(),
         session_root: fresh_root(),
-        provider: "deepseek".into(),
-        model: "deepseek-chat".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (tx, _rx) = std::sync::mpsc::channel();
     App::new(
         Some(crate::theme::Theme::dark()),
         cfg,
-        "dsh-test".into(),
+        "crow-test".into(),
         true,
         false,
         tx,
@@ -65,15 +59,9 @@ fn test_app() -> App {
 
 fn test_app_and_ctl() -> (App, Controller) {
     let cfg = RuntimeConfig {
-        bin: "dsh-runtime".into(),
-        cordis: "cordis".into(),
+        bin: "crow-runtime".into(),
         workspace: "/tmp".into(),
         session_root: fresh_root(),
-        provider: "deepseek".into(),
-        model: "deepseek-chat".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (tx, _rx) = std::sync::mpsc::channel::<AppEvent>();
@@ -81,7 +69,7 @@ fn test_app_and_ctl() -> (App, Controller) {
     let app = App::new(
         Some(crate::theme::Theme::dark()),
         cfg,
-        "dsh-test".into(),
+        "crow-test".into(),
         true,
         false,
         tx,
@@ -151,14 +139,14 @@ fn word_span_finds_word_under_column() {
 fn tool_click_toggles_output_expansion() {
     let mut app = test_app();
     app.transcript.apply(crate::events::UiEvent::ToolCall {
-        session: "dsh-test".into(),
+        session: "crow-test".into(),
         call_id: "c1".into(),
         name: "bash".into(),
         arguments: "{}".into(),
         diff: None,
     });
     app.transcript.apply(crate::events::UiEvent::ToolResult {
-        session: "dsh-test".into(),
+        session: "crow-test".into(),
         call_id: "c1".into(),
         is_error: false,
         text: "a\nb\nc\nd\ne\nf\ng\nh".into(),
@@ -186,7 +174,7 @@ fn ctrl_o_is_the_transcript_wide_collapse_override() {
     let mut app = test_app();
     app.transcript
         .apply(crate::events::UiEvent::ToolCall {
-            session: "dsh-test".into(),
+            session: "crow-test".into(),
             call_id: "c1".into(),
             name: "bash".into(),
             arguments: "{}".into(),
@@ -211,14 +199,14 @@ fn ctrl_o_is_the_transcript_wide_collapse_override() {
 fn wheel_over_collapsed_tool_scrolls_the_transcript() {
     let mut app = test_app();
     app.transcript.apply(crate::events::UiEvent::ToolCall {
-        session: "dsh-test".into(),
+        session: "crow-test".into(),
         call_id: "c1".into(),
         name: "bash".into(),
         arguments: "{}".into(),
         diff: None,
     });
     app.transcript.apply(crate::events::UiEvent::ToolResult {
-        session: "dsh-test".into(),
+        session: "crow-test".into(),
         call_id: "c1".into(),
         is_error: false,
         text: "a\nb\nc\nd\ne\nf\ng\nh".into(),
@@ -247,7 +235,7 @@ fn tool_click_in_a_child_view_targets_the_child_transcript() {
     });
     app.subagents.push(SubagentView {
         id: "child-1".into(),
-        parent: "dsh-test".into(),
+        parent: "crow-test".into(),
         label: "subagent 1".into(),
         running: true,
         failed: false,

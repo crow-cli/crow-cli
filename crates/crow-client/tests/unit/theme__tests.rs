@@ -1,15 +1,33 @@
 use super::*;
 
-/// Accent invariant: the brand accent is the DeepSeek blue — gray body,
-/// blue accents (主体灰色，蓝色点缀).
+/// Accent invariant: the brand accent is crow purple — gray body,
+/// purple accents (主体灰色，紫色点缀).
 #[test]
-fn brand_is_deepseek_blue() {
-    assert_eq!(Theme::dark().brand, DEEPSEEK_450);
-    assert_eq!(Theme::light().brand, DEEPSEEK_500);
+fn brand_is_crow_purple() {
+    assert_eq!(Theme::dark().brand, CROW_400);
+    assert_eq!(Theme::light().brand, CROW_600);
+}
+
+/// The retained blue ramp is reachable as its own pack, and only through
+/// it: nothing else in the catalog wears DeepSeek blue any more.
+#[test]
+fn the_deepseek_palette_survives_as_a_pack_and_nothing_more() {
+    let pack = builtin("deepseek");
+    assert_eq!(pack.label, "DeepSeek Blue");
+    assert_eq!(pack.preferred_mode, None, "ctrl+t still means dark ↔ light");
+    assert_eq!(pack.theme(Mode::Dark).brand, DEEPSEEK_450);
+    assert_eq!(pack.theme(Mode::Light).brand, DEEPSEEK_500);
+    // Everything but the brand slots is the default pack's own map.
+    let retained = pack.theme(Mode::Dark);
+    let house = Theme::dark();
+    assert_eq!(retained.bg, house.bg);
+    assert_eq!(retained.fg, house.fg);
+    assert_eq!(retained.ok, house.ok);
+    assert_ne!(retained.brand, house.brand);
 }
 
 /// Neutral surfaces stay grayscale; the reserved accent vocabulary
-/// (brand blue · gray-blue hint · green ok · amber warn · red err) is
+/// (brand purple · gray-blue hint · green ok · amber warn · red err) is
 /// deliberately colored — minimal, not monotone.
 #[test]
 fn neutrals_stay_gray_and_accents_stay_colored() {
@@ -176,7 +194,7 @@ fn gallery_fixtures_parse_both_modes() {
 fn palette_parses_an_optional_png_background() {
     let mut value = ember_json();
     value["background"] = serde_json::json!({
-        "source": { "kind": "file", "path": "/opt/liang/stage-00.png" },
+        "source": { "kind": "file", "path": "/opt/crow/stage-00.png" },
         "fit": "cover",
         "anchor": { "x": 0.75, "y": 0.5 },
         "opacity": 0.42
@@ -184,7 +202,7 @@ fn palette_parses_an_optional_png_background() {
 
     let pack = PalettePack::from_json(&value).expect("theme background");
     let debug = format!("{pack:?}");
-    assert!(debug.contains("/opt/liang/stage-00.png"), "{debug}");
+    assert!(debug.contains("/opt/crow/stage-00.png"), "{debug}");
     assert!(debug.contains("Cover"), "{debug}");
     assert!(debug.contains("0.75"), "{debug}");
     assert!(debug.contains("0.42"), "{debug}");
@@ -238,17 +256,17 @@ fn toggled_ember_stays_ember() {
     let light = dark.toggled();
     assert_eq!(light.mode, Mode::Light);
     assert_eq!(light.brand, Color::Rgb(217, 106, 30));
-    assert_ne!(light.brand, DEEPSEEK_450);
-    assert_ne!(light.brand, DEEPSEEK_500);
+    assert_ne!(light.brand, CROW_400);
+    assert_ne!(light.brand, CROW_600);
     let back = light.toggled();
     assert_eq!(back.mode, Mode::Dark);
     assert_eq!(back.brand, Color::Rgb(247, 140, 60));
 }
 
 #[test]
-fn default_toggled_still_uses_deepseek_blue() {
-    assert_eq!(Theme::dark().toggled().brand, DEEPSEEK_500);
-    assert_eq!(Theme::light().toggled().brand, DEEPSEEK_450);
+fn default_toggled_still_uses_crow_purple() {
+    assert_eq!(Theme::dark().toggled().brand, CROW_600);
+    assert_eq!(Theme::light().toggled().brand, CROW_400);
     assert_eq!(Theme::dark().toggled().brand, Theme::light().brand);
 }
 
@@ -411,7 +429,7 @@ fn catppuccin_flavors_carry_the_canonical_palette_hexes() {
 }
 
 /// ctrl+t stays inside the family: every flavor's light slot is Latte, and
-/// Latte's dark slot is Mocha — toggling never falls back to DeepSeek blue.
+/// Latte's dark slot is Mocha — toggling never falls back to crow purple.
 #[test]
 fn catppuccin_toggle_stays_inside_the_family() {
     let macchiato = builtin("catppuccin-macchiato").theme(Mode::Dark);

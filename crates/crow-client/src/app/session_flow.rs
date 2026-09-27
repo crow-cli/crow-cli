@@ -174,6 +174,7 @@ impl App {
         self.effort_choices.clear();
         self.selected_model = None;
         self.session_model = None;
+        self.session_provider = None;
         self.session_title = None;
         self.show_banner = false;
         self.queued = 0;

@@ -1,300 +1,530 @@
-# TODO
+# TODO — the crow-client rebrand: no deepseek, no martty, no dsh
 
 ## **DO NOT ASK USER FOR FEEDBACK — THIS IS THE USER FEEDBACK.**
 ## **DO NOT ASK USER FOR NEXT STEPS — THESE ARE THE NEXT STEPS.**
 
-Sprint origin: 2026-09-24, session `worthy-conscious-rat-of-opportunity`.
-Worktree `~/.agents/crow/src/worktrees/goal`, branch `goal`, off main @ 95cf5511.
+Sprint origin: 2026-09-27, session `amorphous-refreshing-peacock-of-psychology`.
+Worktree `~/.agents/crow/src/worktrees/crow-cli-rebrand`, branch
+`client-rebrand`, off main @ `4eea50f1`.
+
+The previous sprint in these two files (`/goal` on the task guts) is complete —
+every item checked. It lives in git history; these files are now this sprint.
 
 ## The mandate, in the user's words
 
-> crow-cli has accumulated lots of garbage from all the AI agent sessions and
-> needs some cleaning up. we either need to polish task and get it fully
-> implemented, or pull out what's not useful to /goal
+> I think having a deepseek theme is fine and dandy.
 >
-> let's create a worktree in ~/.agents/crow/src/worktrees and use the task guts
-> to create a /goal system please. we can decide what if anything we want to do
-> with redis/celery task system later
+> Defaulting to deepseek url and api keys is not. it cause considerable
+> aggrevation for previous model because it thought we needed deepseek api keys
+> (it's not very smart). So removing from default models with built in providers
+> is first step imo. it makes zero sense for an ACP client to be handling that on
+> its side. the agent has the model configurations it exposes to the client.
+> that's how ACP works. there's no "hand providers to ACP agent" channel of ACP.
+> The agent exposes the models it can select from to client, which can then
+> choose.
+>
+> env contract - yeah this is really important we clean this up and make this NOT
+> DEEPSEEK OR MARTTY SHAPED. No martty shims. NO deepseek shims. rebrand. break
+> "existing installs" whatever the fuck that's supposed to mean. we do not want
+> backwards compatibility with martty that's daft.
+>
+> yeah this is not deepseek harness's client anymore. this is crow-cli's harness.
+> we want to rename in a way that's intelligent.
+>
+> we want to get rid of liang for now but keep machinery in case we want to add
+> our own crow pet later. so don't delete but just comment out of whereever it's
+> included in slash command registry or whatever for now.
+>
+> okay so the other agent is done cleaning up our system prompt. let's start
+> hacking on the client and getting rid of deeseek, martty, and dsh branding
 
-So: build `/goal` on the task system's guts. The redis/celery decision is
-EXPLICITLY deferred — do not remove `timers.py`, do not rip out the broker, do
-not relitigate §5.3. Leave both alone and say so in the summary.
+Four rules fall out of that, and they decide every ambiguous case below:
 
-## What /goal is
+1. **The client owns no model config.** No built-in provider, no built-in model
+   list, no base-url, no api key. The agent advertises its models over ACP; the
+   client picks from what arrives.
+2. **No back-compat shims.** Martty homes, dsh credential stores, dsh settings
+   files, dsh env aliases: deleted, not fallback-ed. Breaking a pre-rebrand
+   install is the intended outcome.
+3. **A deepseek *palette* may stay.** Brand *art*, brand *defaults*, brand *wire
+   names* and brand *env vars* may not.
+4. **Liang: unregister, don't amputate.** The pet machinery stays compiled and
+   tested; only the slash-command registry entry goes, so a crow pet can be
+   dropped in later.
 
-A persisted objective per wire session that turns "the turn ended" from a
-terminal event into a loop-back edge. The agent keeps working until the goal
-leaves `active`. This is codex's `/goal` (validated against
-`~/src/crow-term/codex/codex-rs/ext/goal/` this session) rebuilt on crow's
-mailbox instead of codex's extension hooks.
+## Gate (floor for every item)
 
-The mechanism is ACP_V2.md §5.4 — the state-triggered wake that was designed
-and never built. §5.4's own code snippet cites `driver.py:419 _fire_deferred()`;
-neither `remind` nor `_fire_deferred` exists in src/. This sprint builds it,
-with the goal as the thing that defers.
+```
+cd ~/.agents/crow/src/worktrees/crow-cli-rebrand
+cargo check --locked --tests -j 6          # ~30s warm
+cargo test  --locked --bin crow -j 6       # 934 tests at baseline
+cargo run -- --dump-frame 100x34           # no-TTY visual diff
+```
 
-**The load-bearing decision: continuation rides the EXISTING mailbox.** A goal
-continuation is a `TaskDelivery` row. No new event type in `agent2/events.py`,
-no second injection path, no client involvement, nothing for the watcher to
-learn. §5.4: "by the time anything looks, it is an ordinary pending delivery."
-`Delivery.task_id` has no FK, so it names the goal id honestly.
+`cargo test --lib` fails by design — the unit tests are `#[path]`-included into
+the bin. Never run repo-wide `cargo fmt`. Baseline is green with 3 pre-existing
+warnings (unused `Path` import, unused `ctl`, non-snake-case
+`dd_kills_the_line_and_gg_G_jump`) — do not "fix" them as a drive-by, and do not
+add a fourth.
+
+**Phase 1 gate result:** `cargo check --locked --tests -j 6` rc 0 with exactly
+those 3 warnings; `cargo test --locked --bin crow -j 6` → **938 passed, 0
+failed** (934 baseline + 4 new pins); `cargo test --locked --test cli_help` → 3
+passed (1 new); `--dump-frame 100x34` byte-identical to the pre-phase frame.
+Committed `40d15472`.
+
+**Phase 2 gate result:** check rc 0, still exactly those 3 warnings;
+`cargo test --locked --bin crow -j 6` → **939 passed, 0 failed** (one shim pin
+promoted to its own test); `--dump-frame 100x34` byte-identical to the Phase-1
+frame — no paint change, and `main.rs` is untouched. Committed `30ee65fb`.
+
+**Phase 3 gate result:** check rc 0, still exactly those 3 warnings;
+`cargo test --locked --bin crow -j 6` → **940 passed, 0 failed**; `--dump-frame
+100x34` byte-identical to the Phase-2 frame.
+
+**Phase 4 gate result:** recorded in PLAN.md — check rc 0, still exactly those
+3 warnings; **941 passed, 0 failed** (940 → 941); `--dump-frame 100x34`
+byte-identical through 4.1–4.3, then a two-line textual diff in 4.4 (the
+re-wrapped demo conclusion and the `demo-flash · demo` chip) with all 35 rows
+intact. Committed `b05bd263`.
+
+**Phase 5 gate result:** check rc 0, still exactly those 3 warnings (the
+unused-`ctl` one moved `ui__tests.rs:3582` → `:3602` — 5.3's rewrite added 20
+lines above it; same warning, same binding); `cargo test --locked --bin crow
+-j 6` → **941 passed, 0 failed** (941 → 941: one test rewritten and relocated,
+one rewritten in place, four repointed, none added, none deleted); `cli_help` 3,
+`startup_session_e2e` 12, `sigterm_cleanup` 1, `tcp_attach` 1 all green.
+`--dump-frame 100x34` byte-identical to the Phase-4 frame under both the
+developer's `CROW_HOME` and a clean one, `--demo` identical to plain — a
+namespace rename repaints nothing.
+*Not a gate, but recorded:* the bin-profile build warns `field ui_preset is
+never read` (`app.rs:177`) — 4.1 deleted its last reader, the `--tests` gate
+cannot see it because the settings round-trip tests read the field, and the
+field must stay or the next patch-write drops `uiPreset` out of
+`settings.json`. Whether it should drive something now is a product call for
+7.4/7.5, not a drive-by `#[allow]` inside a rename phase.
+
+**Phase 6 gate result:** check rc 0, still exactly those 3 warnings (same three
+lines, same bindings — a fixture rename moves nothing in `src`); `cargo test
+--locked --bin crow -j 6` → **941 passed, 0 failed** (941 → 941: none added,
+none deleted; three test fns renamed to match their new fixtures —
+`dsh_acp_terminal_login_…`, `dsh_question_schema_…`,
+`live_deepseek_landing_also_uses_acp_…` — plus the `dsh_acp_methods` helper;
+nine assertions rewritten from vacuous negatives into positive pins; three
+geometry fixtures corrected); `cli_help` 3, `startup_session_e2e` 12,
+`sigterm_cleanup` 1, `tcp_attach` 1 all green. `--dump-frame 100x34` → 1815
+chars / 35 rows, byte-identical to `/tmp/rebrand-p4-baseline.frame` under a
+clean `CROW_HOME` — test vocabulary never reaches the paint. 23 files changed,
+377 insertions, 373 deletions.
+
+**Phase 7 gate result:** check rc 0, still exactly those 3 warnings (same three
+lines, same bindings — docs, comments and fixture names move nothing in `src`);
+`cargo test --locked --bin crow -j 6` → **941 passed, 0 failed** (941 → 941:
+none added, none deleted, none renamed — 7.5 changed fixture *vocabulary* and
+prose, not test identities); `cli_help` 3, `startup_session_e2e` 12,
+`sigterm_cleanup` 1, `tcp_attach` 1 all green. `--dump-frame 100x34` → 1815
+chars / 35 rows / 2819 bytes on disk, byte-identical to
+`/tmp/rebrand-p4-baseline.frame` (saved as `/tmp/rebrand-p7-clean.frame`) —
+deleting 4.63 MB of brand art and rewriting three prose files repaints nothing,
+because none of it was ever loaded at runtime. Crate diff: 25 files changed,
+138 insertions, 245 deletions.
+*Recorded because a cached green looks exactly like a real one:* cargo replays
+stored warnings for a unit it considers fresh, so both binaries were checked
+against the clock — test bin `crow-e748d5d90d72350e` rebuilt 15:29:31,
+`target/debug/crow` 15:29:37, last source edit 15:24:29. Also verified out of
+band: `bash -n scripts/collect-freeze-diag.sh` rc 0, the palette schema and all
+10 `docs/fixtures/*.json` re-parsed, and `git log -S` for the two historical
+claims 7.1/7.5 rest on.
+
+**Phase 8 gate result:** the whole gate, in both profiles, on the artifact that
+ships. *Debug:* check rc 0 with exactly those 3 warnings (same three lines, same
+bindings, all on stderr in short format); `cargo test --locked --bin crow -j 6`
+→ **941 passed, 0 failed**; `cli_help` 3, `startup_session_e2e` 12,
+`sigterm_cleanup` 1, `tcp_attach` 1; `--dump-frame 100x34` → 1815 chars / 35
+rows / 2819 bytes, byte-identical to `/tmp/rebrand-p4-baseline.frame`.
+*Release:* `cargo build --release -j 6` rc 0 in 128 s → `target/release/crow`,
+11.9 MB, one warning — the deliberate `field ui_preset is never read`
+(`app.rs:177`); the same four integration tests re-run with `--release` → 3 /
+**12** / 1 / 1, so **17** tests drove the shipped binary; its `--dump-frame` is
+byte-identical to the same baseline (saved `/tmp/rebrand-p8-release.frame`);
+`--help` 1484 chars with no brand and no credential flag; `--demo` on a **real
+PTY** (openpty/fork/`execve`, TIOCSWINSZ 110×30, 5 s, SIGTERM) exits **0**
+showing the crow wordmark, `https://crow-ai.dev`, `version crow 0.1.0`,
+`runtime demo`, `model waiting for ACP`, `mode demo — scripted turns, no API
+calls`, `session crow-65c7c5f0` — and **zero** occurrences of `deepseek`,
+`martty`, `dsh` or `api key` in 5897 chars of live UI. *Python:*
+`uv run pytest tests/unit -q` from the worktree root → **788 passed**.
+The release e2e really points at the release binary: the harness bakes
+`env!("CARGO_BIN_EXE_crow")` (`tests/startup_session_e2e.rs:309`, no env
+override, so the profile selects the path), and
+`target/release/deps/startup_session_e2e-9bd8c126ff9ce174` contains the bytes
+`target/release/crow` and not `target/debug/crow`.
+*Recorded because a cached green looks exactly like a real one:* 8.1 did not
+trust the warm artifacts. A syntax error injected into `src/pet.rs` turned check
+rc **101** in 7.4 s (proving the gate compiles this crate, then restored); then
+only this crate's debug artifacts were deleted by hand —
+`target/debug/{.fingerprint/crow-client-*,deps/crow-*,crow,incremental/crow-*}`,
+27 paths, **23.7 GiB** reclaimed, every third-party dep left in place and no
+`cargo clean` (AGENTS.md forbids it; the target dir is shared) — and from that
+state the 941 and the 3 warnings were recompiled in 86.5 s / 8.2 s. Warm
+timings for comparison: check 0.2–1.7 s, bin test 3.4–13 s.
+*One red, chased not waved off:* the first Python run was 1 failed / 787 passed
+— `test_tools_web.py::test_run_screenshot_rides_the_row`, Playwright
+`Page.captureScreenshot: Unable to capture screenshot`. Disproved as a
+load flake three ways: it passes alone in 1.8 s, the full suite re-runs **788
+passed**, and the branch changes zero Python (`git diff --stat` over
+merge-base…HEAD for `*.py`/`src/`/`tests/` returns one entry — the *deletion*
+of `crates/crow-client/assets/promo/build.py`).
+*The phase's one source change* is the root `Cargo.toml:14-18` comment over
+`[profile.devlocal]`, which advertised `DSH_TUI_CARGO_PROFILE=devlocal`, a
+nonexistent `scripts/devlocalinstall.sh` and "the shipped npm packages" (gone in
+Phase 5). It now names only what exists; the profile itself is untouched, and
+`collect-freeze-diag.sh:12`'s `devlocal` stays — that is a `pgrep` path matcher,
+not a build instruction.
 
 ## Scope capture (unordered)
 
-- [x] `Goal` model in `memory/models.py` — one row per wire session
-      (`session_id` PK), `goal_id` uuid for stale-update protection, `objective`,
-      `status`, `blocked_reason`, `token_budget`, `tokens_used`,
-      `time_used_seconds`, `turns_used`, timestamps. `create_all` is idempotent
-      so an existing crow.db gains the table with no migration script.
-      *2026-09-24: shipped. Five statuses, not four — `active|paused|blocked|
-      budget_limited|complete`, the codex vocabulary, because "the arithmetic
-      stopped it" and "the model claims it finished" are different facts and
-      collapsing them loses the only one the user can act on. Constants live in
-      `models.py` (reads needs them, writes imports reads → circular otherwise).*
-- [x] Reads: `get_goal`, `active_goal`. Writes: `set_goal`, `update_goal_status`,
-      `clear_goal`, `account_goal_usage` (atomic add + budget flip in one commit,
-      the `finish_task` discipline).
-      *2026-09-24: shipped, `tests/memory/test_goal_state.py` 16 green,
-      `tests/unit` 811 passed. `set_goal` ALWAYS mints a fresh id and zeroes the
-      counters — codex preserves both on re-set, which suits a product that
-      bills the goal; crow's goal is a loop guard, and a loop guard that
-      inherits its predecessor's spend stops guarding.*
-- [x] `agent2/goal.py` — the continuation prompt template and the eligibility
-      rules, in one place, so the driver stays thin.
-      *2026-09-24: shipped, `tests/unit/test_goal_continuation.py` 12 green.
-      `CONTINUATION_PROMPT` is 15 lines / 607 chars and a test pins that.
-      `eligible` returns `Verdict(status, reason) | None` rather than a bare
-      reason string, because the driver has to persist the status the rule
-      named. `Verdict.status is None` means "someone else already stopped this,
-      do not overwrite their decision".*
-- [x] Driver: `_park()` checks the goal BEFORE announcing idle (no spurious
-      idle flicker), writes the delivery, returns True; the loop's existing
-      `_mailbox_pending()` picks it up.
-      *2026-09-24: shipped, `tests/integration/test_goal_driver.py` 11 green,
-      seven mutations all detected. The no-flicker claim is proven on the wire:
-      two turns produce `["idle","running","idle"]`, because `_set_state`
-      dedupes a state that never changed. New primitive `queue_delivery` —
-      `finish_task` built its delivery inline, and a goal has no task row.*
-- [x] Progress signal: react counts tool CALLS on `LoopState`, reports on
-      `Done.tools_used`, so "did this turn do anything" is a fact and not a
-      guess.
-      *2026-09-24: shipped, asserted through `Gate.tools_used` on the gate's
-      real-MCP round trip (1) and text-only turn (0), mutation-checked. The
-      driver keeps `_last_tools_used`; the slash-command early return zeroes it
-      so `/goal <objective>` is never judged for progress.*
-- [x] Loop guards — the part that decides whether this is a feature or a
-      token fire: a no-tool CONTINUATION turn ends the goal (`blocked`);
-      `turns_used` against a configured max (`budget_limited`); `tokens_used`
-      against `token_budget` (the SQL `CASE` in `account_goal_usage`, not a
-      Python re-check); turn error → `blocked`; cancel → `paused`.
-      *2026-09-24: shipped. Only a turn the GOAL caused is charged, turns and
-      tokens alike — billing a user-prompted turn to the goal makes the ceiling
-      fire on conversation length rather than on autonomy. And it charges
-      `Done.tokens_spent` (new, summed over every model call in the turn), not
-      `done.usage`, which is the LAST call's totals and undercounts a
-      multi-round turn by roughly the number of rounds.*
-      *Scope found while building the policy: the no-tool rule needs
-      `was_continuation`, so the DRIVER must remember whether the turn it just
-      ran was one it caused. Without that distinction a user interjecting
-      "what's the status?" mid-goal gets a text-only answer and blocks their
-      own goal. Phase 4 carries a `_continuation_in_flight` flag: set when the
-      delivery is written, consumed when that turn settles. Lost on restart,
-      which costs one extra continuation and self-corrects.*
-      *Config landed with it, pulled forward from the docs phase:
-      `goal: {max_turns: 25, max_tokens: null}` as a typed `GoalConfig`,
-      unknown keys rejected. `max_tokens` got its consumer in Phase 6: `_set`
-      passes it to `set_goal` as the row's `token_budget`.*
-- [x] `/goal` slash command: bare = show, `<objective>` = set, plus
-      `clear|pause|resume`. Needs the engine on `_SlashView` (v2) and on v1's
-      `AcpAgent`, because `agent/slash.py` is shared by both.
-      *2026-09-24: shipped, `tests/integration/test_goal_slash.py` 20 green,
-      ten mutations all detected. The v1 half of the note is WRONG and v1 is
-      untouched: `_SLASH_COMMANDS` is one list both generations read AND
-      advertise, so a command registered in `agent/slash.py` shows up in a v1
-      session that runs no continuation loop and would answer "goal set" and
-      then do nothing. The handler lives in a new `agent2/slash.py`, imported
-      for its side effect from `agent2/agent.py`; the two generations are
-      separate processes, so that reaches exactly the one that can honour it.
-      Asserted in a fresh interpreter that imports only v1.*
-      *Behaviour the draft did not anticipate: `/goal <objective>` on an idle
-      session starts a turn IMMEDIATELY, because the handler runs no turn of its
-      own and the loop reaches `_park` with an active goal and nothing in
-      flight. Verified as codex parity, not a bug — `apply_external_goal_set`
-      calls `continue_if_idle()` for a goal that is Active
-      (ext/goal/src/runtime.rs:233), and codex's deferral table suppresses the
-      pickup only for FORKED threads (one inserter, one caller:
-      thread_fork_goal.rs:25). Now asserted in its own test.*
-- [x] Model-facing tools so the loop can END: `goal_done` and `goal_blocked` as
-      two subtools, not one mode dispatcher — `tools/task_tool.py`'s house rule is
-      explicit that "a capability behind a mode-string dispatcher is a
-      capability that does not get reached."
-      *2026-09-24: shipped in `_LAZY_V2`, not `_LAZY` — v1 runs no continuation
-      loop, so an exit bound there is a call that succeeds, changes a row and
-      means nothing. `goal_done()` takes no arguments (the achievement is the
-      model's reply, not a wire payload); `goal_blocked(reason)` refuses an
-      empty reason, because codex captures none at all and a blocked goal that
-      cannot say why is a dead end with no exit sign. Both idempotent, neither
-      raises on a goal somebody else already stopped, both read the row BACK
-      after writing it. Shipped with the driver guard that makes an exit hold:
-      `_settle_goal` only moves a goal that is still `active`, so a `goal_done`
-      followed by an unrelated error in the same turn stays `complete` instead
-      of coming back `blocked`.*
-- [x] Tests: unit for the store and the eligibility rules; integration for the
-      driver actually continuing, actually stopping, and actually not looping
-      forever. Real code paths, no mocks.
-      *2026-09-24: 16 store + 12 policy + 19 subtool + 14 driver + 20 slash =
-      81 goal tests, no mocks anywhere — temp sqlite files, a real FastMCP
-      subprocess, a real agent and transport, and a scripted model because a
-      gate that needs a provider is not a gate. 28 mutations applied and every
-      one detected, across Phases 3-6 (1 + 7 + 10 + 10); Phases 1-2 are store
-      and pure-policy code, asserted directly rather than mutated. Full tier
-      1407 passed, 0 failed.*
-      *2026-09-25, Phase 8 closed: `./run_tests.sh -q` over every tier including
-      the live e2e came back **1437 passed, 0 failed in 2154.88s (35m54s)**.
-      81 goal tests became 83 (the eyeball's `progress()` fix and the
-      compaction fixed-point test), and the manual eyeball ran for real and
-      found a bug — see the two items below.*
-- [x] The `crow_cli.tools` facade wart, found by Phase 5's registration check:
-      `import crow_cli.tools.task` anywhere in the process left the MODULE on the
-      package attribute, which shadows `__getattr__`, so `T.task` was afterwards
-      a module and not the callable. `reload()` purged exactly this, so a real
-      kernel was fine — but any in-process consumer that imported a submodule
-      and then reached for the facade by name got something uncallable, and
-      WHICH of the two you got depended on import order.
-      *2026-09-25: fixed at the source, not papered over. Neither "stop setting
-      the parent attribute" nor "make `__getattr__` win" was needed — both fight
-      the import machinery. The names were the problem: every subtool module is
-      now `<name>_tool.py`, so no submodule name is a binding name and there is
-      nothing left to shadow. `crow_cli.tools.fs` is the function by exactly one
-      route and `crow_cli.tools.fs_tool` is the module by exactly one route, in
-      either order. Ten modules renamed (`edit fs memory rlm sg vision web write
-      task goal`), 67 references updated, and three relative imports the first
-      pass missed because they are call-time and indented — `sg_tool` from
-      `.fs`, `fs_tool` from `.write`, `web_tool` from `.vision` — which is what
-      the 23 failures in the first tier run were. The SUBTOOL names are
-      untouched: `@subtool(tool="fs")` and the `_LAZY` keys are what the model
-      calls, and only the module filenames moved.
-      `reload()`'s purge stays, with its comment corrected: it still has one
-      real job (a cached facade function surviving `importlib.reload` of the
-      package in its own existing dict) and the shadowing job is gone.
-      `tests/unit/test_tools_facade_names.py` pins the invariant three ways —
-      the naming rule over the directory, every binding callable after every
-      submodule is imported, and the original failure reproduced in a FRESH
-      interpreter, which is the only state it can be reproduced in since
-      anything that touched the facade first would cache the callable and hide
-      it. Mutation-checked: adding `demo.py` bound as `demo` fails two of the
-      three with `demo resolved to module`. Four test files carried
-      workarounds and warnings for the old behaviour; all four are deleted.
-      `crow-cli.spec` also gained `crow_cli.tools.goal_tool`, which Phase 5
-      should have added next to `task_tool` — both are `_LAZY_V2` and both are
-      resolved through importlib, so both are invisible to PyInstaller's static
-      analysis. Four tiers 1414 passed, 0 failed in 462.10s; `tests/e2e` 26
-      passed in 1419.32s, which is the half that matters here because it runs a
-      real kernel on PRELUDE_V2 and binds `goal_done`, `goal_blocked` and the
-      four `task` names out of the renamed modules. 1440 in all.*
-- [ ] Objective length cap. codex enforces `MAX_THREAD_GOAL_OBJECTIVE_CHARS =
-      4000` (protocol.rs:3957-3969) and crow enforces nothing: `/goal` will
-      store a 200KB objective, and the objective is interpolated into
-      `CONTINUATION_PROMPT` — whose size `test_the_prompt_stays_short` pins
-      under 900 chars, with a comment reading "if this assertion fails,
-      someone added a cathedral". An unbounded objective defeats that pin
-      entirely, and it is re-sent on every
-      continuation, so the cost is per turn rather than once. Belongs in
-      `set_goal` (the store) and not in the slash handler, because a second
-      entry point would need the same check and the store is the one place
-      every writer passes through. NOT this sprint: it is a new rejection path
-      with its own wording and its own test, and nothing in the shipped loop
-      misbehaves without it.
-- [x] Cleanup found along the way: `agent/slash.py:134-140` is an orphaned copy
-      of `register_slash_command`'s body sitting after `stop_command`'s
-      `return` — unreachable, and it references `name`/`description` that do
-      not exist in that scope. Delete it.
-      *2026-09-24: deleted, seven lines. `tests/integration/test_slash_commands.py`
-      (v1's own nine) still green.*
-- [x] ACP_V2.md: §5.4 stops being a proposal; `:28`'s status table and `:811`
-      ("timers.py, celery | Not involved") get corrected to match what shipped.
-      *2026-09-24: six edits, three of them beyond the item as written because
-      the file was asserting things that are no longer true — §1's "a
-      model-facing way to feed itself: does not exist", §5.5's "`TaskDelivery(`
-      is constructed in exactly ONE place", and §5.8's "ship it without a
-      budget". Every symbol named in the new text was grepped for in the file it
-      is attributed to. §5.3's argument is now recorded as proven rather than
-      predicted: the feature that looked most like it would need a scheduler
-      needs no clock, no broker and no worker.*
-- [x] `agent-client-protocol` 1.0.0rc2, and with it the end of the hardcoded
-      `[tool.uv.sources]` path. Added mid-sprint on the user's instruction, and
-      it turned out to be the fix for one of the gate's two failures:
-      `test_source_first_spawn` clones this repo to a temp dir and runs `uv
-      sync` there, and a relative path source cannot resolve in a clone.
-      *2026-09-24: `7ae5438d`, 17 files, +538/−408. rc2 is the first PyPI
-      release carrying `acp/experimental/v2/`, so the editable clone is no
-      longer load-bearing and the `worktrees/python-sdk` symlink is deleted.
-      Three separate breaks, of which only the first announces itself:
-      (1) handlers now take the request's FIELDS as keywords with `_meta`
-      spread among them; (2) `_dump` lost `exclude_none`, so an explicit `None`
-      became a `null` on the wire and a `null` on an upsert is "cleared", not
-      "unchanged" — found by the gate as `{'stopReason': None, 'usage': None}`
-      in the idle update, fixed by `emitter.present()`; (3) `PromptResponse`
-      gained a required `messageId`, so `events.Prompt` carries the id the
-      handler minted and the driver echoes THAT one. v1 is untouched —
-      `acp/router.py` adapts a legacy single-model handler with a
-      DeprecationWarning. Before: 119 failed. After: 1409 passed, 0 failed in
-      469.01s, plus `tests/e2e/test_agent2_live.py` 3 passed live. Recorded in
-      ACP_V2.md §7 with the four stale facts it invalidated corrected.*
-
-- [x] Phase 8's gate found two failures, and neither was allowed to stay
-      labelled "pre-existing" without a diagnosis.
-      *2026-09-25: both were reproduced in the reference checkout on main
-      first, so neither was this sprint's. `test_source_first_spawn` was the
-      `[tool.uv.sources]` path — a clone cannot resolve a relative path source —
-      and the rc2 item above fixed it; the post-rc2 e2e tier shows it green.
-      `test_compact_continues_live` was a `TimeoutError` at `TURN_TIMEOUT=1200`,
-      and reading the failing run's own sqlite file turned it from a flake into
-      a bug: the compaction handoff compounded, 11k -> 32k -> 58k -> 92k ->
-      131k -> 172k chars over six generations, because `last_messages()` capped
-      tool and assistant content and appended USER messages whole — and a
-      successor's handoff IS a user message, so each compaction folded the
-      previous one in whole. By generation five the successor was born over the
-      30k ceiling. Fixed in `6ff6d2d3` (the cap) and `a1e3c9c2` (the prompt,
-      because the growth then moved into the summary), the test's ceiling
-      recalibrated against the timeout it has to fit in `7e1e177e`, and the
-      whole thing green: 5 generations, 4 compactions, 864s.*
-- [x] Phase 8.2's manual eyeball — the one check that sees a line the way a
-      person does.
-      *2026-09-25: run for real, `agent2.main` over stdio against the live
-      model in a scratch dir. The loop works end to end: `/goal` advertised,
-      objective accepted, continuation injected with the exact prompt text,
-      eight `execute` rounds carrying four subtool calls, haiku.txt written and
-      read back, `goal_done` moving the row to `complete` (turns 1, tokens
-      75116, secs 54). And it found a bug that no test could have: the
-      status line read "Turn 2 of at most 4" over the word "complete" on a row
-      whose `turns_used` was 1, because `progress()` adds one for the
-      continuation's benefit — correct there, where the turn is about to start,
-      and wrong here, where nothing is in flight. Fixed in `2b0ed0cc` by letting
-      the row's status decide. The 20 slash tests assert the strings the code
-      produces and the code was self-consistent; only reading it made it look
-      wrong.*
-
-- [x] Cleanup, second pass: the residue the mandate names, found by looking at
-      what sits in `tests/` that is not a test.
-      *2026-09-25: `tests/analyze_payload_deep.py` and
-      `tests/analyze_payload_cache_invalidation.py` deleted. Both were
-      throwaway forensics for a llama.cpp KV-cache investigation —
-      `#!/usr/bin/env python3`, reading `~/.agents/crow/logs` directly, never
-      collected by pytest (the names are not `test_*`), and referenced by
-      nothing in the repo, the docs, or git history outside the
-      monorepo-flattening commit that moved them. `tests/` is the worst place
-      for them: a directory that says "these are the checks" holding two
-      scripts that check nothing. History keeps them.*
+- [x] **The client stops owning provider/model/credentials.** `MODEL_PRESETS`
+      (five hardcoded deepseek ids) is the seed for `/model` when no agent
+      catalog has arrived — it goes, and the picker seeds from `last_models`
+      plus the effective current model only. `RuntimeConfig.provider`/`.model`
+      stop being `String`s with deepseek defaults. `--provider`, `--base-url`,
+      `--api-key`, `--max-tokens` leave the flag surface; `--model` stays (an
+      explicit "run THIS", applied on bind via the same wire path ctrl+p uses)
+      and `CROW_MODEL` stays, `DSH_MODEL` goes.
+      *Done (PLAN 1.1–1.3).* `grep -rn MODEL_PRESETS src tests` → 0.
+      `RuntimeConfig` is now `{bin, workspace, session_root, startup_session}`;
+      the picker seeds from the agent catalog plus `current_model()` only, and
+      says "waiting for the agent catalog" when nothing has arrived.
+      `crow --help` read top to bottom: no brand name, no credential flag,
+      `--model <id>  ask the agent to run this model (default: $CROW_MODEL)`.
+      Absence pinned by `tests/cli_help.rs::help_offers_no_provider_route_and_no_credentials`
+      and `main__cli_args_tests.rs::removed_runtime_aliases_are_rejected`.
+- [x] **`legacy_dsh()` and everything it feeds, deleted.** `~/.dsh/.credentials.yaml`,
+      `~/.dsh/settings.yaml` (`agent-default-model`), the two hand-rolled yaml
+      scrapers, `LegacyDsh`, `has_credentials()`, `credential_source()`.
+      *Done (PLAN 1.5).* `grep -rn "legacy_dsh\|LegacyDsh\|has_credentials\|credential_source" src tests` → 0.
+      Gone with them: `unquote`, `yaml_top_level_env`, `yaml_agent_default_model`,
+      `CROW_CORDIS_CONFIG`. No fallback was left behind — `runtime.rs` reads
+      `settings.json` and nothing else.
+- [x] **`child_env()` stops injecting `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL`**
+      and stops exporting `CROW_CORDIS_CONFIG` (nothing has ever read it —
+      verified: zero consumers in crow-cli's `src/`, `tests/`, `docs/`).
+      The harness `env` from `settings.json` still applies.
+      *Done (PLAN 1.4).* `child_env()` is now `CROW_SESSION_ROOT`, `CROW_CWD`,
+      then the settings.json harness `env` — which still wins, still pinned by
+      `harness_env_applies_only_to_the_configured_agent`. New pin
+      `runtime.rs::child_env_carries_no_provider_and_no_credentials` asserts no
+      key containing `API_KEY`, `BASE_URL`, `MODEL` or `PROVIDER` can reach an
+      agent. `grep -rn DEEPSEEK src` → 32 hits, every one a Phase-4 palette or
+      logo site (`theme.rs` ramp, `logo.rs`, `markdown.rs` heading ramp,
+      `deepseek_logo.rs`); zero env vars.
+- [x] **The credential UI becomes ACP-only.** `ui.rs:4248-4262` (the
+      `⚠ DEEPSEEK_API_KEY not set` line, EN + zh) and `info.rs:113-119`
+      (`api key present · --api-key flag`) collapse into the branch that
+      already exists and already tells the truth: credentials are the agent's,
+      and ACP `authenticate` is the only sign-in story.
+      *Done (PLAN 1.6).* The banner is one honest `else`: "managed by Agent ·
+      source not reported". `/status` and `/session` now print
+      `- model · {model_identity()}` (`provider · model` / `model` /
+      `not reported`) instead of a client-owned `- provider · p / m`;
+      `app__right_slot_tests.rs:465` pins `- model · not reported` for the
+      nothing-reported case. `grep -rn "API_KEY" src` → 1 hit, and it is the
+      guard assertion above, not a credential. `--dump-frame 100x34` (plain and
+      `--demo`) is byte-identical to the pre-phase frame — `main.rs:876` sets
+      `show_banner = false` for the dump, so the banner was never in it; the
+      removal is pinned by the `ui__tests.rs` banner tests instead.
+- [x] **No martty/dsh homes.** `crow_home_from` keeps `CROW_HOME` →
+      `~/.agents/crow` and loses `MARTTY_HOME` + `DSH_HOME`;
+      `legacy_settings_paths*` (`~/.martty/settings.json`,
+      `~/.dsh-tui/sessions/dsh-tui-settings.json`) deleted with its callers;
+      `sessions.rs` discovers only the configured root, not `~/.crow-term`,
+      `~/.martty`, `~/.dsh`, `~/.dsh-tui`; `DSH_TUI_KEYDEBUG` alias deleted
+      (`CROW_KEYDEBUG` only).
+      *Done (PLAN 2.1–2.4).* `crow_home_from(crow_home, user_home)` — two
+      params, one precedence. `legacy_settings_paths*` deleted with both
+      callers (`app.rs` import, `app/prefs.rs load_settings`, which is now a
+      single read of `settings_path(session_root)` and no migration write).
+      `session_roots_from(cfg_root, home)` collapsed into `session_roots(cfg_root)`:
+      `$HOME` is no longer consulted at all. `grep -rn "DSH_\|MARTTY_" src` → 0.
+      *Correction:* `DSH_TUI_KEYDEBUG` was already dead code — `app.rs:585`
+      reads only `CROW_KEYDEBUG`; what survived was a stale comment at
+      `keys_router.rs:237` claiming the alias existed. The comment is fixed.
+- [x] **The tests that PIN those shims get rewritten, not deleted.**
+      `sessions_from_the_martty_and_dsh_homes_remain_discoverable`,
+      `legacy_settings_come_from_the_martty_home_then_dsh_tui`,
+      `a pre-rebrand MARTTY_HOME keeps its data` currently assert the behaviour
+      we are removing. Each becomes the opposite assertion — legacy homes are
+      NOT discovered — so the contract stays pinned.
+      *Done.* All three inverted, none deleted:
+      `sessions_are_discovered_in_the_configured_root_only` writes a real
+      session log under each of the four abandoned homes and asserts
+      `list_sessions` returns only the configured root's;
+      `settings_come_from_the_configured_root_only` seeds valid settings into
+      both legacy filenames and asserts `App::load_settings` ignores them;
+      `a_pre_rebrand_martty_home_is_not_read` (new, promoted from an assert
+      message) exports `MARTTY_HOME`/`DSH_HOME` and asserts `crow_home()` is
+      explained entirely by `CROW_HOME` + `HOME`. A fourth shim pin surfaced
+      only when the suite ran: `lang_switch_repaints_immediately_and_persists_for_the_workspace`
+      seeded `dsh-tui-settings.json` and asserted it migrated — now it seeds
+      `settings.json` and asserts the legacy file is neither read nor
+      overwritten. 938 → 939 tests, all green.
+- [x] **`/liang` out of `SLASH_COMMANDS`** (commented, with a note pointing at
+      `pet.rs` + `assets/pet/*.png`), handler and pet machinery untouched.
+      `locale__tests.rs` iterates the catalog for the zh-desc gate and for
+      name-sort, so both stay green; `run_slash("liang", …)` still works, which
+      is what `app__mode_tests.rs:298` and `pet__tests.rs` drive.
+      *Done (PLAN 3.1–3.2).* Commented in place with a note naming every
+      surviving piece. Both gates green; the catalog is still name-sorted.
+      New pin `liang_is_parked_out_of_the_menu_but_the_machinery_still_runs`
+      asserts the absence from `SLASH_COMMANDS`, the absence from the menu, and
+      that `run_slash("liang", …)` still toggles `pet_visible` — unregister,
+      don't amputate. 939 → 940 tests; `--dump-frame` unchanged, no pet.
+- [x] **The deepseek *logo* is not a theme.** The `ui_preset == "deepseek"`
+      banner branch, `src/deepseek_logo.rs`, `assets/martty-lockup.svg` and
+      `scripts/render-martty-lockup.swift` go; `logo.rs` (the crow-cli lockup)
+      is the only banner. `ui_preset` keeps its `default`.
+      *Done (PLAN 4.1).* Nine files went, not the three named here — the other
+      six were unreferenced DeepSeek/martty brand art with no link left.
+      `slots.rs` now validates `crow | crow-term` only. Four `ui__tests.rs`
+      tests rewritten to pin the new art, none deleted. `grep -rn "deepseek_logo\|martty" src` → 0.
+      *Note:* `ui_preset` keeps its `"default"` and its round-trip tests, but
+      4.1 deleted its last rendering consumer — it survives as a
+      compositor-owned key crow preserves and never reads, which is what
+      `settings_io.rs` already claimed it was.
+- [x] **The deepseek palette stays a palette.** `theme.rs`'s `DEEPSEEK_50…900`
+      ramp survives as a *named* pack; the builtin `default` pack stops wearing
+      DeepSeek blue as its brand and wears crow's purple instead
+      (`docs/styles/purple.css`, `docs/img/crow-icon-purple.svg` are the house
+      brand). `--theme <dark|light>` help text stops saying "DeepSeek Web UI
+      palette".
+      *Done (PLAN 4.2).* `CROW_50…CROW_900` added, every value read off
+      `purple.css` / `crow-icon-purple.svg`; `default` wears `CROW_400`/`CROW_300`
+      dark and `CROW_600`/`CROW_500` light. The blue ramp became
+      `PalettePack::deepseek()` — `"DeepSeek Blue"`, last in `builtin_packs()`
+      and `BUILTIN_PALETTE_IDS`, differing from `default` in the two brand slots
+      only. *Correction:* the `--theme` help text was already clean
+      (`main.rs:74` reads "colour palette (default: persisted, then dark)");
+      `grep -rni "DeepSeek Web UI" src` → 0 before this phase touched anything.
+      *Correction:* 11 tests pinned the old blue and were rewritten, not the
+      zero the PLAN predicted; one new test
+      (`the_deepseek_palette_survives_as_a_pack_and_nothing_more`) now pins rule
+      3 itself. 940 → 941. Paint eyeballed under a clean `CROW_HOME` with a
+      temporary SGR-emitting `dump_frame` (reverted): lockup `cr` runs
+      `#f4f1ff` → `#8b5cf6`, accents `#a78bfa` / `#8b5cf6`, **zero**
+      DeepSeek-ramp cells, structure identical.
+- [x] **`DeepSeekStyleSheet`** in `markdown.rs` (5 sites) renamed to something
+      that says what it is, not who it was copied from.
+      *Done (PLAN 4.3).* → `ThemeStyleSheet`, plus the module doc's two palette
+      claims and `heading_style`'s ramp (now `CROW_*`). One test repointed
+      (`markdown__tests.rs:433`). `grep -rni deepseek src/markdown.rs` → 0.
+      Also fixed `theme.rs:780`'s field doc, which still called `brand` "the
+      DeepSeek blue accent" — the `--dsw-alias-*` token names stay as
+      provenance for the Phase 7.5 sweep.
+- [x] **`demo.rs`**: the DeepSeek whale prose (2 passages), and the
+      `"provider": "deepseek-official", "model": "deepseek-v4-flash"` in three
+      canned JSON payloads, become crow-shaped. `--demo` and `--dump-frame`
+      must still render.
+      *Done (PLAN 4.4).* Whale prose → crow prose, 🐋 gone; payloads advertise
+      `"provider": "demo", "model": "demo-flash"`. Same category, not in the
+      PLAN: `controller.rs`'s demo `FetchCatalog` fixture (`demo-flash` /
+      `demo-pro`) and `describe_server`'s `.unwrap_or("deepseek-harness")` →
+      `.unwrap_or("agent")`. `grep -rni "deepseek\|whale" src/demo.rs` → 0.
+      Both `--demo` and `--dump-frame` render; the frame keeps all 35 rows and
+      diffs in exactly two (the re-wrapped conclusion, the model chip). The
+      pet's XS half-block whale is parked machinery, not brand art, and stays.
+- [x] **The `_dsh/cordis` extension family renamed, machinery kept.**
+      `cordis.rs`'s 22 wire constants (`_dsh/cordis/tui/*`, `_dsh/plugins/list`),
+      the `_meta.dsh.cordis.protocol` capability key the client both reads
+      (`advertised_by_agent`) and advertises (`acp_auth.rs:114`), and the Rust
+      identifiers around them (`Cmd::FetchCordisPlugins`,
+      `CtlEvent::CordisPlugins`, `PickerKind::CordisPlugin|CordisApproval`,
+      `pending_cordis_approvals`, `cordis_plugins`, `ensure_agent_cordis`,
+      `surface.cordis`, `draw_cordis_approval`, `open_cordis_*_picker`,
+      `CordisApprovalsSnapshot`, `CordisPluginItem`, `PendingCordisApproval`).
+      Nothing implements this protocol today — AGENTS.md: "anything that arrives
+      from a Cordis slot snapshot never arrives" — so renaming the namespace is
+      free, and it is the last `_dsh` on the wire.
+      *Done (PLAN 5.1–5.2).* `git mv src/cordis.rs src/ext.rs`; all 22 method
+      strings are crow's, the capability key is `_meta.crow.tui.protocol` in
+      both directions (`advertised_by_agent` reads it, `acp_auth.rs` advertises
+      it), and `crate::cordis::` → `crate::ext::` at 163 sites. 82 identifier
+      replacements, all landing on the crate's existing static/dynamic axis
+      (`DynamicPluginItem`, `Cmd::FetchDynamicPlugins`,
+      `PickerKind::DynamicPlugin`, `PendingPluginApproval`,
+      `app.dynamic_plugins`, `ensure_agent_ext`, `surface.ext`, …).
+      `grep -rni "cordis\|_dsh" src` → **0**; over `src` + `tests` → **1**, the
+      Phase-1 pin that `"--cordis"` stays *rejected*.
+      *Correction:* PLAN's `_dsh/cordis/plugins/{start,stop}` →
+      `_crow/plugins/{start,stop}` collides with `_dsh/plugins/list` →
+      `_crow/plugins/list` — two live methods, one name. The dynamic trio went
+      under the family prefix (`_crow/tui/plugins/{list,start,stop}`) and
+      `PLUGINS_LIST` → `DYNAMIC_PLUGINS_LIST`; the static inventory keeps
+      `_crow/plugins/list`, the one method outside the family.
+      *Correction:* a mock agent in `acp__tests.rs:278` advertised the old
+      `_meta.dsh.cordis.protocol`, so after the rename it had silently stopped
+      advertising the family — and still passed, because the compositor paths
+      do not require the capability. Green for the wrong reason; fixed.
+- [x] **`AGENT_MODES` demo seeds**: the `cordis` "Creator mode" entry and the
+      "Shipped creator id is `cordis`" comment.
+      *Done (PLAN 5.3).* Fourth seed deleted; three modes now. The doc above the
+      constant explains why without using the brand name — the gate is
+      `grep -rni cordis src` → 0, so even a historical note has to avoid the
+      word. *Correction:* the mode count was pinned in four tests, not zero
+      (`stock_presets_cover_the_four_web_ui_modes`, renamed
+      `stock_presets_cover_the_shipped_agent_modes`;
+      `slash_agent_opens_the_agent_preset_picker`;
+      `mode_picker_renders_modes_and_marks_the_current_one`; and the zh-desc
+      gate's key). All four rewritten, none deleted.
+- [x] **The vestigial plugin slash commands** `/plugins`, `/cordis-plugins`,
+      `/ui` — they aim at a plugin host that does not exist. Rename away from
+      cordis at minimum; whether they stay registered is a decision to record,
+      not to guess at silently.
+      *Done (PLAN 5.3).* Decision recorded, not guessed: **parked the way
+      `/liang` is** — commented out of `SLASH_COMMANDS` at their alphabetical
+      positions, each with a note naming every surviving piece, handlers and zh
+      descs untouched so `run_slash` still resolves all three. Shipping three
+      menu entries whose only possible answer is "agent does not advertise
+      `_crow/tui`" is worse than not shipping them. `/cordis-plugins` was
+      renamed **`/dynamic-plugins`** on the way out (`slash_catalog.rs`,
+      `slash.rs:510`, `locale.rs:87`, `app.rs:342`, `session_slot.rs:85`), so
+      re-registering is one uncomment rather than a rename plus one.
+      Absence pinned by
+      `the_plugin_commands_are_parked_out_of_the_menu_but_the_machinery_still_runs`
+      — one registry assertion per command, a menu pass over `/plug`,
+      `/dynamic`, `/ui`, and `run_slash("ui", "")` still opening
+      `PickerKind::UiPlugin`. It is the rewrite of the failing
+      `slash_menu_offers_the_dynamic_plugin_manager`, relocated next to the
+      `/liang` park pin (the closer precedent) rather than next to
+      `login`/`logout` as PLAN said. 941 → 941 tests.
+- [x] **Test fixture vocabulary**: ~400 hits — `dsh-test` (156), `dsh-acp` (22),
+      `dsh-tui`, `dsh-runtime`, `martty-*` temp dirs and env names,
+      `deepseek-*` model ids in canned payloads. Renamed to crow-shaped names
+      with every assertion's meaning preserved.
+      *Done (PLAN 6.1–6.3).* A 67-pair longest-first map applied with
+      `edit(replace_all)` over all 54 `tests/**/*.rs`: **329 replacements in 23
+      files** (`dsh-*`→`crow-*`, `MARTTY_SHELL_TEST`→`CROW_SHELL_TEST`,
+      `martty-*`→`crow-*`, `deepseek-v4*`→`acme-v4*`, `deepseek-v3`→`acme-v3`,
+      `deepseek/m1`→`acme/m1`, `current-deepseek-model`→`current-agent-model`,
+      `@deepseek-ai/dsh-tool-bash`→`@acme-ai/acme-tool-bash`,
+      `builtin-dsh`→`builtin-agent`), then 19 hand edits for the payloads a
+      name map cannot reach: auth-method prose the assertions read,
+      `uiPreset:"deepseek"`→`"acme-compositor"` (must round-trip verbatim —
+      `UiSettings` has no flatten map, so a save would drop it), the `/ui`
+      catalog and overlay-select plugin fixtures → `Alpha`/`Beta` with id
+      `beta`, `_meta.dsh`→`_meta.acme` (opaque pass-through, and deliberately
+      *not* `crow`, which is this client's own capability namespace), and the
+      `deepseek-harness-tui` workspace paths.
+      "With every assertion's meaning preserved" turned out to be the actual
+      work. **Nine `!contains` assertions** would have gone vacuous — a
+      negative pin on vocabulary that no longer exists passes forever, green
+      for no reason — so each became a positive pin on the behaviour
+      underneath: `displayed_model` is `None` until the agent reports one, the
+      failed-auth row names the *method*, a new tab's runtime reads `waiting
+      for ACP`, the codex chip shows exactly `gpt-5.6-codex`. Three further
+      tests pin geometry rather than vocabulary and `crow-` is one char wider
+      than `dsh-`: an untitled tab label is a `short_id` (8 chars, so
+      `crow-test` renders as `crow-tes`) and picker meta is `{short:<8}`
+      padded. All three were fixed against the production contract
+      (`app/staging.rs:118,143`) rather than nudged until green.
+      941 → 941; check rc 0 with exactly the 3 permanent warnings;
+      `--dump-frame` byte-identical to the Phase-4 baseline.
+      *Correction:* PLAN's verifies for 6.2 (`grep -rni martty tests` → 0) and
+      6.3 ("returns only palette tests") were both wrong as written — 10
+      `martty` and 9 `deepseek` hits survive, and every one is an absence pin
+      (`MARTTY_HOME`, `/opt/martty`, `~/.martty/settings.json`,
+      `.martty|.dsh|.dsh-tui/sessions`, `!HELP.contains("DEEPSEEK")`, the
+      `["deepseek","martty","dsh","whale"]` logo-primitive guard) or the
+      palette pack mandate rule 3 keeps. Itemised in PLAN. The `cordis`
+      fixture vocabulary was already swept in 5.2, which is why Phase 6 never
+      listed it; one hit survives, the `"--cordis"` rejection pin.
+- [x] **Docs, assets, scripts, packaging**: `assets/promo/build.py:89`
+      (`github.com/openma-ai/deepseek-harness-tui`), `docs/tui-palette.v0.schema.json`
+      `$id` (`https://openma.ai/dsh-tui/…`) and the `$schema` refs in the 8
+      fixtures, `scripts/collect-freeze-diag.sh` (pgreps `martty`),
+      `crates/crow-client/README.md` + `AGENTS.md` + `docs/README.md` prose
+      (the "what is still vestigial here" list describes the old state).
+      *Done (PLAN 7.1–7.5).* `assets/promo/` deleted outright (`build.py`,
+      `DESIGN.md`, `social-preview.png`) along with six old-brand screenshots
+      (`banner-v020`, `agent-turn`, `skills-menu`, `harness-add`,
+      `harness-switch`, `image-preview`) — all seven looked at with `vision`
+      first, and all seven pure old brand: whale lockup, "DEEPSEEK HARNESS",
+      `dsh --profile martty`, `deepseek-v4-*` chips, a live `/liang` menu, the
+      openma URL. Nothing references them (`Cargo.toml`'s include list carries
+      only the two pet PNGs, both still present), 4.63 MB gone;
+      `assets/screenshots/liang.png` stays by rule 4. Schema `$id` →
+      `https://crow-ai.dev/crow-client/…`, plus its `title` and `$comment`,
+      which named the old product and a JS API that left with the npm layer.
+      `collect-freeze-diag.sh` retargeted at `crow` in six sites. All three
+      prose files rewritten to the post-sprint truth, every number read out of
+      the tree rather than remembered: **20** live slash commands + 4 parked (a
+      naive `name:` regex says 24 — it counts the commented-out ones), **6**
+      `BUILTIN_PALETTE_IDS`, **10** files in `docs/fixtures/`, `harness_badge`
+      still fed at `app/pump.rs:408` from `conversation.harness`
+      (`slots.rs:274`), `CROW_RUST_CACHE_MAX_GIB` / `CROW_CARGO_TARGET_DIR`
+      per `cargo-guard.sh:6-10`, rustc **1.98.1** — and the reason
+      `let_chains` stay out is edition 2021, not the toolchain, so AGENTS.md
+      now says that. `src/deepseek_logo.rs`, `src/cordis.rs` and
+      `assets/martty-lockup.svg` are confirmed absent before being called
+      absent. Reading AGENTS.md top to bottom also turned up a constraint
+      that was false before the sprint — "there is no plugin command namespace
+      to collide with … a builtin name is the only thing that exists" — when
+      in fact the agent's `availableCommands` land in the same `/` menu as
+      host skills (`events.rs:950` ← `acp.rs:1804-1819` / `acp/v2.rs:785`, and
+      this repo's agent sends them at `src/crow_cli/agent/main.py:566`), which
+      is why `app/slash.rs:43,74` dedupes against the builtin names. Now "the
+      `/` namespace has three sources, and builtins win". The 7.5 sweep
+      (`whale` added to the pattern) classified all
+      **133** surviving lines and caught **five misses**: the `liang-effort` /
+      "Liang reasoning effort" plugin-command and overlay-slider fixtures →
+      `effort-slider` / "Reasoning effort" (`slash_matches` filters on
+      `name.starts_with(prefix)`, so builtin `/effort` cannot collide and
+      `matches.len() == 1` still pins what it did); `"whenTheme": "liang"` →
+      `"no-such-theme"`, which states the pin instead of implying it;
+      `/opt/liang/stage-00.png` → `/opt/crow/stage-00.png`; `pet.rs`'s "while
+      DeepSeek runs" and its pointer to a README section that has never
+      existed in this repo (`git log -S` → empty); and `transcript.rs:1553`'s
+      `--dsw-specific-bubble`, the last `dsw` in the crate and one no brand
+      grep can see. `grep -rni liang tests` 43 → 24, `grep -rni deepseek src`
+      37 → 32, `dsw` → 0, `martty`/`cordis`/`dsh`/`whale`/`openma` all
+      accounted for line by line in PLAN 7.5.
+      *Correction:* PLAN 7.1 as written cannot be done — `build.py` composes
+      its promo image from `assets/screenshots/banner.jpg` and `plugin-turn.jpg`,
+      which were **never committed**, so the script could not run at any point
+      in this repo's history. Retargeting its URL would leave a script that
+      still cannot run next to a `DESIGN.md` whose whole subject is a whale
+      lockup; for assets, "no shim" means delete. PLAN 7.2's "the `$schema`
+      reference in each of the 8 fixtures" describes keys that do not exist:
+      **0** of the 10 fixtures carry `$schema`, and none could —
+      `PalettePack::from_json` rejects any key outside
+      `id`/`label`/`dark`/`light`/`background` (`theme.rs:526-533`), so the
+      annotation would be a parse error, not something the loader looks past.
+- [ ] **`crates/crow-client/LICENSE:3`** still reads `Copyright (c) 2026 OpenMA
+      contributors`. Deferred to the attribution pass the user said happens
+      after the rebrand — recorded here so it is not lost, not touched now.
 
 ## Explicitly deferred (write the reason, do not do the work)
 
-- redis/celery: the user said later. `timers.py` stays as built — correct,
-  tested, no production caller. §5.3's argument survives this sprint intact,
-  because a goal continuation is state-triggered and never wanted a clock.
-- Pulling unused surface out of `task`: the "polish or amputate" question is
-  answered AFTER /goal lands, because landing it reveals which guts are load
-  bearing. Do not delete task features on spec.
-- TUI rendering of goal state. The agent advertises `/goal` through the
-  existing `available_commands_update`; a status-bar widget is crow's
-  business, not this repo's.
+- **The LICENSE attribution line.** User, on the record: "we can properly
+  attribute after we're finished with rebrand". Not this sprint.
+- **`crate/target` — 71 GiB of stale build cache** at the repo root, from
+  before the `crate/` → `crates/` move (`6ccafb8d`). Nothing builds into it.
+  AGENTS.md forbids auto-cleaning target dirs, so this is a human decision:
+  `rm -rf crate/target` reclaims 71 GiB. Flagged, not done.
+- **The Cordis/plugin subsystem's existence.** This sprint renames it. Whether
+  crow wants an agent-driven extension protocol at all — overlays, agent-pushed
+  palettes, slot snapshots — is a product question that outlives a rebrand.
+- **`src/locale.rs`'s bilingual-by-construction rule** (every builtin command
+  needs a zh description, gated by a test). DSH-era inheritance, but it is not
+  branding and the user did not ask; the gate stays.
+- **The legacy JSON-RPC attach path** (`proto.rs` `RuntimeProcess`,
+  `Controller::start`) that `--demo`/`--attach-*` still use. It loses its
+  provider/model/maxTokens params because `RuntimeConfig` loses those fields,
+  but the path itself stays: `--demo` is a documented flag with a pinned test
+  surface.
+  *The param loss itself was Phase 1 work and is done (PLAN 1.7):* both
+  `initialize` calls now send `json!({ "cwd": cfg.workspace })` and nothing
+  else; `SelectModel` builds a display label instead of mutating `cfg`;
+  `Cmd::FetchEfforts` carries `Option`s and omits what it does not know.
+  `--demo --dump-frame 100x34` still renders the canned transcript. What stays
+  deferred is the path's *existence*, not its params.

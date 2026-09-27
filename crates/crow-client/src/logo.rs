@@ -2,14 +2,14 @@
 //!
 //! `cr` carries the brand gradient (pale → brand in dark mode, brand →
 //! pale in light); `ow` runs its own ramp in the theme's `ok` hue — mint in
-//! every builtin pack, the complement of the pink-and-blue `cr` — so the two
-//! halves of the word read as two hues rather than one flat ink. Wide
-//! terminals get the full wordmark; narrower ones degrade to plain bold text.
+//! every builtin pack, the complement of the purple `cr` — so the two halves
+//! of the word read as two hues rather than one flat ink. Wide terminals get
+//! the full wordmark; narrower ones degrade to plain bold text.
 
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::theme::{lerp, Mode, Theme, DEEPSEEK_200, DEEPSEEK_50};
+use crate::theme::{lerp, Mode, Theme, CROW_200, CROW_50};
 
 /// The crow-cli wordmark, 6 rows of [`ART_WIDTH`] columns.
 pub const CROW_CLI: [&str; 6] = [
@@ -54,9 +54,9 @@ fn split_logo_lines(
     width: u16,
 ) -> Vec<Line<'static>> {
     let pad = (width as usize).saturating_sub(art_width) / 2;
-    let (ocean_top, ocean_bottom) = match theme.mode {
-        Mode::Dark => (DEEPSEEK_50, theme.brand),
-        Mode::Light => (theme.brand, DEEPSEEK_200),
+    let (brand_top, brand_bottom) = match theme.mode {
+        Mode::Dark => (CROW_50, theme.brand),
+        Mode::Light => (theme.brand, CROW_200),
     };
     let (mint_top, mint_bottom) = match theme.mode {
         Mode::Dark => (pale(theme.ok), theme.ok),
@@ -70,7 +70,7 @@ fn split_logo_lines(
             let (crow, cli) = split_row(row, split);
             Line::from(vec![
                 Span::raw(" ".repeat(pad)),
-                Span::styled(crow, Style::default().fg(lerp(ocean_top, ocean_bottom, t))),
+                Span::styled(crow, Style::default().fg(lerp(brand_top, brand_bottom, t))),
                 Span::styled(cli, Style::default().fg(lerp(mint_top, mint_bottom, t))),
             ])
         })

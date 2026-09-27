@@ -27,30 +27,30 @@ fn title_event(kind: &str, text: &str) -> String {
 #[test]
 fn slug_matches_observed_host_layout() {
     assert_eq!(
-        workspace_slug("/Users/minimax/oos-proj/deepseek-harness-tui"),
-        "--Users-minimax-oos-proj-deepseek-harness-tui--"
+        workspace_slug("/Users/minimax/oos-proj/crow-cli"),
+        "--Users-minimax-oos-proj-crow-cli--"
     );
     assert_eq!(workspace_slug("/Users/minimax"), "--Users-minimax--");
 }
 
 #[test]
 fn lists_workspace_sessions_newest_first_and_skips_current() {
-    let tmp = std::env::temp_dir().join(format!("dsh-sess-test-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("crow-sess-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     let slug = workspace_slug("/w");
     write_session(
         &tmp,
         &slug,
-        "dsh-old",
-        &[header("dsh-old"), user_msg("older prompt")],
+        "crow-old",
+        &[header("crow-old"), user_msg("older prompt")],
     );
     std::thread::sleep(std::time::Duration::from_millis(20));
     write_session(
         &tmp,
         &slug,
-        "dsh-new",
+        "crow-new",
         &[
-            header("dsh-new"),
+            header("crow-new"),
             r#"{"type":"turn/start","seq":1,"data":{"turn":1}}"#.into(),
             user_msg("修复失败的测试 with a long tail that should be truncated away entirely"),
             title_event("fallback", "修复失败的测试"),
@@ -58,11 +58,11 @@ fn lists_workspace_sessions_newest_first_and_skips_current() {
             r#"{"type":"turn/start","seq":9,"data":{"turn":2}}"#.into(),
         ],
     );
-    write_session(&tmp, &slug, "dsh-cur", &[header("dsh-cur")]);
+    write_session(&tmp, &slug, "crow-cur", &[header("crow-cur")]);
 
-    let sessions = list_sessions(tmp.to_str().unwrap(), "/w", "dsh-cur", usize::MAX);
+    let sessions = list_sessions(tmp.to_str().unwrap(), "/w", "crow-cur", usize::MAX);
     let ids: Vec<&str> = sessions.iter().map(|s| s.id.as_str()).collect();
-    assert_eq!(ids, ["dsh-new", "dsh-old"], "newest first, current skipped");
+    assert_eq!(ids, ["crow-new", "crow-old"], "newest first, current skipped");
     assert_eq!(sessions[0].turns, 2);
     assert!(sessions[0].preview.starts_with("修复失败的测试"));
     assert!(sessions[0].preview.ends_with('…'), "long preview truncated");
@@ -76,25 +76,47 @@ fn lists_workspace_sessions_newest_first_and_skips_current() {
 }
 
 #[test]
-fn sessions_from_the_martty_and_dsh_homes_remain_discoverable() {
+fn sessions_are_discovered_in_the_configured_root_only() {
+    // The opposite of what this test used to pin. A real session log sits
+    // under every home this client has moved out of; `/resume` sees none of
+    // them, and sees the configured root's.
     let home = std::env::temp_dir().join(format!("crow-legacy-sessions-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
     let current = home.join(".agents/crow/sessions");
-    let martty = home.join(".martty/sessions");
-    let dsh_tui = home.join(".dsh-tui/sessions");
-    let dsh = home.join(".dsh/sessions");
-    for dir in [&current, &martty, &dsh_tui, &dsh] {
-        std::fs::create_dir_all(dir).unwrap();
+    let slug = workspace_slug("/w");
+    write_session(
+        &current,
+        &slug,
+        "crow-here",
+        &[header("crow-here"), user_msg("still resumable")],
+    );
+    for (dir, id) in [
+        (home.join(".crow-term/sessions"), "crow-term-gone"),
+        (home.join(".martty/sessions"), "martty-gone"),
+        (home.join(".dsh/sessions"), "dsh-gone"),
+        (home.join(".dsh-tui/sessions"), "dsh-tui-gone"),
+    ] {
+        write_session(&dir, &slug, id, &[header(id), user_msg("abandoned")]);
     }
 
-    let roots = session_roots_from(current.to_str().unwrap(), Some(&home));
+    let roots = session_roots(current.to_str().unwrap());
+    assert_eq!(
+        roots,
+        vec![current.clone()],
+        "the configured root is the only root"
+    );
 
-    for dir in [&current, &martty, &dsh_tui, &dsh] {
-        assert!(
-            roots.contains(&dir),
-            "{} missing from {roots:?}",
-            dir.display()
-        );
-    }
+    let ids: Vec<String> = list_sessions(current.to_str().unwrap(), "/w", "", usize::MAX)
+        .iter()
+        .map(|s| s.id.clone())
+        .collect();
+    assert_eq!(ids, ["crow-here"], "the abandoned homes are not discovered");
+
+    assert_eq!(
+        session_roots(home.join(".nope").to_str().unwrap()),
+        Vec::<PathBuf>::new(),
+        "a configured root that does not exist yields nothing"
+    );
     let _ = std::fs::remove_dir_all(home);
 }
 
@@ -111,15 +133,15 @@ fn user_text_skips_injected_context() {
 
 #[test]
 fn title_falls_back_to_non_provider_and_skips_blanks() {
-    let tmp = std::env::temp_dir().join(format!("dsh-title-test-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("crow-title-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     let slug = workspace_slug("/w");
     write_session(
         &tmp,
         &slug,
-        "dsh-fb",
+        "crow-fb",
         &[
-            header("dsh-fb"),
+            header("crow-fb"),
             user_msg("hello"),
             title_event("fallback", "hello world"),
         ],
@@ -127,9 +149,9 @@ fn title_falls_back_to_non_provider_and_skips_blanks() {
     write_session(
         &tmp,
         &slug,
-        "dsh-blank",
+        "crow-blank",
         &[
-            header("dsh-blank"),
+            header("crow-blank"),
             user_msg("hi"),
             title_event("fallback", "  "),
         ],
@@ -138,7 +160,7 @@ fn title_falls_back_to_non_provider_and_skips_blanks() {
     assert_eq!(
         sessions
             .iter()
-            .find(|s| s.id == "dsh-fb")
+            .find(|s| s.id == "crow-fb")
             .unwrap()
             .title
             .as_deref(),
@@ -146,7 +168,7 @@ fn title_falls_back_to_non_provider_and_skips_blanks() {
         "fallback title used when no provider title exists"
     );
     assert_eq!(
-        sessions.iter().find(|s| s.id == "dsh-blank").unwrap().title,
+        sessions.iter().find(|s| s.id == "crow-blank").unwrap().title,
         None,
         "blank titles are dropped"
     );
@@ -157,12 +179,12 @@ fn title_falls_back_to_non_provider_and_skips_blanks() {
 /// must decode, not just the first (the header-only regression).
 #[test]
 fn reads_all_frames_of_concatenated_zstd_logs() {
-    let tmp = std::env::temp_dir().join(format!("dsh-zstd-test-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("crow-zstd-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
-    let dir = tmp.join(workspace_slug("/w")).join("dsh-z");
+    let dir = tmp.join(workspace_slug("/w")).join("crow-z");
     std::fs::create_dir_all(&dir).unwrap();
     let frames: Vec<u8> = [
-        format!("{}\n", header("dsh-z")),
+        format!("{}\n", header("crow-z")),
         format!(
             "{}\n{}\n",
             r#"{"type":"turn/start","seq":1,"data":{"turn":1}}"#,
@@ -191,14 +213,14 @@ fn reads_all_frames_of_concatenated_zstd_logs() {
 
 #[test]
 fn list_sessions_limit_keeps_the_most_recent_n() {
-    let tmp = std::env::temp_dir().join(format!("dsh-sess-limit-{}", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("crow-sess-limit-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     let slug = workspace_slug("/w");
-    write_session(&tmp, &slug, "dsh-oldest", &[header("dsh-oldest")]);
+    write_session(&tmp, &slug, "crow-oldest", &[header("crow-oldest")]);
     std::thread::sleep(std::time::Duration::from_millis(20));
-    write_session(&tmp, &slug, "dsh-mid", &[header("dsh-mid")]);
+    write_session(&tmp, &slug, "crow-mid", &[header("crow-mid")]);
     std::thread::sleep(std::time::Duration::from_millis(20));
-    write_session(&tmp, &slug, "dsh-newest", &[header("dsh-newest")]);
+    write_session(&tmp, &slug, "crow-newest", &[header("crow-newest")]);
 
     // Default `/resume` (= 50) returns everything; `/resume 2` keeps only
     // the two most recent entries.
@@ -206,9 +228,9 @@ fn list_sessions_limit_keeps_the_most_recent_n() {
     assert_eq!(all.len(), 3, "no limit returns every session");
     let two = list_sessions(tmp.to_str().unwrap(), "/w", "none", 2);
     let ids: Vec<&str> = two.iter().map(|s| s.id.as_str()).collect();
-    assert_eq!(ids, ["dsh-newest", "dsh-mid"], "limit keeps the newest n");
+    assert_eq!(ids, ["crow-newest", "crow-mid"], "limit keeps the newest n");
     let one = list_sessions(tmp.to_str().unwrap(), "/w", "none", 1);
     assert_eq!(one.len(), 1);
-    assert_eq!(one[0].id, "dsh-newest");
+    assert_eq!(one[0].id, "crow-newest");
     let _ = std::fs::remove_dir_all(&tmp);
 }

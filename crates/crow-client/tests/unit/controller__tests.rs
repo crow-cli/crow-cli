@@ -5,8 +5,8 @@ use serde_json::json;
 fn parse_catalog_models_and_presets() {
     let value = json!({
         "models": [
-            {"provider": "deepseek-official", "id": "m1", "name": "M One", "vision": true},
-            {"provider": "deepseek-official", "name": "no id → skipped"},
+            {"provider": "acme-official", "id": "m1", "name": "M One", "vision": true},
+            {"provider": "acme-official", "name": "no id → skipped"},
         ],
         "presets": [
             {"id": "standard", "name": "Standard mode", "description": "full agent"},
@@ -56,10 +56,10 @@ fn parse_skills_reads_names_and_skips_nameless() {
 }
 
 #[test]
-fn stock_presets_cover_the_four_web_ui_modes() {
+fn stock_presets_cover_the_shipped_agent_modes() {
     let presets = stock_presets();
     let ids: Vec<&str> = presets.iter().map(|p| p.id.as_str()).collect();
-    assert_eq!(ids, ["standard", "code", "minimal", "cordis"]);
+    assert_eq!(ids, ["standard", "code", "minimal"]);
 }
 
 use crate::bus::Cmd;
@@ -110,17 +110,11 @@ fn image_block() -> crate::bus::PromptBlock {
 fn loop_cfg() -> RuntimeConfig {
     RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: std::env::temp_dir()
-            .join(format!("dsh-tui-ctl-{}", std::process::id()))
+            .join(format!("crow-ctl-{}", std::process::id()))
             .to_string_lossy()
             .into_owned(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     }
 }

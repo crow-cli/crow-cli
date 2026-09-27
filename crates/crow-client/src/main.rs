@@ -9,12 +9,11 @@ mod attachments;
 mod bus;
 mod clipboard;
 mod controller;
-mod cordis;
-mod deepseek_logo;
 mod demo;
 mod diff;
 mod elicitation;
 mod events;
+mod ext;
 mod file_ref;
 #[cfg(feature = "gui")]
 mod gui;
@@ -69,16 +68,12 @@ OPTIONS:
   -w, --workspace <dir>     agent workspace (default: cwd)
       --session-root <dir>  session JSONL root (default: $CROW_HOME/sessions)
       --session-id <id>     resume/continue a durable session id
-      --provider <id>       provider route (default: deepseek-official)
-      --model <id>          model id (default: $CROW_MODEL or deepseek-v4-flash)
-      --max-tokens <n>      per-request output token cap
-      --base-url <url>      sets DEEPSEEK_BASE_URL for a spawned agent
-      --api-key <key>       sets DEEPSEEK_API_KEY for a spawned agent
+      --model <id>          ask the agent to run this model (default: $CROW_MODEL)
       --agent <cmd>         ACP agent command (default: crow-cli acp2 or $CROW_AGENT)
       --agent-arg <arg>     extra argument for --agent (repeatable)
-      --theme <dark|light>  DeepSeek Web UI palette (default: persisted, then dark)
+      --theme <dark|light>  colour palette (default: persisted, then dark)
       --gui                 native GPU window (ratatui over wgpu), not the terminal
-      --demo                scripted turns, no runtime / API key needed
+      --demo                scripted turns, no agent needed
       --attach-fds          speak ACP over inherited fds 3/4 (host attach)
       --attach-tcp <addr>   authenticated loopback TCP (Windows)
       --check-runtime       spawn + initialize the ACP agent, print info, exit
@@ -98,11 +93,9 @@ struct Args {
     workspace: Option<String>,
     session_root: Option<String>,
     session_id: Option<String>,
-    provider: Option<String>,
+    /// `--model`: a request to the agent, not a client-owned default. The
+    /// agent advertises the models it can actually select from.
     model: Option<String>,
-    max_tokens: Option<u64>,
-    base_url: Option<String>,
-    api_key: Option<String>,
     agent: Option<String>,
     agent_args: Vec<String>,
     theme: Option<String>,
@@ -124,11 +117,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<Args> {
         workspace: None,
         session_root: None,
         session_id: None,
-        provider: None,
         model: None,
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         agent: None,
         agent_args: Vec::new(),
         theme: None,
@@ -148,11 +137,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<Args> {
             "-w" | "--workspace" => args_out.workspace = Some(take("--workspace")?),
             "--session-root" => args_out.session_root = Some(take("--session-root")?),
             "--session-id" => args_out.session_id = Some(take("--session-id")?),
-            "--provider" => args_out.provider = Some(take("--provider")?),
             "--model" => args_out.model = Some(take("--model")?),
-            "--max-tokens" => args_out.max_tokens = Some(take("--max-tokens")?.parse()?),
-            "--base-url" => args_out.base_url = Some(take("--base-url")?),
-            "--api-key" => args_out.api_key = Some(take("--api-key")?),
             "--agent" => args_out.agent = Some(take("--agent")?),
             "--agent-arg" => args_out.agent_args.push(take("--agent-arg")?),
             "--theme" => args_out.theme = Some(take("--theme")?),
@@ -216,7 +201,6 @@ fn agent_argv(args: &Args) -> Vec<String> {
 }
 
 fn build_config(args: &Args) -> Result<RuntimeConfig> {
-    let local = runtime::legacy_dsh();
     let workspace = match &args.workspace {
         Some(w) => std::fs::canonicalize(w)
             .with_context(|| format!("workspace not found: {w}"))?
@@ -230,44 +214,29 @@ fn build_config(args: &Args) -> Result<RuntimeConfig> {
     };
     std::fs::create_dir_all(&session_root).ok();
 
-    let attached = args.attach_fds || args.attach_tcp.is_some();
     let agent = agent_argv(args);
     let bin = if args.demo {
         "demo".into()
     } else {
         agent.join(" ")
     };
-    let cordis = if args.demo {
-        "demo".into()
-    } else if attached {
-        "(host mux)".into()
-    } else {
-        "acp".into()
-    };
 
     Ok(RuntimeConfig {
         bin,
-        cordis,
         workspace,
         session_root,
-        // Route defaults borrow the legacy dsh install's configured default
-        // (settings.yaml agent-default-model) before falling back to stock.
-        provider: args
-            .provider
-            .clone()
-            .or(local.provider)
-            .unwrap_or_else(|| "deepseek-official".into()),
-        model: args
-            .model
-            .clone()
-            .or_else(|| std::env::var("CROW_MODEL").ok().or_else(|| std::env::var("DSH_MODEL").ok()))
-            .or(local.model)
-            .unwrap_or_else(|| "deepseek-v4-flash".into()),
-        max_tokens: args.max_tokens,
-        base_url: args.base_url.clone(),
-        api_key: args.api_key.clone(),
         startup_session: args.session_id.clone(),
     })
+}
+
+/// `--model`, or `$CROW_MODEL`: an explicit "run THIS model" request handed to
+/// the agent when the startup session binds. The client keeps no model list of
+/// its own — an unset value means "whatever the agent picks".
+fn startup_model(args: &Args) -> Option<String> {
+    args.model
+        .clone()
+        .or_else(|| std::env::var("CROW_MODEL").ok())
+        .filter(|value| !value.trim().is_empty())
 }
 
 /// Input must stay responsive, and a tool request needs one real frame
@@ -437,7 +406,7 @@ fn startup(args: &Args) -> Result<Startup> {
     );
     // `--model` is an explicit "use THIS model for this run": applied to the
     // startup session once it binds, the same wire path the ctrl+p picker uses.
-    app.startup_model = args.model.clone();
+    app.startup_model = startup_model(args);
     // The composer pet: real pixels (kitty graphics) where the terminal can,
     // half-block art (drawn by ui) where it can't. The GUI window overrides
     // this back to false: it has no kitty channel.
@@ -873,7 +842,7 @@ fn dump_frame(args: &Args, w: u16, h: u16) -> Result<()> {
     // Run one scripted demo turn synchronously through the real pipeline.
     app.transcript
         .push_user("查看这个仓库并修复失败的测试".into(), false);
-    app.show_banner = false; // dump simulates the post-submit look: no whale
+    app.show_banner = false; // dump simulates the post-submit look: the hero has dived
     app.state = RunState::Starting;
     demo::run_demo_turn(bus_tx, "crow-demo".into(), "inspect the repo".into());
     let deadline = std::time::Instant::now() + Duration::from_secs(8);

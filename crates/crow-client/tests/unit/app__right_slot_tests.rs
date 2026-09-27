@@ -5,28 +5,22 @@ use std::sync::mpsc::Receiver;
 fn test_app() -> (App, Controller, Receiver<AppEvent>) {
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: std::env::temp_dir()
-            .join(format!("dsh-tui-right-slot-{}", std::process::id()))
+            .join(format!("crow-right-slot-{}", std::process::id()))
             .to_string_lossy()
             .into_owned(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (tx, rx) = std::sync::mpsc::channel::<AppEvent>();
     let ctl = Controller::start(cfg.clone(), true, None, tx.clone());
-    let app = App::new(Some(Theme::dark()), cfg, "dsh-test".into(), true, false, tx);
+    let app = App::new(Some(Theme::dark()), cfg, "crow-test".into(), true, false, tx);
     (app, ctl, rx)
 }
 
 fn snapshot(nodes: serde_json::Value, rev: u64) -> AppEvent {
     AppEvent::Rpc {
-        method: crate::cordis::SLOTS_UPDATE.into(),
+        method: crate::ext::SLOTS_UPDATE.into(),
         params: json!({
             "protocol": 0,
             "slot": "chrome.right",
@@ -106,7 +100,7 @@ fn snapshots_without_revision_still_replace_the_previous_view() {
     for text in ["first panel", "second panel"] {
         app.handle(
             AppEvent::Rpc {
-                method: crate::cordis::SLOTS_UPDATE.into(),
+                method: crate::ext::SLOTS_UPDATE.into(),
                 params: json!({
                     "protocol": 0,
                     "slot": "chrome.right",
@@ -135,7 +129,7 @@ fn conversation_input_dock_is_compact_and_does_not_claim_the_sidebar() {
     app.show_banner = false;
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::SLOTS_UPDATE.into(),
+            method: crate::ext::SLOTS_UPDATE.into(),
             params: json!({
                 "protocol": 0,
                 "slot": "conversation.input.dock",
@@ -215,7 +209,7 @@ fn conversation_input_dock_expands_structured_nodes_inside_the_composer_box() {
     app.show_banner = false;
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::SLOTS_UPDATE.into(),
+            method: crate::ext::SLOTS_UPDATE.into(),
             params: json!({
                 "protocol": 0,
                 "slot": "conversation.input.dock",
@@ -288,7 +282,7 @@ fn conversation_input_dock_shows_every_queue_row_when_space_allows() {
     app.show_banner = false;
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::SLOTS_UPDATE.into(),
+            method: crate::ext::SLOTS_UPDATE.into(),
             params: json!({
                 "protocol": 0,
                 "slot": "conversation.input.dock",
@@ -347,7 +341,7 @@ fn queue_view_contribution_replaces_the_native_fallback_shelf() {
     );
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::SLOTS_UPDATE.into(),
+            method: crate::ext::SLOTS_UPDATE.into(),
             params: json!({
                 "protocol": 0,
                 "slot": "conversation.input.dock",
@@ -384,7 +378,7 @@ fn conversation_input_dock_routes_each_visible_action() {
     app.show_banner = false;
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::SLOTS_UPDATE.into(),
+            method: crate::ext::SLOTS_UPDATE.into(),
             params: json!({
                 "protocol": 0,
                 "slot": "conversation.input.dock",
@@ -467,8 +461,10 @@ fn status_slash_fallback_shows_run_state_without_transcript_stats() {
     assert!(text.contains("- state · "), "{text}");
     // ACP facts: demo run shows the demo marker and its session.
     assert!(text.contains("- acp · demo"), "{text}");
-    assert!(text.contains("- session · dsh-test"), "{text}");
-    assert!(text.contains("- model · deepseek-v4-flash"), "{text}");
+    assert!(text.contains("- session · crow-test"), "{text}");
+    // The client owns no model: with nothing reported by an agent the line
+    // says so instead of naming a built-in default.
+    assert!(text.contains("- model · not reported"), "{text}");
     assert!(text.contains("- effort · high"), "{text}");
     assert!(text.contains("- permission · "), "{text}");
     assert!(text.contains("- plan · "), "{text}");
@@ -534,7 +530,7 @@ fn status_client_command_is_listed_and_invoked_locally() {
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::COMMANDS_UPDATE.into(),
+            method: crate::ext::COMMANDS_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "commands": [{

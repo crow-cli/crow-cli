@@ -4,19 +4,13 @@ use std::path::PathBuf;
 fn test_app_with_root(root: &str, workspace: &str) -> (App, Controller) {
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: workspace.into(),
         session_root: root.into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (tx, _rx) = std::sync::mpsc::channel::<AppEvent>();
     let ctl = Controller::start(cfg.clone(), true, None, tx.clone());
-    let app = App::new(Some(Theme::dark()), cfg, "dsh-current".into(), true, false, tx);
+    let app = App::new(Some(Theme::dark()), cfg, "crow-current".into(), true, false, tx);
     (app, ctl)
 }
 
@@ -30,14 +24,14 @@ fn write_fixture_session(root: &PathBuf, id: &str) {
             r#"{"type":"user/message","seq":2,"data":{"content":[{"text":"修复失败的测试","type":"text"}],"source":{"kind":"user"},"role":"user","id":"m1"}}"#.into(),
             r#"{"type":"session/title","seq":3,"data":{"title":"fix failing tests","source":{"kind":"provider","provider":"session-title-first-prompt-llm"}}}"#.into(),
             r#"{"type":"assistant/chunk","seq":4,"data":{"chunk":{"type":"usage","usage":{"inputTokens":10,"outputTokens":5}}}}"#.into(),
-            r#"{"type":"assistant/message","seq":5,"data":{"message":{"content":[{"type":"text","text":"tests are green now"}],"source":{"model":"deepseek-v4-flash"}}}}"#.into(),
+            r#"{"type":"assistant/message","seq":5,"data":{"message":{"content":[{"type":"text","text":"tests are green now"}],"source":{"model":"acme-v4-flash"}}}}"#.into(),
             r#"{"type":"turn/end","seq":6,"data":{"reason":"completed"}}"#.into(),
         ];
     std::fs::write(dir.join("session.jsonl"), lines.join("\n")).unwrap();
 }
 
 fn tmp_root(tag: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("dsh-resume-{tag}-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!("crow-resume-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     root
@@ -46,12 +40,12 @@ fn tmp_root(tag: &str) -> PathBuf {
 #[test]
 fn resume_replays_transcript_modes_and_usage() {
     let root = tmp_root("replay");
-    write_fixture_session(&root, "dsh-past");
+    write_fixture_session(&root, "crow-past");
     let (mut app, ctl) = test_app_with_root(root.to_str().unwrap(), "/w");
 
-    app.run_slash("resume", "dsh-past", &ctl);
+    app.run_slash("resume", "crow-past", &ctl);
 
-    assert_eq!(app.session_id, "dsh-past", "active session switched");
+    assert_eq!(app.session_id, "crow-past", "active session switched");
     assert!(!app.show_banner, "banner dismissed on resume");
     assert_eq!(app.modes.permission.as_deref(), Some("workspace-write"));
     assert_eq!(app.transcript.usage.input, 10);
@@ -71,7 +65,7 @@ fn resume_replays_transcript_modes_and_usage() {
         "assistant reply replayed:\n{text}"
     );
     assert!(
-        text.contains("resumed dsh-past"),
+        text.contains("resumed crow-past"),
         "resume notice shown:\n{text}"
     );
     let _ = std::fs::remove_dir_all(&root);
@@ -145,13 +139,13 @@ fn ctrl_k_no_longer_opens_the_keys_modal_on_an_empty_prompt() {
 #[test]
 fn resume_picker_lists_sessions_and_prefix_resolves() {
     let root = tmp_root("picker");
-    write_fixture_session(&root, "dsh-alpha");
+    write_fixture_session(&root, "crow-alpha");
     let (mut app, ctl) = test_app_with_root(root.to_str().unwrap(), "/w");
 
     app.run_slash("resume", "", &ctl);
     let picker = app.picker.as_ref().expect("picker opens");
     assert!(matches!(picker.kind, PickerKind::Session));
-    assert_eq!(picker.items[0].id, "dsh-alpha");
+    assert_eq!(picker.items[0].id, "crow-alpha");
     // The human handle is the label; the meta carries short id, age, turns.
     assert_eq!(picker.items[0].label, "fix failing tests", "title as label");
     assert!(
@@ -160,7 +154,7 @@ fn resume_picker_lists_sessions_and_prefix_resolves() {
         picker.items[0].meta
     );
     assert!(
-        picker.items[0].meta.contains("dsh-alp"),
+        picker.items[0].meta.contains("crow-alp"),
         "short id in meta: {}",
         picker.items[0].meta
     );
@@ -177,10 +171,10 @@ fn resume_picker_lists_sessions_and_prefix_resolves() {
     app.picker = None;
 
     // unique prefix resolves; unknown id warns and keeps the session
-    app.run_slash("resume", "dsh-al", &ctl);
-    assert_eq!(app.session_id, "dsh-alpha");
+    app.run_slash("resume", "crow-al", &ctl);
+    assert_eq!(app.session_id, "crow-alpha");
     app.run_slash("resume", "nope", &ctl);
-    assert_eq!(app.session_id, "dsh-alpha", "unknown prefix leaves session");
+    assert_eq!(app.session_id, "crow-alpha", "unknown prefix leaves session");
     let _ = std::fs::remove_dir_all(&root);
 }
 
@@ -497,7 +491,7 @@ fn acp_session_list_limit_skips_the_current_session_before_truncating() {
     }];
     for i in 1..=10 {
         sessions.push(SessionListItem {
-            id: format!("dsh-sess-{i:02}"),
+            id: format!("crow-sess-{i:02}"),
             title: Some(format!("session {i}")),
             updated_at: None,
         });
@@ -520,18 +514,12 @@ fn startup_app(
 ) -> (App, std::sync::mpsc::Receiver<AppEvent>) {
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: session.map(str::to_string),
     };
     let (tx, rx) = std::sync::mpsc::channel::<AppEvent>();
-    let mut app = App::new(Some(Theme::dark()), cfg, "dsh-startup".into(), false, false, tx);
+    let mut app = App::new(Some(Theme::dark()), cfg, "crow-startup".into(), false, false, tx);
     app.startup_model = model.map(str::to_string);
     app.demo = false;
     app.session_bound = false;

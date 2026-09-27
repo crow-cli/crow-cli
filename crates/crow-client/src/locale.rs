@@ -84,7 +84,7 @@ impl Locale {
             "ui" => "切换 UI 插件",
             "vim" => "切换 vim 模式编辑（默认关闭）",
             "plugins" => "查看 Host 插件状态（只读）",
-            "cordis-plugins" => "查看或管理动态 Cordis 插件",
+            "dynamic-plugins" => "查看或管理动态插件",
             "session" => "显示会话信息 · /session prev|next 切换标签页",
             "auth" => "ACP 登录（Backchat authenticate）",
             "lang" => "切换界面语言",

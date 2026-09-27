@@ -2,8 +2,8 @@
 //!
 //! Speaks initialize / authenticate / session/new / session/resume / session/load /
 //! session/list / prompt / cancel / set_config_option / set_mode.
-//! Transcript paint comes from `session/update`. Negotiated Cordis TUI
-//! compositor state arrives as `_dsh/cordis/tui/*` extension notifications.
+//! Transcript paint comes from `session/update`. Negotiated TUI
+//! compositor state arrives as `_crow/tui/*` extension notifications.
 
 use std::borrow::Cow;
 use std::collections::{HashMap, VecDeque};
@@ -45,7 +45,7 @@ use crate::acp_auth::{
     select_auth_method, snapshot_from_methods, AuthMethodInfo, AuthSnapshot, AuthStatus,
 };
 use crate::bus::{
-    permission_ask_empty_outcome, AppEvent, CatalogPreset, Cmd, CordisPluginItem, CtlEvent,
+    permission_ask_empty_outcome, AppEvent, CatalogPreset, Cmd, DynamicPluginItem, CtlEvent,
     PermissionAskOption, PermissionAskReply, SessionListItem, StaticPluginItem,
 };
 use crate::events::{
@@ -95,8 +95,8 @@ struct Surface {
     client_compositor: bool,
     /// Agent advertised `promptCapabilities.image` (ACP Image blocks allowed).
     prompt_image: bool,
-    /// Agent negotiated the Cordis ACP extension family.
-    cordis: bool,
+    /// Agent negotiated the crow TUI extension family.
+    ext: bool,
 }
 
 impl Surface {
@@ -1500,10 +1500,10 @@ where
     outcome
 }
 
-fn dynamic_plugins_from_value(value: &Value) -> std::result::Result<Vec<CordisPluginItem>, String> {
+fn dynamic_plugins_from_value(value: &Value) -> std::result::Result<Vec<DynamicPluginItem>, String> {
     let rows = value
         .as_array()
-        .ok_or_else(|| "Cordis plugins/list returned a non-array result".to_string())?;
+        .ok_or_else(|| "dynamic plugins/list returned a non-array result".to_string())?;
     rows.iter()
         .enumerate()
         .map(|(index, row)| {
@@ -1553,7 +1553,7 @@ fn dynamic_plugins_from_value(value: &Value) -> std::result::Result<Vec<CordisPl
                 .and_then(|run| run.get("approvalRequestId"))
                 .and_then(Value::as_str)
                 .map(str::to_string);
-            Ok(CordisPluginItem {
+            Ok(DynamicPluginItem {
                 id: plugin_id.to_string(),
                 name: name.to_string(),
                 package_id: package_id.to_string(),
@@ -1632,7 +1632,7 @@ async fn call_tui_extension(
     params: Value,
 ) -> std::result::Result<Value, AcpError> {
     let request = UntypedMessage::new(method, params)?;
-    if matches!(method, crate::cordis::COMMAND_INVOKE | crate::cordis::OVERLAY_EVENT) {
+    if matches!(method, crate::ext::COMMAND_INVOKE | crate::ext::OVERLAY_EVENT) {
         cx.send_request(request).block_task_setup_deadline().await
     } else {
         cx.send_request(request).block_task_deadline().await
@@ -1666,10 +1666,10 @@ fn spawn_plugin_operation(
 async fn fetch_dynamic_plugins(
     cx: &ConnectionTo<Agent>,
     agent_id: &str,
-) -> std::result::Result<Vec<CordisPluginItem>, String> {
+) -> std::result::Result<Vec<DynamicPluginItem>, String> {
     let value = call_tui_extension(
         cx,
-        crate::cordis::PLUGINS_LIST,
+        crate::ext::DYNAMIC_PLUGINS_LIST,
         serde_json::json!({ "agentId": agent_id }),
     )
     .await
@@ -1682,7 +1682,7 @@ async fn fetch_static_plugins(
 ) -> std::result::Result<Vec<StaticPluginItem>, String> {
     let value = call_tui_extension(
         cx,
-        crate::cordis::STATIC_PLUGINS_LIST,
+        crate::ext::STATIC_PLUGINS_LIST,
         serde_json::json!({}),
     )
     .await
@@ -1690,14 +1690,14 @@ async fn fetch_static_plugins(
     static_plugins_from_value(&value)
 }
 
-fn ensure_agent_cordis(surface: &Arc<Mutex<Surface>>, bus: &Sender<AppEvent>) -> bool {
+fn ensure_agent_ext(surface: &Arc<Mutex<Surface>>, bus: &Sender<AppEvent>) -> bool {
     let advertised = {
         let surface = surface.lock().unwrap_or_else(|error| error.into_inner());
-        surface.active_connection().map(crate::cordis::advertised_by_agent).unwrap_or(surface.cordis)
+        surface.active_connection().map(crate::ext::advertised_by_agent).unwrap_or(surface.ext)
     };
     if !advertised {
         let _ = bus.send(AppEvent::Ctl(CtlEvent::TuiOpFailed(
-            "agent does not advertise _dsh/cordis".into(),
+            "agent does not advertise _crow/tui".into(),
         )));
     }
     advertised
@@ -1716,11 +1716,12 @@ fn ensure_client_compositor(surface: &Arc<Mutex<Surface>>, bus: &Sender<AppEvent
     advertised
 }
 
-/// The local compositor owns client projections independently of Agent Cordis.
+/// The local compositor owns client projections independently of the agent
+/// extension.
 /// Without either capability, never send extension traffic or spam notices.
 fn client_projection_available(surface: &Arc<Mutex<Surface>>) -> bool {
     let surface = surface.lock().unwrap_or_else(|error| error.into_inner());
-    surface.client_compositor || surface.cordis
+    surface.client_compositor || surface.ext
 }
 
 /// The v1 stack with no probe ahead of it: the connection handshakes itself.
@@ -1827,13 +1828,13 @@ where
             async move |msg: UntypedMessage, cx| {
                 if matches!(
                     msg.method(),
-                    crate::cordis::THEME_UPDATE
-                        | crate::cordis::THEME_REMOVE
-                        | crate::cordis::SLOTS_UPDATE
-                        | crate::cordis::COMMANDS_UPDATE
-                        | crate::cordis::OVERLAY_UPDATE
-                        | crate::cordis::APPROVALS_UPDATE
-                        | crate::cordis::UI_UPDATE
+                    crate::ext::THEME_UPDATE
+                        | crate::ext::THEME_REMOVE
+                        | crate::ext::SLOTS_UPDATE
+                        | crate::ext::COMMANDS_UPDATE
+                        | crate::ext::OVERLAY_UPDATE
+                        | crate::ext::APPROVALS_UPDATE
+                        | crate::ext::UI_UPDATE
                 ) {
                     if let Ok(mut surface) = surface_u.lock() {
                         surface.client_compositor = true;
@@ -2184,7 +2185,7 @@ where
                 let bus = bus_config;
                 let surface = surface_config;
                 async move |request: UntypedMessage, responder, cx| {
-                    if request.method() != crate::cordis::SESSION_CONFIG_SET {
+                    if request.method() != crate::ext::SESSION_CONFIG_SET {
                         return responder.respond_with_error(AcpError::new(
                             -32601,
                             format!("Method not found: {}", request.method()),
@@ -2192,7 +2193,7 @@ where
                     }
                     let params = request.params();
                     if params.get("protocol").and_then(Value::as_u64)
-                        != Some(crate::cordis::PROTOCOL)
+                        != Some(crate::ext::PROTOCOL)
                     {
                         return responder.respond_with_error(AcpError::new(
                             -32602,
@@ -2309,7 +2310,7 @@ where
                 if let Ok(mut surface) = surface.lock() {
                     surface.prompt_image = init.agent_capabilities.prompt_capabilities.image
                         || prompt_image_supported(&init_value);
-                    surface.cordis = crate::cordis::advertised_by_agent(&init_value);
+                    surface.ext = crate::ext::advertised_by_agent(&init_value);
                     let mut connection = init_value.clone();
                     connection["command"] = json!(cfg.agent_argv().first());
                     connection["args"] = json!(cfg.agent_argv().into_iter().skip(1).collect::<Vec<_>>());
@@ -2777,7 +2778,7 @@ where
                                 continue;
                             }
                             plugin_queue.push_back(PluginOperation {
-                                method: crate::cordis::COMMAND_INVOKE,
+                                method: crate::ext::COMMAND_INVOKE,
                                 params: serde_json::json!({
                                     "protocol": 0,
                                     "name": name,
@@ -2792,7 +2793,7 @@ where
                             }
                             let result = call_tui_extension(
                                 &cx,
-                                crate::cordis::THEME_SELECTED,
+                                crate::ext::THEME_SELECTED,
                                 serde_json::json!({
                                     "protocol": 0,
                                     "agentId": agent_id,
@@ -2812,9 +2813,9 @@ where
                             }
                             match call_tui_extension(
                                 &cx,
-                                crate::cordis::UI_SELECTED,
+                                crate::ext::UI_SELECTED,
                                 serde_json::json!({
-                                    "protocol": crate::cordis::PROTOCOL,
+                                    "protocol": crate::ext::PROTOCOL,
                                     "agentId": agent_id,
                                     "id": id,
                                 }),
@@ -2842,7 +2843,7 @@ where
                                 params["value"] = value;
                             }
                             if event == "change" {
-                                if let Err(error) = UntypedMessage::new(crate::cordis::OVERLAY_EVENT, params)
+                                if let Err(error) = UntypedMessage::new(crate::ext::OVERLAY_EVENT, params)
                                     .and_then(|notification| cx.send_notification(notification))
                                 {
                                     let _ = bus.send(AppEvent::Ctl(CtlEvent::TuiOpFailed(format!(
@@ -2851,7 +2852,7 @@ where
                                 }
                             } else {
                                 let operation = PluginOperation {
-                                    method: crate::cordis::OVERLAY_EVENT,
+                                    method: crate::ext::OVERLAY_EVENT,
                                     params,
                                     context: "plugin overlay event",
                                 };

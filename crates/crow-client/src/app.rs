@@ -37,7 +37,7 @@ use crate::input::{Action, VimMode};
 use crate::locale::{Locale, UiSettings};
 use crate::markdown::ToneMode;
 #[allow(unused_imports)]
-use crate::runtime::{legacy_settings_paths, settings_path, RuntimeConfig};
+use crate::runtime::{settings_path, RuntimeConfig};
 use crate::theme::Theme;
 #[allow(unused_imports)]
 use crate::transcript::{clamp_str, NoticeLevel, Transcript};
@@ -245,7 +245,8 @@ pub struct App {
     pub(crate) prompt_flash_lines: Option<(usize, usize)>,
     pub state: RunState,
     pub state_note: String,
-    /// Welcome banner (whale + wordmark) — shown until the first real prompt.
+    /// Welcome banner (hero lockup + session facts) — shown until the first
+    /// real prompt.
     pub show_banner: bool,
     /// Pixel-art Liang at the composer's right edge (`/liang` toggles him).
     /// Off by default — `/liang on` summons him.
@@ -338,10 +339,10 @@ pub struct App {
     plugin_commands: Vec<PluginCommand>,
     /// Last Host Loader inventory (`/plugins`).
     pub(crate) static_plugins: Vec<crate::bus::StaticPluginItem>,
-    /// Last backend-owned dynamic plugin inventory (`/cordis-plugins`).
-    cordis_plugins: Vec<crate::bus::CordisPluginItem>,
+    /// Last backend-owned dynamic plugin inventory (`/dynamic-plugins`).
+    dynamic_plugins: Vec<crate::bus::DynamicPluginItem>,
     /// Model-requested dynamic activations awaiting a decision.
-    pub(crate) pending_cordis_approvals: Vec<crate::bus::PendingCordisApproval>,
+    pub(crate) pending_plugin_approvals: Vec<crate::bus::PendingPluginApproval>,
     /// ACP-carried UI Plugin catalog (`/ui`).
     ui_plugins: Vec<crate::bus::UiPluginItem>,
     /// Last advertised composition select (`/agent`).
@@ -386,6 +387,10 @@ pub struct App {
     pub selected_model: Option<String>,
     /// Current model reported by this ACP session's config snapshot.
     pub session_model: Option<String>,
+    /// Provider that came with the model this session runs. Learned only from
+    /// what the agent said — a catalog entry, or the picker row the user chose.
+    /// The client has no provider of its own, so this stays `None` until then.
+    pub session_provider: Option<String>,
     /// `--model` for this run; consumed by the first session bind.
     pub startup_model: Option<String>,
     pub demo: bool,
@@ -570,8 +575,8 @@ impl App {
             skills: Vec::new(),
             plugin_commands: Vec::new(),
             static_plugins: Vec::new(),
-            cordis_plugins: Vec::new(),
-            pending_cordis_approvals: Vec::new(),
+            dynamic_plugins: Vec::new(),
+            pending_plugin_approvals: Vec::new(),
             ui_plugins: Vec::new(),
             last_presets: Vec::new(),
             last_models: Vec::new(),
@@ -589,6 +594,7 @@ impl App {
             cfg,
             selected_model: None,
             session_model: None,
+            session_provider: None,
             startup_model: None,
             demo,
             attached,

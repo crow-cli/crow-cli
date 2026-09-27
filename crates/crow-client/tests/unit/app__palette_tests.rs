@@ -1,5 +1,5 @@
 use super::*;
-use crate::theme::DEEPSEEK_450;
+use crate::theme::CROW_400;
 use ratatui::style::Color;
 use serde_json::json;
 use std::sync::mpsc::Receiver;
@@ -8,7 +8,7 @@ fn fresh_root() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "dsh-tui-palette-{}-{}",
+        "crow-palette-{}-{}",
         std::process::id(),
         N.fetch_add(1, Ordering::Relaxed),
     ));
@@ -19,14 +19,8 @@ fn fresh_root() -> String {
 fn test_cfg() -> RuntimeConfig {
     RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: fresh_root(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     }
 }
@@ -35,7 +29,7 @@ fn test_app() -> (App, Controller, Receiver<AppEvent>) {
     let cfg = test_cfg();
     let (tx, rx) = std::sync::mpsc::channel::<AppEvent>();
     let ctl = Controller::start(cfg.clone(), true, None, tx.clone());
-    let app = App::new(Some(Theme::dark()), cfg, "dsh-test".into(), true, false, tx);
+    let app = App::new(Some(Theme::dark()), cfg, "crow-test".into(), true, false, tx);
     (app, ctl, rx)
 }
 
@@ -154,7 +148,7 @@ fn down(app: &mut App, ctl: &Controller) {
 fn starts_on_default_pack() {
     let (app, _ctl, _rx) = test_app();
     assert_eq!(app.active_palette_id, "default");
-    assert_eq!(app.theme.brand, DEEPSEEK_450);
+    assert_eq!(app.theme.brand, CROW_400);
     assert!(app.palettes.iter().any(|p| p.id == "default"));
 }
 
@@ -163,7 +157,7 @@ fn tui_palette_rpc_activates_ember() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(true),
         },
         &ctl,
@@ -217,7 +211,7 @@ fn gallery_palette_rpc_activates_everforest_and_toggles_modes() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: gallery_params("everforest", true),
         },
         &ctl,
@@ -256,7 +250,7 @@ fn slash_theme_switches_between_gallery_packs() {
     ] {
         app.handle(
             AppEvent::Rpc {
-                method: crate::cordis::THEME_UPDATE.into(),
+                method: crate::ext::THEME_UPDATE.into(),
                 params: gallery_params(id, false),
             },
             &ctl,
@@ -274,14 +268,14 @@ fn tui_palette_without_activate_registers_but_does_not_switch() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(false),
         },
         &ctl,
     );
     assert!(app.palettes.iter().any(|p| p.id == "ember"));
     assert_eq!(app.active_palette_id, "default");
-    assert_eq!(app.theme.brand, DEEPSEEK_450);
+    assert_eq!(app.theme.brand, CROW_400);
 }
 
 #[test]
@@ -289,7 +283,7 @@ fn tui_palette_remove_retracts_the_native_catalog_entry() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(false),
         },
         &ctl,
@@ -298,7 +292,7 @@ fn tui_palette_remove_retracts_the_native_catalog_entry() {
 
     app.handle(
         AppEvent::Rpc {
-            method: "_dsh/cordis/tui/theme/remove".into(),
+            method: crate::ext::THEME_REMOVE.into(),
             params: serde_json::json!({ "protocol": 0, "id": "ember" }),
         },
         &ctl,
@@ -312,14 +306,14 @@ fn slash_theme_id_covers_mounted_plugin_pack() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(true),
         },
         &ctl,
     );
     app.run_slash("theme", "default", &ctl);
     assert_eq!(app.active_palette_id, "default");
-    assert_eq!(app.theme.brand, DEEPSEEK_450);
+    assert_eq!(app.theme.brand, CROW_400);
     app.run_slash("theme", "ember", &ctl);
     assert_eq!(app.active_palette_id, "ember");
     assert_eq!(app.theme.brand, Color::Rgb(247, 140, 60));
@@ -342,7 +336,7 @@ fn slash_theme_selection_notifies_the_client_theme_registry() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(false),
         },
         &ctl,
@@ -367,7 +361,7 @@ fn stopped_dynamic_theme_stays_selectable_without_painting_until_restored() {
     loaded["source"] = json!("dynamic");
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: loaded,
         },
         &ctl,
@@ -378,7 +372,7 @@ fn stopped_dynamic_theme_stays_selectable_without_painting_until_restored() {
     stopped["source"] = json!("dynamic");
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: stopped,
         },
         &ctl,
@@ -414,7 +408,7 @@ fn slash_theme_options_match_the_picker_catalog() {
     loaded["loaded"] = json!(true);
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: loaded,
         },
         &ctl,
@@ -424,7 +418,7 @@ fn slash_theme_options_match_the_picker_catalog() {
     stopped["loaded"] = json!(false);
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: stopped,
         },
         &ctl,
@@ -451,7 +445,7 @@ fn theme_picker_can_leave_and_return_to_a_dynamic_plugin_pack() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(true),
         },
         &ctl,
@@ -497,7 +491,7 @@ fn duplicate_palette_id_replaces_colors() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(true),
         },
         &ctl,
@@ -507,7 +501,7 @@ fn duplicate_palette_id_replaces_colors() {
     palette["dark"]["brand"] = json!("#010203");
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: json!({"protocol": 0, "palette": palette, "activate": true}),
         },
         &ctl,
@@ -521,13 +515,13 @@ fn invalid_palette_keeps_previous_theme() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: json!({"protocol": 0, "palette": {"id": "x"}, "activate": true}),
         },
         &ctl,
     );
     assert_eq!(app.active_palette_id, "default");
-    assert_eq!(app.theme.brand, DEEPSEEK_450);
+    assert_eq!(app.theme.brand, CROW_400);
 }
 
 #[test]
@@ -535,14 +529,14 @@ fn theme_dialog_arrows_preview_and_only_enter_commits() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(false),
         },
         &ctl,
     );
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: gallery_params("ayu", false),
         },
         &ctl,
@@ -571,7 +565,7 @@ fn theme_dialog_arrows_preview_and_only_enter_commits() {
 
     // Home jumps back onto the committed row → the preview is gone.
     app.handle(AppEvent::Term(Event::Key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE))), &ctl);
-    assert_eq!(app.theme.brand, DEEPSEEK_450);
+    assert_eq!(app.theme.brand, CROW_400);
     assert_eq!(app.active_palette_id, "default");
 
     // Back down to ember, then Enter confirms: dialog closes, ember commits.
@@ -589,20 +583,20 @@ fn theme_dialog_esc_reverts_the_preview_to_the_committed_theme() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(false),
         },
         &ctl,
     );
     app.run_slash("theme", "", &ctl);
-    assert_eq!(app.theme.brand, DEEPSEEK_450);
+    assert_eq!(app.theme.brand, CROW_400);
 
     // Preview ember with ↓…
     picker_walk_to(&mut app, &ctl, "ember");
     assert_eq!(app.theme.brand, Color::Rgb(247, 140, 60));
     // …Home back onto the committed row drops it again…
     app.handle(AppEvent::Term(Event::Key(KeyEvent::new(KeyCode::Home, KeyModifiers::NONE))), &ctl);
-    assert_eq!(app.theme.brand, DEEPSEEK_450);
+    assert_eq!(app.theme.brand, CROW_400);
     // …and one wheel notch previews the pack it lands on — Catppuccin Latte,
     // which owns a light mode, so the preview carries that mode with it.
     app.handle(
@@ -625,7 +619,7 @@ fn theme_dialog_esc_reverts_the_preview_to_the_committed_theme() {
     assert_eq!(app.active_palette_id, "default");
     assert_eq!(app.theme.mode, crate::theme::Mode::Dark);
     assert_eq!(
-        app.theme.brand, DEEPSEEK_450,
+        app.theme.brand, CROW_400,
         "Esc must revert the preview — arrows never confirm"
     );
 }
@@ -635,7 +629,7 @@ fn slash_theme_popup_previews_and_reverts_without_enter() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(false),
         },
         &ctl,
@@ -673,7 +667,7 @@ fn slash_theme_popup_previews_and_reverts_without_enter() {
     // committed theme and mode show again.
     down(&mut app, &ctl);
     assert_eq!(app.slash_theme_candidate(), None);
-    assert_eq!(app.theme.brand, DEEPSEEK_450);
+    assert_eq!(app.theme.brand, CROW_400);
     assert_eq!(app.theme.mode, crate::theme::Mode::Dark);
     assert_eq!(app.active_palette_id, "default");
 
@@ -684,7 +678,7 @@ fn slash_theme_popup_previews_and_reverts_without_enter() {
     assert!(!app.slash_completion_open());
     assert_eq!(app.theme.mode, crate::theme::Mode::Dark);
     assert_eq!(
-        app.theme.brand, DEEPSEEK_450,
+        app.theme.brand, CROW_400,
         "Esc must revert the popup preview"
     );
 }
@@ -694,7 +688,7 @@ fn slash_theme_popup_enter_commits_the_previewed_palette() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(false),
         },
         &ctl,
@@ -723,7 +717,7 @@ fn dialog_stopped_pack_preview_is_transient_and_enter_holds_it_while_loading() {
     loaded["loaded"] = json!(true);
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: loaded,
         },
         &ctl,
@@ -733,7 +727,7 @@ fn dialog_stopped_pack_preview_is_transient_and_enter_holds_it_while_loading() {
     stopped["loaded"] = json!(false);
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: stopped,
         },
         &ctl,
@@ -756,7 +750,7 @@ fn dialog_stopped_pack_preview_is_transient_and_enter_holds_it_while_loading() {
     // Esc without Enter reverts the preview.
     app.handle(AppEvent::Term(Event::Key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE))), &client_ctl);
     assert!(app.picker.is_none());
-    assert_eq!(app.theme.brand, DEEPSEEK_450);
+    assert_eq!(app.theme.brand, CROW_400);
 
     // Enter confirms: the client registry is asked, and the previewed
     // colors stay on screen while the Plugin loads (no flash to default).
@@ -846,7 +840,7 @@ fn persisted_catppuccin_choice_is_restored_at_startup() {
 fn unknown_persisted_theme_falls_back_to_the_default_pack() {
     let (app, _rx) = restarted_app(json!({ "theme": "iceberg" }));
     assert_eq!(app.active_palette_id, "default");
-    assert_eq!(app.theme.brand, DEEPSEEK_450);
+    assert_eq!(app.theme.brand, CROW_400);
 }
 
 /// Committing a flavor enters the mode it owns and persists both halves of
@@ -865,7 +859,7 @@ fn slash_theme_commits_a_flavor_in_its_own_mode_and_persists_it() {
 }
 
 /// ctrl+t inside the family stays inside it: Macchiato toggles to its Latte
-/// slot rather than back to the DeepSeek default, and the pack stays put.
+/// slot rather than back to the crow purple default, and the pack stays put.
 #[test]
 fn ctrl_t_inside_a_flavor_toggles_to_its_latte_slot() {
     let (mut app, ctl, _rx) = test_app();

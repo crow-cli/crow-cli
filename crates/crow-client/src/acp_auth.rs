@@ -111,8 +111,8 @@ pub fn client_capability_meta() -> Meta {
     meta.insert("terminal_output".into(), json!(true));
     meta.insert("subagent-transcript".into(), json!(true));
     meta.insert(
-        "dsh".into(),
-        json!({ "cordis": { "protocol": crate::cordis::PROTOCOL } }),
+        "crow".into(),
+        json!({ "tui": { "protocol": crate::ext::PROTOCOL } }),
     );
     // Codex ACP 1.7+ keeps adapter diagnostics out of assistant text when
     // the client negotiates its typed session-failure record.

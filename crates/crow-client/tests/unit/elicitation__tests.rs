@@ -3,7 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde_json::json;
 
 #[test]
-fn dsh_question_schema_becomes_one_field_with_inline_other_input() {
+fn agent_question_schema_becomes_one_field_with_inline_other_input() {
     let request: CreateElicitationRequest = serde_json::from_value(json!({
         "mode": "form",
         "sessionId": "s1",

@@ -4,18 +4,12 @@ use std::sync::mpsc::Receiver;
 fn test_app(workspace: &std::path::Path) -> (App, Receiver<AppEvent>) {
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: workspace.to_string_lossy().into_owned(),
         session_root: workspace.join("sessions").to_string_lossy().into_owned(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (tx, rx) = std::sync::mpsc::channel::<AppEvent>();
-    let app = App::new(Some(Theme::dark()), cfg, "dsh-test".into(), true, false, tx);
+    let app = App::new(Some(Theme::dark()), cfg, "crow-test".into(), true, false, tx);
     (app, rx)
 }
 
@@ -39,14 +33,14 @@ fn transcript_text(transcript: &mut crate::transcript::Transcript) -> String {
 
 #[test]
 fn local_shell_state_persists_between_invocations() {
-    let workspace = std::env::temp_dir().join(format!("martty-shell-state-{}", std::process::id()));
+    let workspace = std::env::temp_dir().join(format!("crow-shell-state-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&workspace);
     std::fs::create_dir_all(workspace.join("nested")).unwrap();
     let (mut app, rx) = test_app(&workspace);
 
-    app.run_local_shell("cd nested; export MARTTY_SHELL_TEST=kept".into());
+    app.run_local_shell("cd nested; export CROW_SHELL_TEST=kept".into());
     assert_eq!(wait_for_shell(&rx).0, Some(0));
-    app.run_local_shell("printf %s \"$MARTTY_SHELL_TEST\" > shell-state.txt".into());
+    app.run_local_shell("printf %s \"$CROW_SHELL_TEST\" > shell-state.txt".into());
     assert_eq!(wait_for_shell(&rx).0, Some(0));
 
     let state_file = workspace.join("nested/shell-state.txt");
@@ -62,7 +56,7 @@ fn local_shell_state_persists_between_invocations() {
 
 #[test]
 fn shell_done_refreshes_the_cap_git_branch_label() {
-    let workspace = std::env::temp_dir().join(format!("martty-shell-git-{}", std::process::id()));
+    let workspace = std::env::temp_dir().join(format!("crow-shell-git-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&workspace);
     std::fs::create_dir_all(&workspace).unwrap();
     let (mut app, _rx) = test_app(&workspace);
@@ -93,7 +87,7 @@ fn shell_result_after_a_clear_never_lands_in_a_new_cell() {
     // Regression (review H-sweep): shell_pending holds a transcript cell
     // index; after /clear a fresh cell can occupy the same index, and the
     // old command's output must not be written into it.
-    let workspace = std::env::temp_dir().join(format!("martty-shell-clear-{}", std::process::id()));
+    let workspace = std::env::temp_dir().join(format!("crow-shell-clear-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&workspace);
     std::fs::create_dir_all(&workspace).unwrap();
     let (mut app, _rx) = test_app(&workspace);

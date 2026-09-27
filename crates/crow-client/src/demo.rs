@@ -1,7 +1,7 @@
 //! `--demo` mode driver.
 //!
 //! Emits scripted JSON-RPC notifications identical in wire shape to the real
-//! deepseek-harness SDK runtime, so the full TUI render path can be exercised
+//! crow-cli agent runtime, so the full TUI render path can be exercised
 //! without an API key. Everything is sent as [`AppEvent::Rpc`] over the bus.
 
 use std::sync::mpsc::Sender;
@@ -104,7 +104,7 @@ impl Driver {
                     "id": "m-demo-0",
                     "role": "assistant",
                     "content": [{"type": "text", "text": intro}],
-                    "source": {"kind": "model", "provider": "deepseek-official", "model": "deepseek-v4-flash"}
+                    "source": {"kind": "model", "provider": "demo", "model": "demo-flash"}
                 }
             }
         }));
@@ -262,19 +262,19 @@ impl Driver {
                         "id": "m-demo-child",
                         "role": "assistant",
                         "content": [{"type": "text", "text": "Child scanning the module tree now."}],
-                        "source": {"kind": "model", "provider": "deepseek-official", "model": "deepseek-v4-flash"}
+                        "source": {"kind": "model", "provider": "demo", "model": "demo-flash"}
                     }
                 }
             }));
             self.rpc("subagent.finished", json!({"childSessionId": child}));
         }
 
-        // 8. concluding text deltas (mention the whale playfully).
+        // 8. concluding text deltas (mention the crow playfully).
         let conclusion = if want_long {
             long_conclusion()
         } else {
             "The entrypoint is a thin `fn main` at src/main.rs:12 that hands off to `run`. \
-             All clear — the DeepSeek whale surfaced, nodded approvingly, and dove back down. 🐋"
+             All clear — the crow cocked its head, cawed once in approval, and flew off."
                 .to_string()
         };
         for piece in split_pieces(&conclusion) {
@@ -292,7 +292,7 @@ impl Driver {
                     "id": "m-demo",
                     "role": "assistant",
                     "content": [{"type": "text", "text": conclusion}],
-                    "source": {"kind": "model", "provider": "deepseek-official", "model": "deepseek-v4-flash"}
+                    "source": {"kind": "model", "provider": "demo", "model": "demo-flash"}
                 }
             }
         }));
@@ -416,8 +416,8 @@ fn long_conclusion() -> String {
     s.push_str("Longer lines follow to exercise soft wrapping in narrow panes: ");
     s.push_str("this sentence intentionally rambles on well past any reasonable ");
     s.push_str("terminal width so the wrapping logic has something to chew on.\n\n");
-    s.push_str("That's the whole story — the DeepSeek whale breached, gave a ");
-    s.push_str("cheerful spout of approval, and slipped back beneath the waves. 🐋\n");
+    s.push_str("That's the whole story — the crow cocked its head, cawed once ");
+    s.push_str("in approval, and flew back to the wire.\n");
     s
 }
 

@@ -11,7 +11,7 @@ fn fresh_root() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "dsh-tui-ui-diff-{}-{}",
+        "crow-ui-diff-{}-{}",
         std::process::id(),
         N.fetch_add(1, Ordering::Relaxed),
     ));
@@ -21,19 +21,13 @@ fn fresh_root() -> String {
 
 fn test_app() -> App {
     let cfg = RuntimeConfig {
-        bin: "dsh-runtime".into(),
-        cordis: "cordis".into(),
+        bin: "crow-runtime".into(),
         workspace: "/tmp".into(),
         session_root: fresh_root(),
-        provider: "deepseek".into(),
-        model: "deepseek-chat".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (tx, _rx) = mpsc::channel();
-    App::new(Some(Theme::dark()), cfg, "dsh-test".into(), true, false, tx)
+    App::new(Some(Theme::dark()), cfg, "crow-test".into(), true, false, tx)
 }
 
 /// Issue #38: scrolled CJK content leaves orphan halves of wide chars on the
@@ -223,7 +217,7 @@ fn file_menu_popup_forces_a_full_rewrite() {
     app.show_banner = false;
     app.input.insert_str("@");
     let ws = std::env::temp_dir().join(format!(
-        "dsh-tui-ui-file-menu-diff-{}",
+        "crow-ui-file-menu-diff-{}",
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&ws);

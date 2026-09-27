@@ -4,17 +4,11 @@ use std::sync::mpsc::Receiver;
 fn test_app() -> (App, Receiver<AppEvent>) {
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: std::env::temp_dir()
-            .join(format!("dsh-tui-scroll-{}", std::process::id()))
+            .join(format!("crow-scroll-{}", std::process::id()))
             .to_string_lossy()
             .into_owned(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (tx, rx) = std::sync::mpsc::channel::<AppEvent>();

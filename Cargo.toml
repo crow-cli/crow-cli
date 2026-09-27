@@ -11,10 +11,9 @@ resolver = "2"
 lto = true
 strip = true
 
-# Opt-in fast local build profile (DSH_TUI_CARGO_PROFILE=devlocal for
-# `scripts/devlocalinstall.sh`, or `cargo build --profile devlocal` while
+# Opt-in fast local build profile (`cargo build --profile devlocal` while
 # iterating): plain debug codegen — no optimizations, incremental — the
-# fastest turnaround for build/test loops. `scripts/devlocalinstall.sh` and
-# the shipped npm packages build [profile.release] (fat LTO, stripped).
+# fastest turnaround for build/test loops. What ships is [profile.release]
+# (fat LTO, stripped).
 [profile.devlocal]
 inherits = "dev"

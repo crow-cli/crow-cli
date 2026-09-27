@@ -162,7 +162,7 @@ impl App {
             return None;
         }
         match first.name.as_str() {
-            "model" => Some(self.current_model()),
+            "model" => Some(self.current_model()).filter(|model| !model.is_empty()),
             "effort" => self.modes.effort.clone(),
             "agent" => Some(self.current_mode()),
             "harness" => crate::harness::current_id(&self.harness_settings_path()),
@@ -196,7 +196,7 @@ impl App {
         match name {
             "model" => {
                 // The option list always carries the effective model (pick →
-                // stream → config default) so the inline menu can mark and
+                // stream → agent-reported) so the inline menu can mark and
                 // preselect what the session runs (issue #102).
                 let current = self.current_model();
                 if !self.last_models.is_empty() {
@@ -211,21 +211,18 @@ impl App {
                             )
                         })
                         .collect();
-                    if !rows.iter().any(|(id, _, _)| id == &current) {
-                        rows.insert(0, (current.clone(), current.clone(), String::new()));
+                    if !current.is_empty() && !rows.iter().any(|(id, _, _)| id == &current) {
+                        rows.insert(0, (current.clone(), current, String::new()));
                     }
                     return rows;
                 }
-                let mut ids = MODEL_PRESETS
-                    .iter()
-                    .map(|value| (*value).to_string())
-                    .collect::<Vec<_>>();
-                if !ids.iter().any(|id| id == &current) {
-                    ids.insert(0, current);
+                // No catalog from the agent yet: the only honest option is the
+                // model this session is running, and there is none to offer
+                // until the agent reports one.
+                if current.is_empty() {
+                    return Vec::new();
                 }
-                ids.into_iter()
-                    .map(|id| (id.clone(), id, String::new()))
-                    .collect()
+                vec![(current.clone(), current, String::new())]
             }
             "agent" if !self.last_presets.is_empty() => self
                 .last_presets
@@ -510,13 +507,13 @@ impl App {
                     "正在从 Host 读取静态插件…",
                 ));
             }
-            "cordis-plugins" => {
-                ctl.send(Cmd::FetchCordisPlugins {
+            "dynamic-plugins" => {
+                ctl.send(Cmd::FetchDynamicPlugins {
                     agent_id: self.session_id.clone(),
                 });
                 self.show_tip(self.locale.tr(
-                    "reading dynamic Cordis plugins from Host…",
-                    "正在从 Host 读取动态 Cordis 插件…",
+                    "reading dynamic plugins from Host…",
+                    "正在从 Host 读取动态插件…",
                 ));
             }
             "model" => {
@@ -588,10 +585,11 @@ impl App {
             }
             "effort" => {
                 if arg.is_empty() {
+                    let model = self.current_model();
                     ctl.send(Cmd::FetchEfforts {
                         session_id: self.session_id.clone(),
-                        provider: self.cfg.provider.clone(),
-                        model: self.cfg.model.clone(),
+                        provider: self.session_provider.clone(),
+                        model: (!model.is_empty()).then_some(model),
                     });
                 } else {
                     ctl.send(Cmd::SelectModel {

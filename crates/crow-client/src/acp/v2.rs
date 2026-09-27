@@ -807,13 +807,13 @@ pub(super) async fn connect(
                     }
                     if matches!(
                         msg.method(),
-                        crate::cordis::THEME_UPDATE
-                            | crate::cordis::THEME_REMOVE
-                            | crate::cordis::SLOTS_UPDATE
-                            | crate::cordis::COMMANDS_UPDATE
-                            | crate::cordis::OVERLAY_UPDATE
-                            | crate::cordis::APPROVALS_UPDATE
-                            | crate::cordis::UI_UPDATE
+                        crate::ext::THEME_UPDATE
+                            | crate::ext::THEME_REMOVE
+                            | crate::ext::SLOTS_UPDATE
+                            | crate::ext::COMMANDS_UPDATE
+                            | crate::ext::OVERLAY_UPDATE
+                            | crate::ext::APPROVALS_UPDATE
+                            | crate::ext::UI_UPDATE
                     ) {
                         if let Ok(mut surface) = surface_u.lock() {
                             surface.client_compositor = true;
@@ -927,7 +927,7 @@ pub(super) async fn connect(
                         .and_then(|p| p.get("image"))
                         .is_some()
                         || prompt_image_supported(&init_value);
-                    surface.cordis = crate::cordis::advertised_by_agent(&init_value);
+                    surface.ext = crate::ext::advertised_by_agent(&init_value);
                     let mut connection = init_value.clone();
                     connection["command"] = json!(cfg.agent_argv().first());
                     connection["args"] =

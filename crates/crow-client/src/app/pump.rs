@@ -213,10 +213,10 @@ impl App {
                 }
             }
             AppEvent::Rpc { method, params } => {
-                if method == crate::cordis::AGENTS_NAVIGATE {
+                if method == crate::ext::AGENTS_NAVIGATE {
                     let protocol = params.get("protocol").and_then(serde_json::Value::as_u64);
                     let action = params.get("action").and_then(serde_json::Value::as_str);
-                    if protocol == Some(crate::cordis::PROTOCOL) {
+                    if protocol == Some(crate::ext::PROTOCOL) {
                         match action {
                             Some("begin") => self.begin_agent_navigation(),
                             Some("previous") => self.move_agent_selection(-1),
@@ -229,10 +229,10 @@ impl App {
                     self.needs_redraw = true;
                     return;
                 }
-                if method == crate::cordis::AGENTS_SELECT {
+                if method == crate::ext::AGENTS_SELECT {
                     let protocol = params.get("protocol").and_then(serde_json::Value::as_u64);
                     let id = params.get("id").and_then(serde_json::Value::as_str);
-                    if protocol == Some(crate::cordis::PROTOCOL) {
+                    if protocol == Some(crate::ext::PROTOCOL) {
                         if let Some(id) = id {
                             self.select_agent_transcript(id);
                         }
@@ -240,7 +240,7 @@ impl App {
                     self.needs_redraw = true;
                     return;
                 }
-                if method == crate::cordis::UI_UPDATE {
+                if method == crate::ext::UI_UPDATE {
                     match serde_json::from_value::<UiPluginCatalog>(params) {
                         Ok(catalog) if catalog.protocol == 0 => self.ui_plugins = catalog.plugins,
                         Ok(_) => {}
@@ -253,10 +253,10 @@ impl App {
                     self.needs_redraw = true;
                     return;
                 }
-                if method == crate::cordis::APPROVALS_UPDATE {
-                    match serde_json::from_value::<CordisApprovalsSnapshot>(params) {
+                if method == crate::ext::APPROVALS_UPDATE {
+                    match serde_json::from_value::<PluginApprovalsSnapshot>(params) {
                         Ok(snapshot) if snapshot.protocol == 0 => {
-                            self.pending_cordis_approvals = snapshot.approvals;
+                            self.pending_plugin_approvals = snapshot.approvals;
                         }
                         Ok(_) => {}
                         Err(err) => self.show_tip(self.locale.trf(
@@ -268,15 +268,15 @@ impl App {
                     self.needs_redraw = true;
                     return;
                 }
-                if method == crate::cordis::THEME_UPDATE {
+                if method == crate::ext::THEME_UPDATE {
                     self.apply_palette_rpc(&params);
                     return;
                 }
-                if method == crate::cordis::THEME_REMOVE {
+                if method == crate::ext::THEME_REMOVE {
                     self.remove_palette_rpc(&params);
                     return;
                 }
-                if method == crate::cordis::COMMANDS_UPDATE {
+                if method == crate::ext::COMMANDS_UPDATE {
                     match serde_json::from_value::<PluginCommandCatalog>(params) {
                         Ok(catalog) if catalog.protocol == 0 => {
                             self.plugin_commands = catalog.commands;
@@ -291,7 +291,7 @@ impl App {
                     self.needs_redraw = true;
                     return;
                 }
-                if method == crate::cordis::OVERLAY_UPDATE {
+                if method == crate::ext::OVERLAY_UPDATE {
                     match serde_json::from_value::<PluginOverlaySnapshot>(params) {
                         Ok(snapshot) if snapshot.protocol == 0 => match snapshot.overlay {
                             Some(PluginOverlay::Select(mut select)) => {
@@ -398,7 +398,7 @@ impl App {
                     self.needs_redraw = true;
                     return;
                 }
-                if method == crate::cordis::SLOTS_UPDATE {
+                if method == crate::ext::SLOTS_UPDATE {
                     match crate::slots::parse_snapshot(&params) {
                         Ok(Some(snapshot)) => {
                             let stale = self.slot_snapshots.get(&snapshot.slot).is_some_and(|current| {
@@ -519,6 +519,7 @@ impl App {
                         self.session_id = "unavailable".into();
                         self.session_bound = false;
                         self.session_model = None;
+                        self.session_provider = None;
                         self.selected_model = None;
                         self.auth = crate::acp_auth::AuthSnapshot::none();
                         self.prompt_pending = false;
@@ -741,9 +742,9 @@ impl App {
                         self.static_plugins = plugins;
                         self.open_plugin_tree();
                     }
-                    CtlEvent::CordisPlugins { plugins } => {
-                        self.cordis_plugins = plugins;
-                        self.open_cordis_plugin_picker();
+                    CtlEvent::DynamicPlugins { plugins } => {
+                        self.dynamic_plugins = plugins;
+                        self.open_dynamic_plugin_picker();
                     }
                     CtlEvent::Catalog {
                         session_id: Some(session_id),
@@ -770,7 +771,11 @@ impl App {
                         }
                         let mode_current = self.current_mode();
                         let model_current = self.current_model();
-                        let model_provider = self.cfg.provider.clone();
+                        // The catalog is the agent's own statement of which
+                        // provider serves which model id: adopt it for the model
+                        // this session runs before the picker marks a row.
+                        self.adopt_session_provider(&model_current);
+                        let model_provider = self.session_provider.clone();
                         if let Some(picker) = &mut self.picker {
                             match picker.kind {
                                 PickerKind::Model if !models.is_empty() => {
@@ -788,13 +793,20 @@ impl App {
                                             provider: Some(m.provider),
                                         })
                                         .collect();
+                                    // The catalog arrived: a "waiting for the
+                                    // agent catalog" title is now stale.
+                                    picker.title = model_picker_title(
+                                        self.locale,
+                                        picker.items.is_empty(),
+                                    )
+                                    .to_string();
                                     picker.sel = picker
                                         .items
                                         .iter()
                                         .position(|i| {
                                             i.id == model_current
                                                 && i.provider.as_deref()
-                                                    == Some(model_provider.as_str())
+                                                    == model_provider.as_deref()
                                         })
                                         // Same id under an unknown provider
                                         // still beats pinning row 0.
@@ -1034,7 +1046,8 @@ impl App {
                                     {
                                         if self.session_id != session_id {
                                             self.reset_subagent_views();
-                                self.session_model = None;
+                                            self.session_model = None;
+                                            self.session_provider = None;
                                         }
                                         let old_id = self.session_id.clone();
                                         self.session_id = session_id.clone();
@@ -1135,6 +1148,7 @@ impl App {
                             if self.session_id != session_id {
                                 self.reset_subagent_views();
                                 self.session_model = None;
+                                self.session_provider = None;
                             }
                             let old_id = self.session_id.clone();
                             self.session_id = session_id.clone();
@@ -1425,6 +1439,9 @@ impl App {
             }
             E::SessionModel { session, model } if *session == self.session_id => {
                 self.session_model = Some(model.clone());
+                // The snapshot reports the model only: the provider, if it is
+                // knowable at all, comes from the catalog entry for that id.
+                self.adopt_session_provider(model);
                 apply_to_transcript = false;
             }
             _ => {}

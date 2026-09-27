@@ -178,7 +178,7 @@ fn validate_nodes(nodes: &[TuiNode], ids: &mut HashSet<String>) -> Result<(), St
                     ));
                 }
             }
-            TuiNode::Logo { name, .. } if !matches!(name.as_str(), "crow" | "crow-term" | "martty" | "deepseek") => {
+            TuiNode::Logo { name, .. } if !matches!(name.as_str(), "crow" | "crow-term") => {
                 return Err(format!("unknown tui logo primitive: {name}"));
             }
             TuiNode::Text { tone, .. } => {
@@ -349,10 +349,7 @@ fn render_node(node: &TuiNode, theme: &Theme, tone: ToneMode, width: usize) -> V
                 .map(|name| token_color(theme, name))
                 .unwrap_or(theme.fg)),
         ),
-        TuiNode::Logo { name, .. } if name == "deepseek" => {
-            crate::deepseek_logo::lines(theme, width as u16)
-        }
-        TuiNode::Logo { name, .. } if name == "crow" || name == "crow-term" || name == "martty" => {
+        TuiNode::Logo { name, .. } if name == "crow" || name == "crow-term" => {
             crate::logo::crow_cli_logo_lines(theme, width as u16)
         }
         TuiNode::Logo { .. } | TuiNode::Welcomeinfo { .. } => Vec::new(),

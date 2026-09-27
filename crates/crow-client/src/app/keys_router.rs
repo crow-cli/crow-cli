@@ -234,7 +234,7 @@ impl App {
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent, ctl: &Controller) {
         self.needs_redraw = true;
-        // CROW_KEYDEBUG=1 (or legacy DSH_TUI_KEYDEBUG): surface exactly what the terminal delivered
+        // CROW_KEYDEBUG=1: surface exactly what the terminal delivered
         // (after CG rescue) in the tip row — kills keybinding mysteries.
         if self.key_debug {
             self.show_tip(self.locale.trf(
@@ -254,7 +254,7 @@ impl App {
         // instead of toggling vim, and normal-mode letters never land in
         // a hidden composer while a modal is up).
 
-        if key.modifiers == KeyModifiers::ALT && !self.pending_cordis_approvals.is_empty() {
+        if key.modifiers == KeyModifiers::ALT && !self.pending_plugin_approvals.is_empty() {
             let decision = match key.code {
                 KeyCode::Char('1') => Some("allow-version"),
                 KeyCode::Char('2') => Some("allow-future"),
@@ -262,8 +262,8 @@ impl App {
                 _ => None,
             };
             if let Some(decision) = decision {
-                ctl.send(Cmd::RespondCordisApproval {
-                    request_id: self.pending_cordis_approvals[0].request_id.clone(),
+                ctl.send(Cmd::RespondPluginApproval {
+                    request_id: self.pending_plugin_approvals[0].request_id.clone(),
                     decision: decision.into(),
                 });
                 return;

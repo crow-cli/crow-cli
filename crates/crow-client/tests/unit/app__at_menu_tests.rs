@@ -15,7 +15,7 @@ fn fresh_root() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
     let dir = std::env::temp_dir().join(format!(
-        "dsh-tui-at-menu-{}-{}",
+        "crow-at-menu-{}-{}",
         std::process::id(),
         N.fetch_add(1, Ordering::Relaxed),
     ));
@@ -41,7 +41,7 @@ impl Workspace {
         use std::sync::atomic::{AtomicU64, Ordering};
         static N: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
-            "martty-at-menu-ws-{}-{}",
+            "crow-at-menu-ws-{}-{}",
             std::process::id(),
             N.fetch_add(1, Ordering::Relaxed),
         ));
@@ -63,19 +63,13 @@ impl Drop for Workspace {
 fn test_app(workspace: &PathBuf) -> (App, Controller, Receiver<AppEvent>) {
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: workspace.to_string_lossy().into_owned(),
         session_root: fresh_root(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (tx, rx) = std::sync::mpsc::channel::<AppEvent>();
     let ctl = Controller::start(cfg.clone(), true, None, tx.clone());
-    let app = App::new(Some(Theme::dark()), cfg, "dsh-test".into(), true, false, tx);
+    let app = App::new(Some(Theme::dark()), cfg, "crow-test".into(), true, false, tx);
     (app, ctl, rx)
 }
 

@@ -11,7 +11,7 @@ keywords = ["acp", "agent", "tui", "terminal", "llm"]
 categories = ["command-line-utilities", "development-tools"]
 # The published .crate carries only what compiles and tests: the two pet PNGs
 # are `include_bytes!` in src/pet.rs, and the layout tests read fixtures/ at
-# $CARGO_MANIFEST_DIR. Screenshots, promo and docs stay in the repo.
+# $CARGO_MANIFEST_DIR. Screenshots and docs stay in the repo.
 include = [
     "src/",
     "tests/",

@@ -1,4 +1,4 @@
-//! Parsing of deepseek-harness SDK-runtime JSON-RPC notifications into UI events.
+//! Parsing of the harness SDK-runtime JSON-RPC notifications into UI events.
 
 use serde_json::Value;
 
@@ -145,7 +145,7 @@ pub enum UiEvent {
         session: String,
         outcome: String,
     },
-    /// Cordis TUI theme update (not a session log event).
+    /// TUI extension theme update (not a session log event).
     Palette {
         pack: crate::theme::PalettePack,
         activate: bool,
@@ -182,7 +182,7 @@ pub fn parse_notification(method: &str, params: &Value) -> Vec<UiEvent> {
         }],
         "session.event" => parse_session_event(params),
         "session/update" => parse_session_update(params),
-        crate::cordis::THEME_UPDATE => match crate::theme::parse_palette_notification(params) {
+        crate::ext::THEME_UPDATE => match crate::theme::parse_palette_notification(params) {
             Ok(Some(n)) => vec![UiEvent::Palette {
                 pack: n.pack,
                 activate: n.activate,

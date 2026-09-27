@@ -1,24 +1,24 @@
 #!/usr/bin/env bash
-# Collect diagnostics when the martty TUI looks frozen (issue: freeze after
+# Collect diagnostics when the crow TUI looks frozen (issue: freeze after
 # tab switches). Run this in ANOTHER terminal while the TUI is still wedged,
 # then share the file path the script prints at the end.
 #
 # mktemp, not a fixed /tmp path: a predictable world-writable location is a
 # symlink-attack target on multi-user machines.
 set -euo pipefail
-out=$(mktemp /tmp/martty-freeze-diag.XXXXXX.txt)
+out=$(mktemp /tmp/crow-freeze-diag.XXXXXX.txt)
 : > "$out"
 
-pids=$(pgrep -f 'vendor/[^ ]*/martty|target/(devlocal|debug|release)/martty' || true)
+pids=$(pgrep -f 'vendor/[^ ]*/crow|target/(devlocal|debug|release)/crow' || true)
 if [ -z "$pids" ]; then
-  pids=$(pgrep -xo martty || true)
+  pids=$(pgrep -xo crow || true)
 fi
 
 {
   echo "== date: $(date -Is)"
-  echo "== candidate martty processes:"
+  echo "== candidate crow processes:"
   if [ -z "$pids" ]; then
-    echo "(none found — is the TUI actually a martty process?)"
+    echo "(none found — is the TUI actually a crow process?)"
   fi
   for pid in $pids; do
     echo
