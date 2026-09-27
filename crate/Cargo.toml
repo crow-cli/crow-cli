@@ -49,6 +49,17 @@ tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "io-util"
 tokio-util = { version = "0.7.19", features = ["compat"] }
 futures = "0.3.34"
 image = { version = "0.25", default-features = false, features = ["png"] }
+# GUI backend for `--gui`: a native window with ratatui painted over wgpu, so a
+# launcher can start crow with Terminal=false instead of depending on the
+# compositor's terminal resolution. Optional so the default TUI build compiles
+# none of winit/wgpu.
+winit = { version = "0.30", optional = true }
+ratatui-wgpu = { version = "0.5", optional = true }
+
+[features]
+default = []
+# Native GPU window. Off by default: the shipped TUI must not pay for wgpu.
+gui = ["dep:winit", "dep:ratatui-wgpu"]
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["test-util"] }

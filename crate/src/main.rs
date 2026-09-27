@@ -75,6 +75,7 @@ OPTIONS:
       --agent <cmd>         ACP agent command (default: crow-cli acp2 or $CROW_AGENT)
       --agent-arg <arg>     extra argument for --agent (repeatable)
       --theme <dark|light>  DeepSeek Web UI palette (default: persisted, then dark)
+      --gui                 native GPU window (ratatui over wgpu), not the terminal
       --demo                scripted turns, no runtime / API key needed
       --attach-fds          speak ACP over inherited fds 3/4 (host attach)
       --attach-tcp <addr>   authenticated loopback TCP (Windows)
@@ -108,6 +109,8 @@ struct Args {
     attach_tcp: Option<String>,
     check_runtime: bool,
     dump_frame: Option<(u16, u16)>,
+    /// Run in a native window (ratatui painted over wgpu) instead of the terminal.
+    gui: bool,
 }
 
 fn parse_args() -> Result<Args> {
@@ -132,6 +135,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<Args> {
         attach_tcp: None,
         check_runtime: false,
         dump_frame: None,
+        gui: false,
     };
     let mut it = args.into_iter().peekable();
     while let Some(arg) = it.next() {
@@ -150,6 +154,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<Args> {
             "--agent" => args_out.agent = Some(take("--agent")?),
             "--agent-arg" => args_out.agent_args.push(take("--agent-arg")?),
             "--theme" => args_out.theme = Some(take("--theme")?),
+            "--gui" => args_out.gui = true,
             "--demo" => args_out.demo = true,
             "--attach-fds" => args_out.attach_fds = true,
             "--attach-tcp" => args_out.attach_tcp = Some(take("--attach-tcp")?),
@@ -360,6 +365,14 @@ fn main() -> Result<()> {
 
     if args.attach_fds && args.attach_tcp.is_some() {
         bail!("--attach-fds and --attach-tcp are mutually exclusive");
+    }
+
+    // `--gui` needs the `gui` cargo feature (winit + ratatui-wgpu). Fail loudly
+    // instead of silently falling through to the TUI, which reads as "the flag
+    // was ignored".
+    #[cfg(not(feature = "gui"))]
+    if args.gui {
+        bail!("--gui needs a GUI-enabled build: rebuild with `cargo build --release --features gui`");
     }
 
     if args.check_runtime {
