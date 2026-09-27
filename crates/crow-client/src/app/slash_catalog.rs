@@ -69,11 +69,21 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         usage: "/lang [zh|en]",
         desc: "switch interface language",
     },
-    SlashCommand {
-        name: "liang",
-        usage: "/liang [on|off]",
-        desc: "召唤小难梁 — 🤫 idle · ⌨︎ working",
-    },
+    // Parked, not deleted: `/liang` is a branded pet, and this is crow-cli's
+    // harness. The machinery is intact and still compiled — `src/pet.rs`, the
+    // sprites in `assets/pet/liang-{idle,working}.png`, the `App::pet_visible`
+    // / `pet_pixels` / `pet_want` fields, the pet rect `ui.rs` hands to
+    // `pet_want`, the `slash.rs` handler and its `on|off` argument completion,
+    // and the zh `command_desc` arm in `locale.rs`. `run_slash("liang", …)`
+    // still resolves, which is what `pet__tests.rs` and
+    // `liang_toggle_is_transient_and_keeps_the_empty_welcome_centered` drive.
+    // The sprite and kitty-graphics plumbing is the expensive part; a crow pet
+    // re-registers by uncommenting this entry and swapping the two PNGs.
+    // SlashCommand {
+    //     name: "liang",
+    //     usage: "/liang [on|off]",
+    //     desc: "召唤小难梁 — 🤫 idle · ⌨︎ working",
+    // },
     SlashCommand {
         name: "model",
         usage: "/model [id]",

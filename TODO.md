@@ -76,7 +76,11 @@ Committed `40d15472`.
 **Phase 2 gate result:** check rc 0, still exactly those 3 warnings;
 `cargo test --locked --bin crow -j 6` → **939 passed, 0 failed** (one shim pin
 promoted to its own test); `--dump-frame 100x34` byte-identical to the Phase-1
-frame — no paint change, and `main.rs` is untouched.
+frame — no paint change, and `main.rs` is untouched. Committed `30ee65fb`.
+
+**Phase 3 gate result:** check rc 0, still exactly those 3 warnings;
+`cargo test --locked --bin crow -j 6` → **940 passed, 0 failed**; `--dump-frame
+100x34` byte-identical to the Phase-2 frame.
 
 ## Scope capture (unordered)
 
@@ -165,11 +169,17 @@ frame — no paint change, and `main.rs` is untouched.
       seeded `dsh-tui-settings.json` and asserted it migrated — now it seeds
       `settings.json` and asserts the legacy file is neither read nor
       overwritten. 938 → 939 tests, all green.
-- [ ] **`/liang` out of `SLASH_COMMANDS`** (commented, with a note pointing at
+- [x] **`/liang` out of `SLASH_COMMANDS`** (commented, with a note pointing at
       `pet.rs` + `assets/pet/*.png`), handler and pet machinery untouched.
       `locale__tests.rs` iterates the catalog for the zh-desc gate and for
       name-sort, so both stay green; `run_slash("liang", …)` still works, which
       is what `app__mode_tests.rs:298` and `pet__tests.rs` drive.
+      *Done (PLAN 3.1–3.2).* Commented in place with a note naming every
+      surviving piece. Both gates green; the catalog is still name-sorted.
+      New pin `liang_is_parked_out_of_the_menu_but_the_machinery_still_runs`
+      asserts the absence from `SLASH_COMMANDS`, the absence from the menu, and
+      that `run_slash("liang", …)` still toggles `pet_visible` — unregister,
+      don't amputate. 939 → 940 tests; `--dump-frame` unchanged, no pet.
 - [ ] **The deepseek *logo* is not a theme.** The `ui_preset == "deepseek"`
       banner branch, `src/deepseek_logo.rs`, `assets/martty-lockup.svg` and
       `scripts/render-martty-lockup.swift` go; `logo.rs` (the crow-cli lockup)

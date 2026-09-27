@@ -4393,6 +4393,31 @@ fn logout_is_hidden_from_the_slash_menu() {
 }
 
 #[test]
+fn liang_is_parked_out_of_the_menu_but_the_machinery_still_runs() {
+    // Unregistered, not amputated. The menu must not offer a branded pet, and
+    // the handler behind it must still work — so a crow pet is a swap of two
+    // sprites plus one uncommented registry entry, not a rebuild.
+    assert!(
+        !SLASH_COMMANDS.iter().any(|c| c.name == "liang"),
+        "/liang is parked: re-registering it is a decision, not a drive-by"
+    );
+    let (mut app, ctl, _rx) = test_app();
+    app.input.set("/liang".into());
+    assert!(
+        !app.slash_matches().iter().any(|m| m.name == "liang"),
+        "the parked pet is not offered in the slash menu"
+    );
+
+    app.run_slash("liang", "on", &ctl);
+    assert!(
+        app.pet_visible,
+        "run_slash still resolves — the machinery survived the unregistering"
+    );
+    app.run_slash("liang", "off", &ctl);
+    assert!(!app.pet_visible, "and still toggles back off");
+}
+
+#[test]
 fn empty_auth_with_several_methods_opens_the_picker() {
     let (mut app, ctl, _rx) = test_app();
     app.demo = false;

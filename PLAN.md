@@ -262,7 +262,7 @@ untouched, so `--help` is unchanged too).
 
 ## Phase 3 — liang unregistered, machinery kept
 
-3.1 **Comment out the `/liang` entry in `SLASH_COMMANDS`**
+[x] 3.1 **Comment out the `/liang` entry in `SLASH_COMMANDS`**
     (`app/slash_catalog.rs:72-76`) with a note that says where the machinery
     lives (`src/pet.rs`, `assets/pet/liang-*.png`, the `app.pet_*` fields, the
     `ui.rs` pet rect, the `slash.rs:457-467` handler) and why it is parked:
@@ -275,14 +275,35 @@ untouched, so `--help` is unchanged too).
     `pet__tests.rs` still green because `run_slash("liang", …)` still resolves —
     that is the proof the machinery survived; `cargo run -- --dump-frame 100x34`
     shows no pet (he was already off by default).
+    *Done:* the entry is commented in place, with a note naming every piece of
+    the machinery that stays compiled — `src/pet.rs`,
+    `assets/pet/liang-{idle,working}.png` (both present), `App::pet_visible` /
+    `pet_pixels` / `pet_want`, `ui.rs pet_rect`, the `slash.rs` handler and its
+    `on|off` completion, and the zh `command_desc` arm. *Correction:* the
+    handler is at `slash.rs:454-466`, not `457-467`; the note names the file
+    rather than a line range so it cannot go stale. zh-desc gate and name-sort
+    gate green (the catalog is still sorted — `lang`, then `model`);
+    `liang_toggle_is_transient_and_keeps_the_empty_welcome_centered` and
+    `pet__tests.rs` green; `--dump-frame 100x34` byte-identical to the Phase-2
+    frame and contains no pet.
 
-3.2 **The `/liang` menu absence gets pinned**, the way `login`/`logout` absence
+[x] 3.2 **The `/liang` menu absence gets pinned**, the way `login`/`logout` absence
     already is (`app__mode_tests.rs:4265,4390`): one assertion that
     `SLASH_COMMANDS` has no `liang`, so a future agent does not silently
     re-register it without deciding to.
     *Verify:* that new test green; the zh `command_desc` arm for `liang`
     (`locale.rs:91`) stays — it is dead but harmless, and it is the string a
     re-registered pet would need.
+    *Done:* `liang_is_parked_out_of_the_menu_but_the_machinery_still_runs`,
+    next to the `login`/`logout` pins. It asserts three things, because the
+    mandate is "unregister, don't amputate": no `liang` in `SLASH_COMMANDS`, no
+    `liang` offered when the input reads `/liang`, and `run_slash("liang",
+    "on"/"off")` still flips `app.pet_visible` both ways. The zh
+    `command_desc` arm at `locale.rs:91` is untouched. 939 → 940 tests.
+
+**Phase 3 gate result:** `cargo check --locked --tests -j 6` rc 0, exactly the 3
+pre-existing warnings; `cargo test --locked --bin crow -j 6` → **940 passed, 0
+failed**; `--dump-frame 100x34` byte-identical to the Phase-2 frame.
 
 **Commit:** `feat(client): park /liang — the pet machinery stays, the command does not`
 
