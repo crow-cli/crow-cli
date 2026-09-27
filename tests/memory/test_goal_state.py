@@ -136,6 +136,24 @@ def test_stale_goal_id_loses_the_status_write(tmp_path):
     assert get_goal(engine, "s").status == GOAL_BLOCKED
 
 
+def test_stale_goal_id_loses_the_clear_too(tmp_path):
+    """The same guard on the delete: a ``goal_reset`` that read the row before
+    the user replaced it must not wipe the NEW goal, which would stop a loop
+    somebody just armed and leave them believing it is running."""
+    engine = get_engine(_uri(tmp_path))
+    stale = set_goal(engine, "s", "old objective")
+    fresh = set_goal(engine, "s", "new objective")
+
+    assert clear_goal(engine, "s", expected_goal_id=stale) is False
+    row = get_goal(engine, "s")
+    assert (row.status, row.goal_id) == (GOAL_ACTIVE, fresh)
+
+    # The writer that read the current row wins; the user's own /goal clear
+    # passes no id at all and means whatever is there.
+    assert clear_goal(engine, "s", expected_goal_id=fresh) is True
+    assert get_goal(engine, "s") is None
+
+
 def test_a_user_obeying_write_passes_no_id(tmp_path):
     """``expected_goal_id=None`` means whatever is there now — that is what a
     pause or a resume is, and it must work without reading the row first."""

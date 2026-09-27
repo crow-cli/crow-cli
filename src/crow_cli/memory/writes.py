@@ -412,12 +412,26 @@ def update_goal_status(
         return True
 
 
-def clear_goal(engine, session_id: str) -> bool:
+def clear_goal(
+    engine,
+    session_id: str,
+    *,
+    expected_goal_id: str | None = None,
+) -> bool:
     """Delete the row. False when there was none — the caller says so to the
-    user, and "there was nothing to clear" is a different answer than "done"."""
+    user, and "there was nothing to clear" is a different answer than "done".
+
+    ``expected_goal_id`` is :func:`update_goal_status`' stale-write guard, for a
+    caller that read the row before deciding to delete it: a goal the user
+    replaced in the window between the read and the write is a NEW goal, and
+    deleting that would stop a loop somebody just armed. None means "whatever is
+    there", which is what the user's own ``/goal clear`` passes.
+    """
     with Session(engine) as db:
         row = db.query(Goal).filter_by(session_id=session_id).first()
         if row is None:
+            return False
+        if expected_goal_id is not None and row.goal_id != expected_goal_id:
             return False
         db.delete(row)
         db.commit()

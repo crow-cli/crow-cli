@@ -1,4 +1,5 @@
-"""goal_start / goal_done / goal_blocked: the model's three writes to the latch.
+"""goal_start / goal_done / goal_blocked / goal_reset: the model's four writes to
+the latch.
 
 Everything here is the real rail and the real database. ``begin_cell`` is what
 execute's prologue runs, so the session id these calls act on is the one the
@@ -30,11 +31,13 @@ from crow_cli.memory import (
 )
 from crow_cli.memory.reads import get_goal
 from crow_cli.tools.goal_tool import (
+    GOAL_CLEARED,
     _dispose,
     _engine,
     _state,
     goal_blocked,
     goal_done,
+    goal_reset,
     goal_start,
 )
 from crow_cli.tools.register import begin_cell, clear, pending
@@ -91,12 +94,14 @@ async def test_outside_a_cell_there_is_no_session_to_end_the_goal_of():
         await goal_blocked("no rail")
     with pytest.raises(GoalError, match="no session identity"):
         await goal_start("no rail")
+    with pytest.raises(GoalError, match="no session identity"):
+        await goal_reset()
 
 
 @pytest.mark.asyncio
 async def test_a_rail_without_a_database_raises(tmp_path):
     begin_cell(session_id=SESSION)
-    for call in (goal_start("x"), goal_done(), goal_blocked("x")):
+    for call in (goal_start("x"), goal_done(), goal_blocked("x"), goal_reset()):
         with pytest.raises(GoalError, match="no database"):
             await call
 
@@ -392,6 +397,96 @@ def test_a_result_for_a_still_active_goal_does_not_promise_a_stop():
 
 
 # ---------------------------------------------------------------------------
+# The wipe
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status", [GOAL_PAUSED, GOAL_BLOCKED, GOAL_COMPLETE, "budget_limited"]
+)
+async def test_goal_reset_deletes_a_goal_that_has_stopped(tmp_path, status):
+    """Deleted, not moved: a second engine on the same file reads None back.
+    ``paused`` is the status this call exists for; the other three go by the
+    same rule rather than a per-status list, because "has stopped" is the rule."""
+    engine = _rail(tmp_path)
+    update_goal_status(engine, SESSION, status, blocked_reason="the turn errored")
+
+    r = await goal_reset()
+
+    assert r.changed is True
+    assert r.status == GOAL_CLEARED
+    assert r.objective == OBJECTIVE
+    assert get_goal(engine, SESSION) is None
+    assert "will not be continued" in r.text
+
+
+@pytest.mark.asyncio
+async def test_a_paused_goal_is_no_longer_a_dead_end(tmp_path):
+    """The reason goal_reset exists. A pause refused goal_start (the brake is
+    the user's) and the two exits refuse a row that is not active, so a session
+    with a paused goal could never arm another. Reset clears the row and the
+    next arm is a fresh goal — new id, zeroed counters, new objective."""
+    engine = _rail(tmp_path)
+    old_id = get_goal(engine, SESSION).goal_id
+    update_goal_status(engine, SESSION, GOAL_PAUSED)
+
+    with pytest.raises(GoalError, match="paused"):
+        await goal_start("the next sprint")
+    assert (await goal_reset()).status == GOAL_CLEARED
+
+    r = await goal_start("the next sprint")
+    assert (r.changed, r.status, r.objective) == (True, GOAL_ACTIVE, "the next sprint")
+    row = get_goal(engine, SESSION)
+    assert row.goal_id != old_id
+    assert row.turns_used == 0
+
+
+@pytest.mark.asyncio
+async def test_goal_reset_refuses_a_running_goal(tmp_path):
+    """A third way out of a live loop that claims nothing is the one capability
+    this module must not ship — and the refusal has to leave the loop running
+    exactly as it was, spend included."""
+    engine = _rail(tmp_path)
+    goal_id = get_goal(engine, SESSION).goal_id
+    cm.account_goal_usage(
+        engine, SESSION, goal_id=goal_id, tokens=700, seconds=30, turns=2,
+    )
+
+    with pytest.raises(GoalError, match="active"):
+        await goal_reset()
+
+    row = get_goal(engine, SESSION)
+    assert (row.status, row.goal_id, row.turns_used, row.tokens_used) == (
+        GOAL_ACTIVE, goal_id, 2, 700,
+    )
+
+
+@pytest.mark.asyncio
+async def test_goal_reset_with_no_goal_says_so(tmp_path):
+    """Not a crash and not a silent success: there was nothing to wipe."""
+    _bare_rail(tmp_path)
+    with pytest.raises(GoalError, match="no goal"):
+        await goal_reset()
+
+
+@pytest.mark.asyncio
+async def test_the_wipe_is_recorded_for_the_drain(tmp_path):
+    """The person sees the row go as a tool call whose subject is the objective
+    it had — the tell that a paused sprint was cleared rather than resumed."""
+    engine = _rail(tmp_path)
+    update_goal_status(engine, SESSION, GOAL_PAUSED)
+    await goal_reset()
+
+    (entry,) = pending()
+    assert (entry.tool, entry.mode, entry.status) == ("goal_reset", None, "completed")
+    assert entry.result_kind == "goal"
+    assert entry.args == {}
+    assert entry.acp_payload["subject"] == OBJECTIVE
+    assert "goal cleared" in entry.acp_payload["text"]
+
+
+# ---------------------------------------------------------------------------
 # The other two channels
 # ---------------------------------------------------------------------------
 
@@ -430,6 +525,7 @@ def test_the_wire_kind_is_stated_not_fallen_into():
     rule added to that function could quietly reclassify it."""
     assert KIND_BY_RESULT["goal"] == "other"
     assert tool_kind("goal_start") == "other"
+    assert tool_kind("goal_reset") == "other"
     assert tool_kind("goal_done") == "other"
     assert tool_kind("goal_blocked") == "other"
 
@@ -447,7 +543,7 @@ def test_the_goal_names_resolve_through_the_v2_facade():
     """
     import crow_cli.tools as T
 
-    assert {"goal_start", "goal_done", "goal_blocked"} <= set(T._LAZY_V2)
+    assert {"goal_start", "goal_done", "goal_blocked", "goal_reset"} <= set(T._LAZY_V2)
     # Through the facade, which is the path a kernel takes. This used to have
     # to resolve the modules by hand, because another test importing a
     # submodule left the MODULE on the package attribute and that shadowed
@@ -466,6 +562,7 @@ def test_the_goal_tools_are_not_ambient_in_a_v1_kernel():
     import crow_cli.tools as T
 
     assert "goal_start" not in T._LAZY
+    assert "goal_reset" not in T._LAZY
     assert "goal_done" not in T._LAZY
     assert "goal_blocked" not in T._LAZY
     assert set(T._names()) == set(T._LAZY)

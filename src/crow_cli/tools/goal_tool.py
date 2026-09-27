@@ -1,16 +1,18 @@
-"""goal_start / goal_done / goal_blocked — the model's three writes to the latch.
+"""goal_start / goal_done / goal_blocked / goal_reset — the model's four writes
+to the latch.
 
 A goal is a latch. While the row is ``active``, the driver turns "the turn
 ended" from a full stop into a loop-back edge and sends itself another turn
 with nobody asking (:func:`crow_cli.agent2.driver.SessionDriver` at its idle
 transition). Nothing else about the mechanism is model-visible — no new event
 type, no client round trip, no second injection path — so the row is the whole
-interface: ``goal_start`` arms it, the other two release it. The remaining
+interface: ``goal_start`` arms it, ``goal_done`` and ``goal_blocked`` release it,
+``goal_reset`` wipes it. The remaining
 statuses belong to the user (``paused``) and to the arithmetic
 (``budget_limited``, and ``blocked`` when a turn errors or a continuation
 makes no progress).
 
-Three names, not one ``goal(status=...)``, for the reason
+Four names, not one ``goal(status=...)``, for the reason
 :mod:`crow_cli.tools.task_tool` gives: a capability behind a mode-string dispatcher
 is a capability that does not get reached. The asymmetry here is the argument
 list — ``goal_start`` cannot be called without naming the objective and
@@ -32,6 +34,17 @@ believing a loop is running that is not. Over a goal that has already stopped
 — ``complete``, ``blocked``, ``budget_limited`` — it is the restart gesture
 ``/goal <objective>`` is, and the fresh id and zeroed counters are exactly
 right there.
+
+``goal_reset`` is the fourth because one of the five statuses had no
+model-side exit at all. ``paused`` is the user's brake and the model must not
+lift it — but "must not resume the objective" and "may never touch the row
+again" are different rules, and the second left a session with a paused goal
+nowhere to go: ``goal_start`` refuses to arm over it (correctly), and the two
+exits refuse to move a row that is not ``active`` (also correctly). Reset
+deletes the row instead of resuming it, which is what makes it honest rather
+than a brake released — and it refuses an ``active`` goal, because a third way
+out of a running loop that claims nothing is the one capability this module
+must not ship.
 
 Neither raises on a goal that is already stopped, and both are idempotent.
 They are called at the end of a turn the model spent real reasoning on, and
@@ -55,10 +68,15 @@ from crow_cli.memory.models import (
     GOAL_PAUSED,
 )
 from crow_cli.memory.reads import get_goal
-from crow_cli.memory.writes import set_goal, update_goal_status
+from crow_cli.memory.writes import clear_goal, set_goal, update_goal_status
 
 from .register import CellContext, current_cell, db_uri, subtool
 from .results import GoalError, GoalResult
+
+#: ``GoalResult.status`` when the row is gone. Deliberately NOT in
+#: :mod:`crow_cli.memory.models` with the five row statuses: those enumerate
+#: what the column can hold, and this reports that no row is left to hold it.
+GOAL_CLEARED = "cleared"
 
 # Same reason task.py, rlm.py and memory.py keep theirs in one:
 # importlib.reload re-executes this source in the EXISTING module dict, so a
@@ -192,8 +210,10 @@ async def goal_start(objective: str) -> GoalResult:
       can see that it did not. Re-arming would mint a fresh id and zero
       ``turns_used`` — the column the turn ceiling counts.
     * a goal the user ``paused`` raises :class:`GoalError`. The brake is
-      theirs: ``/goal resume`` picks the objective back up, ``/goal
-      <objective>`` starts a new one.
+      theirs: ``/goal resume`` picks the objective back up and ``/goal
+      <objective>`` starts a new one. :func:`goal_reset` is the model-side way
+      past it — it deletes the row rather than resuming the objective, so the
+      sprint is over and a new one can be armed.
 
     Over a goal that has already stopped (``complete``, ``blocked``,
     ``budget_limited``) this is a restart: fresh id, zeroed counters, new
@@ -283,3 +303,64 @@ async def goal_blocked(reason: str) -> GoalResult:
             ' environment") — naming the missing thing, not "stuck".'
         )
     return _end(GOAL_BLOCKED, reason.strip())
+
+
+@subtool(tool="goal_reset")
+async def goal_reset() -> GoalResult:
+    """Clear the goal row: the latch is gone, and so is the objective.
+
+    The status this exists for is ``paused`` — the one a session otherwise has
+    no way out of. ``goal_start`` refuses to arm over a pause, because the
+    brake belongs to whoever pulled it, and the two exits refuse to move a row
+    that is not ``active``; without this call a paused goal is a row the model
+    can never touch again and a session that can never arm a new one.
+
+    Resetting is NOT resuming. The row is DELETED — objective, counters,
+    blocked reason — so nothing continues and nothing is remembered. That is
+    the whole difference from ``/goal resume``, and it is why clearing a pause
+    this way is honest rather than a brake being lifted. To go again, arm a new
+    goal with :func:`goal_start`, and tell the user the old one was cleared: a
+    person who paused a loop and later sees a different one running is a person
+    nobody told.
+
+    Refuses an ``active`` goal. A running loop has two exits and both say
+    something — ``goal_done`` claims the work is verified complete,
+    ``goal_blocked`` names what is missing — and a third that claims nothing
+    would be a way to quit a goal without accounting for it.
+
+    Takes no arguments.
+
+    Returns:
+        GoalResult: ``status`` is ``cleared``, which is not one of the five row
+        statuses because there is no row left to read back, carrying the
+        objective and the spend it had so the reply can say what was wiped.
+        ``.changed`` is False when the row was replaced between the read and
+        the delete, so this call deleted nothing.
+    """
+    session = _session()
+    engine = _engine()
+    row = get_goal(engine, session)
+    if row is None:
+        raise GoalError(
+            "no goal — this session has none set, so there is nothing to reset."
+            " This clears a goal that has stopped, a paused one above all; one"
+            " that was never armed is already nothing."
+        )
+    if row.status == GOAL_ACTIVE:
+        raise GoalError(
+            "the goal is active, and resetting it would be a third way out of a"
+            " running loop that claims nothing — goal_done says the work is"
+            " verified complete, goal_blocked names what is missing. End it with"
+            " one of those, then reset if the row should go too."
+        )
+    cleared = clear_goal(engine, session, expected_goal_id=row.goal_id)
+    return GoalResult(
+        status=GOAL_CLEARED,
+        objective=row.objective,
+        reason=row.blocked_reason or "",
+        changed=cleared,
+        turns_used=row.turns_used or 0,
+        tokens_used=row.tokens_used or 0,
+        token_budget=row.token_budget,
+        time_used_seconds=row.time_used_seconds or 0,
+    )
