@@ -22,6 +22,15 @@ include = [
     "LICENSE",
 ]
 
+# crow-gui is the runtime-agnostic UI service (native `--gui` window and the
+# `--web` wasm runtime share one runner). It is a member but NOT a default
+# member, so a bare `cargo build`/`cargo test` in this directory keeps building
+# exactly the TUI binary it always did — the shipped TUI must not pay for wgpu.
+[workspace]
+members = [".", "crates/crow-gui"]
+default-members = ["."]
+resolver = "2"
+
 [[bin]]
 name = "crow"
 path = "src/main.rs"
