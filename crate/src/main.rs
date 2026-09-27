@@ -16,6 +16,8 @@ mod diff;
 mod elicitation;
 mod events;
 mod file_ref;
+#[cfg(feature = "gui")]
+mod gui;
 mod input;
 mod locale;
 mod logo;
@@ -367,12 +369,17 @@ fn main() -> Result<()> {
         bail!("--attach-fds and --attach-tcp are mutually exclusive");
     }
 
-    // `--gui` needs the `gui` cargo feature (winit + ratatui-wgpu). Fail loudly
-    // instead of silently falling through to the TUI, which reads as "the flag
-    // was ignored".
+    // `--gui` needs the `gui` cargo feature (crow-gui: winit + ratatui-wgpu).
+    // Without it, fail loudly instead of silently falling through to the TUI,
+    // which reads as "the flag was ignored". With it, the window is the whole
+    // program: no terminal to enter, no crossterm input thread, no alt screen.
     #[cfg(not(feature = "gui"))]
     if args.gui {
         bail!("--gui needs a GUI-enabled build: rebuild with `cargo build --release --features gui`");
+    }
+    #[cfg(feature = "gui")]
+    if args.gui {
+        return gui::run_window();
     }
 
     if args.check_runtime {
@@ -885,3 +892,7 @@ mod event_batch_tests;
 #[cfg(test)]
 #[path = "../tests/unit/main__tty_mode_tests.rs"]
 mod tty_mode_tests;
+
+#[cfg(all(test, feature = "gui"))]
+#[path = "../tests/unit/gui__tests.rs"]
+mod gui_tests;

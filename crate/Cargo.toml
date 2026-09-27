@@ -14,6 +14,7 @@ categories = ["command-line-utilities", "development-tools"]
 # $CARGO_MANIFEST_DIR. Screenshots, promo and docs stay in the repo.
 include = [
     "src/",
+    "crates/",
     "tests/",
     "fixtures/",
     "assets/pet/liang-idle.png",
@@ -60,15 +61,15 @@ futures = "0.3.34"
 image = { version = "0.25", default-features = false, features = ["png"] }
 # GUI backend for `--gui`: a native window with ratatui painted over wgpu, so a
 # launcher can start crow with Terminal=false instead of depending on the
-# compositor's terminal resolution. Optional so the default TUI build compiles
-# none of winit/wgpu.
-winit = { version = "0.30", optional = true }
-ratatui-wgpu = { version = "0.5", optional = true }
+# compositor's terminal resolution. crow-gui is the UI service — it owns winit,
+# ratatui-wgpu and the runner, and hosts anything implementing GuiApplication.
+# Optional so the default TUI build compiles none of winit/wgpu.
+crow-gui = { path = "crates/crow-gui", optional = true }
 
 [features]
 default = []
 # Native GPU window. Off by default: the shipped TUI must not pay for wgpu.
-gui = ["dep:winit", "dep:ratatui-wgpu"]
+gui = ["dep:crow-gui"]
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["test-util"] }
