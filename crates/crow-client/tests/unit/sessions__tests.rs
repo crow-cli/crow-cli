@@ -76,25 +76,47 @@ fn lists_workspace_sessions_newest_first_and_skips_current() {
 }
 
 #[test]
-fn sessions_from_the_martty_and_dsh_homes_remain_discoverable() {
+fn sessions_are_discovered_in_the_configured_root_only() {
+    // The opposite of what this test used to pin. A real session log sits
+    // under every home this client has moved out of; `/resume` sees none of
+    // them, and sees the configured root's.
     let home = std::env::temp_dir().join(format!("crow-legacy-sessions-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
     let current = home.join(".agents/crow/sessions");
-    let martty = home.join(".martty/sessions");
-    let dsh_tui = home.join(".dsh-tui/sessions");
-    let dsh = home.join(".dsh/sessions");
-    for dir in [&current, &martty, &dsh_tui, &dsh] {
-        std::fs::create_dir_all(dir).unwrap();
+    let slug = workspace_slug("/w");
+    write_session(
+        &current,
+        &slug,
+        "crow-here",
+        &[header("crow-here"), user_msg("still resumable")],
+    );
+    for (dir, id) in [
+        (home.join(".crow-term/sessions"), "crow-term-gone"),
+        (home.join(".martty/sessions"), "martty-gone"),
+        (home.join(".dsh/sessions"), "dsh-gone"),
+        (home.join(".dsh-tui/sessions"), "dsh-tui-gone"),
+    ] {
+        write_session(&dir, &slug, id, &[header(id), user_msg("abandoned")]);
     }
 
-    let roots = session_roots_from(current.to_str().unwrap(), Some(&home));
+    let roots = session_roots(current.to_str().unwrap());
+    assert_eq!(
+        roots,
+        vec![current.clone()],
+        "the configured root is the only root"
+    );
 
-    for dir in [&current, &martty, &dsh_tui, &dsh] {
-        assert!(
-            roots.contains(&dir),
-            "{} missing from {roots:?}",
-            dir.display()
-        );
-    }
+    let ids: Vec<String> = list_sessions(current.to_str().unwrap(), "/w", "", usize::MAX)
+        .iter()
+        .map(|s| s.id.clone())
+        .collect();
+    assert_eq!(ids, ["crow-here"], "the abandoned homes are not discovered");
+
+    assert_eq!(
+        session_roots(home.join(".nope").to_str().unwrap()),
+        Vec::<PathBuf>::new(),
+        "a configured root that does not exist yields nothing"
+    );
     let _ = std::fs::remove_dir_all(home);
 }
 

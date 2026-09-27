@@ -37,7 +37,7 @@ use crate::input::{Action, VimMode};
 use crate::locale::{Locale, UiSettings};
 use crate::markdown::ToneMode;
 #[allow(unused_imports)]
-use crate::runtime::{legacy_settings_paths, settings_path, RuntimeConfig};
+use crate::runtime::{settings_path, RuntimeConfig};
 use crate::theme::Theme;
 #[allow(unused_imports)]
 use crate::transcript::{clamp_str, NoticeLevel, Transcript};

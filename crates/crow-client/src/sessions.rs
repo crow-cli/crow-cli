@@ -6,11 +6,11 @@
 //! <root>/<workspace-slug>/<session-id>/session.jsonl[.zstd]
 //! ```
 //!
-//! Roots: the configured `session_root` and the legacy stores
-//! `~/.crow-term/sessions`, `~/.martty/sessions`, `~/.dsh/sessions`. A flat
-//! `<root>/<session-id>/session.jsonl` layout is tolerated
-//! too. The workspace slug is the absolute path with `/` mapped to `-`,
-//! wrapped in `-…--` (observed: `/Users/x/proj` → `--Users-x-proj--`).
+//! Root: the configured `session_root`, and nothing else. Homes this client
+//! has moved out of are not searched. A flat `<root>/<session-id>/session.jsonl`
+//! layout is tolerated too. The workspace slug is the absolute path with `/`
+//! mapped to `-`, wrapped in `-…--` (observed: `/Users/x/proj` →
+//! `--Users-x-proj--`).
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -39,26 +39,19 @@ pub fn workspace_slug(workspace: &str) -> String {
     format!("-{}--", workspace.replace('/', "-"))
 }
 
-/// Candidate session roots, existing ones only: the configured root plus the
-/// homes this client has moved out of (`~/.crow-term`, `~/.martty`, then the
-/// legacy dsh stores), so sessions written before a move stay resumable.
-fn session_roots_from(cfg_root: &str, home: Option<&Path>) -> Vec<PathBuf> {
-    let mut roots = vec![PathBuf::from(cfg_root)];
-    if let Some(home) = home {
-        roots.push(home.join(".crow-term").join("sessions"));
-        roots.push(home.join(".martty").join("sessions"));
-        roots.push(home.join(".dsh").join("sessions"));
-        roots.push(home.join(".dsh-tui").join("sessions"));
-    }
-    roots.sort();
-    roots.dedup();
-    roots.retain(|r| r.is_dir());
-    roots
-}
-
+/// The session roots to search: the configured root, when it exists.
+///
+/// `$HOME` is deliberately not consulted, so a session written under an
+/// abandoned home before the rebrand is not resumable. That is the intended
+/// break, not an oversight: a shim that keeps an old layout discoverable is
+/// how that layout stays alive forever.
 fn session_roots(cfg_root: &str) -> Vec<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    session_roots_from(cfg_root, home.as_deref())
+    let root = PathBuf::from(cfg_root);
+    if root.is_dir() {
+        vec![root]
+    } else {
+        Vec::new()
+    }
 }
 
 /// The session log inside one session directory, preferring the live

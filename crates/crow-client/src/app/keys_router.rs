@@ -234,7 +234,7 @@ impl App {
 
     pub(crate) fn handle_key(&mut self, key: KeyEvent, ctl: &Controller) {
         self.needs_redraw = true;
-        // CROW_KEYDEBUG=1 (or legacy DSH_TUI_KEYDEBUG): surface exactly what the terminal delivered
+        // CROW_KEYDEBUG=1: surface exactly what the terminal delivered
         // (after CG rescue) in the tip row — kills keybinding mysteries.
         if self.key_debug {
             self.show_tip(self.locale.trf(

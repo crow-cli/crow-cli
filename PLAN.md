@@ -190,21 +190,44 @@ pre-existing warnings; `cargo test --locked --bin crow -j 6` → **938 passed,
 
 Breaking pre-rebrand installs is the point, per the mandate.
 
-2.1 **`crow_home_from`** (`runtime.rs:14-38`): `CROW_HOME` → `~/.agents/crow`,
+[x] 2.1 **`crow_home_from`** (`runtime.rs:14-38`): `CROW_HOME` → `~/.agents/crow`,
     full stop. `MARTTY_HOME` and `DSH_HOME` deleted; the signature drops both
     parameters. `rewrite the doc comment` — it currently advertises the shim.
     *Verify:* `main__cli_args_tests.rs` — the test named
     `a pre-rebrand MARTTY_HOME keeps its data` becomes
     `a pre-rebrand MARTTY_HOME is not read`: same inputs, opposite assertion.
+    *Done:* `crow_home_from(crow_home: Option<&str>, user_home: &str)` — the
+    signature dropped both parameters, so the shim cannot be called even by
+    accident. Doc comment rewritten to state the precedence and why there is no
+    fallback. *Correction:* `a pre-rebrand MARTTY_HOME keeps its data` was an
+    assert message inside `crow_home_precedence_owns_the_default_session_root`,
+    not a test name; it is now a real test,
+    `a_pre_rebrand_martty_home_is_not_read`, which exports `MARTTY_HOME` and
+    `DSH_HOME` and asserts `crow_home()` is explained entirely by `CROW_HOME` +
+    `HOME`. Setting them is race-free precisely because nothing reads them.
+    `crow_home_precedence_owns_the_default_session_root` also gained an
+    empty-`CROW_HOME` case.
 
-2.2 **`legacy_settings_paths_from` / `legacy_settings_paths`**
+[x] 2.2 **`legacy_settings_paths_from` / `legacy_settings_paths`**
     (`runtime.rs:56-79`) deleted with every caller — `~/.martty/settings.json`
     and `~/.dsh-tui/sessions/dsh-tui-settings.json` are not read anymore.
     *Verify:* `legacy_settings_come_from_the_martty_home_then_dsh_tui` rewritten
     to pin that only `settings_path(session_root)` is consulted;
     `grep -rn "legacy_settings" src tests` → 0 outside that rewritten test.
+    *Done:* both functions deleted, plus both callers — the `app.rs` import and
+    `app/prefs.rs load_settings`, which lost its whole migrate-and-copy loop and
+    is now one read of `settings_path(session_root)` with `unwrap_or_default()`.
+    grep → 0 in `src`; the two surviving mentions in `tests` are the rewritten
+    test's own comment. Rewritten as `settings_come_from_the_configured_root_only`:
+    seeds valid settings into *both* legacy filenames, asserts `load_settings`
+    returns the default, then asserts the configured file is the one source.
+    A fourth pin fell out of running the suite:
+    `lang_switch_repaints_immediately_and_persists_for_the_workspace` seeded
+    `dsh-tui-settings.json` and asserted it migrated to `settings.json`. It now
+    seeds `settings.json` directly and asserts the legacy file is neither read
+    nor overwritten — the migration it used to prove no longer exists.
 
-2.3 **`sessions.rs:42-62`**: `session_roots_from` returns the configured root
+[x] 2.3 **`sessions.rs:42-62`**: `session_roots_from` returns the configured root
     only. `~/.crow-term/sessions`, `~/.martty/sessions`, `~/.dsh/sessions`,
     `~/.dsh-tui/sessions` deleted, and the module doc (lines 9-13) stops
     listing them.
@@ -212,10 +235,26 @@ Breaking pre-rebrand installs is the point, per the mandate.
     becomes `sessions_are_discovered_in_the_configured_root_only` — writes a
     session under each legacy home, asserts `/resume` sees none of them and
     sees the configured root's.
+    *Done:* `session_roots_from(cfg_root, home)` and its `session_roots` wrapper
+    collapsed into one `session_roots(cfg_root)`; `$HOME` is no longer read, so
+    the four legacy roots are unreachable by construction. Module doc rewritten.
+    The test does exactly what the verify line asked: a real session log under
+    each of the four abandoned homes plus one under the configured root, then
+    `list_sessions` must return only `crow-here`. Also pins that a configured
+    root which does not exist yields no roots.
 
-2.4 **`app/keys_router.rs:237`**: the `DSH_TUI_KEYDEBUG` legacy alias goes;
+[x] 2.4 **`app/keys_router.rs:237`**: the `DSH_TUI_KEYDEBUG` legacy alias goes;
     `CROW_KEYDEBUG=1` is the only spelling.
     *Verify:* `grep -rn "DSH_" src` → 0; the key-debug test still green.
+    *Done:* `grep -rn "DSH_\|MARTTY_" src` → 0. *Correction:* there was no
+    alias in the code — `app.rs:585` already read only `CROW_KEYDEBUG`. What
+    survived was a stale comment at `keys_router.rs:237` advertising an alias
+    that did not exist; the comment now names `CROW_KEYDEBUG` alone.
+
+**Phase 2 gate result:** `cargo check --locked --tests -j 6` rc 0, exactly the 3
+pre-existing warnings; `cargo test --locked --bin crow -j 6` → **939 passed, 0
+failed**; `--dump-frame 100x34` byte-identical to the Phase-1 frame (`main.rs`
+untouched, so `--help` is unchanged too).
 
 **Commit:** `refactor(client)!: delete the martty and dsh compatibility shims`
 

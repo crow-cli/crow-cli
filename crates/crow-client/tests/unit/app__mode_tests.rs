@@ -123,12 +123,21 @@ fn slash_menu_offers_the_client_language_switch() {
 #[test]
 fn lang_switch_repaints_immediately_and_persists_for_the_workspace() {
     let cfg = test_cfg();
-    let legacy = std::path::Path::new(&cfg.session_root).join("dsh-tui-settings.json");
+    let root = std::path::Path::new(&cfg.session_root);
+    let current = root.join("settings.json");
     std::fs::write(
-        &legacy,
-        r#"{"language":"en","uiPreset":"deepseek","defaultHarness":"crow-cli"}"#,
+        &current,
+        r#"{"language":"en","uiPreset":"crow","defaultHarness":"crow-cli"}"#,
     )
     .expect("seed UI preset selection");
+    // The file this test used to seed instead. `legacy_settings_paths` is
+    // gone, so it must be neither read nor migrated nor overwritten.
+    let legacy = root.join("dsh-tui-settings.json");
+    std::fs::write(
+        &legacy,
+        r#"{"language":"en","uiPreset":"abandoned","defaultHarness":"nope"}"#,
+    )
+    .expect("seed an abandoned settings file");
     let (tx, _rx) = std::sync::mpsc::channel::<AppEvent>();
     let (ctl, _commands) = crate::controller::tests::test_controller();
     let mut app = App::new(
@@ -156,22 +165,19 @@ fn lang_switch_repaints_immediately_and_persists_for_the_workspace() {
         frame.replace(' ', "").contains("描述你想构建的内容"),
         "{frame}"
     );
-    assert_eq!(restarted.ui_preset, "deepseek", "/lang preserves UI Preset");
-    let current = std::path::Path::new(&restarted.cfg.session_root).join("settings.json");
-    assert!(
-        current.is_file(),
-        "legacy settings migrate to the current filename"
-    );
-    assert!(
-        legacy.is_file(),
-        "migration preserves the legacy settings file"
-    );
+    assert_eq!(restarted.ui_preset, "crow", "/lang preserves UI Preset");
     let saved: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(current).expect("read migrated settings"))
-            .unwrap();
+        serde_json::from_str(&std::fs::read_to_string(&current).expect("read settings")).unwrap();
     assert_eq!(
         saved["defaultHarness"], "crow-cli",
         "/lang preserves Client-owned settings"
+    );
+    let abandoned: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&legacy).expect("legacy file untouched"))
+            .unwrap();
+    assert_eq!(
+        abandoned["uiPreset"], "abandoned",
+        "the abandoned settings file is neither read nor migrated"
     );
 }
 

@@ -2,41 +2,22 @@
 
 use super::*;
 use crate::locale::{Locale, UiSettings};
-use crate::runtime::{legacy_settings_paths, settings_path, RuntimeConfig};
+use crate::runtime::{settings_path, RuntimeConfig};
 
 impl App {
     pub(crate) fn locale_settings_path(cfg: &RuntimeConfig) -> std::path::PathBuf {
         settings_path(&cfg.session_root)
     }
 
+    /// One settings file, one source of truth. A file that exists but does not
+    /// parse is quarantined by the next save; until then the defaults apply.
+    /// There is no legacy filename to fall through to.
     pub(crate) fn load_settings(cfg: &RuntimeConfig) -> UiSettings {
         let current = Self::locale_settings_path(cfg);
-        if let Some(settings) = std::fs::read_to_string(&current)
+        std::fs::read_to_string(&current)
             .ok()
             .and_then(|text| serde_json::from_str::<UiSettings>(&text).ok())
-        {
-            return settings;
-        }
-        // A current file that exists but does not parse is quarantined by the
-        // next save; until then fall through to the legacy files rather than
-        // silently dropping the user's preferences.
-        for legacy in legacy_settings_paths(&cfg.session_root) {
-            let Some((text, settings)) = std::fs::read_to_string(&legacy).ok().and_then(|text| {
-                serde_json::from_str::<UiSettings>(&text)
-                    .ok()
-                    .map(|settings| (text, settings))
-            }) else {
-                continue;
-            };
-            if let Some(dir) = current.parent() {
-                let _ = std::fs::create_dir_all(dir);
-            }
-            if !current.exists() {
-                let _ = std::fs::write(&current, text);
-            }
-            return settings;
-        }
-        UiSettings::default()
+            .unwrap_or_default()
     }
 
     pub(crate) fn save_settings(&self) {

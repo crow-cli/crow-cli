@@ -71,6 +71,12 @@ add a fourth.
 those 3 warnings; `cargo test --locked --bin crow -j 6` → **938 passed, 0
 failed** (934 baseline + 4 new pins); `cargo test --locked --test cli_help` → 3
 passed (1 new); `--dump-frame 100x34` byte-identical to the pre-phase frame.
+Committed `40d15472`.
+
+**Phase 2 gate result:** check rc 0, still exactly those 3 warnings;
+`cargo test --locked --bin crow -j 6` → **939 passed, 0 failed** (one shim pin
+promoted to its own test); `--dump-frame 100x34` byte-identical to the Phase-1
+frame — no paint change, and `main.rs` is untouched.
 
 ## Scope capture (unordered)
 
@@ -124,19 +130,41 @@ passed (1 new); `--dump-frame 100x34` byte-identical to the pre-phase frame.
       `--demo`) is byte-identical to the pre-phase frame — `main.rs:876` sets
       `show_banner = false` for the dump, so the banner was never in it; the
       removal is pinned by the `ui__tests.rs` banner tests instead.
-- [ ] **No martty/dsh homes.** `crow_home_from` keeps `CROW_HOME` →
+- [x] **No martty/dsh homes.** `crow_home_from` keeps `CROW_HOME` →
       `~/.agents/crow` and loses `MARTTY_HOME` + `DSH_HOME`;
       `legacy_settings_paths*` (`~/.martty/settings.json`,
       `~/.dsh-tui/sessions/dsh-tui-settings.json`) deleted with its callers;
       `sessions.rs` discovers only the configured root, not `~/.crow-term`,
       `~/.martty`, `~/.dsh`, `~/.dsh-tui`; `DSH_TUI_KEYDEBUG` alias deleted
       (`CROW_KEYDEBUG` only).
-- [ ] **The tests that PIN those shims get rewritten, not deleted.**
+      *Done (PLAN 2.1–2.4).* `crow_home_from(crow_home, user_home)` — two
+      params, one precedence. `legacy_settings_paths*` deleted with both
+      callers (`app.rs` import, `app/prefs.rs load_settings`, which is now a
+      single read of `settings_path(session_root)` and no migration write).
+      `session_roots_from(cfg_root, home)` collapsed into `session_roots(cfg_root)`:
+      `$HOME` is no longer consulted at all. `grep -rn "DSH_\|MARTTY_" src` → 0.
+      *Correction:* `DSH_TUI_KEYDEBUG` was already dead code — `app.rs:585`
+      reads only `CROW_KEYDEBUG`; what survived was a stale comment at
+      `keys_router.rs:237` claiming the alias existed. The comment is fixed.
+- [x] **The tests that PIN those shims get rewritten, not deleted.**
       `sessions_from_the_martty_and_dsh_homes_remain_discoverable`,
       `legacy_settings_come_from_the_martty_home_then_dsh_tui`,
       `a pre-rebrand MARTTY_HOME keeps its data` currently assert the behaviour
       we are removing. Each becomes the opposite assertion — legacy homes are
       NOT discovered — so the contract stays pinned.
+      *Done.* All three inverted, none deleted:
+      `sessions_are_discovered_in_the_configured_root_only` writes a real
+      session log under each of the four abandoned homes and asserts
+      `list_sessions` returns only the configured root's;
+      `settings_come_from_the_configured_root_only` seeds valid settings into
+      both legacy filenames and asserts `App::load_settings` ignores them;
+      `a_pre_rebrand_martty_home_is_not_read` (new, promoted from an assert
+      message) exports `MARTTY_HOME`/`DSH_HOME` and asserts `crow_home()` is
+      explained entirely by `CROW_HOME` + `HOME`. A fourth shim pin surfaced
+      only when the suite ran: `lang_switch_repaints_immediately_and_persists_for_the_workspace`
+      seeded `dsh-tui-settings.json` and asserted it migrated — now it seeds
+      `settings.json` and asserts the legacy file is neither read nor
+      overwritten. 938 → 939 tests, all green.
 - [ ] **`/liang` out of `SLASH_COMMANDS`** (commented, with a note pointing at
       `pet.rs` + `assets/pet/*.png`), handler and pet machinery untouched.
       `locale__tests.rs` iterates the catalog for the zh-desc gate and for
