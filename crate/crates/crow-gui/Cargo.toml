@@ -50,6 +50,12 @@ futures-lite = "2"
 wgpu = "28.0.0"
 web-time = "1"
 
+# The input-translation suite runs twice: `#[test]` on the host and
+# `#[wasm_bindgen_test]` here, in a real browser (scripts/test-web.sh).
+# 0.3.79 pins `wasm-bindgen =0.2.129`, which is the installed CLI.
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3.79"
+
 [features]
 default = []
 # Browser runtime: wgpu over WebGL (headless Chromium exposes navigator.gpu but
