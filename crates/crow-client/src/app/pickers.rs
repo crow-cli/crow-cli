@@ -89,9 +89,9 @@ impl App {
                         );
                     }
                     PickerKind::Auth => self.start_auth(&item.id, ctl),
-                    PickerKind::CordisPlugin => {
+                    PickerKind::DynamicPlugin => {
                         let action = self
-                            .cordis_plugins
+                            .dynamic_plugins
                             .iter()
                             .find(|plugin| plugin.id == item.id)
                             .map(|plugin| {
@@ -102,7 +102,7 @@ impl App {
                                 )
                             });
                         if let Some((_plugin_id, _, Some(request_id))) = action.as_ref() {
-                            self.open_cordis_approval_picker(request_id.clone());
+                            self.open_plugin_approval_picker(request_id.clone());
                         } else if let Some((plugin_id, status, _)) = action {
                             if matches!(status.as_str(), "starting-host" | "client-pending") {
                                 self.show_tip(self.locale.trf(
@@ -113,7 +113,7 @@ impl App {
                                 return;
                             }
                             let enabled = !matches!(status.as_str(), "running" | "waiting");
-                            ctl.send(Cmd::SetCordisPluginEnabled {
+                            ctl.send(Cmd::SetDynamicPluginEnabled {
                                 agent_id: self.session_id.clone(),
                                 plugin_id: plugin_id.clone(),
                                 enabled,
@@ -133,9 +133,9 @@ impl App {
                             });
                         }
                     }
-                    PickerKind::CordisApproval => {
+                    PickerKind::PluginApproval => {
                         if let Some(request_id) = item.provider {
-                            ctl.send(Cmd::RespondCordisApproval {
+                            ctl.send(Cmd::RespondPluginApproval {
                                 request_id,
                                 decision: item.id,
                             });

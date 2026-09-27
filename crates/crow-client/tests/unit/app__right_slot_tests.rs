@@ -20,7 +20,7 @@ fn test_app() -> (App, Controller, Receiver<AppEvent>) {
 
 fn snapshot(nodes: serde_json::Value, rev: u64) -> AppEvent {
     AppEvent::Rpc {
-        method: crate::cordis::SLOTS_UPDATE.into(),
+        method: crate::ext::SLOTS_UPDATE.into(),
         params: json!({
             "protocol": 0,
             "slot": "chrome.right",
@@ -100,7 +100,7 @@ fn snapshots_without_revision_still_replace_the_previous_view() {
     for text in ["first panel", "second panel"] {
         app.handle(
             AppEvent::Rpc {
-                method: crate::cordis::SLOTS_UPDATE.into(),
+                method: crate::ext::SLOTS_UPDATE.into(),
                 params: json!({
                     "protocol": 0,
                     "slot": "chrome.right",
@@ -129,7 +129,7 @@ fn conversation_input_dock_is_compact_and_does_not_claim_the_sidebar() {
     app.show_banner = false;
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::SLOTS_UPDATE.into(),
+            method: crate::ext::SLOTS_UPDATE.into(),
             params: json!({
                 "protocol": 0,
                 "slot": "conversation.input.dock",
@@ -209,7 +209,7 @@ fn conversation_input_dock_expands_structured_nodes_inside_the_composer_box() {
     app.show_banner = false;
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::SLOTS_UPDATE.into(),
+            method: crate::ext::SLOTS_UPDATE.into(),
             params: json!({
                 "protocol": 0,
                 "slot": "conversation.input.dock",
@@ -282,7 +282,7 @@ fn conversation_input_dock_shows_every_queue_row_when_space_allows() {
     app.show_banner = false;
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::SLOTS_UPDATE.into(),
+            method: crate::ext::SLOTS_UPDATE.into(),
             params: json!({
                 "protocol": 0,
                 "slot": "conversation.input.dock",
@@ -341,7 +341,7 @@ fn queue_view_contribution_replaces_the_native_fallback_shelf() {
     );
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::SLOTS_UPDATE.into(),
+            method: crate::ext::SLOTS_UPDATE.into(),
             params: json!({
                 "protocol": 0,
                 "slot": "conversation.input.dock",
@@ -378,7 +378,7 @@ fn conversation_input_dock_routes_each_visible_action() {
     app.show_banner = false;
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::SLOTS_UPDATE.into(),
+            method: crate::ext::SLOTS_UPDATE.into(),
             params: json!({
                 "protocol": 0,
                 "slot": "conversation.input.dock",
@@ -530,7 +530,7 @@ fn status_client_command_is_listed_and_invoked_locally() {
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::COMMANDS_UPDATE.into(),
+            method: crate::ext::COMMANDS_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "commands": [{

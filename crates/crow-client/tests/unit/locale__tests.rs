@@ -47,8 +47,8 @@ fn zh_command_desc_covers_every_builtin_and_plugin_command() {
     assert_eq!(zh.command_desc("ui", ""), "切换 UI 插件");
     assert_eq!(zh.command_desc("plugins", ""), "查看 Host 插件状态（只读）");
     assert_eq!(
-        zh.command_desc("cordis-plugins", ""),
-        "查看或管理动态 Cordis 插件"
+        zh.command_desc("dynamic-plugins", ""),
+        "查看或管理动态插件"
     );
     // Built-in Client Plugin commands keep their authored text in English.
     assert_eq!(zh.command_desc("unknown", "fallback"), "fallback");

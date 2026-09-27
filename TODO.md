@@ -82,6 +82,28 @@ frame — no paint change, and `main.rs` is untouched. Committed `30ee65fb`.
 `cargo test --locked --bin crow -j 6` → **940 passed, 0 failed**; `--dump-frame
 100x34` byte-identical to the Phase-2 frame.
 
+**Phase 4 gate result:** recorded in PLAN.md — check rc 0, still exactly those
+3 warnings; **941 passed, 0 failed** (940 → 941); `--dump-frame 100x34`
+byte-identical through 4.1–4.3, then a two-line textual diff in 4.4 (the
+re-wrapped demo conclusion and the `demo-flash · demo` chip) with all 35 rows
+intact. Committed `b05bd263`.
+
+**Phase 5 gate result:** check rc 0, still exactly those 3 warnings (the
+unused-`ctl` one moved `ui__tests.rs:3582` → `:3602` — 5.3's rewrite added 20
+lines above it; same warning, same binding); `cargo test --locked --bin crow
+-j 6` → **941 passed, 0 failed** (941 → 941: one test rewritten and relocated,
+one rewritten in place, four repointed, none added, none deleted); `cli_help` 3,
+`startup_session_e2e` 12, `sigterm_cleanup` 1, `tcp_attach` 1 all green.
+`--dump-frame 100x34` byte-identical to the Phase-4 frame under both the
+developer's `CROW_HOME` and a clean one, `--demo` identical to plain — a
+namespace rename repaints nothing.
+*Not a gate, but recorded:* the bin-profile build warns `field ui_preset is
+never read` (`app.rs:177`) — 4.1 deleted its last reader, the `--tests` gate
+cannot see it because the settings round-trip tests read the field, and the
+field must stay or the next patch-write drops `uiPreset` out of
+`settings.json`. Whether it should drive something now is a product call for
+7.4/7.5, not a drive-by `#[allow]` inside a rename phase.
+
 ## Scope capture (unordered)
 
 - [x] **The client stops owning provider/model/credentials.** `MODEL_PRESETS`
@@ -233,7 +255,7 @@ frame — no paint change, and `main.rs` is untouched. Committed `30ee65fb`.
       Both `--demo` and `--dump-frame` render; the frame keeps all 35 rows and
       diffs in exactly two (the re-wrapped conclusion, the model chip). The
       pet's XS half-block whale is parked machinery, not brand art, and stays.
-- [ ] **The `_dsh/cordis` extension family renamed, machinery kept.**
+- [x] **The `_dsh/cordis` extension family renamed, machinery kept.**
       `cordis.rs`'s 22 wire constants (`_dsh/cordis/tui/*`, `_dsh/plugins/list`),
       the `_meta.dsh.cordis.protocol` capability key the client both reads
       (`advertised_by_agent`) and advertises (`acp_auth.rs:114`), and the Rust
@@ -245,12 +267,58 @@ frame — no paint change, and `main.rs` is untouched. Committed `30ee65fb`.
       Nothing implements this protocol today — AGENTS.md: "anything that arrives
       from a Cordis slot snapshot never arrives" — so renaming the namespace is
       free, and it is the last `_dsh` on the wire.
-- [ ] **`AGENT_MODES` demo seeds**: the `cordis` "Creator mode" entry and the
+      *Done (PLAN 5.1–5.2).* `git mv src/cordis.rs src/ext.rs`; all 22 method
+      strings are crow's, the capability key is `_meta.crow.tui.protocol` in
+      both directions (`advertised_by_agent` reads it, `acp_auth.rs` advertises
+      it), and `crate::cordis::` → `crate::ext::` at 163 sites. 82 identifier
+      replacements, all landing on the crate's existing static/dynamic axis
+      (`DynamicPluginItem`, `Cmd::FetchDynamicPlugins`,
+      `PickerKind::DynamicPlugin`, `PendingPluginApproval`,
+      `app.dynamic_plugins`, `ensure_agent_ext`, `surface.ext`, …).
+      `grep -rni "cordis\|_dsh" src` → **0**; over `src` + `tests` → **1**, the
+      Phase-1 pin that `"--cordis"` stays *rejected*.
+      *Correction:* PLAN's `_dsh/cordis/plugins/{start,stop}` →
+      `_crow/plugins/{start,stop}` collides with `_dsh/plugins/list` →
+      `_crow/plugins/list` — two live methods, one name. The dynamic trio went
+      under the family prefix (`_crow/tui/plugins/{list,start,stop}`) and
+      `PLUGINS_LIST` → `DYNAMIC_PLUGINS_LIST`; the static inventory keeps
+      `_crow/plugins/list`, the one method outside the family.
+      *Correction:* a mock agent in `acp__tests.rs:278` advertised the old
+      `_meta.dsh.cordis.protocol`, so after the rename it had silently stopped
+      advertising the family — and still passed, because the compositor paths
+      do not require the capability. Green for the wrong reason; fixed.
+- [x] **`AGENT_MODES` demo seeds**: the `cordis` "Creator mode" entry and the
       "Shipped creator id is `cordis`" comment.
-- [ ] **The vestigial plugin slash commands** `/plugins`, `/cordis-plugins`,
+      *Done (PLAN 5.3).* Fourth seed deleted; three modes now. The doc above the
+      constant explains why without using the brand name — the gate is
+      `grep -rni cordis src` → 0, so even a historical note has to avoid the
+      word. *Correction:* the mode count was pinned in four tests, not zero
+      (`stock_presets_cover_the_four_web_ui_modes`, renamed
+      `stock_presets_cover_the_shipped_agent_modes`;
+      `slash_agent_opens_the_agent_preset_picker`;
+      `mode_picker_renders_modes_and_marks_the_current_one`; and the zh-desc
+      gate's key). All four rewritten, none deleted.
+- [x] **The vestigial plugin slash commands** `/plugins`, `/cordis-plugins`,
       `/ui` — they aim at a plugin host that does not exist. Rename away from
       cordis at minimum; whether they stay registered is a decision to record,
       not to guess at silently.
+      *Done (PLAN 5.3).* Decision recorded, not guessed: **parked the way
+      `/liang` is** — commented out of `SLASH_COMMANDS` at their alphabetical
+      positions, each with a note naming every surviving piece, handlers and zh
+      descs untouched so `run_slash` still resolves all three. Shipping three
+      menu entries whose only possible answer is "agent does not advertise
+      `_crow/tui`" is worse than not shipping them. `/cordis-plugins` was
+      renamed **`/dynamic-plugins`** on the way out (`slash_catalog.rs`,
+      `slash.rs:510`, `locale.rs:87`, `app.rs:342`, `session_slot.rs:85`), so
+      re-registering is one uncomment rather than a rename plus one.
+      Absence pinned by
+      `the_plugin_commands_are_parked_out_of_the_menu_but_the_machinery_still_runs`
+      — one registry assertion per command, a menu pass over `/plug`,
+      `/dynamic`, `/ui`, and `run_slash("ui", "")` still opening
+      `PickerKind::UiPlugin`. It is the rewrite of the failing
+      `slash_menu_offers_the_dynamic_plugin_manager`, relocated next to the
+      `/liang` park pin (the closer precedent) rather than next to
+      `login`/`logout` as PLAN said. 941 → 941 tests.
 - [ ] **Test fixture vocabulary**: ~400 hits — `dsh-test` (156), `dsh-acp` (22),
       `dsh-tui`, `dsh-runtime`, `martty-*` temp dirs and env names,
       `deepseek-*` model ids in canned payloads. Renamed to crow-shaped names

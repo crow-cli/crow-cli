@@ -81,14 +81,14 @@ fn dynamic_plugin_inventory_uses_the_backend_current_package_and_run_state() {
     assert_eq!(
         plugins,
         vec![
-            crate::bus::CordisPluginItem {
+            crate::bus::DynamicPluginItem {
                 id: "panel-1".into(),
                 name: "Current panel".into(),
                 package_id: "pkg-current".into(),
                 status: "running".into(),
                 approval_request_id: None,
             },
-            crate::bus::CordisPluginItem {
+            crate::bus::DynamicPluginItem {
                 id: "theme-1".into(),
                 name: "Clay theme".into(),
                 package_id: "pkg-theme".into(),
@@ -248,7 +248,7 @@ fn initialize_advertises_backchat_auth_caps() {
     assert_eq!(caps["_meta"]["terminal-auth"], true);
     assert_eq!(caps["_meta"]["terminal_output"], true);
     assert_eq!(caps["_meta"]["subagent-transcript"], true);
-    assert_eq!(caps["_meta"]["dsh"]["cordis"]["protocol"], 0);
+    assert_eq!(caps["_meta"]["crow"]["tui"]["protocol"], 0);
     assert_eq!(caps["_meta"]["jetbrains"]["air"]["version"], 1);
     assert_eq!(
         caps["_meta"]["jetbrains"]["air"]["capabilities"],
@@ -277,8 +277,8 @@ async fn plugin_ui_events_are_compositor_notifications_not_prompts() {
             async move |init: InitializeRequest, responder, cx| {
                 let mut meta = serde_json::Map::new();
                 meta.insert(
-                    "dsh".into(),
-                    json!({ "cordis": { "protocol": crate::cordis::PROTOCOL } }),
+                    "crow".into(),
+                    json!({ "tui": { "protocol": crate::ext::PROTOCOL } }),
                 );
                 responder.respond(
                     InitializeResponse::new(init.protocol_version)
@@ -286,11 +286,11 @@ async fn plugin_ui_events_are_compositor_notifications_not_prompts() {
                         .agent_info(Implementation::new("plugin-command-mock", "0")),
                 )?;
                 cx.send_notification(UntypedMessage::new(
-                    crate::cordis::COMMANDS_UPDATE,
+                    crate::ext::COMMANDS_UPDATE,
                     json!({ "protocol": 0, "commands": [] }),
                 )?)?;
                 cx.send_notification(UntypedMessage::new(
-                    crate::cordis::OVERLAY_UPDATE,
+                    crate::ext::OVERLAY_UPDATE,
                     json!({ "protocol": 0, "overlay": null }),
                 )?)
             },
@@ -300,11 +300,11 @@ async fn plugin_ui_events_are_compositor_notifications_not_prompts() {
             async move |request: UntypedMessage, responder, _cx| {
                 if matches!(
                     request.method(),
-                    crate::cordis::COMMAND_INVOKE
-                        | crate::cordis::THEME_SELECTED
-                        | crate::cordis::OVERLAY_EVENT
-                        | crate::cordis::AGENTS_UPDATE
-                        | crate::cordis::SESSION_ACTIVE
+                    crate::ext::COMMAND_INVOKE
+                        | crate::ext::THEME_SELECTED
+                        | crate::ext::OVERLAY_EVENT
+                        | crate::ext::AGENTS_UPDATE
+                        | crate::ext::SESSION_ACTIVE
                 ) {
                     let _ = request_tx.send((
                         "request",
@@ -318,7 +318,7 @@ async fn plugin_ui_events_are_compositor_notifications_not_prompts() {
         )
         .on_receive_notification(
             async move |notification: UntypedMessage, _cx| {
-                if notification.method() == crate::cordis::OVERLAY_EVENT {
+                if notification.method() == crate::ext::OVERLAY_EVENT {
                     let _ = extension_tx.send((
                         "notification",
                         notification.method().to_string(),
@@ -346,7 +346,7 @@ async fn plugin_ui_events_are_compositor_notifications_not_prompts() {
             Ok(AppEvent::Rpc { method, .. })
                 if matches!(
                     method.as_str(),
-                    crate::cordis::COMMANDS_UPDATE | crate::cordis::OVERLAY_UPDATE
+                    crate::ext::COMMANDS_UPDATE | crate::ext::OVERLAY_UPDATE
                 ) =>
             {
                 compositor_methods.insert(method);
@@ -359,8 +359,8 @@ async fn plugin_ui_events_are_compositor_notifications_not_prompts() {
     assert_eq!(
         compositor_methods,
         std::collections::HashSet::from([
-            crate::cordis::COMMANDS_UPDATE.to_string(),
-            crate::cordis::OVERLAY_UPDATE.to_string(),
+            crate::ext::COMMANDS_UPDATE.to_string(),
+            crate::ext::OVERLAY_UPDATE.to_string(),
         ])
     );
 
@@ -376,7 +376,7 @@ async fn plugin_ui_events_are_compositor_notifications_not_prompts() {
         .expect("command request should reach the compositor plane")
         .expect("extension channel");
     assert_eq!(kind, "request");
-    assert_eq!(method, crate::cordis::COMMAND_INVOKE);
+    assert_eq!(method, crate::ext::COMMAND_INVOKE);
     assert_eq!(
         params,
         json!({
@@ -397,7 +397,7 @@ async fn plugin_ui_events_are_compositor_notifications_not_prompts() {
         .expect("theme Plugin selection should reach the compositor plane")
         .expect("extension channel");
     assert_eq!(kind, "request");
-    assert_eq!(method, crate::cordis::THEME_SELECTED);
+    assert_eq!(method, crate::ext::THEME_SELECTED);
     assert_eq!(
         params,
         json!({
@@ -419,7 +419,7 @@ async fn plugin_ui_events_are_compositor_notifications_not_prompts() {
         .expect("overlay event should reach the compositor plane")
         .expect("extension channel");
     assert_eq!(kind, "notification");
-    assert_eq!(method, crate::cordis::OVERLAY_EVENT);
+    assert_eq!(method, crate::ext::OVERLAY_EVENT);
     assert_eq!(
         params,
         json!({
@@ -443,7 +443,7 @@ async fn plugin_ui_events_are_compositor_notifications_not_prompts() {
                 .expect("terminal overlay event should reach the compositor plane")
                 .expect("extension channel");
         assert_eq!(kind, "request");
-        assert_eq!(method, crate::cordis::OVERLAY_EVENT);
+        assert_eq!(method, crate::ext::OVERLAY_EVENT);
         assert_eq!(params["event"], event);
     }
     cmd_tx
@@ -475,7 +475,7 @@ async fn plugin_ui_events_are_compositor_notifications_not_prompts() {
         .expect("Agent navigation should reach the compositor plane")
         .expect("extension channel");
     assert_eq!(kind, "request");
-    assert_eq!(method, crate::cordis::AGENTS_UPDATE);
+    assert_eq!(method, crate::ext::AGENTS_UPDATE);
     assert_eq!(
         params,
         json!({
@@ -498,14 +498,14 @@ async fn plugin_ui_events_are_compositor_notifications_not_prompts() {
         .expect("active Session should reach the compositor plane")
         .expect("extension channel");
     assert_eq!(kind, "request");
-    assert_eq!(method, crate::cordis::SESSION_ACTIVE);
+    assert_eq!(method, crate::ext::SESSION_ACTIVE);
     assert_eq!(params, json!({ "protocol": 0, "sessionId": "s1" }));
     let _ = cmd_tx.send(Cmd::Shutdown);
     let _ = client.await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn cordis_requests_stay_local_when_the_agent_did_not_advertise_cordis() {
+async fn extension_requests_stay_local_when_the_agent_did_not_advertise_the_family() {
     use agent_client_protocol::schema::v1::{
         AgentCapabilities, InitializeResponse, NewSessionResponse,
     };
@@ -568,7 +568,7 @@ async fn cordis_requests_stay_local_when_the_agent_did_not_advertise_cordis() {
         tokio::time::timeout(Duration::from_millis(100), extension_rx.recv())
             .await
             .is_err(),
-        "a standard ACP agent must not receive an unadvertised Cordis request",
+        "a standard ACP agent must not receive an unadvertised extension request",
     );
     assert!(
         (0..20).any(|_| matches!(
@@ -584,7 +584,7 @@ async fn cordis_requests_stay_local_when_the_agent_did_not_advertise_cordis() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn client_compositor_catalog_does_not_require_agent_cordis_capability() {
+async fn client_compositor_catalog_does_not_require_agent_extension_capability() {
     use agent_client_protocol::schema::v1::{AgentCapabilities, InitializeResponse};
     use std::time::Duration;
 
@@ -599,7 +599,7 @@ async fn client_compositor_catalog_does_not_require_agent_cordis_capability() {
                         .agent_info(Implementation::new("standard-acp-agent", "0")),
                 )?;
                 cx.send_notification(UntypedMessage::new(
-                    crate::cordis::COMMANDS_UPDATE,
+                    crate::ext::COMMANDS_UPDATE,
                     json!({
                         "protocol": 0,
                         "commands": [{
@@ -625,7 +625,7 @@ async fn client_compositor_catalog_does_not_require_agent_cordis_capability() {
     let mut catalog = None;
     while std::time::Instant::now() < deadline && catalog.is_none() {
         match bus_rx.recv_timeout(Duration::from_millis(20)) {
-            Ok(AppEvent::Rpc { method, params }) if method == crate::cordis::COMMANDS_UPDATE => {
+            Ok(AppEvent::Rpc { method, params }) if method == crate::ext::COMMANDS_UPDATE => {
                 catalog = Some(params);
             }
             Ok(_) => {}
@@ -640,7 +640,7 @@ async fn client_compositor_catalog_does_not_require_agent_cordis_capability() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn client_compositor_command_does_not_require_agent_cordis_capability() {
+async fn client_compositor_command_does_not_require_agent_extension_capability() {
     use agent_client_protocol::schema::v1::{
         AgentCapabilities, InitializeResponse, NewSessionResponse,
     };
@@ -661,7 +661,7 @@ async fn client_compositor_command_does_not_require_agent_cordis_capability() {
                         )),
                 )?;
                 cx.send_notification(UntypedMessage::new(
-                    crate::cordis::COMMANDS_UPDATE,
+                    crate::ext::COMMANDS_UPDATE,
                     json!({
                         "protocol": 0,
                         "commands": [{
@@ -700,7 +700,7 @@ async fn client_compositor_command_does_not_require_agent_cordis_capability() {
     while std::time::Instant::now() < deadline {
         if matches!(
             bus_rx.recv_timeout(Duration::from_millis(20)),
-            Ok(AppEvent::Rpc { method, .. }) if method == crate::cordis::COMMANDS_UPDATE
+            Ok(AppEvent::Rpc { method, .. }) if method == crate::ext::COMMANDS_UPDATE
         ) {
             break;
         }
@@ -716,7 +716,7 @@ async fn client_compositor_command_does_not_require_agent_cordis_capability() {
         .await
         .expect("local compositor invocation should not be blocked by agent capability")
         .expect("invocation request");
-    assert_eq!(method, crate::cordis::COMMAND_INVOKE);
+    assert_eq!(method, crate::ext::COMMAND_INVOKE);
     assert_eq!(params["name"], "harness");
     assert_eq!(params["args"], "path-dsh-acp");
 
@@ -724,9 +724,10 @@ async fn client_compositor_command_does_not_require_agent_cordis_capability() {
     let active = tokio::time::timeout(Duration::from_secs(1), invoke_rx.recv()).await;
     let _ = cmd_tx.send(Cmd::Shutdown);
     let _ = client.await;
-    let (method, params) = active.expect("local session projection is independent of Agent Cordis")
+    let (method, params) = active
+        .expect("the local session projection does not need the extension family")
         .expect("active session projection request");
-    assert_eq!(method, crate::cordis::SESSION_ACTIVE);
+    assert_eq!(method, crate::ext::SESSION_ACTIVE);
     assert_eq!(params["sessionId"], "s1");
 }
 
@@ -755,7 +756,7 @@ async fn harness_new_action_uses_the_native_new_tab_flow_without_reinitializing(
                     )?;
                     if generation == 1 {
                         cx.send_notification(UntypedMessage::new(
-                            crate::cordis::COMMANDS_UPDATE,
+                            crate::ext::COMMANDS_UPDATE,
                             json!({
                                 "protocol": 0,
                                 "commands": [{
@@ -784,7 +785,7 @@ async fn harness_new_action_uses_the_native_new_tab_flow_without_reinitializing(
         )
         .on_receive_request(
             async move |request: UntypedMessage, responder, _cx| {
-                assert_eq!(request.method(), crate::cordis::COMMAND_INVOKE);
+                assert_eq!(request.method(), crate::ext::COMMAND_INVOKE);
                 responder.respond(json!({ "action": "new-session" }))
             },
             on_receive_request!(),
@@ -804,7 +805,7 @@ async fn harness_new_action_uses_the_native_new_tab_flow_without_reinitializing(
     let mut initial_bound = false;
     while Instant::now() < deadline && !(command_ready && initial_bound) {
         match bus_rx.recv_timeout(Duration::from_millis(20)) {
-            Ok(AppEvent::Rpc { method, .. }) if method == crate::cordis::COMMANDS_UPDATE => {
+            Ok(AppEvent::Rpc { method, .. }) if method == crate::ext::COMMANDS_UPDATE => {
                 command_ready = true;
             }
             Ok(AppEvent::Ctl(CtlEvent::SessionBound { session_id, .. })) if session_id == "s1" => {
@@ -876,7 +877,7 @@ async fn overlay_cancel_reaches_the_compositor_while_submit_is_pending() {
             async move |init: InitializeRequest, responder, cx| {
                 responder.respond(InitializeResponse::new(init.protocol_version))?;
                 cx.send_notification(UntypedMessage::new(
-                    crate::cordis::COMMANDS_UPDATE,
+                    crate::ext::COMMANDS_UPDATE,
                     json!({"protocol":0,"commands":[{"name":"harness","description":"Harness"}]}),
                 )?)
             },
@@ -955,7 +956,7 @@ async fn plugin_operation_defers_agent_requests_and_queued_prompts_until_complet
         .on_receive_request(
             async move |init: InitializeRequest, responder, cx| {
                 responder.respond(InitializeResponse::new(init.protocol_version))?;
-                cx.send_notification(UntypedMessage::new(crate::cordis::COMMANDS_UPDATE,
+                cx.send_notification(UntypedMessage::new(crate::ext::COMMANDS_UPDATE,
                     json!({"protocol":0,"commands":[{"name":"harness","description":"Harness"}]}))?)
             }, on_receive_request!(),
         )
@@ -1732,9 +1733,9 @@ async fn client_tree_config_set_uses_standard_acp_and_folds_response_only_state(
                 let result_tx = result_tx.clone();
                 tokio::spawn(async move {
                     let request = UntypedMessage::new(
-                        crate::cordis::SESSION_CONFIG_SET,
+                        crate::ext::SESSION_CONFIG_SET,
                         json!({
-                            "protocol": crate::cordis::PROTOCOL,
+                            "protocol": crate::ext::PROTOCOL,
                             "sessionId": "s-client",
                             "configId": "collaboration_mode",
                             "value": "plan",

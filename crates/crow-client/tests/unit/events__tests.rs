@@ -563,7 +563,7 @@ fn tui_palette_notification_activates_ember() {
     let palette: Value =
         serde_json::from_str(include_str!("../../docs/fixtures/demo-skin.v0.json")).unwrap();
     let ev = parse_notification(
-        crate::cordis::THEME_UPDATE,
+        crate::ext::THEME_UPDATE,
         &json!({"protocol": 0, "palette": palette, "activate": true}),
     );
     match &ev[..] {
@@ -584,12 +584,12 @@ fn tui_palette_wrong_protocol_or_invalid_yields_nothing() {
     let palette: Value =
         serde_json::from_str(include_str!("../../docs/fixtures/demo-skin.v0.json")).unwrap();
     assert!(parse_notification(
-        crate::cordis::THEME_UPDATE,
+        crate::ext::THEME_UPDATE,
         &json!({"protocol": 1, "palette": palette, "activate": true})
     )
     .is_empty());
     assert!(parse_notification(
-        crate::cordis::THEME_UPDATE,
+        crate::ext::THEME_UPDATE,
         &json!({"protocol": 0, "palette": {"id": "x"}, "activate": true})
     )
     .is_empty());
@@ -635,7 +635,7 @@ fn session_update_maps_chunks_tools_and_agent_option() {
                 "sessionUpdate": "config_option_update",
                 "configOptions": [
                     {"type": "select", "id": "mode", "category": "mode", "currentValue": "read-only", "options": []},
-                    {"type": "select", "id": "agent", "currentValue": "cordis", "options": [{"value": "cordis", "name": "Cordis"}]},
+                    {"type": "select", "id": "agent", "currentValue": "studio", "options": [{"value": "studio", "name": "Studio"}]},
                     {"type": "select", "id": "effort", "currentValue": "max", "options": [{"value": "high", "name": "High"}, {"value": "max", "name": "Max"}]}
                 ]
             }
@@ -646,7 +646,7 @@ fn session_update_maps_chunks_tools_and_agent_option() {
         vec![
             UiEvent::AgentPreset {
                 session: "s".into(),
-                preset: "cordis".into()
+                preset: "studio".into()
             },
             UiEvent::ReasoningEffort {
                 session: "s".into(),
@@ -843,7 +843,7 @@ fn catalog_prefers_agent_id_and_flattens_groups() {
         {"type": "select", "id": "model", "category": "model", "options": [{"value": "deepseek/m1", "name": "M1"}]},
         {"type": "select", "id": "agent", "options": [
             {"group": "system", "name": "System", "options": [
-                {"value": "cordis", "name": "Cordis", "description": "inspect"},
+                {"value": "studio", "name": "Studio", "description": "inspect"},
                 {"value": "broken", "name": "Broken", "description": "Broken: missing yaml"}
             ]}
         ]}
@@ -853,7 +853,7 @@ fn catalog_prefers_agent_id_and_flattens_groups() {
     assert_eq!(models.len(), 1);
     assert_eq!(models[0].id, "m1");
     assert_eq!(presets.len(), 2);
-    assert_eq!(presets[0].id, "cordis");
+    assert_eq!(presets[0].id, "studio");
     assert!(presets[1].broken);
 }
 

@@ -12,8 +12,8 @@ pub enum PickerKind {
     Permission,
     Session,
     Auth,
-    CordisPlugin,
-    CordisApproval,
+    DynamicPlugin,
+    PluginApproval,
     AgentHistory,
     Harness,
 }
@@ -90,9 +90,9 @@ pub(crate) struct PluginOverlaySnapshot {
 }
 
 #[derive(serde::Deserialize)]
-pub(crate) struct CordisApprovalsSnapshot {
+pub(crate) struct PluginApprovalsSnapshot {
     pub(crate) protocol: u64,
-    pub(crate) approvals: Vec<crate::bus::PendingCordisApproval>,
+    pub(crate) approvals: Vec<crate::bus::PendingPluginApproval>,
 }
 
 #[derive(serde::Deserialize)]

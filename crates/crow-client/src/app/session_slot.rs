@@ -82,7 +82,7 @@ pub struct SessionSlot {
     /// the user returns. Compositor-owned plugin views never park — the
     /// tab-click path cancels them instead (see `cancel_plugin_overlays`).
     pub view_overlay: Option<ViewOverlay>,
-    /// `/plugins` / `/cordis-plugins` inventory tree (selection state
+    /// `/plugins` / `/dynamic-plugins` inventory tree (selection state
     /// included) parked with its session like the info popups.
     pub plugin_tree: Option<PluginTree>,
 }

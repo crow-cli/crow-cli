@@ -56,10 +56,10 @@ fn parse_skills_reads_names_and_skips_nameless() {
 }
 
 #[test]
-fn stock_presets_cover_the_four_web_ui_modes() {
+fn stock_presets_cover_the_shipped_agent_modes() {
     let presets = stock_presets();
     let ids: Vec<&str> = presets.iter().map(|p| p.id.as_str()).collect();
-    assert_eq!(ids, ["standard", "code", "minimal", "cordis"]);
+    assert_eq!(ids, ["standard", "code", "minimal"]);
 }
 
 use crate::bus::Cmd;

@@ -420,12 +420,12 @@ fn controller_loop(
                     plugins: Vec::new(),
                 }));
             }
-            Cmd::FetchCordisPlugins { .. } => {
-                let _ = bus.send(AppEvent::Ctl(CtlEvent::CordisPlugins {
+            Cmd::FetchDynamicPlugins { .. } => {
+                let _ = bus.send(AppEvent::Ctl(CtlEvent::DynamicPlugins {
                     plugins: Vec::new(),
                 }));
             }
-            Cmd::SetCordisPluginEnabled { .. } | Cmd::RespondCordisApproval { .. } => {
+            Cmd::SetDynamicPluginEnabled { .. } | Cmd::RespondPluginApproval { .. } => {
                 let _ = bus.send(AppEvent::Ctl(CtlEvent::TuiOpFailed(
                     "dynamic plugins require the ACP transport".into(),
                 )));
@@ -641,7 +641,7 @@ fn controller_loop(
                 // controller owns nothing to forget.
             }
             Cmd::QueueSnapshot { .. } | Cmd::AgentsSnapshot { .. } | Cmd::ActiveSession { .. } => {
-                // The legacy/demo controller has no local Cordis compositor.
+                // The legacy/demo controller has no local compositor.
             }
             Cmd::SwitchHarness { .. } => {
                 // The legacy/demo controller owns no agent endpoint: there is
@@ -981,7 +981,7 @@ fn parse_catalog(value: &Value) -> (Vec<CatalogModel>, Vec<CatalogPreset>) {
     (out, presets)
 }
 
-/// The four stock Web UI agent modes, used by the demo catalog.
+/// The stock agent modes, used by the demo catalog.
 fn stock_presets() -> Vec<CatalogPreset> {
     crate::app::AGENT_MODES
         .iter()

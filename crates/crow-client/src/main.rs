@@ -9,11 +9,11 @@ mod attachments;
 mod bus;
 mod clipboard;
 mod controller;
-mod cordis;
 mod demo;
 mod diff;
 mod elicitation;
 mod events;
+mod ext;
 mod file_ref;
 #[cfg(feature = "gui")]
 mod gui;

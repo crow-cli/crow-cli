@@ -179,9 +179,9 @@ impl App {
         });
     }
 
-    pub(crate) fn open_cordis_plugin_picker(&mut self) {
+    pub(crate) fn open_dynamic_plugin_picker(&mut self) {
         let items = self
-            .cordis_plugins
+            .dynamic_plugins
             .iter()
             .map(|plugin| PickerItem {
                 id: plugin.id.clone(),
@@ -198,12 +198,12 @@ impl App {
             .collect();
         self.picker = Some(Picker {
             offset: 0,
-            kind: PickerKind::CordisPlugin,
+            kind: PickerKind::DynamicPlugin,
             title: self
                 .locale
                 .tr(
-                    " Cordis plugins · dynamic · enter manage · esc close ",
-                    " Cordis 插件 · 动态 · enter 管理 · esc 关闭 ",
+            " dynamic plugins · enter manage · esc close ",
+            " 动态插件 · enter 管理 · esc 关闭 ",
                 )
                 .into(),
             sel: 0,
@@ -211,10 +211,10 @@ impl App {
         });
     }
 
-    pub(crate) fn open_cordis_approval_picker(&mut self, request_id: String) {
+    pub(crate) fn open_plugin_approval_picker(&mut self, request_id: String) {
         self.picker = Some(Picker {
             offset: 0,
-            kind: PickerKind::CordisApproval,
+            kind: PickerKind::PluginApproval,
             title: self
                 .locale
                 .tr(

@@ -157,7 +157,7 @@ fn tui_palette_rpc_activates_ember() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(true),
         },
         &ctl,
@@ -211,7 +211,7 @@ fn gallery_palette_rpc_activates_everforest_and_toggles_modes() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: gallery_params("everforest", true),
         },
         &ctl,
@@ -250,7 +250,7 @@ fn slash_theme_switches_between_gallery_packs() {
     ] {
         app.handle(
             AppEvent::Rpc {
-                method: crate::cordis::THEME_UPDATE.into(),
+                method: crate::ext::THEME_UPDATE.into(),
                 params: gallery_params(id, false),
             },
             &ctl,
@@ -268,7 +268,7 @@ fn tui_palette_without_activate_registers_but_does_not_switch() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(false),
         },
         &ctl,
@@ -283,7 +283,7 @@ fn tui_palette_remove_retracts_the_native_catalog_entry() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(false),
         },
         &ctl,
@@ -292,7 +292,7 @@ fn tui_palette_remove_retracts_the_native_catalog_entry() {
 
     app.handle(
         AppEvent::Rpc {
-            method: "_dsh/cordis/tui/theme/remove".into(),
+            method: crate::ext::THEME_REMOVE.into(),
             params: serde_json::json!({ "protocol": 0, "id": "ember" }),
         },
         &ctl,
@@ -306,7 +306,7 @@ fn slash_theme_id_covers_mounted_plugin_pack() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(true),
         },
         &ctl,
@@ -336,7 +336,7 @@ fn slash_theme_selection_notifies_the_client_theme_registry() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(false),
         },
         &ctl,
@@ -361,7 +361,7 @@ fn stopped_dynamic_theme_stays_selectable_without_painting_until_restored() {
     loaded["source"] = json!("dynamic");
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: loaded,
         },
         &ctl,
@@ -372,7 +372,7 @@ fn stopped_dynamic_theme_stays_selectable_without_painting_until_restored() {
     stopped["source"] = json!("dynamic");
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: stopped,
         },
         &ctl,
@@ -408,7 +408,7 @@ fn slash_theme_options_match_the_picker_catalog() {
     loaded["loaded"] = json!(true);
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: loaded,
         },
         &ctl,
@@ -418,7 +418,7 @@ fn slash_theme_options_match_the_picker_catalog() {
     stopped["loaded"] = json!(false);
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: stopped,
         },
         &ctl,
@@ -445,7 +445,7 @@ fn theme_picker_can_leave_and_return_to_a_dynamic_plugin_pack() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(true),
         },
         &ctl,
@@ -491,7 +491,7 @@ fn duplicate_palette_id_replaces_colors() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(true),
         },
         &ctl,
@@ -501,7 +501,7 @@ fn duplicate_palette_id_replaces_colors() {
     palette["dark"]["brand"] = json!("#010203");
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: json!({"protocol": 0, "palette": palette, "activate": true}),
         },
         &ctl,
@@ -515,7 +515,7 @@ fn invalid_palette_keeps_previous_theme() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: json!({"protocol": 0, "palette": {"id": "x"}, "activate": true}),
         },
         &ctl,
@@ -529,14 +529,14 @@ fn theme_dialog_arrows_preview_and_only_enter_commits() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(false),
         },
         &ctl,
     );
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: gallery_params("ayu", false),
         },
         &ctl,
@@ -583,7 +583,7 @@ fn theme_dialog_esc_reverts_the_preview_to_the_committed_theme() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(false),
         },
         &ctl,
@@ -629,7 +629,7 @@ fn slash_theme_popup_previews_and_reverts_without_enter() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(false),
         },
         &ctl,
@@ -688,7 +688,7 @@ fn slash_theme_popup_enter_commits_the_previewed_palette() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: ember_params(false),
         },
         &ctl,
@@ -717,7 +717,7 @@ fn dialog_stopped_pack_preview_is_transient_and_enter_holds_it_while_loading() {
     loaded["loaded"] = json!(true);
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: loaded,
         },
         &ctl,
@@ -727,7 +727,7 @@ fn dialog_stopped_pack_preview_is_transient_and_enter_holds_it_while_loading() {
     stopped["loaded"] = json!(false);
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: stopped,
         },
         &ctl,

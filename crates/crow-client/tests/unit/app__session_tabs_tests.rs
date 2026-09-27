@@ -360,7 +360,7 @@ fn hidden_subagent_streams_are_retained_without_repainting_the_parent() {
     }
 
     app.handle(AppEvent::Rpc {
-        method: crate::cordis::AGENTS_SELECT.into(),
+        method: crate::ext::AGENTS_SELECT.into(),
         params: serde_json::json!({ "protocol": 0, "id": "sub-2" }),
     }, &ctl);
     assert!(app.needs_redraw, "switching to a child immediately reveals its saved output");
@@ -883,7 +883,7 @@ fn mouse(kind: MouseEventKind, x: u16, y: u16) -> MouseEvent {
 fn push_plugin_view(app: &mut App, ctl: &Controller, id: &str, text: &str) {
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "overlay": {
@@ -973,7 +973,7 @@ fn tab_click_cancels_a_plugin_select_carrying_the_selection_value() {
     app.open_new_session("s-two".into(), true);
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "overlay": {
@@ -1026,7 +1026,7 @@ fn plugin_null_ack_after_a_tab_switch_keeps_the_restored_painter_popup() {
     // The compositor's null ack lands afterwards and must not eat /keys.
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({ "protocol": 0, "overlay": null }),
         },
         &ctl,

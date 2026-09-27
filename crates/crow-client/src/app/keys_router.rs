@@ -254,7 +254,7 @@ impl App {
         // instead of toggling vim, and normal-mode letters never land in
         // a hidden composer while a modal is up).
 
-        if key.modifiers == KeyModifiers::ALT && !self.pending_cordis_approvals.is_empty() {
+        if key.modifiers == KeyModifiers::ALT && !self.pending_plugin_approvals.is_empty() {
             let decision = match key.code {
                 KeyCode::Char('1') => Some("allow-version"),
                 KeyCode::Char('2') => Some("allow-future"),
@@ -262,8 +262,8 @@ impl App {
                 _ => None,
             };
             if let Some(decision) = decision {
-                ctl.send(Cmd::RespondCordisApproval {
-                    request_id: self.pending_cordis_approvals[0].request_id.clone(),
+                ctl.send(Cmd::RespondPluginApproval {
+                    request_id: self.pending_plugin_approvals[0].request_id.clone(),
                     decision: decision.into(),
                 });
                 return;

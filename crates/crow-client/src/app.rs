@@ -339,10 +339,10 @@ pub struct App {
     plugin_commands: Vec<PluginCommand>,
     /// Last Host Loader inventory (`/plugins`).
     pub(crate) static_plugins: Vec<crate::bus::StaticPluginItem>,
-    /// Last backend-owned dynamic plugin inventory (`/cordis-plugins`).
-    cordis_plugins: Vec<crate::bus::CordisPluginItem>,
+    /// Last backend-owned dynamic plugin inventory (`/dynamic-plugins`).
+    dynamic_plugins: Vec<crate::bus::DynamicPluginItem>,
     /// Model-requested dynamic activations awaiting a decision.
-    pub(crate) pending_cordis_approvals: Vec<crate::bus::PendingCordisApproval>,
+    pub(crate) pending_plugin_approvals: Vec<crate::bus::PendingPluginApproval>,
     /// ACP-carried UI Plugin catalog (`/ui`).
     ui_plugins: Vec<crate::bus::UiPluginItem>,
     /// Last advertised composition select (`/agent`).
@@ -575,8 +575,8 @@ impl App {
             skills: Vec::new(),
             plugin_commands: Vec::new(),
             static_plugins: Vec::new(),
-            cordis_plugins: Vec::new(),
-            pending_cordis_approvals: Vec::new(),
+            dynamic_plugins: Vec::new(),
+            pending_plugin_approvals: Vec::new(),
             ui_plugins: Vec::new(),
             last_presets: Vec::new(),
             last_models: Vec::new(),

@@ -284,7 +284,7 @@ fn active_image_background_clears_only_the_base_canvas() {
     let (ctl, _commands) = crate::controller::tests::test_controller();
     app.handle(
         crate::bus::AppEvent::Rpc {
-            method: crate::cordis::THEME_UPDATE.into(),
+            method: crate::ext::THEME_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "palette": palette,
@@ -625,32 +625,52 @@ fn status_shortcut_hints_follow_their_values_and_use_key_styling() {
 }
 
 #[test]
-fn cordis_protocol_id_is_rendered_as_creator() {
+fn an_advertised_preset_renders_by_its_catalog_name_not_its_raw_id() {
+    fn title(app: &App) -> String {
+        status_title(app)
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
+    }
+
     let mut app = test_app();
     let (ctl, _commands) = crate::controller::tests::test_controller();
     app.handle(
         crate::bus::AppEvent::Ctl(crate::bus::CtlEvent::Catalog {
             session_id: None,
             models: Vec::new(),
-            presets: vec![crate::bus::CatalogPreset {
-                id: "cordis".into(),
-                name: "Creator from ACP".into(),
-                description: String::new(),
-                broken: false,
-            }],
+            presets: vec![
+                crate::bus::CatalogPreset {
+                    id: "standard".into(),
+                    name: "House Standard from ACP".into(),
+                    description: String::new(),
+                    broken: false,
+                },
+                crate::bus::CatalogPreset {
+                    id: "nightshift".into(),
+                    name: "Night Shift from ACP".into(),
+                    description: String::new(),
+                    broken: false,
+                },
+            ],
         }),
         &ctl,
     );
-    app.modes.agent_preset = Some("cordis".into());
 
-    let rendered = status_title(&app)
-        .spans
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect::<String>();
+    // An id the client never shipped still renders as the agent described it,
+    // never as the raw protocol token.
+    app.modes.agent_preset = Some("nightshift".into());
+    let rendered = title(&app);
+    assert!(rendered.contains("Night Shift from ACP"), "{rendered}");
+    assert!(!rendered.contains("nightshift"), "{rendered}");
 
-    assert!(rendered.contains("Creator from ACP"), "{rendered}");
-    assert!(!rendered.contains("cordis"), "{rendered}");
+    // And an id the client *does* have a stock label for defers to the
+    // catalog anyway: the agent's own name outranks the demo seed.
+    app.modes.agent_preset = Some("standard".into());
+    let rendered = title(&app);
+    assert!(rendered.contains("House Standard from ACP"), "{rendered}");
+    assert!(!rendered.contains("Standard mode"), "{rendered}");
 }
 
 #[test]
@@ -966,7 +986,7 @@ fn plugin_agent_navigation_sits_above_composer_meta_with_general_theme_tokens() 
     let (ctl, _commands) = crate::controller::tests::test_controller();
     app.handle(
         crate::bus::AppEvent::Rpc {
-            method: crate::cordis::SLOTS_UPDATE.into(),
+            method: crate::ext::SLOTS_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "slot": "conversation.navigation.dock",
@@ -984,7 +1004,7 @@ fn plugin_agent_navigation_sits_above_composer_meta_with_general_theme_tokens() 
     );
     app.handle(
         crate::bus::AppEvent::Rpc {
-            method: crate::cordis::SLOTS_UPDATE.into(),
+            method: crate::ext::SLOTS_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "slot": "conversation.composer.dock",
@@ -1070,7 +1090,7 @@ fn plugin_agent_navigation_sits_above_composer_meta_with_general_theme_tokens() 
 
     app.handle(
         crate::bus::AppEvent::Rpc {
-            method: crate::cordis::SLOTS_UPDATE.into(),
+            method: crate::ext::SLOTS_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "slot": "conversation.navigation.dock",
@@ -1181,7 +1201,7 @@ fn narrow_agent_navigation_keeps_the_active_item_and_switch_action() {
     let (ctl, _commands) = crate::controller::tests::test_controller();
     app.handle(
         crate::bus::AppEvent::Rpc {
-            method: crate::cordis::SLOTS_UPDATE.into(),
+            method: crate::ext::SLOTS_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "slot": "conversation.navigation.dock",
@@ -1226,7 +1246,7 @@ fn short_terminal_keeps_navigation_before_optional_telemetry() {
     ] {
         app.handle(
             crate::bus::AppEvent::Rpc {
-                method: crate::cordis::SLOTS_UPDATE.into(),
+                method: crate::ext::SLOTS_UPDATE.into(),
                 params: serde_json::json!({
                     "protocol": 0,
                     "slot": slot,
@@ -1628,7 +1648,7 @@ fn welcome_hero_slot_replaces_only_the_crow_cli_lockup() {
     let (ctl, _commands) = crate::controller::tests::test_controller();
     app.handle(
         crate::bus::AppEvent::Rpc {
-            method: crate::cordis::SLOTS_UPDATE.into(),
+            method: crate::ext::SLOTS_UPDATE.into(),
             params: serde_json::json!({
             "protocol": 0,
             "slot": "welcome.hero",
@@ -1682,7 +1702,7 @@ fn welcome_slot_updates_do_not_hide_an_existing_conversation() {
 
     app.handle(
         crate::bus::AppEvent::Rpc {
-            method: crate::cordis::SLOTS_UPDATE.into(),
+            method: crate::ext::SLOTS_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "slot": "welcome.hero",
@@ -1722,7 +1742,7 @@ fn welcome_info_slot_replaces_only_the_native_information_region() {
     let (ctl, _commands) = crate::controller::tests::test_controller();
     app.handle(
         crate::bus::AppEvent::Rpc {
-            method: crate::cordis::SLOTS_UPDATE.into(),
+            method: crate::ext::SLOTS_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "slot": "welcome.info",
@@ -2001,7 +2021,7 @@ fn mode_picker_renders_modes_and_marks_the_current_one() {
             .collect(),
     });
     let frame = dump_frame(&mut app, 100, 30);
-    for name in ["Standard mode", "Code mode", "Minimal mode", "Creator mode"] {
+    for name in ["Standard mode", "Code mode", "Minimal mode"] {
         assert!(frame.contains(name), "{name} listed in the picker\n{frame}");
     }
     let minimal_row = frame
@@ -3192,7 +3212,7 @@ fn composer_control_rows_share_one_left_gutter() {
     ] {
         app.handle(
             crate::bus::AppEvent::Rpc {
-                method: crate::cordis::SLOTS_UPDATE.into(),
+                method: crate::ext::SLOTS_UPDATE.into(),
                 params: serde_json::json!({
                     "protocol": 0,
                     "slot": slot,
@@ -3362,7 +3382,7 @@ fn empty_plugin_dock_snapshot_hides_the_agents_row_after_tasks_end() {
     let (ctl, _commands) = crate::controller::tests::test_controller();
     app.handle(
         crate::bus::AppEvent::Rpc {
-            method: crate::cordis::SLOTS_UPDATE.into(),
+            method: crate::ext::SLOTS_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "slot": "conversation.navigation.dock",

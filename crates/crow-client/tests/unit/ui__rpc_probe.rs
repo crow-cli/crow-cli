@@ -20,7 +20,7 @@ fn probe_app() -> App {
 fn push_view(app: &mut App, ctl: &crate::controller::Controller, text: &str) {
     app.handle(
         crate::bus::AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "overlay": {

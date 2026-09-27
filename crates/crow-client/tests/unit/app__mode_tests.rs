@@ -1,6 +1,6 @@
 use super::*;
 use crate::bus::{
-    CatalogModel, CatalogPreset, CordisPluginItem, PendingCordisApproval, SessionListItem,
+    CatalogModel, CatalogPreset, DynamicPluginItem, PendingPluginApproval, SessionListItem,
     StaticPluginItem,
 };
 use std::sync::mpsc::Receiver;
@@ -94,18 +94,6 @@ fn selected_model_clears_once_a_turn_streams_on_it() {
         app.selected_model, None,
         "realized pick defers to the stream"
     );
-}
-
-#[test]
-fn slash_menu_offers_the_dynamic_plugin_manager() {
-    let (mut app, _ctl, _rx) = test_app();
-    app.input.set("/plug".into());
-
-    let matches = app.slash_matches();
-
-    assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0].name, "plugins");
-    assert_eq!(matches[0].usage, "/plugins");
 }
 
 #[test]
@@ -339,16 +327,16 @@ fn plugins_slash_fetches_the_static_loader_inventory() {
 }
 
 #[test]
-fn cordis_plugins_slash_fetches_the_dynamic_inventory() {
+fn dynamic_plugins_slash_fetches_the_dynamic_inventory() {
     let (mut app, _demo_ctl, _rx) = test_app();
     let (ctl, commands) = crate::controller::tests::test_controller();
 
-    app.run_slash("cordis-plugins", "", &ctl);
+    app.run_slash("dynamic-plugins", "", &ctl);
 
     let command = commands
         .recv_timeout(std::time::Duration::from_secs(1))
-        .expect("cordis-plugins slash sends a command");
-    assert!(matches!(command, Cmd::FetchCordisPlugins { agent_id } if agent_id == "dsh-test"));
+        .expect("dynamic-plugins slash sends a command");
+    assert!(matches!(command, Cmd::FetchDynamicPlugins { agent_id } if agent_id == "dsh-test"));
 }
 
 #[test]
@@ -406,27 +394,27 @@ fn static_plugin_inventory_is_read_only_and_matches_web_status_fields() {
 }
 
 #[test]
-fn cordis_plugin_inventory_opens_a_running_stopped_and_pending_picker() {
+fn dynamic_plugin_inventory_opens_a_running_stopped_and_pending_picker() {
     let (mut app, ctl, _rx) = test_app();
 
     app.handle(
-        AppEvent::Ctl(CtlEvent::CordisPlugins {
+        AppEvent::Ctl(CtlEvent::DynamicPlugins {
             plugins: vec![
-                CordisPluginItem {
+                DynamicPluginItem {
                     id: "panel-1".into(),
                     name: "Status panel".into(),
                     package_id: "pkg-1".into(),
                     status: "running".into(),
                     approval_request_id: None,
                 },
-                CordisPluginItem {
+                DynamicPluginItem {
                     id: "theme-1".into(),
                     name: "Clay theme".into(),
                     package_id: "pkg-2".into(),
                     status: "stopped".into(),
                     approval_request_id: None,
                 },
-                CordisPluginItem {
+                DynamicPluginItem {
                     id: "dock-1".into(),
                     name: "Composer dock".into(),
                     package_id: "pkg-3".into(),
@@ -439,7 +427,7 @@ fn cordis_plugin_inventory_opens_a_running_stopped_and_pending_picker() {
     );
 
     let picker = app.picker.as_ref().expect("plugin picker opens");
-    assert!(matches!(picker.kind, PickerKind::CordisPlugin));
+    assert!(matches!(picker.kind, PickerKind::DynamicPlugin));
     assert_eq!(picker.items[0].label, "Status panel");
     assert_eq!(picker.items[0].meta, "dynamic · running · enter stop");
     assert_eq!(picker.items[1].meta, "dynamic · stopped · enter restore");
@@ -454,8 +442,8 @@ fn enter_toggles_a_plugin_and_reopens_the_backend_inventory() {
     let (mut app, _demo_ctl, _rx) = test_app();
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
-        AppEvent::Ctl(CtlEvent::CordisPlugins {
-            plugins: vec![CordisPluginItem {
+        AppEvent::Ctl(CtlEvent::DynamicPlugins {
+            plugins: vec![DynamicPluginItem {
                 id: "panel-1".into(),
                 name: "Status panel".into(),
                 package_id: "pkg-1".into(),
@@ -473,18 +461,18 @@ fn enter_toggles_a_plugin_and_reopens_the_backend_inventory() {
         .expect("plugin picker sends a toggle");
     assert!(matches!(
         command,
-        Cmd::SetCordisPluginEnabled { agent_id, plugin_id, enabled }
+        Cmd::SetDynamicPluginEnabled { agent_id, plugin_id, enabled }
             if agent_id == "dsh-test" && plugin_id == "panel-1" && !enabled
     ));
 }
 
 #[test]
-fn pending_cordis_approval_renders_above_tips_and_alt_shortcut_answers_it() {
+fn pending_plugin_approval_renders_above_tips_and_alt_shortcut_answers_it() {
     let (mut app, _demo_ctl, _rx) = test_app();
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::APPROVALS_UPDATE.into(),
+            method: crate::ext::APPROVALS_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "approvals": [{
@@ -501,8 +489,8 @@ fn pending_cordis_approval_renders_above_tips_and_alt_shortcut_answers_it() {
         &ctl,
     );
     assert_eq!(
-        app.pending_cordis_approvals,
-        vec![PendingCordisApproval {
+        app.pending_plugin_approvals,
+        vec![PendingPluginApproval {
             request_id: "approval-1".into(),
             agent_id: "dsh-test".into(),
             plugin_id: "panel-1".into(),
@@ -529,7 +517,7 @@ fn pending_cordis_approval_renders_above_tips_and_alt_shortcut_answers_it() {
         .expect("approval shortcut sends a decision");
     assert!(matches!(
         command,
-        Cmd::RespondCordisApproval { request_id, decision }
+        Cmd::RespondPluginApproval { request_id, decision }
             if request_id == "approval-1" && decision == "allow-future"
     ));
 }
@@ -692,7 +680,7 @@ fn agent_navigation_is_inline_when_the_view_plugin_is_available() {
     });
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::COMMANDS_UPDATE.into(),
+            method: crate::ext::COMMANDS_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "commands": [{
@@ -757,7 +745,7 @@ fn the_client_agents_selection_can_open_any_subagent_or_return_to_main() {
 
     app.handle(
         AppEvent::Rpc {
-            method: "_dsh/cordis/tui/agents/select".into(),
+            method: crate::ext::AGENTS_SELECT.into(),
             params: serde_json::json!({ "protocol": 0, "id": "child-2" }),
         },
         &ctl,
@@ -766,7 +754,7 @@ fn the_client_agents_selection_can_open_any_subagent_or_return_to_main() {
 
     app.handle(
         AppEvent::Rpc {
-            method: "_dsh/cordis/tui/agents/select".into(),
+            method: crate::ext::AGENTS_SELECT.into(),
             params: serde_json::json!({ "protocol": 0, "id": "dsh-test" }),
         },
         &ctl,
@@ -776,7 +764,7 @@ fn the_client_agents_selection_can_open_any_subagent_or_return_to_main() {
     for action in ["begin", "next", "confirm"] {
         app.handle(
             AppEvent::Rpc {
-                method: crate::cordis::AGENTS_NAVIGATE.into(),
+                method: crate::ext::AGENTS_NAVIGATE.into(),
                 params: serde_json::json!({ "protocol": 0, "action": action }),
             },
             &ctl,
@@ -954,7 +942,7 @@ fn slash_agent_opens_the_agent_preset_picker() {
     let picker = app.picker.as_ref().expect("agent picker opens");
     assert!(matches!(picker.kind, PickerKind::Mode));
     let ids: Vec<&str> = picker.items.iter().map(|item| item.id.as_str()).collect();
-    assert_eq!(ids, ["standard", "code", "minimal", "cordis"]);
+    assert_eq!(ids, ["standard", "code", "minimal"]);
     assert_eq!(picker.sel, 0, "defaults to standard");
     assert_eq!(picker.items[0].label, "Standard mode");
 }
@@ -1064,8 +1052,8 @@ fn live_mode_picker_uses_advertised_composition_not_stock() {
             session_id: None,
             models: Vec::new(),
             presets: vec![CatalogPreset {
-                id: "cordis".into(),
-                name: "Creator from ACP".into(),
+                id: "studio".into(),
+                name: "Studio from ACP".into(),
                 description: "inspect".into(),
                 broken: false,
             }],
@@ -1075,8 +1063,8 @@ fn live_mode_picker_uses_advertised_composition_not_stock() {
     app.run_slash("agent", "", &ctl);
     let picker = app.picker.as_ref().expect("mode picker opens");
     let ids: Vec<&str> = picker.items.iter().map(|i| i.id.as_str()).collect();
-    assert_eq!(ids, ["cordis"]);
-    assert_eq!(picker.items[0].label, "Creator from ACP");
+    assert_eq!(ids, ["studio"]);
+    assert_eq!(picker.items[0].label, "Studio from ACP");
 }
 
 #[test]
@@ -1291,11 +1279,11 @@ fn preset_ack_folds_the_chip_and_new_session_waits_for_the_host_mode() {
     app.handle(
         AppEvent::Ctl(CtlEvent::PresetSet {
             session_id: String::new(),
-            preset: "cordis".into(),
+            preset: "studio".into(),
         }),
         &ctl,
     );
-    assert_eq!(app.modes.agent_preset.as_deref(), Some("cordis"));
+    assert_eq!(app.modes.agent_preset.as_deref(), Some("studio"));
     app.run_slash("new", "fresh", &ctl);
     assert_eq!(app.session_id, "fresh");
     assert!(
@@ -1475,10 +1463,10 @@ fn agent_preset_event_updates_chrome_without_adding_a_transcript_row() {
 
     app.apply_ui(crate::events::UiEvent::AgentPreset {
         session: app.session_id.clone(),
-        preset: "cordis".into(),
+        preset: "studio".into(),
     });
 
-    assert_eq!(app.modes.agent_preset.as_deref(), Some("cordis"));
+    assert_eq!(app.modes.agent_preset.as_deref(), Some("studio"));
     assert_eq!(app.transcript.cells.len(), cells_before);
 }
 
@@ -3274,7 +3262,7 @@ fn client_plugin_command_catalog_does_not_interpret_legacy_theme_metadata() {
     let (mut app, ctl, _rx) = test_app();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::COMMANDS_UPDATE.into(),
+            method: crate::ext::COMMANDS_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "commands": [{
@@ -3300,7 +3288,7 @@ fn client_plugin_command_invocation_stays_out_of_the_agent_prompt() {
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::COMMANDS_UPDATE.into(),
+            method: crate::ext::COMMANDS_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "commands": [{
@@ -3333,7 +3321,7 @@ fn ui_plugin_catalog_reuses_the_upward_slash_menu_and_selects_over_acp() {
     app.show_banner = false;
     app.handle(
             AppEvent::Rpc {
-                method: crate::cordis::UI_UPDATE.into(),
+                method: crate::ext::UI_UPDATE.into(),
                 params: serde_json::json!({
                     "protocol": 0,
                     "plugins": [
@@ -3526,7 +3514,7 @@ fn plugin_slider_moves_between_effort_marks_for_material_preview() {
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "overlay": {
@@ -3572,7 +3560,7 @@ fn select_delete_emits_only_for_an_eligible_visible_row() {
     let (mut app, _demo_ctl, _rx) = test_app();
     let (ctl, commands) = crate::controller::tests::test_controller();
     for code in [KeyCode::Delete, KeyCode::Backspace] {
-        app.handle(AppEvent::Rpc { method: crate::cordis::OVERLAY_UPDATE.into(), params: serde_json::json!({
+        app.handle(AppEvent::Rpc { method: crate::ext::OVERLAY_UPDATE.into(), params: serde_json::json!({
             "protocol": 0, "overlay": { "kind": "select", "id": "items", "title": "Items",
             "options": [
                 { "value": "current", "label": "Current", "disabled": true, "deletable": true },
@@ -3603,7 +3591,7 @@ fn select_delete_emits_only_for_an_eligible_visible_row() {
 fn searchable_select_backspace_edits_and_delete_never_targets_a_hidden_row() {
     let (mut app, _demo_ctl, _rx) = test_app();
     let (ctl, commands) = crate::controller::tests::test_controller();
-    app.handle(AppEvent::Rpc { method: crate::cordis::OVERLAY_UPDATE.into(), params: serde_json::json!({
+    app.handle(AppEvent::Rpc { method: crate::ext::OVERLAY_UPDATE.into(), params: serde_json::json!({
         "protocol": 0, "overlay": { "kind": "select", "id": "items", "title": "Items", "searchable": true,
         "options": [{ "value": "saved", "label": "Saved", "deletable": true }], "value": "saved" }
     }) }, &ctl);
@@ -3622,7 +3610,7 @@ fn searchable_select_backspace_edits_and_delete_never_targets_a_hidden_row() {
 fn disabled_plugin_choices_cannot_submit_from_picker_or_composer() {
     let (mut app, _demo_ctl, _rx) = test_app();
     let (ctl, commands) = crate::controller::tests::test_controller();
-    app.handle(AppEvent::Rpc { method: crate::cordis::OVERLAY_UPDATE.into(), params: serde_json::json!({
+    app.handle(AppEvent::Rpc { method: crate::ext::OVERLAY_UPDATE.into(), params: serde_json::json!({
         "protocol": 0, "overlay": { "kind": "select", "id": "current", "title": "Harness",
         "options": [{ "value": "live", "label": "Live (current)", "disabled": true }], "value": "live" }
     }) }, &ctl);
@@ -3648,7 +3636,7 @@ fn plugin_select_form_renders_rows_and_submits_the_selected_value() {
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "overlay": {
@@ -3712,7 +3700,7 @@ fn plugin_select_search_filters_and_keeps_selected_rows_visible() {
         "description": "Available locally"
     })).collect();
     app.handle(AppEvent::Rpc {
-        method: crate::cordis::OVERLAY_UPDATE.into(),
+        method: crate::ext::OVERLAY_UPDATE.into(),
         params: serde_json::json!({ "protocol": 0, "overlay": {
             "kind": "select", "id": "catalog", "title": "Add Harness",
             "searchable": true, "value": "agent-00", "options": options
@@ -3750,7 +3738,7 @@ fn grouped_select_navigation_and_search_only_submit_real_options() {
     let (mut app, _demo_ctl, _rx) = test_app();
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(AppEvent::Rpc {
-        method: crate::cordis::OVERLAY_UPDATE.into(),
+        method: crate::ext::OVERLAY_UPDATE.into(),
         params: serde_json::json!({ "protocol": 0, "overlay": {
             "kind": "select", "id": "catalog", "title": "Harnesses", "searchable": true,
             "value": "a", "options": [
@@ -3790,7 +3778,7 @@ fn plugin_select_refresh_preserves_search_and_selected_value_across_reordering()
     let (ctl, commands) = crate::controller::tests::test_controller();
     let publish = |app: &mut App, id: &str, options: serde_json::Value| {
         app.handle(AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({ "protocol": 0, "overlay": {
                 "kind": "select", "id": id, "title": "Harnesses", "searchable": true,
                 "value": "a", "options": options,
@@ -3831,7 +3819,7 @@ fn plugin_select_refresh_does_not_keep_a_choice_that_stops_matching_the_filter()
     let (ctl, commands) = crate::controller::tests::test_controller();
     let publish = |app: &mut App, options: serde_json::Value| {
         app.handle(AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({ "protocol": 0, "overlay": {
                 "kind": "select", "id": "catalog", "title": "Harnesses", "searchable": true,
                 "value": "a", "options": options,
@@ -3861,7 +3849,7 @@ fn plugin_slider_enter_submits_the_effort_and_closes() {
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "overlay": {
@@ -3905,7 +3893,7 @@ fn plugin_slider_supports_a_plain_numeric_axis_without_marks() {
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "overlay": {
@@ -3943,7 +3931,7 @@ fn plugin_slider_left_steps_on_the_numeric_axis() {
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "overlay": {
@@ -3981,7 +3969,7 @@ fn plugin_slider_escape_cancels_and_closes() {
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "overlay": {
@@ -4016,7 +4004,7 @@ fn plugin_view_escape_closes_the_generic_node_modal() {
     let (ctl, commands) = crate::controller::tests::test_controller();
     app.handle(
         AppEvent::Rpc {
-            method: crate::cordis::OVERLAY_UPDATE.into(),
+            method: crate::ext::OVERLAY_UPDATE.into(),
             params: serde_json::json!({
                 "protocol": 0,
                 "overlay": {
@@ -4415,6 +4403,45 @@ fn liang_is_parked_out_of_the_menu_but_the_machinery_still_runs() {
     );
     app.run_slash("liang", "off", &ctl);
     assert!(!app.pet_visible, "and still toggles back off");
+}
+
+#[test]
+fn the_plugin_commands_are_parked_out_of_the_menu_but_the_machinery_still_runs() {
+    // Parked exactly the way `/liang` above is: unregistered, not amputated.
+    // No agent advertises `_crow/tui`, so all three entries could only ever
+    // answer "agent does not advertise _crow/tui" — but every command,
+    // handler and projection behind them stays compiled. The two inventory
+    // fetches are driven by `plugins_slash_fetches_the_static_loader_inventory`
+    // and `dynamic_plugins_slash_fetches_the_dynamic_inventory`; the picker
+    // behind `/ui` has no other test, so it is asserted here.
+    for name in ["plugins", "dynamic-plugins", "ui"] {
+        assert!(
+            !SLASH_COMMANDS.iter().any(|command| command.name == name),
+            "/{name} is parked: re-registering it is a decision, not a drive-by"
+        );
+    }
+
+    let (mut app, ctl, _rx) = test_app();
+    for prefix in ["/plug", "/dynamic", "/ui"] {
+        app.input.set(prefix.into());
+        let matches = app.slash_matches();
+        let offered: Vec<&str> = matches.iter().map(|entry| entry.name.as_str()).collect();
+        assert!(
+            !offered
+                .iter()
+                .any(|name| ["plugins", "dynamic-plugins", "ui"].contains(name)),
+            "{prefix} still offers a parked plugin command: {offered:?}"
+        );
+    }
+
+    app.run_slash("ui", "", &ctl);
+    assert!(
+        matches!(
+            app.picker.as_ref().map(|picker| &picker.kind),
+            Some(PickerKind::UiPlugin)
+        ),
+        "run_slash still resolves — re-registering is one uncomment"
+    );
 }
 
 #[test]

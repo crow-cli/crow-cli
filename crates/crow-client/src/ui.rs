@@ -230,7 +230,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     // on top, one meta row — run state + mode/permission chips + model — at
     // the bottom). The old shortcut-hints row is gone (`/keys` carries that).
     let child_view = app.active_subagent.is_some();
-    let approval_h = if !child_view && !app.pending_cordis_approvals.is_empty() && main.height >= 12
+    let approval_h = if !child_view && !app.pending_plugin_approvals.is_empty() && main.height >= 12
     {
         1
     } else {
@@ -348,7 +348,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     draw_chat(f, app, chat);
     if approval_h > 0 {
-        draw_cordis_approval(f, app, approval);
+        draw_plugin_approval(f, app, approval);
     }
     if queue_shelf_h > 0 {
         draw_queue_shelf(f, app, queue_shelf);
@@ -439,12 +439,12 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
 }
 
-fn draw_cordis_approval(f: &mut Frame, app: &App, area: Rect) {
-    let Some(approval) = app.pending_cordis_approvals.first() else {
+fn draw_plugin_approval(f: &mut Frame, app: &App, area: Rect) {
+    let Some(approval) = app.pending_plugin_approvals.first() else {
         return;
     };
     let theme = app.theme;
-    let count = app.pending_cordis_approvals.len();
+    let count = app.pending_plugin_approvals.len();
     let line = Line::from(vec![
         Span::styled(
             format!(" ⚠ 1/{count} {} · ", approval.name),
@@ -3676,8 +3676,8 @@ fn draw_model_picker(f: &mut Frame, app: &mut App, screen: Rect) {
         }
         crate::app::PickerKind::Session
         | crate::app::PickerKind::Auth
-        | crate::app::PickerKind::CordisPlugin
-        | crate::app::PickerKind::CordisApproval
+        | crate::app::PickerKind::DynamicPlugin
+        | crate::app::PickerKind::PluginApproval
         // The harness picker marks its active row in the meta column, which is
         // where the recipe lives; a ✓ would only repeat it.
         | crate::app::PickerKind::Harness

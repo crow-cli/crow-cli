@@ -507,13 +507,13 @@ impl App {
                     "正在从 Host 读取静态插件…",
                 ));
             }
-            "cordis-plugins" => {
-                ctl.send(Cmd::FetchCordisPlugins {
+            "dynamic-plugins" => {
+                ctl.send(Cmd::FetchDynamicPlugins {
                     agent_id: self.session_id.clone(),
                 });
                 self.show_tip(self.locale.tr(
-                    "reading dynamic Cordis plugins from Host…",
-                    "正在从 Host 读取动态 Cordis 插件…",
+                    "reading dynamic plugins from Host…",
+                    "正在从 Host 读取动态插件…",
                 ));
             }
             "model" => {

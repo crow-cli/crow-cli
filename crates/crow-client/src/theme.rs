@@ -154,7 +154,7 @@ impl Mode {
     }
 }
 
-/// Closed token names for protocol 0 palettes (`tuiTheme.register` / Cordis theme update).
+/// Closed token names for protocol 0 palettes (`tuiTheme.register` / extension theme update).
 pub const TOKEN_NAMES: &[&str] = &[
     "bg",
     "surface",
@@ -378,7 +378,7 @@ impl std::fmt::Display for PaletteError {
     }
 }
 
-/// A named dark/light token pack. Built-in `default` plus registered Cordis packs.
+/// A named dark/light token pack. Built-in `default` plus registered packs.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PalettePack {
     pub id: String,
@@ -421,7 +421,7 @@ pub struct ThemeBackground {
     pub opacity: f64,
 }
 
-/// A parsed Cordis TUI theme update (`protocol` 0).
+/// A parsed TUI extension theme update (`protocol` 0).
 #[derive(Clone, Debug, PartialEq)]
 pub struct PaletteNotification {
     pub pack: PalettePack,
@@ -672,7 +672,7 @@ fn unit_field(value: Option<&Value>, default: f64, at: &str) -> Result<f64, Pale
     Ok(number)
 }
 
-/// Parse Cordis TUI theme-update params. `protocol != 0` (or missing) → `Ok(None)`.
+/// Parse TUI extension theme-update params. `protocol != 0` (or missing) → `Ok(None)`.
 pub fn parse_palette_notification(
     params: &Value,
 ) -> Result<Option<PaletteNotification>, PaletteError> {

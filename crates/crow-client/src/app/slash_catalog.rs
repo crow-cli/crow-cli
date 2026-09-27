@@ -34,11 +34,25 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         usage: "/close",
         desc: "close the current session tab (last tab cannot close)",
     },
-    SlashCommand {
-        name: "cordis-plugins",
-        usage: "/cordis-plugins",
-        desc: "review or manage dynamic Cordis plugins",
-    },
+    // Parked, not deleted: `/dynamic-plugins` reaches a plugin host that does
+    // not exist — no agent advertises `_crow/tui`, so the entry could only ever
+    // answer "agent does not advertise _crow/tui". The machinery is intact and
+    // still compiled: `Cmd::FetchDynamicPlugins` / `SetDynamicPluginEnabled` /
+    // `RespondPluginApproval`, `ensure_agent_ext` and `fetch_dynamic_plugins` in
+    // `acp.rs`, their handlers in `acp/control.rs`, `CtlEvent::DynamicPlugins`,
+    // `DynamicPluginItem`, `PendingPluginApproval`, `App::dynamic_plugins` /
+    // `pending_plugin_approvals`, `PickerKind::DynamicPlugin` /
+    // `PluginApproval`, `open_dynamic_plugin_picker` /
+    // `open_plugin_approval_picker`, `draw_plugin_approval`, the alt-key answer
+    // in `keys_router.rs`, the `slash.rs` handler and the zh `command_desc` arm.
+    // `run_slash("dynamic-plugins", "")` still resolves — see
+    // `the_plugin_commands_are_parked_out_of_the_menu_but_the_machinery_still_runs`.
+    // Re-registering is uncommenting this entry.
+    // SlashCommand {
+    //     name: "dynamic-plugins",
+    //     usage: "/dynamic-plugins",
+    //     desc: "review or manage the agent's dynamic plugins",
+    // },
     SlashCommand {
         name: "effort",
         usage: "/effort [off|high|max]",
@@ -104,11 +118,18 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         usage: "/plan [on|off]",
         desc: "toggle host plan mode",
     },
-    SlashCommand {
-        name: "plugins",
-        usage: "/plugins",
-        desc: "show Host plugin status (read-only)",
-    },
+    // Parked with `/dynamic-plugins` above, for the same reason: the read-only
+    // Host inventory is served over `_crow/plugins/list`, which nothing
+    // answers. Machinery intact and still compiled: `Cmd::FetchStaticPlugins`,
+    // `fetch_static_plugins` and `static_plugins_from_value` in `acp.rs`, the
+    // handler in `acp/control.rs`, `CtlEvent::StaticPlugins`,
+    // `StaticPluginItem`, `App::static_plugins`, and the grouped render in
+    // `ui.rs`. `run_slash("plugins", "")` still resolves.
+    // SlashCommand {
+    //     name: "plugins",
+    //     usage: "/plugins",
+    //     desc: "show Host plugin status (read-only)",
+    // },
     SlashCommand {
         name: "quit",
         usage: "/quit",
@@ -129,11 +150,18 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
         usage: "/theme [id|toggle]",
         desc: "switch Theme Plugin or toggle dark/light",
     },
-    SlashCommand {
-        name: "ui",
-        usage: "/ui [id]",
-        desc: "switch UI Plugin",
-    },
+    // Parked with the two plugin commands above: a UI Plugin is mounted by the
+    // same host that does not exist. Machinery intact and still compiled:
+    // `App::ui_plugins`, `UiPluginItem`, `open_ui_plugin_picker`,
+    // `Cmd::PluginUiSelected`, the `_crow/tui/ui/update` + `ui/selected`
+    // projection in `app/pump.rs` and `acp/control.rs`, the `"ui"` argument
+    // completion arm and the `slash.rs` handler. `run_slash("ui", "")` still
+    // resolves.
+    // SlashCommand {
+    //     name: "ui",
+    //     usage: "/ui [id]",
+    //     desc: "switch UI Plugin",
+    // },
     SlashCommand {
         name: "vim",
         usage: "/vim [on|off]",
@@ -143,7 +171,13 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
 
 /// Demo seeds for `/agent` when no agent catalog has arrived. Live ACP
 /// replaces these with the extra composition select the agent advertised.
-/// Shipped creator id is `cordis`.
+///
+/// There used to be a fourth seed: a "Creator mode" whose whole description
+/// was runtime inspection and preset authoring against the extension family.
+/// It went with the three parked plugin commands, for the same reason — a menu
+/// entry that can only answer "agent does not advertise `_crow/tui`" is worse
+/// than no menu entry. An agent that really does author presets advertises its
+/// own composition select; `stock_presets()` is only the demo's stand-in.
 pub const AGENT_MODES: &[(&str, &str, &str)] = &[
     (
         "standard",
@@ -159,11 +193,6 @@ pub const AGENT_MODES: &[(&str, &str, &str)] = &[
         "minimal",
         "Minimal mode",
         "two tools · persistent bash + str_replace_editor",
-    ),
-    (
-        "cordis",
-        "Creator mode",
-        "standard + runtime inspection and preset authoring",
     ),
 ];
 

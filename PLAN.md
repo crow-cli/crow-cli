@@ -489,7 +489,7 @@ provenance module docs `events.rs:1`, `transcript.rs:3`, `file_ref.rs:3`,
 Machinery kept, namespace crow's. Nothing implements this protocol today, so
 the rename cannot break a peer.
 
-5.1 **`cordis.rs` → the crow extension namespace.** The 22 wire constants
+[x] 5.1 **`cordis.rs` → the crow extension namespace.** The 22 wire constants
     `_dsh/cordis/tui/*` → `_crow/tui/*`, `_dsh/plugins/list` →
     `_crow/plugins/list`, `_dsh/cordis/plugins/{start,stop}` →
     `_crow/plugins/{start,stop}`; the capability key the client reads in
@@ -499,8 +499,47 @@ the rename cannot break a peer.
     that says what it holds (`ext.rs`), and update `main.rs:12`'s `mod` line.
     *Verify:* `grep -rn "_dsh\|cordis::" src` → 0; the extension-path tests in
     `acp__tests.rs` / `events__tests.rs` green with the new method strings.
+    *Done:* `git mv src/cordis.rs src/ext.rs` — `ext` because what the module
+    holds is the client's extension contract, and the `mod` line moved to its
+    alphabetical slot after `mod events;`. All 22 method strings are crow's: 18
+    under `_crow/tui/*` plus the four plugin methods. `PROTOCOL` is documented
+    as the version advertised in `agentCapabilities._meta.crow.tui.protocol`
+    and checked against that same key, `advertised_by_agent` reads that path,
+    and `acp_auth.rs:113-116` advertises
+    `meta.insert("crow", {"tui": {"protocol": …}})`. `crate::cordis::` →
+    `crate::ext::` at 163 sites (57 in `src`, 106 in `tests`).
+    *Correction — the collision this item did not see:* mapping
+    `_dsh/cordis/plugins/{list,start,stop}` → `_crow/plugins/{list,start,stop}`
+    puts `_dsh/cordis/plugins/list` and `_dsh/plugins/list` on the **same** new
+    name, and they are two live methods with different shapes and different
+    callers: `StaticPluginItem` is the read-only Loader inventory fetched by
+    `Cmd::FetchStaticPlugins`, `DynamicPluginItem` is the agent's own registry,
+    fetched by `Cmd::FetchDynamicPlugins` and driven by start/stop/approvals.
+    That static/dynamic axis already exists in the crate (`app.static_plugins`,
+    `fetch_dynamic_plugins`), so the rename follows it instead of flattening
+    it: the dynamic trio went under the family prefix as
+    `_crow/tui/plugins/{list,start,stop}`, `_crow/plugins/list` stays the one
+    method outside the family, and `PLUGINS_LIST` → `DYNAMIC_PLUGINS_LIST` says
+    which is which. The old inside/outside-the-family split survives exactly —
+    only the vendor segment is gone — and `ext.rs`'s module doc records the
+    two-level rule so the next reader does not have to rediscover it.
+    *Also, because a rename that leaves the tests on the old dialect is half a
+    rename:* `acp__tests.rs:251` asserted the client's own advertised
+    `_meta.dsh.cordis.protocol` and now asserts `_meta.crow.tui.protocol`; the
+    mock agent at `acp__tests.rs:278-282` advertised the old key too, which
+    after the rename meant that test's agent had **silently stopped
+    advertising the family** — it still passed, because the compositor paths do
+    not require the capability (exactly what the two
+    `does_not_require_agent_extension_capability` tests pin), i.e. it was green
+    for the wrong reason. Both fixtures now speak `crow`/`tui`. The last three
+    hardcoded `_dsh/…` strings anywhere in the crate
+    (`app__mode_tests.rs`'s two `agents/select`, `app__palette_tests.rs`'s
+    `theme/remove`) became `crate::ext::AGENTS_SELECT` / `THEME_REMOVE`.
+    *Verify result:* `grep -rni "cordis\|_dsh" src` → **0**;
+    `grep -rn "_dsh" tests` → **0**; the extension-path tests in
+    `acp__tests.rs` / `events__tests.rs` green on the new method strings.
 
-5.2 **The Rust identifiers.** `Cmd::FetchCordisPlugins`,
+[x] 5.2 **The Rust identifiers.** `Cmd::FetchCordisPlugins`,
     `Cmd::SetCordisPluginEnabled`, `Cmd::RespondCordisApproval`,
     `CtlEvent::CordisPlugins`, `PickerKind::CordisPlugin|CordisApproval`,
     `CordisApprovalsSnapshot`, `CordisPluginItem`, `PendingCordisApproval`,
@@ -512,8 +551,56 @@ the rename cannot break a peer.
     (AST, not substring — `cordis_plugins` must not touch a `plugins` local).
     *Verify:* `cargo check --locked --tests -j 6` clean; `grep -rni cordis src` → 0;
     full `cargo test --locked --bin crow -j 6` green.
+    *Done:* 82 replacements, longest-first, located with `ast_grep_py` and
+    written with `edit`. Every new name lands on the crate's **existing**
+    static/dynamic axis rather than a third vocabulary:
+    `CordisPluginItem` → `DynamicPluginItem`,
+    `PendingCordisApproval` → `PendingPluginApproval`,
+    `CtlEvent::CordisPlugins` → `DynamicPlugins`,
+    `Cmd::FetchCordisPlugins` → `FetchDynamicPlugins`,
+    `SetCordisPluginEnabled` → `SetDynamicPluginEnabled`,
+    `RespondCordisApproval` → `RespondPluginApproval`,
+    `PickerKind::CordisPlugin` → `DynamicPlugin`,
+    `CordisApproval` → `PluginApproval`,
+    `CordisApprovalsSnapshot` → `PluginApprovalsSnapshot`,
+    `app.cordis_plugins` → `dynamic_plugins`,
+    `pending_cordis_approvals` → `pending_plugin_approvals`,
+    `ensure_agent_cordis` → `ensure_agent_ext`, `surface.cordis` →
+    `surface.ext`, `draw_cordis_approval` → `draw_plugin_approval`,
+    `open_cordis_plugin_picker` → `open_dynamic_plugin_picker`,
+    `open_cordis_approval_picker` → `open_plugin_approval_picker`.
+    Prose followed the identifiers: `acp.rs`, `acp/control.rs:116`, six `bus.rs`
+    docs, `controller.rs:644`, `events.rs:148`, four `theme.rs` sites, both
+    picker titles in `harness.rs:205-206` (" dynamic plugins · enter manage ·
+    esc close " / " 动态插件 · enter 管理 · esc 关闭 "), the `slash.rs:515-516`
+    tips, `controller.rs:984`'s "The stock agent modes", and `acp.rs:1700`'s
+    refusal message, which now reads "agent does not advertise _crow/tui".
+    *Also done, and not in the PLAN — the tests' own vocabulary.* Five test
+    names still said cordis (`cordis_plugin_inventory_opens_…`,
+    `pending_cordis_approval_renders_…`,
+    `cordis_requests_stay_local_when_the_agent_did_not_advertise_cordis`,
+    `client_compositor_catalog_does_not_require_agent_cordis_capability`,
+    `client_compositor_command_does_not_require_agent_cordis_capability`), two
+    assert messages did, and six canned payloads used `"cordis"` /
+    `"name": "Cordis"` as the agent-advertised preset id. The names moved to
+    the new axis (`dynamic_plugin_inventory_…`, `pending_plugin_approval_…`,
+    `extension_requests_stay_local_when_the_agent_did_not_advertise_the_family`,
+    `…_does_not_require_agent_extension_capability`); the fixture id became a
+    neutral `studio` / `Studio`, which preserves every assertion's meaning —
+    an opaque advertised id is precisely what those tests exercise. This is
+    Phase 6's *category* but not Phase 6's *list* (6.1–6.3 name `dsh-*`,
+    `martty-*`, `deepseek-*`), and leaving it would have made Phase 5 a
+    half-rename of the one concept Phase 5 exists to rename.
+    *Verify result:* check rc 0 with exactly the 3 permanent warnings — the
+    unused-`ctl` one moved from `ui__tests.rs:3582` to `:3602` because 5.3's
+    rewrite added 20 lines above it; same warning, same binding.
+    `grep -rni cordis src` → **0**, and over `src` **and** `tests` → exactly
+    one hit: `main__cli_args_tests.rs:128`'s `"--cordis"`, the Phase-1 pin that
+    the removed flag stays *rejected*. Deliberate, in the same category as
+    `MARTTY_HOME` in `a_pre_rebrand_martty_home_is_not_read`. Full suite green
+    at **941**.
 
-5.3 **The three vestigial plugin commands.** `/plugins`, `/cordis-plugins`,
+[x] 5.3 **The three vestigial plugin commands.** `/plugins`, `/cordis-plugins`,
     `/ui` (`slash_catalog.rs:37-41,97-101,122-126`, handlers in `slash.rs:513+`,
     zh descs in `locale.rs:84,86-87`) aim at a plugin host that does not exist.
     Decision, recorded rather than guessed: **park them the way 3.1 parks
@@ -526,6 +613,92 @@ the rename cannot break a peer.
     *Verify:* the zh-desc gate and name-sort gate green; absence pinned by one
     assertion per command next to the `login`/`logout` ones;
     `cargo run -- --dump-frame 100x34` unchanged.
+    *Done:* all three commented out at their alphabetical positions, each with
+    a `/liang`-style note naming every surviving piece — the three `Cmd`s,
+    `ensure_agent_ext` and `fetch_{static,dynamic}_plugins` in `acp.rs`, the
+    handlers in `acp/control.rs`, `CtlEvent::{StaticPlugins,DynamicPlugins}`,
+    `StaticPluginItem` / `DynamicPluginItem` / `PendingPluginApproval`,
+    `App::{static_plugins,dynamic_plugins,pending_plugin_approvals,ui_plugins}`,
+    `PickerKind::{DynamicPlugin,PluginApproval,UiPlugin}`, the three
+    `open_*_picker`s, `draw_plugin_approval`, the alt-key answer in
+    `keys_router.rs`, the grouped render in `ui.rs`, the `_crow/tui/ui/update`
+    + `ui/selected` projection in `app/pump.rs`, the `"ui"` argument-completion
+    arm, the `slash.rs` handlers and the three zh `command_desc` arms (which
+    stay, exactly as `liang`'s does). Handlers untouched, so `run_slash` still
+    resolves all three.
+    `/cordis-plugins` was renamed **`/dynamic-plugins`** on the way out
+    (`slash_catalog.rs`, the `slash.rs:510` arm, `locale.rs:87`'s zh desc →
+    "查看或管理动态插件", `app.rs:342`, `session_slot.rs:85`), so what is parked is
+    a command crow would actually ship and re-registering is one uncomment, not
+    a rename plus an uncomment. `AGENT_MODES`'s fourth seed went with them; the
+    doc above the constant explains why **without using the removed brand
+    name** — the gate is `grep -rni cordis src` → 0, so even a historical note
+    has to avoid the word. Three modes now.
+    *Correction — the mode-count pin lived in four tests, not zero:*
+    `controller__tests.rs::stock_presets_cover_the_four_web_ui_modes` (renamed
+    `stock_presets_cover_the_shipped_agent_modes`: neither "four" nor "web ui"
+    is true any more),
+    `app__mode_tests.rs::slash_agent_opens_the_agent_preset_picker`,
+    `ui__tests.rs::mode_picker_renders_modes_and_marks_the_current_one` (drops
+    "Creator mode" from the asserted list) and
+    `locale__tests.rs::zh_command_desc_covers_every_builtin_and_plugin_command`
+    (the zh key is `dynamic-plugins` now). All four rewritten to pin three
+    modes; none deleted.
+    *Correction — the absence pin landed next to the `/liang` park pin, not
+    next to `login`/`logout`:* same region of `app__mode_tests.rs`, and liang is
+    the closer precedent because it is also a park-not-delete. The failing
+    `slash_menu_offers_the_dynamic_plugin_manager` (which asserted `/plug`
+    matches exactly one entry, `plugins`) was rewritten — relocated, not
+    dropped — into
+    `the_plugin_commands_are_parked_out_of_the_menu_but_the_machinery_still_runs`:
+    one registry-absence assertion per command, a menu-absence pass over
+    `/plug`, `/dynamic` and `/ui`, and one machinery assertion,
+    `run_slash("ui", "")` still opening `PickerKind::UiPlugin`. The two
+    inventory fetches keep their own tests
+    (`plugins_slash_fetches_the_static_loader_inventory`,
+    `dynamic_plugins_slash_fetches_the_dynamic_inventory`), so the pin points at
+    them instead of duplicating them. Test count unchanged: **941 → 941**.
+    *Also rewritten, same category:*
+    `ui__tests.rs::cordis_protocol_id_is_rendered_as_creator` still passed, but
+    its fixture was a removed concept. It is now
+    `an_advertised_preset_renders_by_its_catalog_name_not_its_raw_id`, and it
+    pins *more* than the test it replaces: the old fixture's id was in
+    `AGENT_MODES`, so it was implicitly pinning "the catalog name outranks the
+    stock demo label" as well as "never the raw id". Two presets now pin both
+    halves explicitly — `nightshift`, an id crow never shipped, and `standard`,
+    one it does have a stock label for.
+    *Verify result:* the zh-desc gate and the name-sort gate green (the catalog
+    is still name-sorted with three entries commented out in place, and every
+    registered builtin still has a zh desc); `--dump-frame 100x34`
+    byte-identical to the Phase-4 frame — 1815 bytes, 35 rows — under both the
+    developer's `CROW_HOME` and a clean one, and `--demo` byte-identical to
+    plain.
+
+**Phase 5 gate result:** `cargo check --locked --tests -j 6` rc 0 with exactly
+the 3 permanent warnings; `cargo test --locked --bin crow -j 6` → **941 passed,
+0 failed** (941 → 941: one test rewritten and relocated, one rewritten in
+place, four repointed to the new mode count / zh key / wire constants, none
+added, none deleted). The other four test targets green as well: `cli_help` 3,
+`startup_session_e2e` 12, `sigterm_cleanup` 1, `tcp_attach` 1.
+`--dump-frame 100x34` byte-identical to the Phase-4 frame (1815 bytes, 35 rows)
+under both the developer's `CROW_HOME` and a clean one, and `--demo` identical
+to plain — a namespace rename repaints nothing.
+`grep -rni "cordis\|_dsh" src` → **0**; `grep -rn "_dsh" tests` → **0**;
+`grep -rni cordis` over `src` + `tests` → **1**, the deliberate `"--cordis"`
+rejection pin. The crate's 8 other `cordis` hits are prose in `README.md:128-129,147`,
+`AGENTS.md:11,19-20,22` and `docs/README.md:4` — 7.4's, and now doubly stale:
+those lines still call `/plugins`, `/cordis-plugins`, `/ui` and `/liang` "live
+slash commands" and still point at `src/cordis.rs`, which is `src/ext.rs` now.
+
+*Carried forward, not caused here:* the bin-profile build warns
+`field ui_preset is never read` (`app.rs:177`). Phase 4.1 deleted its last
+reader, the `ui_preset == "deepseek"` banner branch; the `--tests` gate cannot
+see it because the settings round-trip tests read the field, and the field has
+to stay — `UiSettings` has no `flatten`/unknown-key map, so dropping it would
+drop the `uiPreset` key out of `settings.json` on the next patch-write. Left
+alone deliberately rather than `#[allow]`-ed: whether `uiPreset` should drive
+something now (a palette pack, the slot logo) is a product call for 7.4/7.5 or
+later, not a drive-by inside a rename phase.
 
 **Commit:** `refactor(client)!: the _dsh/cordis extension family is now _crow/tui`
 
