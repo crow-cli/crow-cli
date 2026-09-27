@@ -1,21 +1,37 @@
-"""goal_done / goal_blocked — the two exits a goal offers the model.
+"""goal_start / goal_done / goal_blocked — the model's three writes to the latch.
 
 A goal is a latch. While the row is ``active``, the driver turns "the turn
 ended" from a full stop into a loop-back edge and sends itself another turn
 with nobody asking (:func:`crow_cli.agent2.driver.SessionDriver` at its idle
 transition). Nothing else about the mechanism is model-visible — no new event
-type, no client round trip, no second injection path — so the only way the
-model can stop the loop is to write the row, and these two calls are the
-writes it is allowed. The other three statuses belong to the user
-(``paused``) and to the arithmetic (``budget_limited``, and ``blocked`` when a
-turn errors or a continuation makes no progress).
+type, no client round trip, no second injection path — so the row is the whole
+interface: ``goal_start`` arms it, the other two release it. The remaining
+statuses belong to the user (``paused``) and to the arithmetic
+(``budget_limited``, and ``blocked`` when a turn errors or a continuation
+makes no progress).
 
-Two names, not one ``goal(status=...)``, for the reason
+Three names, not one ``goal(status=...)``, for the reason
 :mod:`crow_cli.tools.task_tool` gives: a capability behind a mode-string dispatcher
 is a capability that does not get reached. The asymmetry here is the argument
-list — ``goal_blocked`` cannot be called without saying why, and a dispatcher
-with an argument that is required on one branch and forbidden on the other is
-where a requirement like that goes to die.
+list — ``goal_start`` cannot be called without naming the objective and
+``goal_blocked`` cannot be called without saying why, and a dispatcher with an
+argument that is required on one branch and forbidden on the other is where a
+requirement like that goes to die.
+
+``goal_start`` exists because the model is usually the first to know that a
+long job has arrived: the plan-todo sprint mandate is "work the PLAN until
+everything is complete", and a session that has to wait for a human to type
+``/goal`` stops at the end of the turn that read it. Arming is not the same
+authority as releasing, so it is the guarded one of the three — a goal already
+``active`` is left exactly as it stands (``set_goal`` mints a fresh id and
+zeroes ``turns_used``, and ``turns_used`` is the column the turn ceiling
+counts, so a call that re-armed a running goal would be a call that
+lengthened its own rope), and a goal the user ``paused`` is a refusal rather
+than a no-op: the brake is theirs, and a silent nothing would leave the model
+believing a loop is running that is not. Over a goal that has already stopped
+— ``complete``, ``blocked``, ``budget_limited`` — it is the restart gesture
+``/goal <objective>`` is, and the fresh id and zeroed counters are exactly
+right there.
 
 Neither raises on a goal that is already stopped, and both are idempotent.
 They are called at the end of a turn the model spent real reasoning on, and
@@ -32,9 +48,14 @@ from __future__ import annotations
 import contextlib
 
 import crow_cli.memory as cm
-from crow_cli.memory.models import GOAL_ACTIVE, GOAL_BLOCKED, GOAL_COMPLETE
+from crow_cli.memory.models import (
+    GOAL_ACTIVE,
+    GOAL_BLOCKED,
+    GOAL_COMPLETE,
+    GOAL_PAUSED,
+)
 from crow_cli.memory.reads import get_goal
-from crow_cli.memory.writes import update_goal_status
+from crow_cli.memory.writes import set_goal, update_goal_status
 
 from .register import CellContext, current_cell, db_uri, subtool
 from .results import GoalError, GoalResult
@@ -139,6 +160,75 @@ def _end(status: str, reason: str = "") -> GoalResult:
         blocked_reason=reason or None,
     )
     return _result(get_goal(engine, session) or row, changed=changed)
+
+
+@subtool(tool="goal_start")
+async def goal_start(objective: str) -> GoalResult:
+    """Arm the goal: this session keeps working on ``objective`` by itself.
+
+    A turn that ends with the row ``active`` sends itself another turn with
+    nobody asking, until the model calls :func:`goal_done` or
+    :func:`goal_blocked` or a ceiling fires. That is the whole effect — no new
+    event, no client round trip — and it is how a long job (a plan-todo
+    sprint, "complete every item in TODO.md") survives the end of the turn
+    that read it. It also survives a compaction: the row is keyed by the WIRE
+    session id, not by the generation, so the next agent inherits the loop
+    rather than the conversation that started it.
+
+    ``objective`` is required and is stored verbatim. Every continuation turn
+    shows it to the model and ``/goal`` shows it to the user, so it names the
+    outcome and the criterion — "complete every item in TODO.md and PLAN.md,
+    each verified by its stated criteria" — not "continue", not "the work".
+
+    Then TELL the user in prose, in the same turn: the objective, that this
+    session now keeps working without them, and that ``/goal pause`` stops it
+    while ``/goal`` shows where it is. The row is not a notification, and a
+    loop the person does not know is running is a loop they cannot stop.
+
+    Guarded, because arming is not the same authority as releasing:
+
+    * a goal already ``active`` is left alone and comes back with
+      ``changed=False``, objective included so a call that meant to replace it
+      can see that it did not. Re-arming would mint a fresh id and zero
+      ``turns_used`` — the column the turn ceiling counts.
+    * a goal the user ``paused`` raises :class:`GoalError`. The brake is
+      theirs: ``/goal resume`` picks the objective back up, ``/goal
+      <objective>`` starts a new one.
+
+    Over a goal that has already stopped (``complete``, ``blocked``,
+    ``budget_limited``) this is a restart: fresh id, zeroed counters, new
+    objective. The ceilings are config-owned (``goal.max_turns``,
+    ``goal.max_tokens``) and deliberately not settable from in here — the
+    kernel reads no config, and a budget the model guessed is either too low
+    for the work or too high to be a limit.
+
+    Returns:
+        GoalResult: the row read back — ``active``, the objective, and the
+        spend, which is zero on a fresh arm. ``.changed`` is False when a goal
+        was already running and this call did not move it.
+    """
+    if not objective or not objective.strip():
+        raise GoalError(
+            "goal_start needs the objective. Every continuation turn shows it"
+            " to the model and /goal shows it to the user, so it names the"
+            ' outcome and the criterion — goal_start("complete every item in'
+            ' TODO.md and PLAN.md, each verified by its stated criteria") —'
+            ' not goal_start("continue").'
+        )
+    session = _session()
+    engine = _engine()
+    row = get_goal(engine, session)
+    if row is not None and row.status == GOAL_PAUSED:
+        raise GoalError(
+            "the goal is paused — the user stopped it and lifting that is"
+            " theirs, not yours: /goal resume picks the objective back up,"
+            " /goal <objective> starts a new one. Nothing was written, so this"
+            " session is NOT being continued."
+        )
+    if row is not None and row.status == GOAL_ACTIVE:
+        return _result(row, changed=False)
+    set_goal(engine, session, objective.strip())
+    return _result(get_goal(engine, session), changed=True)
 
 
 @subtool(tool="goal_done")

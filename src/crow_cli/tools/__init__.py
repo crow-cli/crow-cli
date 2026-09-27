@@ -54,17 +54,18 @@ _LAZY = {
 #: a `task` subtool would have two launchers minting ids off the same global
 #: counter and writing the same two tables.
 #:
-#: For `goal_done`/`goal_blocked` it IS the protocol: they are the exits from
-#: a continuation loop, and only the agent2 driver runs one (v1 has no idle
-#: transition to hook). Binding them in a v1 kernel would offer the model a
-#: way out of a loop it is not in — a call that succeeds, changes a row, and
-#: means nothing.
+#: For the three `goal_*` names it IS the protocol: `goal_start` is the
+#: entrance to a continuation loop and the other two are the exits, and only
+#: the agent2 driver runs one (v1 has no idle transition to hook). Binding
+#: them in a v1 kernel would offer the model a latch nothing ever reads back —
+#: a call that succeeds, changes a row, and means nothing.
 #:
 #: Either way, v1 is frozen: it does not get new ambient surface just because
 #: v2 needs it.
 _LAZY_V2 = {
     "goal_blocked": ("crow_cli.tools.goal_tool", "goal_blocked"),
     "goal_done": ("crow_cli.tools.goal_tool", "goal_done"),
+    "goal_start": ("crow_cli.tools.goal_tool", "goal_start"),
     "task": ("crow_cli.tools.task_tool", "task"),
     "task_cancel": ("crow_cli.tools.task_tool", "task_cancel"),
     "task_read": ("crow_cli.tools.task_tool", "task_read"),

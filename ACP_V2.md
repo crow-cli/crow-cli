@@ -840,7 +840,10 @@ The real names, for grepping:
   accounting, and the cancel-pauses / error-blocks exits), and `_park`'s first
   two lines.
 - `agent2/react.py` — `Done.tools_used`, `Done.tokens_spent`.
-- `tools/goal_tool.py` — `goal_done`, `goal_blocked`, bound in `_LAZY_V2`.
+- `tools/goal_tool.py` — `goal_start`, `goal_done`, `goal_blocked`, bound in
+  `_LAZY_V2`. The entrance came after the two exits: the model is usually the
+  first to know a long job has arrived, and a session that has to wait for a
+  human to type `/goal` stops at the end of the turn that read it.
 - `agent2/slash.py` — `goal_command`, imported for its side effect from
   `agent2/agent.py` so that a v1 process never sees the name.
 - `config/config.py` — `GoalConfig`, `goal: {max_turns: 25, max_tokens: null}`.
@@ -1357,12 +1360,13 @@ error string otherwise).
 ### The tools split
 
 `tools/__init__.py`: `_LAZY = {edit, fs, memory, rlm, sg, vision, web, write}`;
-`_LAZY_V2 = {task, task_send, task_read, task_cancel, goal_done, goal_blocked}`
-— **v2 kernels only**, because v1 already ships `task` as an MCP tool from the
-agent process, so a v1 kernel with both would have two launchers minting ids off
-the same global counter and writing the same two tables; and because the goal
-exits leave a continuation loop that only the agent2 driver runs. And v1 is
-frozen.
+`_LAZY_V2 = {task, task_send, task_read, task_cancel, goal_start, goal_done,
+goal_blocked}` — **v2 kernels only**, because v1 already ships `task` as an MCP
+tool from the agent process, so a v1 kernel with both would have two launchers
+minting ids off the same global counter and writing the same two tables; and
+because the goal latch — its entrance and its two exits — is read back only by
+the agent2 driver's continuation loop, which v1 does not have an idle transition
+to hook. And v1 is frozen.
 
 **Every subtool module is `<name>_tool.py`** — `fs_tool.py`, `task_tool.py`,
 `goal_tool.py` — and the suffix is load-bearing, not decoration. The facade
