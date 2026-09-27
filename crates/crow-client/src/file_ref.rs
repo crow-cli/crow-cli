@@ -1,9 +1,9 @@
 //! `@file` mentions: caret-token grammar plus the file-browser menu.
 //!
-//! The grammar mirrors the DeepSeek Harness `file-reference` grammar
-//! (pure functions, no filesystem access): an `@` at a word boundary opens
-//! a token that extends to whitespace, or to the closing quote for the
-//! `@"…"` form (which allows spaces). Emails and URL hosts never trigger.
+//! The grammar is pure functions with no filesystem access: an `@` at a
+//! word boundary opens a token that extends to whitespace, or to the closing
+//! quote for the `@"…"` form (which allows spaces). Emails and URL hosts
+//! never trigger.
 //!
 //! The browser menu is built on [`ratatui-explorer`] (the issue-62 UI
 //! control) and colored from the app [`Theme`] tokens — `panel`/`border`/

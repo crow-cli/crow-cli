@@ -758,43 +758,43 @@ fn parse_hex(s: &str) -> Option<Color> {
     Some(Color::Rgb(r, g, bl))
 }
 
-/// Semantic colors — a cold monochrome remap of the Web UI neutral-bluish
-/// scale (the alias slot names are kept for reference).
+/// Semantic colors — the slots every palette pack fills. The crow house
+/// ramp (`CROW_50…CROW_900`) is what `default` wears; a pack remaps these.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Theme {
     pub mode: Mode,
-    /// `--dsw-alias-bg-base`
+    /// the canvas background
     pub bg: Color,
-    /// `--dsw-alias-bg-layer-1`
+    /// one step above the canvas (reserved)
     #[allow(dead_code)]
     pub surface: Color,
-    /// `--dsw-alias-bg-layer-2` (panels, tool cards)
+    /// panels and tool cards
     pub panel: Color,
-    /// `--dsw-alias-label-primary`
+    /// primary text
     pub fg: Color,
-    /// `--dsw-alias-label-secondary`
+    /// secondary text
     pub fg_secondary: Color,
-    /// `--dsw-alias-label-tertiary`
+    /// tertiary text
     pub fg_tertiary: Color,
-    /// `--dsw-alias-label-caption`
+    /// captions and meta rows
     pub caption: Color,
-    /// `--dsw-alias-brand-primary-new-color…` — the house accent
+    /// the house accent
     pub brand: Color,
-    /// `--dsw-alias-state-business-primary`
+    /// a quieter accent (selections, highlights)
     pub brand_soft: Color,
-    /// `--dsw-specific-bubble` (user message bubble)
+    /// the user message bubble
     pub bubble_bg: Color,
     /// text on the bubble
     pub bubble_fg: Color,
-    /// borders (`--dsw-alias-border-l2/l3` approximated on the layer stack)
+    /// borders, approximated on the layer stack
     pub border: Color,
-    /// `--dsw-alias-markdown-code-block`
+    /// markdown code block background
     pub code_bg: Color,
-    /// `--dsw-alias-state-success-primary` / secondary
+    /// success
     pub ok: Color,
-    /// `--dsw-alias-state-warn-primary` / label
+    /// warning
     pub warn: Color,
-    /// `--dsw-alias-state-error-primary`
+    /// error
     pub err: Color,
     /// Gray-blue hint text (tip banner, informational chips) — quieter
     /// than `brand_soft`, warmer than the neutral grays.

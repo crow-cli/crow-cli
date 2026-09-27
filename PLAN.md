@@ -865,27 +865,237 @@ For Phase 7, two counts that will otherwise be misread: `grep -rni dsh src` →
 
 ## Phase 7 — docs, assets, scripts, packaging
 
-7.1 `assets/promo/build.py:89` — `github.com/openma-ai/deepseek-harness-tui` →
+[x] 7.1 `assets/promo/build.py:89` — `github.com/openma-ai/deepseek-harness-tui` →
     the crow repo; sweep the rest of that script for brand text baked into
     promo images.
-7.2 `docs/tui-palette.v0.schema.json` `$id`
+    *Done:* `assets/promo/` is deleted outright — `build.py`, `DESIGN.md`,
+    `social-preview.png` — together with six old-brand screenshots
+    (`banner-v020`, `agent-turn`, `skills-menu`, `harness-add`,
+    `harness-switch`, `image-preview`.png). Each of the seven images was
+    looked at with `vision` before it went: whale logo, "DEEPSEEK HARNESS"
+    lockup, `dsh --profile martty` command lines, `deepseek-v4-*` model chips,
+    a live `/liang` menu entry, the openma URL. Nothing references any of them
+    — `Cargo.toml`'s `include` list carries only the two pet PNGs (both still
+    present), no `include_bytes!` points at them, no doc links them.
+    `assets/screenshots/liang.png` stays (the Phase 4 decision, rule 4), so
+    `assets/` is now `crow-cli-ascii.txt`, `pet/*` and that one screenshot.
+    `.gitignore` dropped `/npm-martty`; `Cargo.toml:14`'s comment over the
+    asset list reads "Screenshots and docs".
+    *Correction:* there is no URL to retarget. `build.py` composed the promo
+    image from source JPEGs that were **never committed** — `git log` finds no
+    trace of them at any point — so the script could not run in this repo even
+    before the sprint. Rewriting its URL would leave a script that still
+    cannot run, beside a `DESIGN.md` whose entire subject is a whale lockup.
+    For assets, "no shim" means delete.
+
+[x] 7.2 `docs/tui-palette.v0.schema.json` `$id`
     (`https://openma.ai/dsh-tui/tui-palette.v0.schema.json`) → crow-ai.dev, and
     the `$schema` reference in each of the 8 `docs/fixtures/*.v0.json`.
     *Verify:* the palette loader tests still parse every fixture (they read
     `$schema`-tagged files from `docs/fixtures/` at `$CARGO_MANIFEST_DIR`).
-7.3 `scripts/collect-freeze-diag.sh` — pgreps `martty` binaries and writes
+    *Done:* `$id` → `https://crow-ai.dev/crow-client/tui-palette.v0.schema.json`;
+    `title` → "crow-client palette protocol 0"; and the `$comment`, which
+    called the file the "Plugin ABI for `tuiTheme.register`" — a JS API that
+    left with the npm layer — now says what the schema actually pins:
+    "Palette ABI: what a pack must carry to be selectable." The title and the
+    `$comment` are both invisible to 7.5's grep, which is why 7.2 owns them.
+    All 10 fixtures still parse as JSON; the file is documentation for an
+    outside editor, nothing in `src/` reads it.
+    *Correction:* the second half of the item describes files that do not
+    exist. **No** fixture carries a `$schema` key — 0 of the 10 files in
+    `docs/fixtures/`, not 8 of 8 — and they *cannot*: `PalettePack::from_json`
+    rejects any key outside `id`/`label`/`dark`/`light`/`background`
+    (`theme.rs:526-533`, "unknown palette field"), so a `$schema` annotation
+    would be a hard parse error, not something the loader looks past. The
+    fixtures are pulled in with `include_str!` and parsed by that function, so
+    the schema file is documentation for an outside editor and nothing else —
+    which is exactly why its `$id` was the only thing here that could go
+    stale. The verify still holds as written: every fixture parses, 941 green.
+
+[x] 7.3 `scripts/collect-freeze-diag.sh` — pgreps `martty` binaries and writes
     `/tmp/martty-freeze-diag.*`; retarget at `crow`.
-7.4 `README.md`, `AGENTS.md`, `docs/README.md` — the "what is still vestigial
+    *Done:* six sites — the header comment ("when the crow TUI looks frozen"),
+    the `mktemp` prefix (`/tmp/crow-freeze-diag.XXXXXX.txt`), the
+    `pgrep -f 'vendor/[^ ]*/crow|target/(devlocal|debug|release)/crow'`
+    pattern, `pgrep -xo crow`, the `== candidate crow processes:` heading and
+    the `(none found — is the TUI actually a crow process?)` hint. `bash -n`
+    clean; `grep -rni martty scripts` → 0.
+
+[x] 7.4 `README.md`, `AGENTS.md`, `docs/README.md` — the "what is still vestigial
     here" lists describe the pre-sprint state and will be wrong. Rewrite them
     to the post-sprint truth: what is parked and where the machinery lives,
     what the palette situation is, and that the client owns no model config.
     *Verify:* read top to bottom; every claim checked against the tree, not
     against memory.
-7.5 Final sweep: `grep -rni "deepseek\|martty\|dsh\|openma\|liang\|cordis"`
+    *Done — `README.md`:* the intro's "still carry branding from the project
+    this one was forked out of" is now the honest post-sprint statement (one
+    surviving attribution, `LICENSE:3`, pending an attribution pass); the app
+    table's `crow` row says what it is built from (`the crow-client crate in
+    this repo is *today*; the binary is crow`); the heading is
+    `### This repo: crow-client v0.1.0, binary crow` and the build line points
+    at `target/release/crow`; "24 slash commands" → **20 live + 4 parked**;
+    "8 palettes" → **9 palette fixtures + `demo-surface.v0.json`**; and the
+    whole "What is still vestigial here" list was rewritten rather than
+    patched — no provider/model/credentials and `/model`+`/auth` are the
+    agent's over ACP, `theme.rs` is the house ramp plus packs with one
+    retained blue pack that is *selectable and nothing more*, the four parked
+    commands with the file each piece of machinery lives in
+    (`src/ext.rs`, `src/pet.rs`, `assets/pet/liang-*.png`, the pickers, the
+    `run_slash` handlers, the zh descriptions), `slots.rs` +
+    `app.harness_badge` permanently empty, `locale.rs`'s zh requirement,
+    `docs/composer-input.md` still Chinese, `LICENSE:3`. The trailing
+    "docs from the Martty era" sentence is de-branded.
+    *Done — `AGENTS.md`:* "no Cordis host, no dsh profile" → no plugin host,
+    no profile system, and nothing answers `_crow/tui/*` in `src/ext.rs`,
+    which is *why* four commands are parked; the `theme.rs` bullet no longer
+    claims a 1:1 DeepSeek token map or points at `src/deepseek_logo.rs` and
+    `assets/martty-lockup.svg` (neither file exists) — it states the palette
+    layer: `CROW_50…CROW_900`, the six `BUILTIN_PALETTE_IDS`, protocol-0
+    parse, no logo module, no lockup asset; `/plugins, /cordis-plugins, /ui,
+    /liang are live` → `/plugins, /dynamic-plugins, /ui, /liang are **parked,
+    not live**` with `src/ext.rs` as the wire-name table and `src/slots.rs` +
+    `src/pet.rs` as the receiving ends (`src/cordis.rs` does not exist);
+    "arrives from a Cordis slot snapshot" → "compositor slot snapshot" (the
+    claim itself is still true and still load-bearing);
+    `DSH_TUI_RUST_CACHE_MAX_GIB` → `CROW_RUST_CACHE_MAX_GIB` and
+    `$DSH_TUI_CARGO_TARGET_DIR` → `$CROW_CARGO_TARGET_DIR`, both matching
+    `scripts/cargo-guard.sh:6-10`; the release line no longer says `PLAN.md`
+    and `TODO.md` were deleted (they are this sprint's working docs at the
+    repo root — `CHANGELOG.md` is the one that is gone); and `rustc 1.95` →
+    `rustc 1.98`, with the reason `let_chains` are avoided restated correctly
+    (they are edition-2024-only and this crate is edition 2021, so the
+    toolchain version was never the real constraint).
+    One more stale claim the sweep cannot see, caught by the read-top-to-bottom
+    the verify asks for: "**There is no plugin command namespace to collide
+    with** … a builtin name is the only thing that exists" was false even
+    before this sprint. The agent's `availableCommands` become host skills in
+    the same `/` menu (`skills_from_available_commands`, `events.rs:950`, fed
+    from `acp.rs:1804-1819` and `acp/v2.rs:785`), and this repo's own agent
+    sends them (`src/crow_cli/agent/main.py:566`) — which is exactly why
+    `app/slash.rs:43,74` filters both non-builtin sources against the builtin
+    names. Rewritten as "the `/` namespace has three sources, and builtins
+    win", with the third source (compositor-pushed plugin commands) named as
+    parked. A constraint file that says a collision is impossible is worse
+    than one that says nothing, because the dedupe code reads like paranoia.
+    *Done — `docs/README.md`:* only lines 3-6 were wrong ("Everything
+    Martty-era — the Cordis plugin host, the dsh profile…"), now "Everything
+    that came from the project this one was forked out of — the plugin host,
+    the profile system…". The rest was checked and is accurate: 8 shipped
+    palettes + `demo-skin` + `demo-surface` (referenced by nothing), nothing
+    in `src/` reads `docs/fixtures/` at runtime, `--demo-skin` gone and pinned
+    absent by `tests/cli_help.rs`.
+    *Every number above was read out of the tree, not remembered:* 20 live
+    entries by counting uncommented `name:` in `slash_catalog.rs` (a naive
+    `name:\s*"…"` regex says 24 — it counts the four parked ones);
+    `BUILTIN_PALETTE_IDS` = 6; `docs/fixtures/` = 10 files;
+    `harness_badge` fed at `app/pump.rs:408` from `conversation.harness`
+    (`slots.rs:274`); `cargo-guard.sh` env vars; `rustc --version` = 1.98.1;
+    `src/deepseek_logo.rs`, `src/cordis.rs`, `assets/martty-lockup.svg`
+    absent.
+
+[x] 7.5 Final sweep: `grep -rni "deepseek\|martty\|dsh\|openma\|liang\|cordis"`
     over the whole crate. The only surviving hits are the intentional ones —
     the deepseek palette in `theme.rs`, the parked `/liang` registry comment and
     its `pet.rs` machinery, `assets/pet/liang-*.png`, and `LICENSE:3`
     (deferred by the user). Anything else is a miss; fix it.
+    *Done — the src pass first, so the sweep had something to converge on:*
+    `theme.rs`'s struct doc and its 15 `--dsw-alias-*` /
+    `--dsw-specific-bubble` field docs now say what each token *does* instead
+    of which web token it mirrors (15 doc lines in `theme.rs` alone;
+    `grep -rn dsw` over the whole crate is 0 now, but only because the sweep
+    below caught a sixteenth, in `transcript.rs`); the
+    provenance module docs were de-branded in place — `events.rs:1`,
+    `proto.rs:1`, `transcript.rs:1-6`, `file_ref.rs:3-6` keep the "this shape
+    was learned from a web UI" fact without wearing the name. `theme.rs` is
+    now only the palette pack, which is what rule 3 permits.
+    *Done — the sweep,* run as
+    `grep -rniE 'deepseek|martty|dsh|cordis|openma|whale|liang'` over the
+    whole crate (`whale` added: it is the pet's fallback art and the name of
+    the deleted logo primitive, so it belongs in the net). **133 lines, every
+    one classified:**
+    - `src/` 70 — `theme.rs` 31 deepseek (the palette, rule 3) + 2 whale
+      (`whale_gradient()`, the pet fallback's two colours); `pet.rs` 6 liang +
+      3 whale + 1 deepseek (line 1's homage, rule 4); `ui.rs` 9 whale + 1
+      liang (`WHALE_XS` half-block fallback, `pet_rect`); `app.rs` 2 liang
+      (the `pet_*` field docs); `app/slash.rs` 4 liang (the parked handler and
+      its two zh strings); `app/slash_catalog.rs` 6 liang (the parked entry's
+      note); `locale.rs` 1 liang (the zh `command_desc` arm); `acp.rs` 4 +
+      `acp/negotiate.rs` 1 `dsh` — the substring "handshake", exactly as
+      Phase 6 predicted.
+    - `tests/` 56 — absence pins (`main__cli_args_tests.rs`: martty 8, dsh 8,
+      cordis 1, deepseek 1; `sessions__tests.rs` 3; `ui__tests.rs:1807`'s
+      logo-primitive guard; `cli_help.rs:40`; `app__mode_tests.rs:123`'s
+      retired `dsh-tui-settings.json`), the palette (`theme__tests.rs` 6), the
+      pet (`pet__tests.rs` 9, `ui__tests.rs` 7, `app__mode_tests.rs` 11).
+    - `docs/`, `scripts/`, `assets/`, `packaging/`, `web/`, `fixtures/`,
+      `.gitignore` — **0**. `Cargo.toml` — 2, the `assets/pet/liang-*.png`
+      asset lines. `LICENSE:3` — `OpenMA contributors`, deferred by the user.
+    - Filename sweep (grep cannot see these): the only brand-named paths left
+      are `assets/pet/liang-{idle,working}.png` and
+      `assets/screenshots/liang.png`, all three kept by rule 4.
+    *Five misses found and fixed.* Phase 6's inventory called all 43 `liang`
+    lines in `tests/` pet machinery; 19 of them were not — they were plugin
+    fixtures that happened to be named after the old brand. The fifth is a
+    token name no brand grep can see:
+    - `liang-effort` / `"Liang reasoning effort"` → `effort-slider` /
+      `"Reasoning effort"`: the client-plugin command fixture
+      (`app__mode_tests.rs:3269-3312`) and the three overlay-slider fixtures
+      (`app__mode_tests.rs:3522/3552`, `:3857/3884`, `ui__tests.rs:2656-2684`).
+      The typed prefixes became `/effort-sli` and `/effort-slider`;
+      `slash_matches` filters with `name.starts_with(prefix)`
+      (`app/slash.rs:26,42`), so the builtin `/effort` cannot collide and
+      `matches.len() == 1` still pins what it pinned. The new title is 6
+      chars shorter than the old one, so the 100×30 frame assertion is if
+      anything safer.
+    - `"whenTheme": "liang"` → `"no-such-theme"`
+      (`app__mode_tests.rs:3271`). The test is
+      `client_plugin_command_catalog_does_not_interpret_legacy_theme_metadata`;
+      the value's whole job is to be a theme id the client does not know, and
+      saying so is a stronger pin than a brand name that happens to be
+      unknown.
+    - `/opt/liang/stage-00.png` → `/opt/crow/stage-00.png`
+      (`ui__tests.rs:280`, `theme__tests.rs:197/205`) — a palette *background*
+      path with nothing to do with the pet, and `/opt/crow` is already Phase
+      6's vocabulary.
+    - `src/pet.rs:5-6` — "hammers away on a tiny terminal while **DeepSeek**
+      runs. `/liang` toggles him; see README "The /liang meme"" → "while the
+      agent runs", and the dangling pointer now points at the parked entry's
+      note in `src/app/slash_catalog.rs`. No README in this repo's history has
+      ever had that section (`git log -S'The /liang meme'` → empty), so it was
+      stale before the sprint started. Lines 1-2 stay: naming Liang Wenfeng is
+      attribution for retained art, in the same class as the 29
+      grok-provenance comments.
+    - One more that the pattern cannot catch: `src/transcript.rs:1553`'s
+      "the user bubble uses `--dsw-specific-bubble`" — a CSS custom-property
+      name from the deleted web UI, and the last `dsw` in the crate. It now
+      names the tokens the code actually reads (`bubble_bg` / `bubble_fg`).
+    *After:* `grep -rni liang tests` 43 → **24** lines, `grep -rni deepseek
+    src` 37 → **32** (4 provenance docs + `pet.rs`'s "while DeepSeek runs"),
+    `grep -rni dsw` → **0**, `martty` 10 (all absence pins), `cordis` 1 (the
+    `--cordis` rejection pin), `dsh` 17 (src 5 = "handshake", tests 12 =
+    absence pins), `whale` 18 (pet fallback art + the logo-primitive guard),
+    `openma` 1 (`LICENSE:3`, deferred).
+
+**Phase 7 gate result:** `cargo check --locked --tests -j 6` rc 0 with exactly
+the 3 permanent warnings (unused `Path` @ `main__cli_args_tests.rs:2`, unused
+`ctl` @ `ui__tests.rs:3602`, non-snake-case `dd_kills_the_line_and_gg_G_jump` @
+`input__vim__tests.rs:74`); `cargo test --locked --bin crow -j 6` → **941
+passed, 0 failed** (941 → 941 again: 7.5 renamed fixtures and comments, not
+tests); `cli_help` 3, `startup_session_e2e` 12, `sigterm_cleanup` 1,
+`tcp_attach` 1 — all green; `--dump-frame 100x34` → 1815 chars / 35 rows /
+2819 bytes on disk, **byte-identical** to `/tmp/rebrand-p4-baseline.frame`
+(saved as `/tmp/rebrand-p7-clean.frame`).
+
+The green is a *built* green, not a replayed one: cargo replays cached
+warnings for a unit it considers fresh, so a stale artifact and a real pass
+look identical in the output. Both binaries were checked against the clock —
+`target/debug/deps/crow-e748d5d90d72350e` (the test bin) rebuilt at 15:29:31
+and `target/debug/crow` at 15:29:37, against a last source edit at 15:24:29
+(`src/transcript.rs`). Also run: `bash -n scripts/collect-freeze-diag.sh` rc 0,
+the schema and all 10 `docs/fixtures/*.json` re-parsed with `json.loads`, and
+`git log -S` on the two claims about history (build.py's source JPEGs, the
+README's missing `/liang meme` section). Seven images went, 4.63 MB / 4.41 MiB
+of old brand art; nothing was added.
 
 **Commit:** `docs(client): the rebrand, written down`
 

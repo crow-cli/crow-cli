@@ -1,9 +1,10 @@
 # docs
 
-What is left here, and what each file is for. Everything Martty-era — the
-Cordis plugin host, the dsh profile, the npm bundle, the Node migration plan,
-the harness CLI, the architecture diagrams — has been deleted rather than left
-to mislead. It is in the git history.
+What is left here, and what each file is for. Everything that came from the
+project this one was forked out of — the plugin host, the profile system, the
+npm bundle, the Node migration plan, the harness CLI, the architecture
+diagrams — has been deleted rather than left to mislead. It is in the git
+history.
 
 | | |
 |---|---|

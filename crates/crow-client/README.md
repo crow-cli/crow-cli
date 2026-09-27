@@ -6,8 +6,9 @@ This README is honest about the gap between the two: **what we are building
 toward** is a monorepo of Rust apps that share one terminal, one agent protocol
 and one theme. **What exists today** is one of those apps — an ACP client TUI —
 plus a set of sibling checkouts that are not yet part of anything. Neither half
-is finished, and the parts that are finished still carry branding from the
-project this one was forked out of.
+is finished. The client itself was rebranded out of the project it was forked
+from; the one surviving attribution is `crates/crow-client/LICENSE:3`, pending
+an attribution pass.
 
 ---
 
@@ -20,7 +21,7 @@ you get **one theme selector** that drives all of it.
 | name | what it is | where it comes from | license |
 |---|---|---|---|
 | **crow-term** | the terminal emulator itself — the base executable | fork of [rio](https://github.com/raphamorim/rio): `frontends/rioterm` for native, the wasm frontend for the browser | MIT |
-| **crow** | the ACP client — talk to a coding agent inside the terminal | what the `crow-term` crate in this repo is *today*, renamed | MIT |
+| **crow** | the ACP client — talk to a coding agent inside the terminal | what the `crow-client` crate in this repo is *today*; the binary is `crow` | MIT |
 | **murdr** | a crow agent orchestrator: panes that keep running when you detach, per-pane agent state, several machines in one window | fork of [herdr](https://herdr.dev), rebranded and rebuilt around ACP instead of herdr's own socket API | Apache-2.0 |
 | **starship** | the shell prompt | [starship/starship](https://github.com/starship/starship) | ISC |
 | **fresh** | the text editor | [sinelaw/fresh](https://github.com/sinelaw/fresh) | GPL-3.0-or-later |
@@ -52,14 +53,14 @@ decisions below have something to be decided against.
 
 ## What exists today
 
-### This repo: `crow-term` v0.2.39
+### This repo: `crow-client` v0.1.0, binary `crow`
 
 A pure-Rust binary crate. No Node, no npm, no plugin host — the JavaScript layer
 this project was forked out of is deleted, not dormant, and the git history is
 full of it.
 
 ```
-cargo build --release -j 6      # -> target/release/crow-term
+cargo build --release -j 6      # -> target/release/crow
 cargo test --locked             # the only gate
 ```
 
@@ -95,9 +96,14 @@ handles the connection. A harness is an argv, not a config schema.
   `ratatui-textarea`, `ratatui-explorer`, `tui-tree-widget`
 - settings at `~/.agents/crow/settings.json` — patched, never rewritten;
   an unparseable file is quarantined rather than replaced
-- 24 slash commands, catalogued in `src/app/slash_catalog.rs`
-- 8 palettes in `docs/fixtures/` against `docs/tui-palette.v0.schema.json`:
-  ayu, catppuccin, everforest, iceberg, kanagawa, one, solarized, tomorrow
+- 20 slash commands, catalogued and name-sorted in
+  `src/app/slash_catalog.rs`; four more (`/plugins`, `/dynamic-plugins`,
+  `/ui`, `/liang`) are parked in place, each with a note naming the machinery
+  that is still compiled and tested
+- 9 palette fixtures in `docs/fixtures/` against
+  `docs/tui-palette.v0.schema.json` — ayu, catppuccin, everforest, iceberg,
+  kanagawa, one, solarized, tomorrow, plus `demo-skin` — and
+  `demo-surface.v0.json`, a slot snapshot kept as a schema example
 - `tests/startup_session_e2e.rs` drives the **shipped binary** on a real PTY
   against a stub ACP agent — that, not a mock, is how behaviour gets proven
 
@@ -123,14 +129,29 @@ workspace, no shared build, no path dependencies.
 
 Listed so nobody mistakes it for intent:
 
-- `src/theme.rs` is a 1:1 map of DeepSeek's web design tokens, and
-  `src/deepseek_logo.rs` and `assets/martty-lockup.svg` are still in the tree
-- `/plugins`, `/cordis-plugins`, `/ui` and `/liang` are live slash commands
-  pointing at a Cordis plugin host that no longer exists; `src/cordis.rs` and
-  `src/slots.rs` are the same story
+- The client owns **no provider, no model list and no credentials**. `/model`,
+  `/auth` and `/login` are the agent's, spoken over ACP; the binary never asks
+  for a key of its own and injects none into a child environment.
+- `src/theme.rs` is the crow house ramp (`CROW_50…CROW_900`) plus palette
+  packs; `default` wears the house ramp. One retained blue pack survives as a
+  *selectable palette and nothing more* — no default, no logo, no art.
+- `/plugins`, `/dynamic-plugins`, `/ui` and `/liang` are **parked, not
+  deleted**: commented out of `SLASH_COMMANDS` at their alphabetical
+  positions, each with a note naming every piece of machinery that is still
+  compiled and tested — `src/ext.rs` (the `_crow/tui` extension family),
+  `src/pet.rs` and `assets/pet/liang-*.png`, the pickers, the `run_slash`
+  handlers and their zh descriptions. Re-registering any of them is
+  uncommenting one entry.
+- `src/slots.rs` still parses compositor slot snapshots, and
+  `app.harness_badge` is still fed from the `conversation.harness` slot in
+  `src/app/pump.rs`. Nothing sends one, so the badge is permanently empty;
+  chrome, badges and palettes are driven from the Rust side
+  (`CtlEvent` / `AppEvent`).
 - `src/locale.rs` requires a Chinese description for every builtin command, so
   the command surface is bilingual by construction
 - `docs/composer-input.md` is accurate and still in Chinese
+- `crates/crow-client/LICENSE:3` still names the project this one was forked
+  from; the attribution pass happens after the rebrand
 
 ---
 
@@ -144,9 +165,9 @@ Listed so nobody mistakes it for intent:
 | [`docs/composer-input.md`](docs/composer-input.md) | the input widget: every keybinding, and how it is wired |
 | [`docs/tui-palette.v0.schema.json`](docs/tui-palette.v0.schema.json) | the palette format, with `docs/fixtures/*.v0.json` as examples |
 
-The Martty-era docs — Cordis plugins, the dsh profile, the npm bundle, the Node
-migration plan, the harness CLI — have been deleted rather than left to mislead.
-They are in the git history.
+The docs from the project this one was forked out of — the plugin host, the
+profile system, the npm bundle, the Node migration plan, the harness CLI — have
+been deleted rather than left to mislead. They are in the git history.
 
 ## License
 

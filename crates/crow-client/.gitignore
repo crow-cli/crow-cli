@@ -2,7 +2,6 @@
 /dist
 # staged wasm bundle + wasm-bindgen output (built by scripts/build-web.sh)
 /web/target
-/npm-martty
 /.venv
 /npm/vendor
 /npm/node_modules

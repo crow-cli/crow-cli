@@ -1,4 +1,4 @@
-//! NDJSON JSON-RPC 2.0 over stdio — the deepseek-harness SDK runtime protocol.
+//! NDJSON JSON-RPC 2.0 over stdio — the harness SDK runtime protocol.
 //!
 //! One JSON object per line. Client requests: `initialize`, `session/prompt`,
 //! `shutdown`. Server notifications: `session.event`, `session.status`,

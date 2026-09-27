@@ -277,7 +277,7 @@ fn active_image_background_clears_only_the_base_canvas() {
     let mut palette: serde_json::Value =
         serde_json::from_str(include_str!("../../docs/fixtures/demo-skin.v0.json")).unwrap();
     palette["background"] = serde_json::json!({
-        "source": { "kind": "file", "path": "/opt/liang/stage-00.png" },
+        "source": { "kind": "file", "path": "/opt/crow/stage-00.png" },
         "fit": "cover",
         "opacity": 0.42
     });
@@ -2653,8 +2653,8 @@ fn plugin_slider_overlay_renders_track_marks_and_keyboard_affordances() {
     let mut app = test_app();
     app.show_banner = false;
     app.slider_overlay = Some(SliderOverlay {
-        id: "liang-effort".into(),
-        title: "Liang reasoning effort".into(),
+        id: "effort-slider".into(),
+        title: "Reasoning effort".into(),
         min: 0.0,
         max: 30.0,
         step: 1.0,
@@ -2681,7 +2681,7 @@ fn plugin_slider_overlay_renders_track_marks_and_keyboard_affordances() {
 
     let frame = dump_frame(&mut app, 100, 30);
 
-    assert!(frame.contains("Liang reasoning effort"), "title\n{frame}");
+    assert!(frame.contains("Reasoning effort"), "title\n{frame}");
     for label in ["Off", "High", "Max"] {
         assert!(frame.contains(label), "mark {label}\n{frame}");
     }

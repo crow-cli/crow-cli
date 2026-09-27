@@ -1,9 +1,8 @@
 //! Transcript model: the scrollback cells and their rendering to styled lines.
 //!
-//! Mirrors what the deepseek-harness Web UI surfaces for a session: user
-//! prompts, streaming reasoning, streaming assistant text, tool calls with
-//! results, injected context, subagent lifecycle, usage accounting, and turn
-//! outcomes.
+//! Mirrors what a harness session surfaces: user prompts, streaming
+//! reasoning, streaming assistant text, tool calls with results, injected
+//! context, subagent lifecycle, usage accounting, and turn outcomes.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -1551,7 +1550,9 @@ impl Transcript {
             match &cell.kind {
                 CellKind::User { text, queued } => {
                     emit(&mut out, &mut owners, Line::default(), None);
-                    // Web UI fidelity: the user bubble uses --dsw-specific-bubble.
+                    // Web UI fidelity: the user bubble paints with its own
+                    // token pair (`bubble_bg` / `bubble_fg`), not the assistant
+                    // surface.
                     // Budget = width - 4: the "❯ "/"  " prefix takes 2 cells
                     // and the " {l} " padding takes 2 more, so a wider wrap
                     // budget would clip the last text cells of full lines.

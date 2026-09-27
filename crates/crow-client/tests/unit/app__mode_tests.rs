@@ -3266,19 +3266,19 @@ fn client_plugin_command_catalog_does_not_interpret_legacy_theme_metadata() {
             params: serde_json::json!({
                 "protocol": 0,
                 "commands": [{
-                    "name": "liang-effort",
+                    "name": "effort-slider",
                     "description": "slide the reasoning effort",
-                    "whenTheme": "liang"
+                    "whenTheme": "no-such-theme"
                 }]
             }),
         },
         &ctl,
     );
 
-    app.input.set("/liang-eff".into());
+    app.input.set("/effort-sli".into());
     let matches = app.slash_matches();
     assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0].name, "liang-effort");
+    assert_eq!(matches[0].name, "effort-slider");
     assert_eq!(matches[0].desc, "slide the reasoning effort");
 }
 
@@ -3292,14 +3292,14 @@ fn client_plugin_command_invocation_stays_out_of_the_agent_prompt() {
             params: serde_json::json!({
                 "protocol": 0,
                 "commands": [{
-                    "name": "liang-effort",
+                    "name": "effort-slider",
                     "description": "slide the reasoning effort"
                 }]
             }),
         },
         &ctl,
     );
-    app.input.set("/liang-effort".into());
+    app.input.set("/effort-slider".into());
 
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &ctl);
 
@@ -3309,7 +3309,7 @@ fn client_plugin_command_invocation_stays_out_of_the_agent_prompt() {
     assert!(matches!(
         command,
         Cmd::InvokePluginCommand { name, args }
-            if name == "liang-effort" && args.is_empty()
+            if name == "effort-slider" && args.is_empty()
     ));
     assert!(app.input.is_empty());
 }
@@ -3519,8 +3519,8 @@ fn plugin_slider_moves_between_effort_marks_for_material_preview() {
                 "protocol": 0,
                 "overlay": {
                     "kind": "slider",
-                    "id": "liang-effort",
-                    "title": "Liang reasoning effort",
+                    "id": "effort-slider",
+                    "title": "Reasoning effort",
                     "min": 0,
                     "max": 30,
                     "step": 1,
@@ -3549,7 +3549,7 @@ fn plugin_slider_moves_between_effort_marks_for_material_preview() {
     assert!(matches!(
         command,
         Cmd::PluginOverlayEvent { id, event, value }
-            if id == "liang-effort"
+            if id == "effort-slider"
                 && event == "change"
                 && value == Some(serde_json::json!(16.0))
     ));
@@ -3854,8 +3854,8 @@ fn plugin_slider_enter_submits_the_effort_and_closes() {
                 "protocol": 0,
                 "overlay": {
                     "kind": "slider",
-                    "id": "liang-effort",
-                    "title": "Liang reasoning effort",
+                    "id": "effort-slider",
+                    "title": "Reasoning effort",
                     "min": 0,
                     "max": 30,
                     "step": 1,
@@ -3881,7 +3881,7 @@ fn plugin_slider_enter_submits_the_effort_and_closes() {
     assert!(matches!(
         command,
         Cmd::PluginOverlayEvent { id, event, value }
-            if id == "liang-effort"
+            if id == "effort-slider"
                 && event == "submit"
                 && value == Some(serde_json::json!(15.0))
     ));

@@ -194,7 +194,7 @@ fn gallery_fixtures_parse_both_modes() {
 fn palette_parses_an_optional_png_background() {
     let mut value = ember_json();
     value["background"] = serde_json::json!({
-        "source": { "kind": "file", "path": "/opt/liang/stage-00.png" },
+        "source": { "kind": "file", "path": "/opt/crow/stage-00.png" },
         "fit": "cover",
         "anchor": { "x": 0.75, "y": 0.5 },
         "opacity": 0.42
@@ -202,7 +202,7 @@ fn palette_parses_an_optional_png_background() {
 
     let pack = PalettePack::from_json(&value).expect("theme background");
     let debug = format!("{pack:?}");
-    assert!(debug.contains("/opt/liang/stage-00.png"), "{debug}");
+    assert!(debug.contains("/opt/crow/stage-00.png"), "{debug}");
     assert!(debug.contains("Cover"), "{debug}");
     assert!(debug.contains("0.75"), "{debug}");
     assert!(debug.contains("0.42"), "{debug}");

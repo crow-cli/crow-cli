@@ -1,4 +1,4 @@
-//! Parsing of deepseek-harness SDK-runtime JSON-RPC notifications into UI events.
+//! Parsing of the harness SDK-runtime JSON-RPC notifications into UI events.
 
 use serde_json::Value;
 

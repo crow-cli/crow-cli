@@ -117,6 +117,25 @@ chars / 35 rows, byte-identical to `/tmp/rebrand-p4-baseline.frame` under a
 clean `CROW_HOME` — test vocabulary never reaches the paint. 23 files changed,
 377 insertions, 373 deletions.
 
+**Phase 7 gate result:** check rc 0, still exactly those 3 warnings (same three
+lines, same bindings — docs, comments and fixture names move nothing in `src`);
+`cargo test --locked --bin crow -j 6` → **941 passed, 0 failed** (941 → 941:
+none added, none deleted, none renamed — 7.5 changed fixture *vocabulary* and
+prose, not test identities); `cli_help` 3, `startup_session_e2e` 12,
+`sigterm_cleanup` 1, `tcp_attach` 1 all green. `--dump-frame 100x34` → 1815
+chars / 35 rows / 2819 bytes on disk, byte-identical to
+`/tmp/rebrand-p4-baseline.frame` (saved as `/tmp/rebrand-p7-clean.frame`) —
+deleting 4.63 MB of brand art and rewriting three prose files repaints nothing,
+because none of it was ever loaded at runtime. Crate diff: 25 files changed,
+138 insertions, 245 deletions.
+*Recorded because a cached green looks exactly like a real one:* cargo replays
+stored warnings for a unit it considers fresh, so both binaries were checked
+against the clock — test bin `crow-e748d5d90d72350e` rebuilt 15:29:31,
+`target/debug/crow` 15:29:37, last source edit 15:24:29. Also verified out of
+band: `bash -n scripts/collect-freeze-diag.sh` rc 0, the palette schema and all
+10 `docs/fixtures/*.json` re-parsed, and `git log -S` for the two historical
+claims 7.1/7.5 rest on.
+
 ## Scope capture (unordered)
 
 - [x] **The client stops owning provider/model/credentials.** `MODEL_PRESETS`
@@ -373,12 +392,67 @@ clean `CROW_HOME` — test vocabulary never reaches the paint. 23 files changed,
       palette pack mandate rule 3 keeps. Itemised in PLAN. The `cordis`
       fixture vocabulary was already swept in 5.2, which is why Phase 6 never
       listed it; one hit survives, the `"--cordis"` rejection pin.
-- [ ] **Docs, assets, scripts, packaging**: `assets/promo/build.py:89`
+- [x] **Docs, assets, scripts, packaging**: `assets/promo/build.py:89`
       (`github.com/openma-ai/deepseek-harness-tui`), `docs/tui-palette.v0.schema.json`
       `$id` (`https://openma.ai/dsh-tui/…`) and the `$schema` refs in the 8
       fixtures, `scripts/collect-freeze-diag.sh` (pgreps `martty`),
       `crates/crow-client/README.md` + `AGENTS.md` + `docs/README.md` prose
       (the "what is still vestigial here" list describes the old state).
+      *Done (PLAN 7.1–7.5).* `assets/promo/` deleted outright (`build.py`,
+      `DESIGN.md`, `social-preview.png`) along with six old-brand screenshots
+      (`banner-v020`, `agent-turn`, `skills-menu`, `harness-add`,
+      `harness-switch`, `image-preview`) — all seven looked at with `vision`
+      first, and all seven pure old brand: whale lockup, "DEEPSEEK HARNESS",
+      `dsh --profile martty`, `deepseek-v4-*` chips, a live `/liang` menu, the
+      openma URL. Nothing references them (`Cargo.toml`'s include list carries
+      only the two pet PNGs, both still present), 4.63 MB gone;
+      `assets/screenshots/liang.png` stays by rule 4. Schema `$id` →
+      `https://crow-ai.dev/crow-client/…`, plus its `title` and `$comment`,
+      which named the old product and a JS API that left with the npm layer.
+      `collect-freeze-diag.sh` retargeted at `crow` in six sites. All three
+      prose files rewritten to the post-sprint truth, every number read out of
+      the tree rather than remembered: **20** live slash commands + 4 parked (a
+      naive `name:` regex says 24 — it counts the commented-out ones), **6**
+      `BUILTIN_PALETTE_IDS`, **10** files in `docs/fixtures/`, `harness_badge`
+      still fed at `app/pump.rs:408` from `conversation.harness`
+      (`slots.rs:274`), `CROW_RUST_CACHE_MAX_GIB` / `CROW_CARGO_TARGET_DIR`
+      per `cargo-guard.sh:6-10`, rustc **1.98.1** — and the reason
+      `let_chains` stay out is edition 2021, not the toolchain, so AGENTS.md
+      now says that. `src/deepseek_logo.rs`, `src/cordis.rs` and
+      `assets/martty-lockup.svg` are confirmed absent before being called
+      absent. Reading AGENTS.md top to bottom also turned up a constraint
+      that was false before the sprint — "there is no plugin command namespace
+      to collide with … a builtin name is the only thing that exists" — when
+      in fact the agent's `availableCommands` land in the same `/` menu as
+      host skills (`events.rs:950` ← `acp.rs:1804-1819` / `acp/v2.rs:785`, and
+      this repo's agent sends them at `src/crow_cli/agent/main.py:566`), which
+      is why `app/slash.rs:43,74` dedupes against the builtin names. Now "the
+      `/` namespace has three sources, and builtins win". The 7.5 sweep
+      (`whale` added to the pattern) classified all
+      **133** surviving lines and caught **five misses**: the `liang-effort` /
+      "Liang reasoning effort" plugin-command and overlay-slider fixtures →
+      `effort-slider` / "Reasoning effort" (`slash_matches` filters on
+      `name.starts_with(prefix)`, so builtin `/effort` cannot collide and
+      `matches.len() == 1` still pins what it did); `"whenTheme": "liang"` →
+      `"no-such-theme"`, which states the pin instead of implying it;
+      `/opt/liang/stage-00.png` → `/opt/crow/stage-00.png`; `pet.rs`'s "while
+      DeepSeek runs" and its pointer to a README section that has never
+      existed in this repo (`git log -S` → empty); and `transcript.rs:1553`'s
+      `--dsw-specific-bubble`, the last `dsw` in the crate and one no brand
+      grep can see. `grep -rni liang tests` 43 → 24, `grep -rni deepseek src`
+      37 → 32, `dsw` → 0, `martty`/`cordis`/`dsh`/`whale`/`openma` all
+      accounted for line by line in PLAN 7.5.
+      *Correction:* PLAN 7.1 as written cannot be done — `build.py` composes
+      its promo image from `assets/screenshots/banner.jpg` and `plugin-turn.jpg`,
+      which were **never committed**, so the script could not run at any point
+      in this repo's history. Retargeting its URL would leave a script that
+      still cannot run next to a `DESIGN.md` whose whole subject is a whale
+      lockup; for assets, "no shim" means delete. PLAN 7.2's "the `$schema`
+      reference in each of the 8 fixtures" describes keys that do not exist:
+      **0** of the 10 fixtures carry `$schema`, and none could —
+      `PalettePack::from_json` rejects any key outside
+      `id`/`label`/`dark`/`light`/`background` (`theme.rs:526-533`), so the
+      annotation would be a parse error, not something the loader looks past.
 - [ ] **`crates/crow-client/LICENSE:3`** still reads `Copyright (c) 2026 OpenMA
       contributors`. Deferred to the attribution pass the user said happens
       after the rebrand — recorded here so it is not lost, not touched now.

@@ -2,8 +2,10 @@
 //! 梁文锋 (Liang Wenfeng), perched at the composer's right edge.
 //!
 //! Two states, driven by the run state: **idle** goes 🤫 (shush — quiet
-//! research), **working** hammers away on a tiny terminal while DeepSeek
-//! runs. `/liang` toggles him; see README "The /liang meme".
+//! research), **working** hammers away on a tiny terminal while the agent
+//! runs. `/liang` toggles him, and is parked out of the slash registry: the
+//! note on the commented-out entry in `src/app/slash_catalog.rs` lists every
+//! piece of this machinery that is still compiled and tested.
 //!
 //! High-pixel path: the kitty graphics protocol (ghostty, kitty, WezTerm)
 //! in immediate transmit-and-display mode (`a=T`), re-sent on every state
