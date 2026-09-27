@@ -34,3 +34,6 @@ sandbox/lancedb-testing/pylate_lancedb/
 
 # Rust
 target/
+
+# playwright-cli scratch state
+.playwright-cli/
