@@ -22,6 +22,10 @@ include = [
     "LICENSE",
 ]
 
+# crow-gui is the runtime-agnostic UI service (native `--gui` window and the
+# `--web` wasm runtime share one runner). It is a member but NOT a default
+# member, so a bare `cargo build`/`cargo test` in this directory keeps building
+# exactly the TUI binary it always did — the shipped TUI must not pay for wgpu.
 [[bin]]
 name = "crow"
 path = "src/main.rs"
@@ -49,21 +53,20 @@ tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "io-util"
 tokio-util = { version = "0.7.19", features = ["compat"] }
 futures = "0.3.34"
 image = { version = "0.25", default-features = false, features = ["png"] }
+# GUI backend for `--gui`: a native window with ratatui painted over wgpu, so a
+# launcher can start crow with Terminal=false instead of depending on the
+# compositor's terminal resolution. crow-gui is the UI service — it owns winit,
+# ratatui-wgpu and the runner, and hosts anything implementing GuiApplication.
+# Optional so the default TUI build compiles none of winit/wgpu.
+crow-gui = { path = "../crow-gui", optional = true }
+
+[features]
+default = []
+# Native GPU window. Off by default: the shipped TUI must not pay for wgpu.
+gui = ["dep:crow-gui"]
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["test-util"] }
-
-[profile.release]
-lto = true
-strip = true
-
-# Opt-in fast local build profile (DSH_TUI_CARGO_PROFILE=devlocal for
-# `scripts/devlocalinstall.sh`, or `cargo build --profile devlocal` while
-# iterating): plain debug codegen — no optimizations, incremental — the
-# fastest turnaround for build/test loops. `scripts/devlocalinstall.sh` and
-# the shipped npm packages build [profile.release] (fat LTO, stripped).
-[profile.devlocal]
-inherits = "dev"
 
 [package.metadata.deb]
 maintainer = "Thomas Wood <odell.wood@gmail.com>"
@@ -80,9 +83,13 @@ drives the agent from a vim-style composer."""
 # Terminal=true launcher entry plus the hicolor ladder its Icon= key resolves
 # through; without these the .deb installs a binary no app grid can find.
 assets = [
-    ["target/release/crow", "/usr/bin/crow", "755"],
+    ["../../target/release/crow", "/usr/bin/crow", "755"],
     ["README.md", "/usr/share/doc/crow-client/README.md", "644"],
-    ["packaging/crow.desktop", "/usr/share/applications/crow.desktop", "644"],
+    # The GUI launcher entry (`Terminal=false`, `Exec=crow --gui`): this .deb is
+    # built with the `gui` feature, so the app grid must open the window, not a
+    # terminal. Swap the source to `packaging/crow.desktop` for the
+    # `Terminal=true` entry the non-GUI package routes ship.
+    ["packaging/crow-gui.desktop", "/usr/share/applications/crow.desktop", "644"],
     ["packaging/icons/hicolor/16x16/apps/crow.png", "/usr/share/icons/hicolor/16x16/apps/crow.png", "644"],
     ["packaging/icons/hicolor/22x22/apps/crow.png", "/usr/share/icons/hicolor/22x22/apps/crow.png", "644"],
     ["packaging/icons/hicolor/24x24/apps/crow.png", "/usr/share/icons/hicolor/24x24/apps/crow.png", "644"],

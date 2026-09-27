@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Crow
+GenericName=AI Coding Agent Client
+Comment=Native-window ACP client for AI coding agents
+TryExec=crow
+Exec=crow --gui
+Icon=crow
+Terminal=false
+Categories=Development;
+Keywords=ai;agent;coding;acp;llm;crow;
+StartupNotify=true
+StartupWMClass=crow

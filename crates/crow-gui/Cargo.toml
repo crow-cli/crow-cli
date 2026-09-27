@@ -1,0 +1,72 @@
+[package]
+name = "crow-gui"
+version = "0.1.0"
+edition = "2021"
+description = "Runtime-agnostic ratatui-over-wgpu UI service for crow: hosted by the native `--gui` window or the `--web` wasm runtime"
+license = "MIT"
+publish = false
+
+[lib]
+name = "crow_gui"
+path = "src/lib.rs"
+
+# The browser runtime. `required-features` keeps it out of native builds: its
+# surface is a DOM canvas and its event loop is the browser's.
+[[bin]]
+name = "crow-web"
+path = "src/bin/crow_web.rs"
+required-features = ["web"]
+
+[dependencies]
+anyhow = "1"
+bitflags = "2"
+log = "0.4"
+# default-features = false: ratatui's default feature set pulls the crossterm
+# backend, which does not compile for wasm32-unknown-unknown (its terminal/sys.rs
+# has only #[cfg(unix)] / #[cfg(windows)] branches). The rendering core
+# (ratatui-core + ratatui-widgets) is all this service needs.
+ratatui = { version = "0.30.2", default-features = false, features = ["std", "underline-color"] }
+ratatui-wgpu = "0.5"
+winit = "0.30"
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+console_error_panic_hook = { version = "0.1", optional = true }
+console_log = { version = "1", optional = true }
+web-sys = { version = "0.3", optional = true, features = [
+    "Window", "Document", "Element", "HtmlCanvasElement",
+    "CssStyleDeclaration", "DomRect",
+] }
+
+# Native: the wgpu adapter/device request is async and we have a thread to block
+# on. futures-lite's block_on is the same one ratatui-wgpu uses in its tests.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+futures-lite = "2"
+
+# Web: wgpu is named directly only here (Backends::GL + SurfaceTarget::Canvas),
+# and winit's ControlFlow::WaitUntil carries web_time::Instant on this target --
+# std's Instant is not implemented for wasm32-unknown-unknown.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = "28.0.0"
+web-time = "1"
+
+# The input-translation suite runs twice: `#[test]` on the host and
+# `#[wasm_bindgen_test]` here, in a real browser (scripts/test-web.sh).
+# 0.3.79 pins `wasm-bindgen =0.2.129`, which is the installed CLI.
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3.79"
+
+[features]
+default = []
+# Browser runtime: wgpu over WebGL (headless Chromium exposes navigator.gpu but
+# has no WebGPU adapter, so the GL path is the one that works), plus the
+# wasm-bindgen plumbing the canvas surface needs.
+web = [
+    "dep:wasm-bindgen",
+    "dep:wasm-bindgen-futures",
+    "dep:js-sys",
+    "dep:web-sys",
+    "dep:console_error_panic_hook",
+    "dep:console_log",
+    "ratatui-wgpu/web",
+]

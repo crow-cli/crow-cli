@@ -137,3 +137,29 @@ fn no_session_id_flag_means_no_startup_reattach() {
     let cfg = build_config(&args).unwrap();
     assert_eq!(cfg.startup_session, None);
 }
+
+#[test]
+fn gui_flag_defaults_off() {
+    let args = parse_args_from(["-w".into(), "/tmp".into()]).unwrap();
+    assert!(!args.gui, "the TUI must stay the default front end");
+}
+
+#[test]
+fn gui_flag_turns_on_the_native_window() {
+    let args = parse_args_from(["--gui".into(), "-w".into(), "/tmp".into()]).unwrap();
+    assert!(args.gui);
+    assert_eq!(args.workspace.as_deref(), Some("/tmp"), "--gui must not eat the next flag");
+}
+
+#[test]
+fn gui_flag_coexists_with_demo() {
+    // `--demo --gui` is the cheap way to eyeball the GPU window with no runtime.
+    let args = parse_args_from(["--demo".into(), "--gui".into()]).unwrap();
+    assert!(args.demo);
+    assert!(args.gui);
+}
+
+#[test]
+fn help_mentions_gui() {
+    assert!(HELP.contains("--gui"));
+}

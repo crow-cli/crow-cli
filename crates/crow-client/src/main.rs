@@ -16,6 +16,8 @@ mod diff;
 mod elicitation;
 mod events;
 mod file_ref;
+#[cfg(feature = "gui")]
+mod gui;
 mod input;
 mod locale;
 mod logo;
@@ -75,6 +77,7 @@ OPTIONS:
       --agent <cmd>         ACP agent command (default: crow-cli acp2 or $CROW_AGENT)
       --agent-arg <arg>     extra argument for --agent (repeatable)
       --theme <dark|light>  DeepSeek Web UI palette (default: persisted, then dark)
+      --gui                 native GPU window (ratatui over wgpu), not the terminal
       --demo                scripted turns, no runtime / API key needed
       --attach-fds          speak ACP over inherited fds 3/4 (host attach)
       --attach-tcp <addr>   authenticated loopback TCP (Windows)
@@ -108,6 +111,8 @@ struct Args {
     attach_tcp: Option<String>,
     check_runtime: bool,
     dump_frame: Option<(u16, u16)>,
+    /// Run in a native window (ratatui painted over wgpu) instead of the terminal.
+    gui: bool,
 }
 
 fn parse_args() -> Result<Args> {
@@ -132,6 +137,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<Args> {
         attach_tcp: None,
         check_runtime: false,
         dump_frame: None,
+        gui: false,
     };
     let mut it = args.into_iter().peekable();
     while let Some(arg) = it.next() {
@@ -150,6 +156,7 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<Args> {
             "--agent" => args_out.agent = Some(take("--agent")?),
             "--agent-arg" => args_out.agent_args.push(take("--agent-arg")?),
             "--theme" => args_out.theme = Some(take("--theme")?),
+            "--gui" => args_out.gui = true,
             "--demo" => args_out.demo = true,
             "--attach-fds" => args_out.attach_fds = true,
             "--attach-tcp" => args_out.attach_tcp = Some(take("--attach-tcp")?),
@@ -348,28 +355,18 @@ fn collect_event_batch(first: AppEvent, rx: &mpsc::Receiver<AppEvent>) -> (Vec<A
     (batch, immediate)
 }
 
-fn main() -> Result<()> {
-    // Die quietly on closed pipes (crow --dump-frame | head) instead of
-    // panicking in println!.
-    #[cfg(unix)]
-    unsafe {
-        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
-    }
+/// Everything both runtimes need before they diverge: config, session id, the
+/// event bus, the controller thread and the `App`. The TTY loop and the `--gui`
+/// window differ only in what they do with these (Phase 3.3).
+pub(crate) struct Startup {
+    pub(crate) app: App,
+    pub(crate) controller: Controller,
+    pub(crate) bus_tx: mpsc::Sender<AppEvent>,
+    pub(crate) bus_rx: mpsc::Receiver<AppEvent>,
+}
 
-    let args = parse_args()?;
-
-    if args.attach_fds && args.attach_tcp.is_some() {
-        bail!("--attach-fds and --attach-tcp are mutually exclusive");
-    }
-
-    if args.check_runtime {
-        return check_runtime(&args);
-    }
-    if let Some((w, h)) = args.dump_frame {
-        return dump_frame(&args, w, h);
-    }
-
-    let cfg = build_config(&args)?;
+fn startup(args: &Args) -> Result<Startup> {
+    let cfg = build_config(args)?;
     let session_id = args
         .session_id
         .clone()
@@ -425,7 +422,7 @@ fn main() -> Result<()> {
         } else if let Some(address) = &args.attach_tcp {
             acp::AcpEndpoint::AttachTcp(tcp_attach_stream(address)?)
         } else {
-            acp::AcpEndpoint::Spawn(agent_argv(&args))
+            acp::AcpEndpoint::Spawn(agent_argv(args))
         };
         Controller::start_acp(cfg.clone(), endpoint, bus_tx.clone())
     };
@@ -442,12 +439,74 @@ fn main() -> Result<()> {
     // startup session once it binds, the same wire path the ctrl+p picker uses.
     app.startup_model = args.model.clone();
     // The composer pet: real pixels (kitty graphics) where the terminal can,
-    // half-block art (drawn by ui) where it can't.
+    // half-block art (drawn by ui) where it can't. The GUI window overrides
+    // this back to false: it has no kitty channel.
     app.pet_pixels = pet::kitty_supported();
     // ":branch" after the project path in the composer cap. Seeded here;
     // `App::tick` re-checks on a throttle and `!` shell commands refresh
     // immediately, so mid-session checkouts stay in sync.
     app.git_branch = ui::head_branch(&app.cfg.workspace);
+
+    if let Ok(auto) = std::env::var("CROW_AUTOPROMPT") {
+        if !auto.trim().is_empty() {
+            app.auto_prompt(&auto, &controller);
+        }
+    }
+    // ACP commands for the slash menu; demo serves samples.
+    controller.send(bus::Cmd::FetchSkills {
+        session_id: app.session_id.clone(),
+    });
+
+    Ok(Startup { app, controller, bus_tx, bus_rx })
+}
+
+fn main() -> Result<()> {
+    // Die quietly on closed pipes (crow --dump-frame | head) instead of
+    // panicking in println!.
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+
+    let args = parse_args()?;
+
+    if args.attach_fds && args.attach_tcp.is_some() {
+        bail!("--attach-fds and --attach-tcp are mutually exclusive");
+    }
+
+    // `--gui` needs the `gui` cargo feature (crow-gui: winit + ratatui-wgpu).
+    // Without it, fail loudly instead of silently falling through to the TUI,
+    // which reads as "the flag was ignored". With it, the window is the whole
+    // program: no terminal to enter, no crossterm input thread, no alt screen.
+    #[cfg(not(feature = "gui"))]
+    if args.gui {
+        bail!("--gui needs a GUI-enabled build: rebuild with `cargo build --release --features gui`");
+    }
+    if args.check_runtime {
+        return check_runtime(&args);
+    }
+    if let Some((w, h)) = args.dump_frame {
+        return dump_frame(&args, w, h);
+    }
+
+    let start = startup(&args)?;
+
+    // The window is the whole program: no terminal to enter, no crossterm
+    // input thread, no alt screen to leave.
+    #[cfg(feature = "gui")]
+    if args.gui {
+        let session_id = start.app.session_id.clone();
+        let demo = start.app.demo;
+        gui::run_crow_app(start)?;
+        // Same out-of-band handoff as the TTY tail below: the caller grabs the
+        // live session id for `--session-id` resume. stderr, never stdout.
+        if !demo {
+            eprintln!("session {}", session_id);
+        }
+        return Ok(());
+    }
+    let Startup { mut app, controller, bus_tx, bus_rx } = start;
+
     let mut pet = pet::Pet::new(app.pet_pixels);
     let mut backdrop = pet::Backdrop::new(app.pet_pixels);
     // User-image thumbnails in the chat scrollback (kitty graphics, PNG only).
@@ -505,16 +564,6 @@ fn main() -> Result<()> {
 
     let backend = ratatui::backend::CrosstermBackend::new(std::io::stdout());
     let mut terminal = ratatui::Terminal::new(backend)?;
-
-    if let Ok(auto) = std::env::var("CROW_AUTOPROMPT") {
-        if !auto.trim().is_empty() {
-            app.auto_prompt(&auto, &controller);
-        }
-    }
-    // ACP commands for the slash menu; demo serves samples.
-    controller.send(bus::Cmd::FetchSkills {
-        session_id: app.session_id.clone(),
-    });
 
     let run = (|| -> Result<()> {
         let mut last_tick = std::time::Instant::now();
@@ -872,3 +921,7 @@ mod event_batch_tests;
 #[cfg(test)]
 #[path = "../tests/unit/main__tty_mode_tests.rs"]
 mod tty_mode_tests;
+
+#[cfg(all(test, feature = "gui"))]
+#[path = "../tests/unit/gui__tests.rs"]
+mod gui_tests;
