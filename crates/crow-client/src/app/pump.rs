@@ -519,6 +519,7 @@ impl App {
                         self.session_id = "unavailable".into();
                         self.session_bound = false;
                         self.session_model = None;
+                        self.session_provider = None;
                         self.selected_model = None;
                         self.auth = crate::acp_auth::AuthSnapshot::none();
                         self.prompt_pending = false;
@@ -770,7 +771,11 @@ impl App {
                         }
                         let mode_current = self.current_mode();
                         let model_current = self.current_model();
-                        let model_provider = self.cfg.provider.clone();
+                        // The catalog is the agent's own statement of which
+                        // provider serves which model id: adopt it for the model
+                        // this session runs before the picker marks a row.
+                        self.adopt_session_provider(&model_current);
+                        let model_provider = self.session_provider.clone();
                         if let Some(picker) = &mut self.picker {
                             match picker.kind {
                                 PickerKind::Model if !models.is_empty() => {
@@ -788,13 +793,20 @@ impl App {
                                             provider: Some(m.provider),
                                         })
                                         .collect();
+                                    // The catalog arrived: a "waiting for the
+                                    // agent catalog" title is now stale.
+                                    picker.title = model_picker_title(
+                                        self.locale,
+                                        picker.items.is_empty(),
+                                    )
+                                    .to_string();
                                     picker.sel = picker
                                         .items
                                         .iter()
                                         .position(|i| {
                                             i.id == model_current
                                                 && i.provider.as_deref()
-                                                    == Some(model_provider.as_str())
+                                                    == model_provider.as_deref()
                                         })
                                         // Same id under an unknown provider
                                         // still beats pinning row 0.
@@ -1034,7 +1046,8 @@ impl App {
                                     {
                                         if self.session_id != session_id {
                                             self.reset_subagent_views();
-                                self.session_model = None;
+                                            self.session_model = None;
+                                            self.session_provider = None;
                                         }
                                         let old_id = self.session_id.clone();
                                         self.session_id = session_id.clone();
@@ -1135,6 +1148,7 @@ impl App {
                             if self.session_id != session_id {
                                 self.reset_subagent_views();
                                 self.session_model = None;
+                                self.session_provider = None;
                             }
                             let old_id = self.session_id.clone();
                             self.session_id = session_id.clone();
@@ -1425,6 +1439,9 @@ impl App {
             }
             E::SessionModel { session, model } if *session == self.session_id => {
                 self.session_model = Some(model.clone());
+                // The snapshot reports the model only: the provider, if it is
+                // knowable at all, comes from the catalog entry for that id.
+                self.adopt_session_provider(model);
                 apply_to_transcript = false;
             }
             _ => {}

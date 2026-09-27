@@ -44,14 +44,8 @@ fn fresh_root() -> String {
 fn test_crow_app() -> (CrowApp, mpsc::Receiver<Cmd>, mpsc::Sender<AppEvent>) {
     let cfg = RuntimeConfig {
         bin: "crow-runtime".into(),
-        cordis: "cordis".into(),
         workspace: "/tmp".into(),
         session_root: fresh_root(),
-        provider: "deepseek".into(),
-        model: "deepseek-chat".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = mpsc::channel();

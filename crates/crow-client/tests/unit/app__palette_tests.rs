@@ -19,14 +19,8 @@ fn fresh_root() -> String {
 fn test_cfg() -> RuntimeConfig {
     RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: fresh_root(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     }
 }

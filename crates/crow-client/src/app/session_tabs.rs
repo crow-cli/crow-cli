@@ -31,6 +31,7 @@ impl App {
             scroll_up: std::mem::take(&mut self.scroll_up),
             selected_model: std::mem::take(&mut self.selected_model),
             session_model: self.session_model.take(),
+            session_provider: self.session_provider.take(),
             show_banner: std::mem::take(&mut self.show_banner),
             state_note: std::mem::take(&mut self.state_note),
             run_started: self.run_started.take(),
@@ -115,6 +116,7 @@ impl App {
         self.scroll_up = slot.scroll_up;
         self.selected_model = slot.selected_model;
         self.session_model = slot.session_model;
+        self.session_provider = slot.session_provider;
         self.show_banner = slot.show_banner;
         let running = slot.running || slot.prompt_pending;
         self.state = if running {
@@ -318,6 +320,11 @@ impl App {
             E::SessionTitle { title, .. } => slot.title = Some(title.clone()),
             E::SessionModel { model, .. } => {
                 slot.session_model = Some(model.clone());
+                // Same rule as the live tab: the provider is whatever the
+                // parked session's own catalog says serves that model id.
+                if let Some(provider) = catalog_provider(&slot.models, model) {
+                    slot.session_provider = Some(provider);
+                }
                 apply_to_transcript = false;
             }
             _ => {}

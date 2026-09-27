@@ -46,14 +46,8 @@ fn seeded_app(settings: serde_json::Value) -> (App, Controller, Receiver<AppEven
     std::fs::write(&path, settings.to_string()).expect("seed settings.json");
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: root,
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (tx, rx) = std::sync::mpsc::channel::<AppEvent>();

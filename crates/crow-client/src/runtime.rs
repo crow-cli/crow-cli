@@ -77,48 +77,31 @@ pub fn legacy_settings_paths(session_root: &str) -> Vec<PathBuf> {
     legacy_settings_paths_from(session_root, &default_session_root(), &user)
 }
 
+/// How to reach the agent, and where this client keeps its own files.
+///
+/// Deliberately absent: provider, model, base URL, API key, token caps. An ACP
+/// client does not own model configuration — the agent advertises the models it
+/// can select from (`CatalogModel`) and reports the one a session runs
+/// (`UiEvent::SessionModel`). Credentials belong to the agent too.
 #[derive(Clone, Debug)]
 pub struct RuntimeConfig {
     pub bin: String,
-    pub cordis: String,
     pub workspace: String,
     pub session_root: String,
-    pub provider: String,
-    pub model: String,
-    pub max_tokens: Option<u64>,
-    pub base_url: Option<String>,
-    pub api_key: Option<String>,
     /// `--session-id`: re-attach to this durable session at startup instead of
     /// creating one (`session/resume`, legacy `session/load`).
     pub startup_session: Option<String>,
 }
 
 impl RuntimeConfig {
-    /// Environment for the child process, mirroring the SDK's injection.
-    /// Credentials fall back to the legacy dsh store (~/.dsh), so a machine
-    /// with a configured legacy dsh needs no exported DEEPSEEK_API_KEY.
+    /// Environment for the spawned agent: where this client keeps its files,
+    /// plus whatever the user's own harness recipe asks for. No credentials
+    /// and no model route — the agent owns both.
     pub fn child_env(&self) -> Vec<(String, String)> {
         let mut env = vec![
-            ("CROW_CORDIS_CONFIG".into(), self.cordis.clone()),
             ("CROW_SESSION_ROOT".into(), self.session_root.clone()),
             ("CROW_CWD".into(), self.workspace.clone()),
         ];
-        if let Some(url) = &self.base_url {
-            env.push(("DEEPSEEK_BASE_URL".into(), url.clone()));
-        }
-        if let Some(key) = &self.api_key {
-            env.push(("DEEPSEEK_API_KEY".into(), key.clone()));
-        } else if std::env::var("DEEPSEEK_API_KEY").is_err() {
-            let local = legacy_dsh();
-            if let Some(key) = local.api_key {
-                env.push(("DEEPSEEK_API_KEY".into(), key));
-            }
-            if self.base_url.is_none() && std::env::var("DEEPSEEK_BASE_URL").is_err() {
-                if let Some(url) = local.base_url {
-                    env.push(("DEEPSEEK_BASE_URL".into(), url));
-                }
-            }
-        }
         // A harness configured in settings.json may carry its own environment.
         // Apply it when that harness is the agent being spawned, and let it win
         // over the defaults above.
@@ -130,12 +113,6 @@ impl RuntimeConfig {
         env
     }
 
-    pub fn has_credentials(&self) -> bool {
-        self.api_key.is_some()
-            || std::env::var("DEEPSEEK_API_KEY").is_ok()
-            || legacy_dsh().api_key.is_some()
-    }
-
     /// Spawn argv for the ACP agent (and Terminal Auth). `demo` falls back
     /// to `crow-cli acp2` so `/auth` still has a command to run.
     pub fn agent_argv(&self) -> Vec<String> {
@@ -144,108 +121,6 @@ impl RuntimeConfig {
         }
         self.bin.split_whitespace().map(str::to_string).collect()
     }
-
-    /// Human description of where the API key comes from.
-    pub fn credential_source(&self) -> Option<&'static str> {
-        if self.api_key.is_some() {
-            Some("--api-key flag")
-        } else if std::env::var("DEEPSEEK_API_KEY").is_ok() {
-            Some("environment")
-        } else if legacy_dsh().api_key.is_some() {
-            Some("local dsh (~/.dsh)")
-        } else {
-            None
-        }
-    }
-}
-
-/// Facts borrowed from the legacy `dsh` installation (~/.dsh).
-#[derive(Default, Clone, Debug)]
-pub struct LegacyDsh {
-    pub api_key: Option<String>,
-    pub base_url: Option<String>,
-    pub provider: Option<String>,
-    pub model: Option<String>,
-}
-
-/// Read the legacy dsh credential store and settings (best effort).
-pub fn legacy_dsh() -> LegacyDsh {
-    let Ok(home) = std::env::var("HOME") else {
-        return LegacyDsh::default();
-    };
-    let root = Path::new(&home).join(".dsh");
-    let mut out = LegacyDsh::default();
-    if let Ok(creds) = std::fs::read_to_string(root.join(".credentials.yaml")) {
-        out.api_key = yaml_top_level_env(&creds, "DEEPSEEK_API_KEY");
-        out.base_url = yaml_top_level_env(&creds, "DEEPSEEK_BASE_URL");
-    }
-    if let Ok(settings) = std::fs::read_to_string(root.join("settings.yaml")) {
-        let (provider, model) = yaml_agent_default_model(&settings);
-        out.provider = provider;
-        out.model = model;
-    }
-    out
-}
-
-fn unquote(v: &str) -> String {
-    let v = v.trim();
-    let v = v
-        .strip_prefix('\'')
-        .and_then(|s| s.strip_suffix('\''))
-        .unwrap_or(v);
-    let v = v
-        .strip_prefix('"')
-        .and_then(|s| s.strip_suffix('"'))
-        .unwrap_or(v);
-    v.to_string()
-}
-
-/// `KEY: value` at zero indentation where KEY is an env-style name.
-fn yaml_top_level_env(yaml: &str, key: &str) -> Option<String> {
-    for line in yaml.lines() {
-        if line.starts_with([' ', '\t', '#']) {
-            continue;
-        }
-        let Some((k, v)) = line.split_once(':') else {
-            continue;
-        };
-        if k.trim() == key {
-            let v = unquote(v);
-            if !v.is_empty() {
-                return Some(v);
-            }
-        }
-    }
-    None
-}
-
-/// provider/model under the `agent-default-model:` block.
-fn yaml_agent_default_model(yaml: &str) -> (Option<String>, Option<String>) {
-    let mut in_block = false;
-    let mut provider = None;
-    let mut model = None;
-    for line in yaml.lines() {
-        if !line.starts_with([' ', '\t']) {
-            in_block = line.trim_end() == "agent-default-model:";
-            continue;
-        }
-        if !in_block {
-            continue;
-        }
-        let Some((k, v)) = line.trim().split_once(':') else {
-            continue;
-        };
-        let v = unquote(v);
-        if v.is_empty() {
-            continue;
-        }
-        match k.trim() {
-            "provider" => provider = Some(v),
-            "model" => model = Some(v),
-            _ => {}
-        }
-    }
-    (provider, model)
 }
 
 #[cfg(test)]
@@ -255,14 +130,8 @@ mod tests {
     fn cfg(session_root: &str, bin: &str) -> RuntimeConfig {
         RuntimeConfig {
             bin: bin.into(),
-            cordis: "acp".into(),
             workspace: "/tmp".into(),
             session_root: session_root.into(),
-            provider: "deepseek-official".into(),
-            model: "deepseek-v4-flash".into(),
-            max_tokens: None,
-            base_url: None,
-            api_key: None,
             startup_session: None,
         }
     }
@@ -299,6 +168,22 @@ mod tests {
                 .iter()
                 .any(|(key, _)| key == "HARNESS_KEY"),
             "an agent that is not the configured harness must not inherit its env"
+        );
+    }
+
+    #[test]
+    fn child_env_carries_no_provider_and_no_credentials() {
+        let dir = root("no-credentials");
+        std::fs::write(dir.join("settings.json"), "{}").unwrap();
+        let env = cfg(&dir.to_string_lossy(), "/bin/agent acp").child_env();
+        let keys: Vec<&str> = env.iter().map(|(key, _)| key.as_str()).collect();
+        assert!(
+            !keys.iter().any(|key| key.contains("API_KEY") || key.contains("BASE_URL")),
+            "the client owns no credentials to hand an agent: {keys:?}"
+        );
+        assert!(
+            !keys.iter().any(|key| key.contains("MODEL") || key.contains("PROVIDER")),
+            "the client owns no model route to hand an agent: {keys:?}"
         );
     }
 }

@@ -110,13 +110,10 @@ context, subagent lifecycles, token usage (incl. cache hits), end reason.";
                 Some(name) => format!("sign-in needed · {name} · /auth"),
                 None => "sign-in needed · /auth".into(),
             }
-        } else if self.cfg.has_credentials() {
-            match self.cfg.credential_source() {
-                Some(src) => format!("api key present · {src}"),
-                None => "api key present".to_string(),
-            }
         } else {
-            "DEEPSEEK_API_KEY not set".to_string()
+            // The agent holds its own credentials; this client never sees one,
+            // so there is no key of ours to report present or missing.
+            "managed by Agent · source not reported".to_string()
         };
         let u = self.transcript.usage;
         let total = u.input + u.output + u.cached + u.reasoning;
@@ -145,7 +142,7 @@ context, subagent lifecycles, token usage (incl. cache hits), end reason.";
             .unwrap_or_default();
         let mut text = format!(
             "- session · {}{}\n\
-             - provider · {} / {}{}\n\
+             - model · {}{}\n\
              - agent · {}{}\n\
              - workspace · {}\n\
              - session root · {}\n\
@@ -160,8 +157,7 @@ context, subagent lifecycles, token usage (incl. cache hits), end reason.";
                 .as_deref()
                 .map(|t| format!(" · {t}"))
                 .unwrap_or_default(),
-            self.cfg.provider,
-            self.cfg.model,
+            self.model_identity(),
             effort_line,
             self.agent_label(&self.current_mode()),
             if self.modes.agent_preset.is_none() {
@@ -321,7 +317,7 @@ context, subagent lifecycles, token usage (incl. cache hits), end reason.";
              - agent · {}{}\n\
              - permission · {}\n\
              - plan · {}",
-            self.cfg.model,
+            self.model_identity(),
             effort_line,
             self.agent_label(&self.current_mode()),
             if self.modes.agent_preset.is_none() {

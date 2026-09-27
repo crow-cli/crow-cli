@@ -6,17 +6,11 @@ use std::sync::mpsc;
 fn probe_app() -> App {
     let cfg = RuntimeConfig {
         bin: "dsh-runtime".into(),
-        cordis: "cordis".into(),
         workspace: "/w".into(),
         session_root: std::env::temp_dir()
             .join(format!("dsh-tui-rpc-probe-{}", std::process::id()))
             .to_string_lossy()
             .into_owned(),
-        provider: "deepseek".into(),
-        model: "deepseek-chat".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (tx, _rx) = mpsc::channel();

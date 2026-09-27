@@ -19,14 +19,8 @@ fn fresh_root() -> String {
 fn test_app() -> App {
     let cfg = RuntimeConfig {
         bin: "dsh-runtime".into(),
-        cordis: "cordis".into(),
         workspace: "/tmp".into(),
         session_root: fresh_root(),
-        provider: "deepseek".into(),
-        model: "deepseek-chat".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (tx, _rx) = mpsc::channel();
@@ -36,14 +30,8 @@ fn test_app() -> App {
 fn live_test_app() -> App {
     let cfg = RuntimeConfig {
         bin: "dsh-acp".into(),
-        cordis: "cordis".into(),
         workspace: "/tmp".into(),
         session_root: fresh_root(),
-        provider: "deepseek".into(),
-        model: "deepseek-chat".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (tx, _rx) = mpsc::channel();
@@ -2232,8 +2220,8 @@ fn model_picker_marks_only_the_current_provider_model_pair() {
     use crate::app::{Picker, PickerItem, PickerKind};
     let mut app = test_app();
     app.show_banner = false;
-    app.cfg.provider = "coding-plan-b".into();
-    app.cfg.model = "deepseek-v4".into();
+    app.session_provider = Some("coding-plan-b".into());
+    app.session_model = Some("deepseek-v4".into());
     app.picker = Some(Picker {
         offset: 0,
         kind: PickerKind::Model,
@@ -2360,13 +2348,14 @@ fn prompt_jump_flash_washes_the_jumped_prompt_then_restores() {
 }
 
 #[test]
-fn model_picker_marks_the_streamed_model_when_it_differs_from_config() {
+fn model_picker_marks_the_streamed_model_when_it_differs_from_the_session_model() {
     use crate::app::{Picker, PickerItem, PickerKind};
     let mut app = test_app();
     app.show_banner = false;
-    // A turn streamed on `deepseek-v4-pro` while the config still names the
-    // fallback: the picker must mark the running model (issue #102).
-    app.cfg.model = "deepseek-v4-flash".into();
+    // A turn streamed on `deepseek-v4-pro` while the agent's session snapshot
+    // still names the model it bound with: the picker must mark the running
+    // model (issue #102).
+    app.session_model = Some("deepseek-v4-flash".into());
     app.transcript.last_model = Some("deepseek-v4-pro".into());
     app.picker = Some(Picker {
         offset: 0,
@@ -2470,10 +2459,32 @@ fn slash_model_menu_marks_the_running_model() {
     use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
     let mut app = test_app();
     app.show_banner = false;
-    app.cfg.model = "deepseek-v4-flash".into();
+    app.session_model = Some("deepseek-v4-flash".into());
     app.transcript.last_model = Some("deepseek-v4-pro".into());
-    app.input.set("/model".into());
     let (ctl, _commands) = crate::controller::tests::test_controller();
+    // The menu's rows are the agent's catalog; the client contributes no ids.
+    app.handle(
+        crate::bus::AppEvent::Ctl(crate::bus::CtlEvent::Catalog {
+            session_id: None,
+            models: vec![
+                crate::bus::CatalogModel {
+                    provider: "agent".into(),
+                    id: "deepseek-v4-flash".into(),
+                    name: "V4 Flash".into(),
+                    vision: false,
+                },
+                crate::bus::CatalogModel {
+                    provider: "agent".into(),
+                    id: "deepseek-v4-pro".into(),
+                    name: "V4 Pro".into(),
+                    vision: true,
+                },
+            ],
+            presets: Vec::new(),
+        }),
+        &ctl,
+    );
+    app.input.set("/model".into());
     app.handle(
         crate::bus::AppEvent::Term(Event::Key(KeyEvent::new(
             KeyCode::Char(' '),
@@ -2482,13 +2493,13 @@ fn slash_model_menu_marks_the_running_model() {
         &ctl,
     );
 
-    // The inline `/model ` list leads with the running model, marked ✓ and
-    // highlighted, instead of the config default.
+    // The inline `/model ` list marks ✓ and highlights the running model,
+    // not the one the agent reported at bind.
     let frame = dump_frame(&mut app, 100, 30);
     let marked: Vec<&str> = frame.lines().filter(|line| line.contains('✓')).collect();
     assert_eq!(marked.len(), 1, "only the running model is marked:\n{frame}");
     assert!(
-        marked[0].contains("deepseek-v4-pro") && marked[0].contains("▸"),
+        marked[0].contains("V4 Pro") && marked[0].contains("▸"),
         "highlight and ✓ sit on the running model: {}\n{frame}",
         marked[0]
     );

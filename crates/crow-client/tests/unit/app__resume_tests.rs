@@ -4,14 +4,8 @@ use std::path::PathBuf;
 fn test_app_with_root(root: &str, workspace: &str) -> (App, Controller) {
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: workspace.into(),
         session_root: root.into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (tx, _rx) = std::sync::mpsc::channel::<AppEvent>();
@@ -520,14 +514,8 @@ fn startup_app(
 ) -> (App, std::sync::mpsc::Receiver<AppEvent>) {
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: session.map(str::to_string),
     };
     let (tx, rx) = std::sync::mpsc::channel::<AppEvent>();

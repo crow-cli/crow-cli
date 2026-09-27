@@ -386,6 +386,10 @@ pub struct App {
     pub selected_model: Option<String>,
     /// Current model reported by this ACP session's config snapshot.
     pub session_model: Option<String>,
+    /// Provider that came with the model this session runs. Learned only from
+    /// what the agent said — a catalog entry, or the picker row the user chose.
+    /// The client has no provider of its own, so this stays `None` until then.
+    pub session_provider: Option<String>,
     /// `--model` for this run; consumed by the first session bind.
     pub startup_model: Option<String>,
     pub demo: bool,
@@ -589,6 +593,7 @@ impl App {
             cfg,
             selected_model: None,
             session_model: None,
+            session_provider: None,
             startup_model: None,
             demo,
             attached,

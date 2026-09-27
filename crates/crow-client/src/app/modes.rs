@@ -136,14 +136,14 @@ impl App {
     pub(crate) fn select_model(&mut self, item: PickerItem, ctl: &Controller) {
         let model = item.id;
         let provider = item.provider;
-        let provider_changed = provider
-            .as_deref()
-            .is_some_and(|candidate| candidate != self.cfg.provider);
-        if model != self.cfg.model || provider_changed {
-            self.cfg.model = model.clone();
+        // One upstream model id can sit behind two providers (two coding plans
+        // exposing the same model), so a provider move is a real switch even
+        // when the id does not change.
+        let provider_changed = provider.is_some() && provider != self.session_provider;
+        if model != self.current_model() || provider_changed {
             self.selected_model = Some(model.clone());
-            if let Some(p) = &provider {
-                self.cfg.provider = p.clone();
+            if provider.is_some() {
+                self.session_provider = provider.clone();
             }
             ctl.send(Cmd::SelectModel {
                 session_id: self.session_id.clone(),
@@ -155,23 +155,34 @@ impl App {
         // Stage 2: offer efforts for the chosen model.
         ctl.send(Cmd::FetchEfforts {
             session_id: self.session_id.clone(),
-            provider: self.cfg.provider.clone(),
-            model: self.cfg.model.clone(),
+            provider: self.session_provider.clone(),
+            model: Some(model),
         });
     }
 
+    /// `/model <id>`: a typed id carries no provider, so re-learn it from the
+    /// catalog and drop a stale one rather than claim a provider nobody stated.
     pub(crate) fn set_model(&mut self, model: String, ctl: &Controller) {
-        if model == self.cfg.model {
+        if model == self.current_model() {
             return;
         }
-        self.cfg.model = model.clone();
         self.selected_model = Some(model.clone());
+        self.session_provider = None;
+        self.adopt_session_provider(&model);
         ctl.send(Cmd::SelectModel {
             session_id: self.session_id.clone(),
             provider: None,
             model: Some(model),
             effort: None,
         });
+    }
+
+    /// Take the provider for `model` from the agent's catalog, when exactly one
+    /// entry carries that id (see [`catalog_provider`]).
+    pub(crate) fn adopt_session_provider(&mut self, model: &str) {
+        if let Some(provider) = catalog_provider(&self.last_models, model) {
+            self.session_provider = Some(provider);
+        }
     }
 
     /// grok: Shift+Tab cycles the permission preset.
@@ -199,14 +210,31 @@ impl App {
     }
 
     /// The effective model: an explicit `/model` pick until a turn realizes
-    /// it, then the model that actually streamed last, then the configured
-    /// default. Mirrors the meta-row chip chain, so the model picker
+    /// it, then the model that actually streamed last, then the one the agent
+    /// reported for this session. Empty until the agent says — the client keeps
+    /// no default model. Mirrors the meta-row chip chain, so the model picker
     /// highlights and ✓-marks the model the session is running (issue #102).
     pub fn current_model(&self) -> String {
         self.selected_model
             .clone()
             .or_else(|| self.transcript.last_model.clone())
-            .unwrap_or_else(|| self.cfg.model.clone())
+            .or_else(|| self.session_model.clone())
+            .unwrap_or_default()
+    }
+
+    /// The model line for the info overlays: `provider · model` when the agent
+    /// told us both, the bare id when it told us only that, and an explicit
+    /// "not reported" when it told us nothing. There is no client-side default
+    /// to fall back to.
+    pub fn model_identity(&self) -> String {
+        let model = self.current_model();
+        if model.is_empty() {
+            return "not reported".to_string();
+        }
+        match &self.session_provider {
+            Some(provider) => format!("{provider} · {model}"),
+            None => model,
+        }
     }
 
     /// The effective permission preset: the folded `permission/preset` fact,

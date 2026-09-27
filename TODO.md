@@ -67,9 +67,14 @@ warnings (unused `Path` import, unused `ctl`, non-snake-case
 `dd_kills_the_line_and_gg_G_jump`) — do not "fix" them as a drive-by, and do not
 add a fourth.
 
+**Phase 1 gate result:** `cargo check --locked --tests -j 6` rc 0 with exactly
+those 3 warnings; `cargo test --locked --bin crow -j 6` → **938 passed, 0
+failed** (934 baseline + 4 new pins); `cargo test --locked --test cli_help` → 3
+passed (1 new); `--dump-frame 100x34` byte-identical to the pre-phase frame.
+
 ## Scope capture (unordered)
 
-- [ ] **The client stops owning provider/model/credentials.** `MODEL_PRESETS`
+- [x] **The client stops owning provider/model/credentials.** `MODEL_PRESETS`
       (five hardcoded deepseek ids) is the seed for `/model` when no agent
       catalog has arrived — it goes, and the picker seeds from `last_models`
       plus the effective current model only. `RuntimeConfig.provider`/`.model`
@@ -77,18 +82,48 @@ add a fourth.
       `--api-key`, `--max-tokens` leave the flag surface; `--model` stays (an
       explicit "run THIS", applied on bind via the same wire path ctrl+p uses)
       and `CROW_MODEL` stays, `DSH_MODEL` goes.
-- [ ] **`legacy_dsh()` and everything it feeds, deleted.** `~/.dsh/.credentials.yaml`,
+      *Done (PLAN 1.1–1.3).* `grep -rn MODEL_PRESETS src tests` → 0.
+      `RuntimeConfig` is now `{bin, workspace, session_root, startup_session}`;
+      the picker seeds from the agent catalog plus `current_model()` only, and
+      says "waiting for the agent catalog" when nothing has arrived.
+      `crow --help` read top to bottom: no brand name, no credential flag,
+      `--model <id>  ask the agent to run this model (default: $CROW_MODEL)`.
+      Absence pinned by `tests/cli_help.rs::help_offers_no_provider_route_and_no_credentials`
+      and `main__cli_args_tests.rs::removed_runtime_aliases_are_rejected`.
+- [x] **`legacy_dsh()` and everything it feeds, deleted.** `~/.dsh/.credentials.yaml`,
       `~/.dsh/settings.yaml` (`agent-default-model`), the two hand-rolled yaml
       scrapers, `LegacyDsh`, `has_credentials()`, `credential_source()`.
-- [ ] **`child_env()` stops injecting `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL`**
+      *Done (PLAN 1.5).* `grep -rn "legacy_dsh\|LegacyDsh\|has_credentials\|credential_source" src tests` → 0.
+      Gone with them: `unquote`, `yaml_top_level_env`, `yaml_agent_default_model`,
+      `CROW_CORDIS_CONFIG`. No fallback was left behind — `runtime.rs` reads
+      `settings.json` and nothing else.
+- [x] **`child_env()` stops injecting `DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL`**
       and stops exporting `CROW_CORDIS_CONFIG` (nothing has ever read it —
       verified: zero consumers in crow-cli's `src/`, `tests/`, `docs/`).
       The harness `env` from `settings.json` still applies.
-- [ ] **The credential UI becomes ACP-only.** `ui.rs:4248-4262` (the
+      *Done (PLAN 1.4).* `child_env()` is now `CROW_SESSION_ROOT`, `CROW_CWD`,
+      then the settings.json harness `env` — which still wins, still pinned by
+      `harness_env_applies_only_to_the_configured_agent`. New pin
+      `runtime.rs::child_env_carries_no_provider_and_no_credentials` asserts no
+      key containing `API_KEY`, `BASE_URL`, `MODEL` or `PROVIDER` can reach an
+      agent. `grep -rn DEEPSEEK src` → 32 hits, every one a Phase-4 palette or
+      logo site (`theme.rs` ramp, `logo.rs`, `markdown.rs` heading ramp,
+      `deepseek_logo.rs`); zero env vars.
+- [x] **The credential UI becomes ACP-only.** `ui.rs:4248-4262` (the
       `⚠ DEEPSEEK_API_KEY not set` line, EN + zh) and `info.rs:113-119`
       (`api key present · --api-key flag`) collapse into the branch that
       already exists and already tells the truth: credentials are the agent's,
       and ACP `authenticate` is the only sign-in story.
+      *Done (PLAN 1.6).* The banner is one honest `else`: "managed by Agent ·
+      source not reported". `/status` and `/session` now print
+      `- model · {model_identity()}` (`provider · model` / `model` /
+      `not reported`) instead of a client-owned `- provider · p / m`;
+      `app__right_slot_tests.rs:465` pins `- model · not reported` for the
+      nothing-reported case. `grep -rn "API_KEY" src` → 1 hit, and it is the
+      guard assertion above, not a credential. `--dump-frame 100x34` (plain and
+      `--demo`) is byte-identical to the pre-phase frame — `main.rs:876` sets
+      `show_banner = false` for the dump, so the banner was never in it; the
+      removal is pinned by the `ui__tests.rs` banner tests instead.
 - [ ] **No martty/dsh homes.** `crow_home_from` keeps `CROW_HOME` →
       `~/.agents/crow` and loses `MARTTY_HOME` + `DSH_HOME`;
       `legacy_settings_paths*` (`~/.martty/settings.json`,
@@ -174,3 +209,9 @@ add a fourth.
   provider/model/maxTokens params because `RuntimeConfig` loses those fields,
   but the path itself stays: `--demo` is a documented flag with a pinned test
   surface.
+  *The param loss itself was Phase 1 work and is done (PLAN 1.7):* both
+  `initialize` calls now send `json!({ "cwd": cfg.workspace })` and nothing
+  else; `SelectModel` builds a display label instead of mutating `cfg`;
+  `Cmd::FetchEfforts` carries `Option`s and omits what it does not know.
+  `--demo --dump-frame 100x34` still renders the canned transcript. What stays
+  deferred is the path's *existence*, not its params.

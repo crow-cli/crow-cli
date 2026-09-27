@@ -42,14 +42,8 @@ fn sel(a: (usize, usize), h: (usize, usize)) -> Selection {
 fn test_app() -> App {
     let cfg = RuntimeConfig {
         bin: "dsh-runtime".into(),
-        cordis: "cordis".into(),
         workspace: "/tmp".into(),
         session_root: fresh_root(),
-        provider: "deepseek".into(),
-        model: "deepseek-chat".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (tx, _rx) = std::sync::mpsc::channel();
@@ -66,14 +60,8 @@ fn test_app() -> App {
 fn test_app_and_ctl() -> (App, Controller) {
     let cfg = RuntimeConfig {
         bin: "dsh-runtime".into(),
-        cordis: "cordis".into(),
         workspace: "/tmp".into(),
         session_root: fresh_root(),
-        provider: "deepseek".into(),
-        model: "deepseek-chat".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (tx, _rx) = std::sync::mpsc::channel::<AppEvent>();

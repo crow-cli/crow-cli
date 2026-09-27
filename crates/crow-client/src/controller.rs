@@ -113,7 +113,7 @@ impl Controller {
 }
 
 fn controller_loop(
-    mut cfg: RuntimeConfig,
+    cfg: RuntimeConfig,
     demo: bool,
     attached: bool,
     bus: Sender<AppEvent>,
@@ -139,7 +139,7 @@ fn controller_loop(
                         &text,
                     );
                 } else {
-                    handle_prompt(&mut cfg, &bus, &runtime, &interrupted, &session_id, &text);
+                    handle_prompt(&cfg, &bus, &runtime, &interrupted, &session_id, &text);
                 }
             }
             Cmd::Steer {
@@ -159,7 +159,7 @@ fn controller_loop(
                         &text,
                     );
                 } else {
-                    handle_prompt(&mut cfg, &bus, &runtime, &interrupted, &session_id, &text);
+                    handle_prompt(&cfg, &bus, &runtime, &interrupted, &session_id, &text);
                 }
             }
             Cmd::PromptImages { session_id, blocks } => {
@@ -278,16 +278,17 @@ fn controller_loop(
                 model,
                 effort,
             } => {
-                if let Some(m) = &model {
-                    cfg.model = m.clone();
-                }
-                if let Some(p) = &provider {
-                    cfg.provider = p.clone();
-                }
+                // The client keeps no model state of its own: the notice names
+                // what the user just asked the agent for, nothing more.
+                let label = match (&model, &effort) {
+                    (Some(model), Some(effort)) => format!("{model} · effort {effort}"),
+                    (Some(model), None) => model.clone(),
+                    (None, Some(effort)) => format!("effort {effort}"),
+                    (None, None) => "agent default".to_string(),
+                };
                 if demo {
                     let _ = bus.send(AppEvent::Ctl(CtlEvent::TuiOpDone(format!(
-                        "model → {} (demo)",
-                        cfg.model
+                        "model → {label} (demo)"
                     ))));
                     continue;
                 }
@@ -308,8 +309,7 @@ fn controller_loop(
                         {
                             Ok(_) => {
                                 let _ = bus.send(AppEvent::Ctl(CtlEvent::TuiOpDone(format!(
-                                    "model → {} · live for this session",
-                                    cfg.model
+                                    "model → {label} · live for this session"
                                 ))));
                             }
                             Err(err) => {
@@ -326,8 +326,7 @@ fn controller_loop(
                         rt.kill();
                     }
                     let _ = bus.send(AppEvent::Ctl(CtlEvent::TuiOpDone(format!(
-                        "model → {} (runtime restarts on next prompt)",
-                        cfg.model
+                        "model → {label} (runtime restarts on next prompt)"
                     ))));
                 }
             }
@@ -466,11 +465,16 @@ fn controller_loop(
                 }
                 let rt = runtime.lock().unwrap().clone();
                 let result = rt.filter(|rt| attached && rt.is_alive()).map(|rt| {
-                    rt.request(
-                        "tui/model-info",
-                        Some(json!({ "provider": provider, "model": model })),
-                        Duration::from_secs(20),
-                    )
+                    // Ask about what the agent told us; a fact it never
+                    // reported is omitted rather than sent as a guess.
+                    let mut params = json!({});
+                    if let Some(provider) = provider {
+                        params["provider"] = json!(provider);
+                    }
+                    if let Some(model) = model {
+                        params["model"] = json!(model);
+                    }
+                    rt.request("tui/model-info", Some(params), Duration::from_secs(20))
                 });
                 match result {
                     Some(Ok(value)) => {
@@ -754,14 +758,10 @@ fn ensure_attached_ready(
 ) -> Option<Arc<RuntimeProcess>> {
     let rt = runtime.lock().unwrap().clone()?;
     if !*initialized {
-        let mut params = json!({
-            "cwd": cfg.workspace,
-            "provider": cfg.provider,
-            "model": cfg.model,
-        });
-        if let Some(max) = cfg.max_tokens {
-            params["maxTokens"] = json!(max);
-        }
+        // The client owns no model route: `initialize` carries the workspace
+        // and nothing else. Which model runs is the agent's to decide, and to
+        // report back through the session config snapshot.
+        let params = json!({ "cwd": cfg.workspace });
         match rt.request("initialize", Some(params), Duration::from_secs(60)) {
             Ok(result) => {
                 let _ = bus.send(AppEvent::Ctl(CtlEvent::Ready {
@@ -799,7 +799,7 @@ fn send_attached_prompt(rt: &Arc<RuntimeProcess>, bus: &Sender<AppEvent>, params
 }
 
 fn handle_prompt(
-    cfg: &mut RuntimeConfig,
+    cfg: &RuntimeConfig,
     bus: &Sender<AppEvent>,
     runtime: &Arc<Mutex<Option<Arc<RuntimeProcess>>>>,
     interrupted: &Arc<AtomicBool>,
@@ -833,14 +833,8 @@ fn handle_prompt(
                 };
                 *runtime.lock().unwrap() = Some(Arc::clone(&rt));
 
-                let mut params = json!({
-                    "cwd": cfg.workspace,
-                    "provider": cfg.provider,
-                    "model": cfg.model,
-                });
-                if let Some(max) = cfg.max_tokens {
-                    params["maxTokens"] = json!(max);
-                }
+                // As above: workspace only, no provider/model/token cap.
+                let params = json!({ "cwd": cfg.workspace });
                 match rt.request("initialize", Some(params), Duration::from_secs(180)) {
                     Ok(result) => {
                         let server = describe_server(&result);

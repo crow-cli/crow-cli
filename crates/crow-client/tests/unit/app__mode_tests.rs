@@ -21,14 +21,8 @@ fn fresh_root() -> String {
 fn test_cfg() -> RuntimeConfig {
     RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: fresh_root(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     }
 }
@@ -1120,8 +1114,10 @@ fn host_catalog_replaces_mode_picker_items() {
 #[test]
 fn host_catalog_model_picker_distinguishes_duplicate_ids_by_provider() {
     let (mut app, ctl, _rx) = test_app();
-    app.cfg.provider = "coding-plan-b".into();
-    app.cfg.model = "deepseek-v4".into();
+    // Both facts are the agent's: the session model it reported, and the
+    // provider that came with the catalog row the user picked.
+    app.session_provider = Some("coding-plan-b".into());
+    app.session_model = Some("deepseek-v4".into());
     app.open_model_picker(&ctl);
     app.handle(
         AppEvent::Ctl(CtlEvent::Catalog {
@@ -1148,15 +1144,15 @@ fn host_catalog_model_picker_distinguishes_duplicate_ids_by_provider() {
     let picker = app.picker.as_ref().expect("model picker stays open");
     assert_eq!(picker.items[0].meta, "coding-plan-a · DeepSeek V4");
     assert_eq!(picker.items[1].meta, "coding-plan-b · DeepSeek V4");
-    assert_eq!(picker.sel, 1, "current provider and model identify the row");
+    assert_eq!(picker.sel, 1, "reported provider and model identify the row");
 }
 
 #[test]
-fn model_picker_highlights_the_streamed_model_not_the_config_default() {
+fn model_picker_highlights_the_streamed_model_not_the_reported_session_model() {
     let (mut app, ctl, _rx) = test_app();
-    // The config default is only a fallback: once a turn streamed on a
+    // The agent-reported model is only a fallback: once a turn streamed on a
     // different model, the picker must mark the running one (issue #102).
-    app.cfg.model = "deepseek-v4-flash".into();
+    app.session_model = Some("deepseek-v4-flash".into());
     app.transcript.last_model = Some("deepseek-v4-pro".into());
 
     app.open_model_picker(&ctl);
@@ -1201,8 +1197,8 @@ fn effort_picker_falls_back_to_the_advertised_default() {
 fn slash_model_menu_preselects_the_running_model() {
     let (mut app, ctl, _rx) = test_app();
     // The inline option menu (typed `/model `) follows the same effective
-    // model as the picker: streamed model, not the config default (#102).
-    app.cfg.model = "deepseek-v4-flash".into();
+    // model as the picker: streamed model, not the agent-reported one (#102).
+    app.session_model = Some("deepseek-v4-flash".into());
     app.transcript.last_model = Some("deepseek-v4-pro".into());
     app.input.set("/model".into());
     app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE), &ctl);
@@ -1212,9 +1208,9 @@ fn slash_model_menu_preselects_the_running_model() {
     assert_eq!(app.slash_sel, 0, "highlight lands on the running model");
 
     // Enter on the opened menu picks the running model (no accidental
-    // switch back to the config default).
+    // switch back to the one the agent reported at bind).
     app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), &ctl);
-    assert_eq!(app.cfg.model, "deepseek-v4-pro");
+    assert_eq!(app.current_model(), "deepseek-v4-pro");
 }
 
 #[test]
@@ -1249,8 +1245,8 @@ fn slash_effort_menu_preselects_the_effort_in_effect() {
 #[test]
 fn selecting_same_model_id_from_another_provider_switches_provider() {
     let (mut app, ctl, _rx) = test_app();
-    app.cfg.provider = "coding-plan-a".into();
-    app.cfg.model = "deepseek-v4".into();
+    app.session_provider = Some("coding-plan-a".into());
+    app.session_model = Some("deepseek-v4".into());
 
     app.select_model(
         PickerItem {
@@ -1262,7 +1258,7 @@ fn selecting_same_model_id_from_another_provider_switches_provider() {
         &ctl,
     );
 
-    assert_eq!(app.cfg.provider, "coding-plan-b");
+    assert_eq!(app.session_provider.as_deref(), Some("coding-plan-b"));
     assert_eq!(app.selected_model.as_deref(), Some("deepseek-v4"));
 }
 

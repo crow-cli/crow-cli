@@ -2161,13 +2161,15 @@ fn layout_harness_icon(app: &mut App, line: &Line, area: Rect) {
     }
 }
 
+/// The model to show in the meta chip: the explicit pick, then the model that
+/// actually streamed, then the one the agent reported for this session. `None`
+/// until the agent says — the client has no model of its own to display.
 fn displayed_model(app: &App) -> Option<String> {
     if app.connection_error.is_some() { return None; }
     app.selected_model
         .clone()
         .or_else(|| app.transcript.last_model.clone())
         .or_else(|| app.session_model.clone())
-        .or_else(|| app.demo.then(|| app.cfg.model.clone()))
 }
 
 fn active_runtime(app: &App) -> &str {
@@ -2180,14 +2182,7 @@ fn welcome_model(app: &App) -> String {
     if app.connection_error.is_some() {
         return app.locale.tr("unavailable", "不可用").into();
     }
-    if app.demo {
-        return format!(
-            "{} · {}",
-            app.cfg.provider,
-            app.session_model.as_deref().unwrap_or(&app.cfg.model)
-        );
-    }
-    app.session_model.clone().unwrap_or_else(|| {
+    displayed_model(app).unwrap_or_else(|| {
         app.locale
             .tr("waiting for ACP", "等待 ACP 上报")
             .to_string()
@@ -3656,7 +3651,7 @@ fn draw_model_picker(f: &mut Frame, app: &mut App, screen: Rect) {
     // Current-identity ids, precomputed so the row builder below never
     // borrows `app` (the ListView render needs a mutable picker).
     let current_model = app.current_model();
-    let current_provider = app.cfg.provider.clone();
+    let current_provider = app.session_provider.clone();
     let current_mode = app.current_mode();
     let current_palette = app.active_palette_id.clone();
     let current_permission = app.current_permission().to_string();
@@ -3664,10 +3659,13 @@ fn draw_model_picker(f: &mut Frame, app: &mut App, screen: Rect) {
     let is_current = move |item: &crate::app::PickerItem| match kind {
         crate::app::PickerKind::Model => {
             item.id == current_model
-                && item
-                    .provider
-                    .as_deref()
-                    .is_none_or(|provider| provider == current_provider)
+                && match (&item.provider, &current_provider) {
+                    // A row that carries no provider, or a session whose
+                    // provider the agent never stated: the id is the only fact
+                    // there is to match on.
+                    (None, _) | (_, None) => true,
+                    (Some(row), Some(session)) => row == session,
+                }
         }
         crate::app::PickerKind::Mode => item.id == current_mode,
         crate::app::PickerKind::Theme => item.id == current_palette,
@@ -4238,28 +4236,16 @@ fn welcome_info_lines(app: &App) -> Vec<Line<'static>> {
             app.locale.tr("credentials", "凭据"),
             detail,
         ));
-    } else if app.attached {
+    } else {
+        // The agent owns its credentials; this client never sees a key, so the
+        // only honest line is that the source is not ours to report. Demo says
+        // the same thing — it has no agent and no key either.
         out.push(kv(
             app.locale.tr("credentials", "凭据"),
             app.locale
                 .tr("managed by Agent · source not reported", "由 Agent 管理 · 来源未上报")
                 .into(),
         ));
-    } else if let Some(source) = app.cfg.credential_source() {
-        out.push(kv(app.locale.tr("credentials", "凭据"), source.into()));
-    } else {
-        out.push(Line::from(vec![
-            Span::styled("  ⚠ ".to_string(), Style::default().fg(theme.warn)),
-            Span::styled(
-                app.locale
-                    .tr(
-                        "DEEPSEEK_API_KEY not set — export it, or relaunch with --demo",
-                        "未设置 DEEPSEEK_API_KEY — 请导出变量，或使用 --demo 重启",
-                    )
-                    .to_string(),
-                Style::default().fg(theme.warn_soft()),
-            ),
-        ]));
     }
     out.push(Line::from(Span::styled(
         app.locale

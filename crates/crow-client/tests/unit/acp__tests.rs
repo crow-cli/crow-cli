@@ -331,14 +331,8 @@ async fn plugin_ui_events_are_compositor_notifications_not_prompts() {
         );
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -546,14 +540,8 @@ async fn cordis_requests_stay_local_when_the_agent_did_not_advertise_cordis() {
         );
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -625,14 +613,8 @@ async fn client_compositor_catalog_does_not_require_agent_cordis_capability() {
         );
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -706,14 +688,8 @@ async fn client_compositor_command_does_not_require_agent_cordis_capability() {
         );
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -815,14 +791,8 @@ async fn harness_new_action_uses_the_native_new_tab_flow_without_reinitializing(
         );
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -939,9 +909,10 @@ async fn overlay_cancel_reaches_the_compositor_while_submit_is_pending() {
             on_receive_request!(),
         );
     let cfg = RuntimeConfig {
-        bin: "demo".into(), cordis: "demo".into(), workspace: "/tmp".into(),
-        session_root: "/tmp".into(), provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(), max_tokens: None, base_url: None, api_key: None, startup_session: None,
+        bin: "demo".into(),
+        workspace: "/tmp".into(),
+        session_root: "/tmp".into(),
+        startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
     let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
@@ -1052,9 +1023,10 @@ async fn plugin_operation_defers_agent_requests_and_queued_prompts_until_complet
             }
         }, on_receive_request!());
     let cfg = RuntimeConfig {
-        bin: "demo".into(), cordis: "demo".into(), workspace: "/tmp".into(),
-        session_root: "/tmp".into(), provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(), max_tokens: None, base_url: None, api_key: None, startup_session: None,
+        bin: "demo".into(),
+        workspace: "/tmp".into(),
+        session_root: "/tmp".into(),
+        startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
     let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
@@ -1287,14 +1259,8 @@ async fn form_auth_stays_configured_when_the_startup_session_succeeds() {
         );
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -1408,14 +1374,8 @@ async fn elicitation_create_waits_for_the_tui_form_reply() {
         );
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -1513,14 +1473,8 @@ async fn new_session_binds_before_applying_initial_config() {
         );
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -1596,14 +1550,8 @@ async fn set_config_option_response_updates_client_state_without_a_notification(
         );
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -1707,14 +1655,8 @@ async fn effort_selection_uses_the_advertised_thought_level_config_id() {
         );
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -1830,14 +1772,8 @@ async fn client_tree_config_set_uses_standard_acp_and_folds_response_only_state(
         );
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -1945,14 +1881,8 @@ async fn resume_session_prefers_resume_and_binds_before_applying_initial_config(
         );
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -2059,14 +1989,8 @@ async fn resume_session_falls_back_to_load_when_resume_is_rejected() {
         );
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -2182,14 +2106,8 @@ async fn prompts_while_running_wait_in_fifo_without_session_cancel() {
 
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -2326,14 +2244,8 @@ async fn composition_catalog_is_ready_before_the_first_prompt() {
 
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -2446,14 +2358,8 @@ async fn auth_failure_parks_prompts_but_reports_steers_back_to_the_client() {
 
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -2616,9 +2522,10 @@ async fn authenticate_rejection_reports_failure_instead_of_another_sign_in_hint(
             responder.respond_with_error(AcpError::new(-32000, reason))
         }, on_receive_request!());
     let cfg = RuntimeConfig {
-        bin: "demo".into(), cordis: "demo".into(), workspace: "/tmp".into(),
-        session_root: "/tmp".into(), provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(), max_tokens: None, base_url: None, api_key: None, startup_session: None,
+        bin: "demo".into(),
+        workspace: "/tmp".into(),
+        session_root: "/tmp".into(),
+        startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
     let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
@@ -2709,9 +2616,10 @@ async fn assert_authentication_before_session_setup(setup_error: Option<i32>) {
             }
         }, on_receive_request!());
     let cfg = RuntimeConfig {
-        bin: "demo".into(), cordis: "demo".into(), workspace: "/tmp".into(),
-        session_root: "/tmp".into(), provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(), max_tokens: None, base_url: None, api_key: None, startup_session: None,
+        bin: "demo".into(),
+        workspace: "/tmp".into(),
+        session_root: "/tmp".into(),
+        startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
     let (cmd_tx, cmd_rx) = std::sync::mpsc::channel();
@@ -2842,14 +2750,8 @@ async fn session_new_auth_failure_parks_the_first_intent_without_retry_storms() 
 
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -3011,14 +2913,8 @@ async fn late_steer_rejection_is_not_retried_by_the_transport_after_auth() {
 
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -3185,14 +3081,8 @@ async fn steer_sends_a_concurrent_prompt_without_interrupting_the_turn() {
 
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -3347,14 +3237,8 @@ async fn rejected_steer_reports_deferred_without_transport_retry() {
 
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -3507,14 +3391,8 @@ async fn interrupt_sends_session_cancel_while_prompt_is_in_flight() {
 
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -3735,14 +3613,8 @@ async fn sessions_run_concurrent_prompts_on_one_connection() {
         );
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -3889,14 +3761,8 @@ async fn stale_text_prompt_finish_cannot_release_a_rebound_sessions_new_turn() {
         );
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -4026,14 +3892,8 @@ async fn prompt_for_an_unbound_session_is_rejected_not_rerouted() {
         );
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();
@@ -4214,14 +4074,8 @@ where
 {
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: startup_session.map(str::to_string),
     };
     let (bus_tx, bus_rx) = std::sync::mpsc::channel();

@@ -38,6 +38,9 @@ pub struct SessionSlot {
     /// `transcript.last_model` in the chip until a turn realizes it.
     pub selected_model: Option<String>,
     pub session_model: Option<String>,
+    /// Provider of the parked session's model, learned from the agent's
+    /// catalog or the user's pick — never from a client-side default.
+    pub session_provider: Option<String>,
     /// Welcome banner: shown until this session sends its first prompt.
     pub show_banner: bool,
     /// Meta-row chrome while the session runs: state note text and the
@@ -101,6 +104,7 @@ impl SessionSlot {
             scroll_up: 0,
             selected_model: None,
             session_model: None,
+            session_provider: None,
             // A fresh tab has not prompted yet — the welcome banner paints
             // until its first send (resume paths force it off).
             show_banner: true,

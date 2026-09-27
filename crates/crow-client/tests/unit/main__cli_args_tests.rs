@@ -79,7 +79,16 @@ fn legacy_settings_come_from_the_martty_home_then_dsh_tui() {
 
 #[test]
 fn removed_runtime_aliases_are_rejected() {
-    for flag in ["--runtime-bin", "--cordis"] {
+    // The client owns no model route and no credentials, so the flags that
+    // used to carry them are gone — not hidden, rejected.
+    for flag in [
+        "--runtime-bin",
+        "--cordis",
+        "--provider",
+        "--base-url",
+        "--api-key",
+        "--max-tokens",
+    ] {
         let err = match parse_args_from([flag.into(), "legacy".into()]) {
             Ok(_) => panic!("{flag} unexpectedly remained accepted"),
             Err(err) => err,
@@ -89,6 +98,47 @@ fn removed_runtime_aliases_are_rejected() {
             "{flag} must not remain as a hidden legacy option: {err:#}"
         );
     }
+}
+
+#[test]
+fn help_offers_no_provider_route_and_no_credentials() {
+    for gone in ["--provider", "--base-url", "--api-key", "--max-tokens"] {
+        assert!(!HELP.contains(gone), "help must not offer {gone}:\n{HELP}");
+    }
+    assert!(
+        !HELP.to_ascii_uppercase().contains("DEEPSEEK"),
+        "help must not name a provider brand or its env vars:\n{HELP}"
+    );
+    assert!(
+        HELP.contains("--model"),
+        "help must still offer --model, the request handed to the agent:\n{HELP}"
+    );
+}
+
+#[test]
+fn model_flag_becomes_the_startup_request() {
+    let args = parse_args_from([
+        "-w".into(),
+        "/tmp".into(),
+        "--model".into(),
+        "gpt-5.6-sol".into(),
+    ])
+    .unwrap();
+    assert_eq!(
+        startup_model(&args).as_deref(),
+        Some("gpt-5.6-sol"),
+        "--model must reach the session bind, not die in Args"
+    );
+}
+
+#[test]
+fn no_model_flag_means_the_agent_chooses() {
+    let args = parse_args_from(["-w".into(), "/tmp".into()]).unwrap();
+    assert_eq!(
+        startup_model(&args),
+        std::env::var("CROW_MODEL").ok().filter(|value| !value.trim().is_empty()),
+        "with no --model the only source is $CROW_MODEL: the client has no default model"
+    );
 }
 
 #[test]

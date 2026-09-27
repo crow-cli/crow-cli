@@ -5,17 +5,11 @@ use std::sync::mpsc::Receiver;
 fn test_app() -> (App, Controller, Receiver<AppEvent>) {
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: std::env::temp_dir()
             .join(format!("dsh-tui-right-slot-{}", std::process::id()))
             .to_string_lossy()
             .into_owned(),
-        provider: "deepseek-official".into(),
-        model: "deepseek-v4-flash".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (tx, rx) = std::sync::mpsc::channel::<AppEvent>();
@@ -468,7 +462,9 @@ fn status_slash_fallback_shows_run_state_without_transcript_stats() {
     // ACP facts: demo run shows the demo marker and its session.
     assert!(text.contains("- acp · demo"), "{text}");
     assert!(text.contains("- session · dsh-test"), "{text}");
-    assert!(text.contains("- model · deepseek-v4-flash"), "{text}");
+    // The client owns no model: with nothing reported by an agent the line
+    // says so instead of naming a built-in default.
+    assert!(text.contains("- model · not reported"), "{text}");
     assert!(text.contains("- effort · high"), "{text}");
     assert!(text.contains("- permission · "), "{text}");
     assert!(text.contains("- plan · "), "{text}");

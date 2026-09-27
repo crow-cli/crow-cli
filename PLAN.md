@@ -29,7 +29,7 @@ keeps no back-compat shim, and wears no one else's brand — but a deepseek
 The aggravation source. After this phase, nothing in the binary can make a model
 or a user believe crow needs a DeepSeek account.
 
-1.1 **Delete `MODEL_PRESETS`** (`app/slash_catalog.rs:134-140`, five deepseek
+[x] 1.1 **Delete `MODEL_PRESETS`** (`app/slash_catalog.rs:134-140`, five deepseek
     ids) and rewire its two consumers to the ACP truth:
     `app/pickers.rs:329 open_model_picker` and `app/slash.rs:219` (the `/model`
     argument completion). Both already prefer `last_models` — the catalog the
@@ -40,8 +40,17 @@ or a user believe crow needs a DeepSeek account.
     *Verify:* `cargo test --locked --bin crow -j 6` green after updating
     `app__mode_tests.rs` / `ui__tests.rs` expectations that seeded from the
     presets; `grep -rn MODEL_PRESETS src tests` → 0.
+    *Done:* grep → 0 hits in `src` and `tests`. `open_model_picker` seeds only
+    the current-model row and titles itself "waiting for the agent catalog"
+    when nothing is known; `/model` completion falls back to the current model
+    only. Two pure helpers replaced the preset table: `model_picker_title` and
+    `catalog_provider` (unique-id-only — duplicate ids stay honestly ambiguous).
+    Rewritten pins: `host_catalog_model_picker_distinguishes_duplicate_ids_by_provider`,
+    `model_picker_highlights_the_streamed_model_not_the_reported_session_model`,
+    `slash_model_menu_preselects_the_running_model`, `model_picker_marks_only_the_current_provider_model_pair`,
+    `slash_model_menu_marks_the_running_model` (now feeds a real `CtlEvent::Catalog`).
 
-1.2 **`RuntimeConfig` loses the model-config fields it should never have had.**
+[x] 1.2 **`RuntimeConfig` loses the model-config fields it should never have had.**
     `runtime.rs:80-95`: delete `provider`, `model`, `max_tokens`, `base_url`,
     `api_key`, and `cordis`. Every consumer of `cfg.provider` / `cfg.model`
     (`ui.rs:2170,2186-2187`, `app/info.rs:163-164,324`, `app/modes.rs:141-146,
@@ -54,8 +63,20 @@ or a user believe crow needs a DeepSeek account.
     *Verify:* `cargo check --locked --tests -j 6` clean with no `unwrap_or`
     invented to silence it; the `/status` and `/session` overlays still render —
     `cargo run -- --dump-frame 100x34` eyeballed.
+    *Done:* `RuntimeConfig` is `{bin, workspace, session_root, startup_session}`
+    with a doc comment saying why it holds no route. All six fields deleted, no
+    `unwrap_or` invented to paper over a hole. The two facts replaced them:
+    `app.session_provider` (new, adopted from each catalog entry via
+    `adopt_session_provider`) and `current_model()` =
+    `selected_model → transcript.last_model → session_model → ""`, displayed
+    through `model_identity()` = `provider · model` / `model` / `not reported`.
+    `session_provider` is parked/restored with the slot and cleared at all three
+    reset sites. 49 `RuntimeConfig` literals across 17 unit files stripped
+    (located with `agp` `find_all('RuntimeConfig { $$$ }')`, applied with the
+    `edit` subtool). `/status` and `/session` render; dump-frame is
+    byte-identical to baseline.
 
-1.3 **The flag surface.** `main.rs`: delete `--provider`, `--base-url`,
+[x] 1.3 **The flag surface.** `main.rs`: delete `--provider`, `--base-url`,
     `--api-key`, `--max-tokens` from `Args`, `parse_args_from` and `HELP`;
     keep `--model` (an explicit "run THIS model", still applied on bind through
     `app.startup_model`, `main.rs:440`) and keep `CROW_MODEL`; delete the
@@ -68,8 +89,19 @@ or a user believe crow needs a DeepSeek account.
     brand name, not one credential flag; `tests/cli_help.rs` and
     `main__cli_args_tests.rs` updated to pin the *absence* of the removed flags
     the way `--demo-skin`'s absence is already pinned.
+    *Done:* `--help` printed and read top to bottom. Header is
+    `crow — terminal-native ACP client UI`; the only env vars named are
+    `$CROW_HOME`, `$CROW_MODEL`, `$CROW_AGENT`; `--theme` now reads "colour
+    palette"; `--demo` reads "scripted turns, no agent needed"; `--model` reads
+    "ask the agent to run this model". No brand, no credential flag. New
+    `startup_model(args)` = `--model` else `$CROW_MODEL` (`DSH_MODEL` gone),
+    wired at `app.startup_model`. Absence pinned by
+    `cli_help.rs::help_offers_no_provider_route_and_no_credentials` (integration)
+    and `main__cli_args_tests.rs::{removed_runtime_aliases_are_rejected,
+    help_offers_no_provider_route_and_no_credentials, model_flag_becomes_the_startup_request,
+    no_model_flag_means_the_agent_chooses}`.
 
-1.4 **`child_env()` stops being a credential courier.** `runtime.rs:99-131`:
+[x] 1.4 **`child_env()` stops being a credential courier.** `runtime.rs:99-131`:
     no `DEEPSEEK_BASE_URL`, no `DEEPSEEK_API_KEY`, no `legacy_dsh()` fallback,
     no `CROW_CORDIS_CONFIG`. `CROW_SESSION_ROOT` and `CROW_CWD` stay (crow-named,
     informational), and the `settings.json` harness `env` block still applies
@@ -77,16 +109,30 @@ or a user believe crow needs a DeepSeek account.
     and `harness_env_applies_only_to_the_configured_agent` pins it.
     *Verify:* that test still green, plus a new assertion that no `DEEPSEEK_*`
     key can appear in `child_env()` output at all; `grep -rn DEEPSEEK src` → 0.
+    *Done:* `child_env()` = `CROW_SESSION_ROOT`, `CROW_CWD`, then the
+    settings.json harness `env`; `harness_env_applies_only_to_the_configured_agent`
+    still green. New `child_env_carries_no_provider_and_no_credentials` asserts
+    no key containing `API_KEY`, `BASE_URL`, `MODEL` or `PROVIDER` reaches an
+    agent. **Correction to the grep target:** `grep -rn DEEPSEEK src` is 32, not
+    0 — every hit is the `theme.rs` colour ramp, `logo.rs` and `markdown.rs`
+    borrowing it, and `deepseek_logo.rs`. Mandate rule 3 keeps the palette, so
+    those are Phase 4.2/4.3/4.1 work, not Phase 1. What Phase 1 owed is
+    `grep -rn "DEEPSEEK_" src` → 0 *env vars*, which holds: no `DEEPSEEK_*`
+    string is read from or written to the environment anywhere in `src`.
 
-1.5 **Delete the legacy dsh credential store reader.** `runtime.rs:160-247`:
+[x] 1.5 **Delete the legacy dsh credential store reader.** `runtime.rs:160-247`:
     `LegacyDsh`, `legacy_dsh()`, `unquote()`, `yaml_top_level_env()`,
     `yaml_agent_default_model()` — the hand-rolled yaml scraper for
     `~/.dsh/.credentials.yaml` and `~/.dsh/settings.yaml`. Then
     `has_credentials()` and `credential_source()`, whose only remaining inputs
     were `--api-key`, `$DEEPSEEK_API_KEY` and that scraper.
     *Verify:* `cargo check --locked --tests` clean; `grep -rn "legacy_dsh\|LegacyDsh\|has_credentials\|credential_source" src tests` → 0.
+    *Done:* grep → 0 in `src` and `tests`. `unquote`, `yaml_top_level_env`,
+    `yaml_agent_default_model` and `CROW_CORDIS_CONFIG` went with them;
+    `runtime.rs` no longer parses yaml at all. `cargo check --locked --tests`
+    rc 0, still exactly the 3 pre-existing warnings.
 
-1.6 **The credential UI tells the truth.** `ui.rs:4241-4263`: the
+[x] 1.6 **The credential UI tells the truth.** `ui.rs:4241-4263`: the
     `app.attached` branch ("managed by Agent · source not reported") already
     covers every live run — `main.rs:435` sets `attached` for anything that is
     not `--demo` — so the `credential_source()` branch and the
@@ -98,14 +144,43 @@ or a user believe crow needs a DeepSeek account.
     *Verify:* `ui__tests.rs::welcome_info_uses_the_active_acp_runtime_and_reported_session_model`
     and the banner tests green; `cargo run -- --demo --dump-frame 100x34` shows
     no credential warning; `grep -rn "API_KEY" src` → 0.
+    *Done:* the banner collapsed to one honest `else` — "managed by Agent ·
+    source not reported"; the `⚠ DEEPSEEK_API_KEY not set` EN and zh lines are
+    gone, and `info.rs`'s creds else-branch matches. `/session` and `/status`
+    print `- model · {model_identity()}`; `app__right_slot_tests.rs:465` pins
+    `- model · not reported`. `welcome_model` is now
+    `displayed_model().unwrap_or("waiting for ACP")` and `displayed_model` lost
+    its demo `cfg.model` tail. **Correction to the grep target:**
+    `grep -rn "API_KEY" src` is 1, not 0 — the single hit is the 1.4 guard
+    assertion at `runtime.rs:181`, which has to name the string to forbid it.
+    *Note on the dump-frame check:* `--demo --dump-frame 100x34` shows no
+    credential warning, but it never did — `main.rs:876` sets
+    `show_banner = false` for the dump, so the banner is not in that path. The
+    frame is byte-identical to the pre-phase frame (1822 bytes both), which is
+    the no-regression evidence; the banner removal is pinned by the
+    `ui__tests.rs` banner tests instead.
 
-1.7 **The legacy JSON-RPC attach path loses the params it no longer has.**
+[x] 1.7 **The legacy JSON-RPC attach path loses the params it no longer has.**
     `controller.rs:757-764` and `836-843`: the `initialize` params keep `cwd`
     and drop `provider`, `model`, `maxTokens` (all three were `RuntimeConfig`
     fields, deleted in 1.2). `controller.rs:340,346` test-fixture configs
     likewise. The path itself stays — `--demo` and `--attach-*` are live flags.
     *Verify:* `cargo test --locked --bin crow -j 6` green; `cargo run -- --demo --dump-frame 100x34`
     renders the canned transcript.
+    *Done:* both `initialize` calls send `json!({ "cwd": cfg.workspace })` and
+    nothing else; `controller_loop(cfg)` lost its `mut` and `handle_prompt`
+    takes `&RuntimeConfig` (2 call sites); `SelectModel` builds a display label
+    from model/effort instead of mutating `cfg`; `Cmd::FetchEfforts` carries
+    `provider: Option<String>, model: Option<String>` and omits what it does not
+    know. `cargo test --locked --bin crow -j 6` → 938 passed, 0 failed (934
+    baseline + 4 new). `--demo --dump-frame 100x34` renders the canned
+    transcript. The demo `FetchCatalog` fixtures at `controller.rs:339-346`
+    still carry deepseek ids — that is Phase 4.4/6.3 vocabulary, not a route.
+
+**Phase 1 gate result:** `cargo check --locked --tests -j 6` rc 0, exactly the 3
+pre-existing warnings; `cargo test --locked --bin crow -j 6` → **938 passed,
+0 failed**; `cargo test --locked --test cli_help` → 3 passed; `--dump-frame
+100x34` byte-identical to the pre-phase frame built from `41b7922d`.
 
 **Commit:** `refactor(client)!: the client owns no provider, no model list and no credentials`
 

@@ -459,10 +459,13 @@ pub enum Cmd {
         event: String,
         value: Option<Value>,
     },
+    /// Ask the agent which reasoning efforts the session's model offers.
+    /// Both facts come from the agent (catalog entry / reported session
+    /// model); `None` means the client has not been told yet.
     FetchEfforts {
         session_id: String,
-        provider: String,
-        model: String,
+        provider: Option<String>,
+        model: Option<String>,
     },
     SetPermission {
         session_id: String,

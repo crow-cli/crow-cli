@@ -131,14 +131,6 @@ pub const SLASH_COMMANDS: &[SlashCommand] = &[
     },
 ];
 
-pub const MODEL_PRESETS: &[&str] = &[
-    "deepseek-v4-flash",
-    "deepseek-v4",
-    "deepseek-v3.2",
-    "deepseek-chat",
-    "deepseek-reasoner",
-];
-
 /// Demo seeds for `/agent` when no agent catalog has arrived. Live ACP
 /// replaces these with the extra composition select the agent advertised.
 /// Shipped creator id is `cordis`.
@@ -246,6 +238,38 @@ pub(crate) fn permission_picker_items(
             }
         })
         .collect()
+}
+
+/// The model picker's title. An empty list means the agent has not advertised a
+/// catalog yet, and the title is the only place left that can say so.
+pub(crate) fn model_picker_title(locale: crate::locale::Locale, empty: bool) -> &'static str {
+    if empty {
+        locale.tr(
+            " model · waiting for the agent catalog ",
+            " 模型 · 等待 Agent 上报目录 ",
+        )
+    } else {
+        locale.tr(
+            " model · enter select · esc close ",
+            " 模型 · enter 选择 · esc 关闭 ",
+        )
+    }
+}
+
+/// The provider that serves `model` according to the agent's own catalog, when
+/// exactly one entry carries that id. Two entries with the same id (one upstream
+/// model behind two coding plans) stay ambiguous — only the user's pick can say
+/// which one the session is on. The client never guesses a provider.
+pub(crate) fn catalog_provider(
+    models: &[crate::bus::CatalogModel],
+    model: &str,
+) -> Option<String> {
+    if model.is_empty() {
+        return None;
+    }
+    let mut matches = models.iter().filter(|entry| entry.id == model);
+    let unique = matches.next()?;
+    matches.next().is_none().then(|| unique.provider.clone())
 }
 
 /// Map a file extension to the attachment media type the host accepts.

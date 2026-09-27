@@ -139,14 +139,8 @@ async fn check_slow_control(config: bool) {
         );
     let cfg = RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "test".into(),
-        model: "test".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     };
     let (bus, events) = std::sync::mpsc::channel();
@@ -336,14 +330,8 @@ fn model_switch_agent(reject: bool) -> impl ConnectTo<Client> + 'static {
 fn model_switch_cfg() -> RuntimeConfig {
     RuntimeConfig {
         bin: "demo".into(),
-        cordis: "demo".into(),
         workspace: "/tmp".into(),
         session_root: "/tmp".into(),
-        provider: "test".into(),
-        model: "test".into(),
-        max_tokens: None,
-        base_url: None,
-        api_key: None,
         startup_session: None,
     }
 }

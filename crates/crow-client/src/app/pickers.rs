@@ -321,62 +321,30 @@ impl App {
     }
 
     pub(crate) fn open_model_picker(&mut self, ctl: &Controller) {
-        // Ask the ACP agent for its real catalog; seed the picker
-        // with fallback presets / env snapshot meanwhile.
+        // The agent owns the model list: ask it for the real catalog. Until it
+        // answers, the only honest row is the model this session is running —
+        // an empty picker beats inventing one.
         ctl.send(Cmd::FetchCatalog {
             session_id: self.session_id.clone(),
         });
-        let mut items: Vec<PickerItem> = MODEL_PRESETS
-            .iter()
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>()
-            .into_iter()
-            .map(|id| PickerItem {
-                id: id.clone(),
-                label: id,
-                meta: String::new(),
-                provider: None,
-            })
-            .collect();
-        // The effective model (explicit pick → last streamed → configured
-        // default) is the picker's "current": the highlight and the ✓ mark
-        // land on the model the session is actually running (issue #102).
+        // The effective model (explicit pick → last streamed → agent-reported)
+        // is the picker's "current": the highlight and the ✓ mark land on the
+        // model the session is actually running (issue #102).
         let current = self.current_model();
-        if !items.iter().any(|i| i.id == current) {
-            items.insert(
-                0,
-                PickerItem {
-                    id: current.clone(),
-                    label: current.clone(),
-                    meta: String::new(),
-                    provider: None,
-                },
-            );
+        let mut items: Vec<PickerItem> = Vec::new();
+        if !current.is_empty() {
+            items.push(PickerItem {
+                id: current.clone(),
+                label: current,
+                meta: String::new(),
+                provider: self.session_provider.clone(),
+            });
         }
-        let current_provider = self.cfg.provider.clone();
-        let sel = items
-            .iter()
-            .position(|i| {
-                i.id == current
-                    && i.provider
-                        .as_deref()
-                        .is_none_or(|provider| provider == current_provider)
-            })
-            // The running model may come from the transcript without a
-            // provider: fall back to an id-only match rather than row 0.
-            .or_else(|| items.iter().position(|i| i.id == current))
-            .unwrap_or(0);
         self.picker = Some(Picker {
             offset: 0,
             kind: PickerKind::Model,
-            title: self
-                .locale
-                .tr(
-                    " model · enter select · esc close ",
-                    " 模型 · enter 选择 · esc 关闭 ",
-                )
-                .into(),
-            sel,
+            title: model_picker_title(self.locale, items.is_empty()).into(),
+            sel: 0,
             items,
         });
     }
