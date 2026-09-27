@@ -201,6 +201,35 @@ fn tick_reports_the_redraw_the_drain_caused() {
 }
 
 #[test]
+fn color_update_is_quiet_until_the_mode_flips() {
+    let (mut crow, _cmds, _bus) = test_crow_app();
+    assert!(
+        crow.take_color_update().is_none(),
+        "the startup mode is seeded at construction, not published"
+    );
+    crow.on_key(KeyEvent {
+        code: KeyCode::Char('t'),
+        modifiers: KeyModifiers::CONTROL,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    })
+    .unwrap();
+    assert_eq!(crow.app.theme.mode, crate::theme::Mode::Light, "ctrl+t flips the mode");
+    let light = crow.take_color_update().expect("the flip publishes a table");
+    assert_eq!(light.WHITE, crow_gui::light_color_table().WHITE);
+    assert!(crow.take_color_update().is_none(), "one table per flip");
+    crow.on_key(KeyEvent {
+        code: KeyCode::Char('t'),
+        modifiers: KeyModifiers::CONTROL,
+        kind: KeyEventKind::Press,
+        state: KeyEventState::NONE,
+    })
+    .unwrap();
+    let dark = crow.take_color_update().expect("flipping back publishes again");
+    assert_eq!(dark.WHITE, crow_gui::dark_color_table().WHITE);
+}
+
+#[test]
 fn render_clears_the_redraw_flag_like_the_tty_loop() {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;

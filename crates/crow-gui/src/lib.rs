@@ -96,6 +96,9 @@ pub struct GuiConfig {
     pub reset_fg: Color,
     /// ANSI base-16 color table. `None` uses the ratatui-wgpu defaults.
     pub color_table: Option<ColorTable>,
+    /// Wayland app id / X11 WM_CLASS (`with_name`). The desktop entry's
+    /// `StartupWMClass` must match this or the launcher cannot group windows.
+    pub app_id: String,
 }
 
 impl Default for GuiConfig {
@@ -107,6 +110,7 @@ impl Default for GuiConfig {
             reset_bg: Color::Rgb(0x1e, 0x1e, 0x2e),
             reset_fg: Color::Rgb(0xe0, 0xe0, 0xe0),
             color_table: None,
+            app_id: "crow".into(),
         }
     }
 }

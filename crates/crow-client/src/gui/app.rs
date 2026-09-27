@@ -14,7 +14,7 @@ use crow_gui::event::{
     KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers, MediaKeyCode, ModifierKeyCode,
     MouseButton, MouseEvent, MouseEventKind,
 };
-use crow_gui::GuiApplication;
+use crow_gui::{ColorTable, GuiApplication};
 use crossterm::event::{
     Event as CtEvent, KeyEvent as CtKeyEvent, KeyEventKind as CtKeyEventKind,
     KeyEventState as CtKeyEventState, KeyCode as CtKeyCode, KeyModifiers as CtKeyModifiers,
@@ -24,6 +24,7 @@ use crossterm::event::{
 use ratatui::Frame;
 
 use crate::app::App;
+use crate::theme::Mode;
 use crate::bus::{AppEvent, Cmd};
 use crate::controller::Controller;
 
@@ -33,11 +34,24 @@ pub(crate) struct CrowApp {
     pub(crate) ctl: Controller,
     pub(crate) bus_rx: mpsc::Receiver<AppEvent>,
     last_tick: Instant,
+    /// Mode the ANSI table was last handed out for; `take_color_update`
+    /// reports a change only when ctrl+t (or the theme dialog) flips it.
+    last_mode: Mode,
 }
 
 impl CrowApp {
     pub(crate) fn new(app: App, ctl: Controller, bus_rx: mpsc::Receiver<AppEvent>) -> Self {
-        Self { app, ctl, bus_rx, last_tick: Instant::now() }
+        let last_mode = app.theme.mode;
+        Self { app, ctl, bus_rx, last_tick: Instant::now(), last_mode }
+    }
+
+    /// The ANSI base-16 table for a mode: named colors (`Color::Red`, …) in the
+    /// window follow the same dark/light split the semantic theme tokens use.
+    pub(crate) fn table_for(mode: Mode) -> ColorTable {
+        match mode {
+            Mode::Dark => crow_gui::dark_color_table(),
+            Mode::Light => crow_gui::light_color_table(),
+        }
     }
 }
 
@@ -95,6 +109,14 @@ impl GuiApplication for CrowApp {
 
     fn on_close(&mut self) {
         self.ctl.send(Cmd::Shutdown);
+    }
+
+    fn take_color_update(&mut self) -> Option<ColorTable> {
+        let mode = self.app.theme.mode;
+        (mode != self.last_mode).then(|| {
+            self.last_mode = mode;
+            Self::table_for(mode)
+        })
     }
 }
 

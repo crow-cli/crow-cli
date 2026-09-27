@@ -1,0 +1,20 @@
+# Workspace root: the TUI/ACP client and the runtime-agnostic UI service.
+# Mirrors fresh's layout (crates/<name>); the root manifest is virtual so
+# `cargo build` at the repo root builds exactly the default members.
+[workspace]
+members = ["crates/crow-client", "crates/crow-gui"]
+default-members = ["crates/crow-client"]
+resolver = "2"
+
+# Profiles live at the workspace root (cargo ignores them in member manifests).
+[profile.release]
+lto = true
+strip = true
+
+# Opt-in fast local build profile (DSH_TUI_CARGO_PROFILE=devlocal for
+# `scripts/devlocalinstall.sh`, or `cargo build --profile devlocal` while
+# iterating): plain debug codegen — no optimizations, incremental — the
+# fastest turnaround for build/test loops. `scripts/devlocalinstall.sh` and
+# the shipped npm packages build [profile.release] (fat LTO, stripped).
+[profile.devlocal]
+inherits = "dev"

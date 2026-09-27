@@ -8,7 +8,8 @@
 //! runs in a browser and can be asserted on end-to-end by
 //! `tests/e2e/test_web_paint_live.py`.
 //!
-//! Build + stage with `crate/scripts/build-web.sh`, serve `crate/web/`.
+//! Build + stage with `crates/crow-client/scripts/build-web.sh`, serve
+//! `crates/crow-client/web/`.
 
 use anyhow::Result;
 use ratatui::prelude::*;

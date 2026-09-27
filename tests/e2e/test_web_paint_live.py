@@ -6,10 +6,10 @@ actually rasterises the frames and we assert on the pixels.
 
 Skips unless the wasm bundle has been staged:
 
-    crate/scripts/build-web.sh
+    crates/crow-client/scripts/build-web.sh
 
 which runs `cargo build -p crow-gui --features web --target wasm32-unknown-unknown`
-and wasm-bindgen into `crate/web/target/`.
+and wasm-bindgen into `crates/crow-client/web/target/`.
 """
 
 import http.server
@@ -19,13 +19,13 @@ from pathlib import Path
 
 import pytest
 
-CRATE = Path(__file__).resolve().parents[2] / "crate"
+CRATE = Path(__file__).resolve().parents[2] / "crates" / "crow-client"
 WEB = CRATE / "web"
 STAGED = WEB / "target" / "crow_web.js"
 
 pytestmark = pytest.mark.skipif(
     not STAGED.exists(),
-    reason="wasm bundle not staged — run crate/scripts/build-web.sh",
+    reason="wasm bundle not staged — run crates/crow-client/scripts/build-web.sh",
 )
 
 

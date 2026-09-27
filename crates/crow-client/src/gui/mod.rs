@@ -22,7 +22,16 @@ pub(crate) fn run_crow_app(start: Startup) -> Result<()> {
     // on the half-block art path `ui::draw` paints, never escape sequences
     // (TODO "Kitty graphics", verify `pet_pixels` stays false).
     app.pet_pixels = false;
-    crow_gui::run(GuiConfig::default(), move |_cols, _rows| {
+    // Seed the backend from the startup theme: `Color::Reset` cells and the
+    // ANSI base-16 names match the palette the TTY would have shown. Mode
+    // flips after that travel through `CrowApp::take_color_update`.
+    let cfg = GuiConfig {
+        reset_bg: app.theme.bg,
+        reset_fg: app.theme.fg,
+        color_table: Some(CrowApp::table_for(app.theme.mode)),
+        ..GuiConfig::default()
+    };
+    crow_gui::run(cfg, move |_cols, _rows| {
         Ok(CrowApp::new(app, controller, bus_rx))
     })
 }

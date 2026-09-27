@@ -395,12 +395,28 @@ impl<A: GuiApplication + 'static> WgpuRunner<A> {
     }
 
     fn create_state(&mut self, event_loop: &ActiveEventLoop) -> Result<RunnerState<A>> {
-        let attrs = WindowAttributes::default()
+        let mut attrs = WindowAttributes::default()
             .with_title(&self.config.title)
             .with_inner_size(winit::dpi::PhysicalSize::new(
                 self.config.width,
                 self.config.height,
             ));
+        // Wayland app_id + X11 WM_CLASS, so the desktop entry's StartupWMClass
+        // can group the window. Fully qualified: both platform traits define
+        // `with_name`, and the backend that isn't running ignores its field.
+        #[cfg(target_os = "linux")]
+        {
+            attrs = winit::platform::wayland::WindowAttributesExtWayland::with_name(
+                attrs,
+                self.config.app_id.clone(),
+                self.config.app_id.clone(),
+            );
+            attrs = winit::platform::x11::WindowAttributesExtX11::with_name(
+                attrs,
+                self.config.app_id.clone(),
+                self.config.app_id.clone(),
+            );
+        }
         let window: WindowHandle =
             Arc::new(event_loop.create_window(attrs).context("failed to create window")?);
         let size = window.inner_size();
