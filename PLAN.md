@@ -1246,6 +1246,23 @@ Python suite, disproved three ways in 8.3.
 
 **Commit:** `chore(client): phase 8 — the shipped binary, driven`
 
+**Merged to `main`:** `41ddb4c8`, a `--no-ff` merge of `5df74182` into
+`29f3fb43`. The two sides share no file — main had moved on to `goal_start` /
+`goal_reset` / `/goal` help (`src/crow_cli/**`, `ACP_V2.md`) while this branch
+was entirely `crates/crow-client/**` plus the root `PLAN.md` / `TODO.md` /
+`Cargo.toml` — and `git merge-tree --write-tree` reported the clean merge
+before it was run. Re-proved on the merged tree, in the main worktree: check
+rc 0 with exactly the 3 permanent warnings, `--bin crow` **941 passed**,
+`cli_help` 3 / `startup_session_e2e` 12 / `sigterm_cleanup` 1 / `tcp_attach`
+1, `--dump-frame 100x34` byte-identical to `/tmp/rebrand-p4-baseline.frame`,
+`--help` 1484 chars with no brand and no credential flag, and
+`uv run pytest tests/unit -q` → **806 passed** (the branch's 788 plus main's
+18 goal tests). The main worktree's uncommitted work — the crate `description`
+and the `0.1.46` bump in `pyproject.toml`/`uv.lock` — was stashed *by path*
+for the merge and popped back intact: `crates/crow-client/Cargo.toml` now
+carries both this branch's `include`-list comment and the user's description
+edit on top, still uncommitted, still theirs.
+
 ---
 
 ## Rules for this sprint
