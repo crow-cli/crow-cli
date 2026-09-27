@@ -1186,9 +1186,11 @@ of old brand art; nothing was added.
     *Done:* PLAN 8.1–8.5 each carry their evidence (this block) and TODO's Gate
     section gains a **Phase 8 gate result** paragraph after Phase 7's. The
     deferred list is intact at five items with their reasons — the LICENSE
-    attribution line, `crate/target`'s 71 GiB, the Cordis/plugin subsystem's
-    existence, `locale.rs`'s bilingual-by-construction rule, the legacy
-    JSON-RPC attach path — plus the open `- [ ]` LICENSE scope bullet. There is
+    attribution line, `crate/target`'s 73 GiB (its recorded reason was wrong
+    and is corrected in TODO's deferred list — it is live cache, built into
+    today, not dead), the Cordis/plugin subsystem's existence, `locale.rs`'
+    bilingual-by-construction rule, the legacy JSON-RPC attach path — plus the
+    open `- [ ]` LICENSE scope bullet. There is
     no Phase 8 bullet in the scope capture to tick, and that is correct: Phase 8
     adds no scope, it re-proves Phases 1–7 against the shipped artifact, and
     every bullet it re-proves was already `[x]`.

@@ -507,10 +507,23 @@ not a build instruction.
 
 - **The LICENSE attribution line.** User, on the record: "we can properly
   attribute after we're finished with rebrand". Not this sprint.
-- **`crate/target` — 71 GiB of stale build cache** at the repo root, from
-  before the `crate/` → `crates/` move (`6ccafb8d`). Nothing builds into it.
-  AGENTS.md forbids auto-cleaning target dirs, so this is a human decision:
-  `rm -rf crate/target` reclaims 71 GiB. Flagged, not done.
+- **`crate/target` — 73 GiB of build cache** at the repo root, from before the
+  `crate/` → `crates/` move (`6ccafb8d`). AGENTS.md forbids auto-cleaning
+  target dirs, so this is a human decision. Flagged, not done.
+  *Correction, found while merging `client-rebrand`:* the old reason here —
+  "nothing builds into it, `rm -rf` reclaims 71 GiB" — is **false**, and acting
+  on it would not be free. The mtimes say it was built into *today*:
+  `debug/crow` (424 MB) and `debug/crow.d` at 09:16, `debug/deps` (18 GiB) at
+  09:16, `debug/incremental` (**53 GiB**) at 23:45 yesterday. And `crow.d`'s
+  prerequisite list points into
+  `~/.agents/crow/src/worktrees/crow-cli-gui/crate/…` — paths that no longer
+  exist, that worktree being on the new `crates/` layout. So something on this
+  machine still uses `crate/target` as its cargo target dir; the likely culprit
+  is a `CARGO_TARGET_DIR` / `CROW_CARGO_TARGET_DIR` in the user's shell
+  (`crates/crow-client/scripts/cargo-guard.sh:6` honours
+  `CROW_CARGO_TARGET_DIR`, defaulting to `$project_root/target`). Find that
+  first, then decide — and note the cheap half is `incremental/` alone, 53 of
+  the 73 GiB.
 - **The Cordis/plugin subsystem's existence.** This sprint renames it. Whether
   crow wants an agent-driven extension protocol at all — overlays, agent-pushed
   palettes, slot snapshots — is a product question that outlives a rebrand.
