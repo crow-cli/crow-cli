@@ -101,7 +101,7 @@ def decode_cursor(cursor: Optional[str]) -> int:
     """An opaque token back to an offset.
 
     Opaque to the CLIENT and to nothing else: base64 JSON, because that is what
-    v1 emitted and the TUI's history screen already round-trips it. A cursor
+    v1 emitted and a client's history view already round-trips it. A cursor
     that does not decode is refused rather than treated as page zero —
     restarting the listing would hand back sessions the client has already
     rendered, and it would look like the agent's history had duplicates.

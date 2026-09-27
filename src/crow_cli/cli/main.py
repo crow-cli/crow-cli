@@ -364,8 +364,8 @@ def run_init(
         "--no-source",
         help=(
             "Skip cloning the source checkout into <config-dir>/src. Crow is "
-            "source-first: the checkout is what the TUI spawns, so skipping it "
-            "leaves you on the installed build."
+            "source-first: the checkout is what a source-first spawn runs, so "
+            "skipping it leaves you on the installed build."
         ),
     ),
 ):
@@ -1400,52 +1400,14 @@ def global_callback(
         is_eager=True,
         callback=_print_version_and_exit,
     ),
-    directory: str = typer.Option(
-        ".",
-        "-d",
-        "--dir",
-        help="Project directory (bare `crow-cli` TUI only; place before any subcommand).",
-    ),
-    session: str | None = typer.Option(
-        None,
-        "-s",
-        "--session",
-        help="Session id to load into the TUI (bare `crow-cli` only).",
-    ),
-    model: str | None = typer.Option(
-        None,
-        "-m",
-        "--model",
-        help="Model for the TUI's session (bare `crow-cli` only). Selected over "
-        "ACP session/set_config_option once the session exists, so it applies "
-        "to whichever agent launches — crow's own or an `agent_servers` entry. "
-        "Names come from config.yaml models: (see `crow-cli models`).",
-    ),
-    agent_server: str | None = typer.Option(
-        None,
-        "-a",
-        "--agent-server",
-        help="Named `agent_servers` entry from config to launch (bare `crow-cli` only).",
-    ),
-    config_dir: Path | None = typer.Option(
-        None,
-        "--config-dir",
-        help="Config directory (bare `crow-cli` TUI only).",
-    ),
-    config_file: Path | None = typer.Option(
-        None,
-        "--config-file",
-        help="Config file (bare `crow-cli` TUI only).",
-    ),
 ):
     """Crow ACP Client - Transparent, observable agent client.
 
-    With no subcommand, launches the interactive TUI.
+    With no subcommand, prints this help: every capability is a subcommand.
     """
     if ctx.invoked_subcommand is None:
-        from crow_cli.cli.tui_cmd import launch_tui
-
-        launch_tui(directory, session, model, config_dir, config_file, agent_server)
+        typer.echo(ctx.get_help())
+        raise typer.Exit()
 
 
 def main():

@@ -29,7 +29,7 @@ longer than any client's switch, and a new variant that renders as nothing is
 indistinguishable from an agent that stopped talking.
 
 What this is NOT: a permission surface (crow's agent never asks — it owns
-execution), a NES client, or a TUI. There is no key handler, so a turn cannot be
+execution), or a NES client. There is no key handler, so a turn cannot be
 cancelled from the REPL; Ctrl-C ends this process and the child dies with it.
 Raw-mode input is ``tui2``'s job.
 """

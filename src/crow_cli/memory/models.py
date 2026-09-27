@@ -165,10 +165,10 @@ class Goal(Base):
 
 
 class SessionTab(Base):
-    """Client-side tab state for a TUI session (title, resume meta).
+    """Client-side tab state for a session (title, resume meta).
 
     The server-side session record lives on Agent (agents.session_id);
-    this table is what the TUI's tab bar and resume modal need, kept in
+    this table is what a client's tab bar and resume flow need, kept in
     the shared store so the package has one state database."""
 
     __tablename__ = "session_tabs"

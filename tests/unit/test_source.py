@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from crow_cli.cli import source
-from crow_cli.tui.agent_servers import resolve_agent_server
+from crow_cli.agents import resolve_agent_server
 
 
 def _checkout(path: Path) -> Path:
@@ -99,8 +99,9 @@ def test_default_agent_server_entry_points_at_the_checkout(config_dir: Path):
     }
 
     agent = resolve_agent_server("crow-cli", {"crow-cli": entry})
-    assert f"--project {config_dir / 'src' / 'crow-cli'}" in agent["run_command"]["*"]
-    assert agent["identity"] == "crow-cli"
+    argv = " ".join((agent.command, *agent.args))
+    assert f"--project {config_dir / 'src' / 'crow-cli'}" in argv
+    assert agent.name == "crow-cli"
 
 
 # ---------------------------------------------------------------------------

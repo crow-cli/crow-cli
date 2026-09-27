@@ -4,13 +4,13 @@
 ``<config_dir>/src/crow-cli`` (plus the site repo and the global skill), so a
 ``git pull`` there is an upgrade. The checkout is never loaded implicitly: it
 is just a directory an ``agent_servers`` entry may point at (see
-crow_cli.tui.agent_servers) — one of potentially many agents, nothing special.
+crow_cli.agents) — one of potentially many agents, nothing special.
 
 :func:`spawn_argv` builds the launch argv for crow's OWN agent, and it is
 always the code that is actually running: a frozen build's ``acp``/``acp2``
 subcommand, or this interpreter via ``-m crow_cli.agent.main`` (v1) or
 ``-m crow_cli.agent2.main`` (v2). :func:`spawn_command` is the same argv
-shell-quoted, which is the shape the TUI's Agent dict carries. No checkout
+shell-quoted, which is the shape a resolved agent carries. No checkout
 preference, no re-exec, no behind-the-scenes redirection.
 """
 
@@ -56,7 +56,7 @@ def skills_dir(config_dir: Path | str | None = None) -> Path:
 
 
 def global_checkout(config_dir: Path | str | None = None) -> Path:
-    """``<config_dir>/src/crow-cli`` — the checkout the TUI spawns by default."""
+    """``<config_dir>/src/crow-cli`` — the checkout a source-first spawn runs by default."""
     return src_dir(config_dir) / "crow-cli"
 
 
@@ -77,7 +77,7 @@ def default_agent_server_entry(config_dir: Path | str | None = None) -> dict:
     The explicit route for what used to be implicit: bare `crow-cli` launches
     the TOP entry, so init leaves one named ``crow-cli`` that runs
     ``uv --project <checkout> run crow-cli acp``. An absolute path, because
-    the TUI shell-quotes argv and a quoted ``~`` would never expand.
+    the spawn shell-quotes argv and a quoted ``~`` would never expand.
     """
     return {
         "type": "custom",
@@ -124,7 +124,7 @@ def spawn_argv(
 
     The list is the truth and :func:`spawn_command` is its shell-quoted form,
     because the two clients consume different shapes: ``run`` spawns an argv,
-    the TUI's Agent dict carries a command string.
+    a resolved agent carries a command string.
     """
     try:
         subcommand, module = AGENT_ENTRY_POINTS[protocol]

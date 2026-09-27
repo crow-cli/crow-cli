@@ -560,7 +560,7 @@ def run_init(config_dir: Path, yes: bool = False, source: bool = True):
     # =========================================================================
     # Crow is source-first: there is no non-source distribution. The installed
     # tool is the bootloader; the checkout at <config_dir>/src/crow-cli is the
-    # program the TUI actually spawns (`uv --project ... run crow-cli acp`), so
+    # program a source-first spawn actually runs (`uv --project ... run crow-cli acp`), so
     # a `git pull` there is an upgrade and pure-Python changes are live with no
     # reinstall. The skill is installed GLOBALLY because it is the BIOS — when
     # a project-level spawn is broken, the agent that fixes it cannot fetch the
@@ -573,7 +573,7 @@ def run_init(config_dir: Path, yes: bool = False, source: bool = True):
             console.print(f"[yellow]Retry:[/yellow] [dim]{error}[/dim]")
     else:
         console.print(
-            "\n[dim]--no-source: skipping the source checkout; the TUI will run "
+            "\n[dim]--no-source: skipping the source checkout; a spawn will run "
             "the installed crow-cli.[/dim]"
         )
 

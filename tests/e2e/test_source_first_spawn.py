@@ -29,7 +29,7 @@ from acp.schema import ClientCapabilities, Implementation
 
 from crow_cli.cli import source
 from crow_cli.client.subagent import HeadlessClient
-from crow_cli.tui.agent_servers import crow_agent
+from crow_cli.agents import crow_agent_server
 
 pytestmark = pytest.mark.asyncio
 
@@ -110,8 +110,8 @@ async def test_init_clone_spawn_handshake(
 
     # 3. crow's own agent does NOT reach for the checkout implicitly; the
     #    launch that reaches it is an agent_servers entry, written explicitly.
-    agent = crow_agent(config_dir=str(config_dir))
-    assert "uv" not in agent["run_command"]["*"]
+    agent = crow_agent_server(config_dir=str(config_dir))
+    assert "uv" not in " ".join((agent.command, *agent.args))
     command = f"uv --project {checkout} run crow-cli acp --config-dir {config_dir}"
 
     # 4. and that string, handed to a shell, is a live ACP agent

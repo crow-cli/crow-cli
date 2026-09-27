@@ -296,5 +296,5 @@ learn. §5.4: "by the time anything looks, it is an ordinary pending delivery."
   answered AFTER /goal lands, because landing it reveals which guts are load
   bearing. Do not delete task features on spec.
 - TUI rendering of goal state. The agent advertises `/goal` through the
-  existing `available_commands_update`; a status-bar widget is crow-term's
+  existing `available_commands_update`; a status-bar widget is crow's
   business, not this repo's.

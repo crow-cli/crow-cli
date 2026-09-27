@@ -4,7 +4,7 @@ description: The crow-cli map — where the source lives, how a running agent wa
   spawned, and how to change, upgrade, or repair crow-cli itself. Use when the
   task touches crow-cli's own code or install ("fix crow-cli", "upgrade
   crow-cli", "reinstall", "where is the source", "the checkout", "crow-cli
-  init", "project agent", "why is my change not live", "self-heal", "the TUI
+  init", "project agent", "why is my change not live", "self-heal", "crow
   spawns"), when a crow-cli spawn failed, or when you are an agent asked to
   repair a broken crow-cli. Also the entry point for the feedback loop
   (analysis/ideas files, the learn skill).
@@ -38,14 +38,14 @@ Resolution is project-first, exactly like skills
 2. `<cwd>/.agents/crow/src/crow-cli` — the project's own checkout. `crow-cli
    acp` **re-execs** into it (`uv --project <checkout> run crow-cli acp`), so
    the agent that answers is the one the repo ships.
-3. `~/.agents/crow/src/crow-cli` — the global checkout. What the TUI spawns by
+3. `~/.agents/crow/src/crow-cli` — the global checkout. What a source-first spawn runs by
    default.
 4. The installed crow-cli — a frozen binary's `acp`, or `-m crow_cli.agent.main`.
 
 `--system` forces 4. `CROW_ACP_REEXEC=1` in the environment means "this
 process IS the re-exec" and stops the walk. All of this lives in
-`src/crow_cli/cli/source.py`; the TUI's launch string is built by
-`crow_cli.tui.agent_servers.crow_agent`.
+`src/crow_cli/cli/source.py`; the spawn argv for crow's own agent is built by
+`crow_cli.agents.crow_agent_server`.
 
 **Every fallback is loud.** If you see `crow-cli: No source checkout at ...` or
 `... needs uv, which is not on PATH` on stderr, the agent you got is NOT the
@@ -114,7 +114,7 @@ passes two and three. All in `src/crow_cli/agent/compact.py`:
   message. The only one that touches the conversation.
 - **analysis** — `ANALYSIS_PROMPT`, about **crow-cli itself**: the system
   prompt, the tools and their schemas, skills, compaction, memory, config,
-  ACP, the TUI. Four sections: What worked well / What did not work / Bugs /
+  ACP, the client. Four sections: What worked well / What did not work / Bugs /
   Ideas. Evidence is mandatory — an item with no evidence gets deleted, not
   softened. Written to `~/.agents/crow/ideas/{agent-id}.md`.
 - **ideas** — `IDEAS_PROMPT`, about **the project in cwd**: assumptions worth

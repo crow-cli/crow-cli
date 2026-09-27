@@ -382,7 +382,7 @@ skills_dir: ~/.agents/skills
 # remove the key to fall back to the built-in prompt.
 system_prompt_path: ~/.agents/crow/prompts/system_prompt.jinja2
 
-# Named ACP servers the TUI can launch with -a/--agent-server <name>
+# Named ACP servers a client can launch with -a/--agent-server <name>
 # (bare `crow-cli` only). Every entry is a command, honored exactly as
 # written; with no -a the TOP entry is the default, the same way the top
 # model in config.yaml is the default model. Nothing configured → crow's

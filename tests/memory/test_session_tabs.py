@@ -7,7 +7,6 @@ CRUD, recency ordering, and the tui DB facade against an explicit db_uri
 
 from crow_cli.memory import session_tabs
 from crow_cli.memory.db import create_database
-from crow_cli.tui.db import DB
 
 
 def make_uri(tmp_path) -> str:
@@ -48,22 +47,3 @@ def test_rename_and_touch(tmp_path):
 
     assert not session_tabs.tab_touch(uri, a + b + 99)
     assert not session_tabs.tab_rename(uri, a + b + 99, "nope")
-
-
-async def test_tui_facade_against_explicit_uri(tmp_path):
-    uri = make_uri(tmp_path)
-    db = DB(db_uri=uri)
-    pk = await db.session_new(
-        title="t",
-        agent="Crow",
-        agent_identity="crowai.dev",
-        agent_session_id="wire-1",
-        meta={"k": "v"},
-    )
-    assert await db.session_update_last_used(pk)
-    assert await db.session_update_title(pk, "t2")
-    session = await db.session_get(pk)
-    assert session["title"] == "t2"
-    assert session["meta_json"] == '{"k": "v"}'
-    recent = await db.session_get_recent()
-    assert [s["id"] for s in recent] == [pk]

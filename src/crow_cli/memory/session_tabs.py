@@ -1,6 +1,6 @@
-"""session_tabs CRUD — client-side TUI tab state in the shared store.
+"""session_tabs CRUD — client-side tab state in the shared store.
 
-Sync; the TUI wraps these in asyncio.to_thread. The db_uri comes from the
+Sync; async clients wrap these in asyncio.to_thread. The db_uri comes from the
 caller — canonically crow_cli.config's Config.db_uri, the same authority
 the agent and the MCP surfaces draw from.
 """

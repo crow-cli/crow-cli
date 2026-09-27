@@ -1,6 +1,6 @@
 """The `agent_servers` registry: what a CLIENT launches, and how it speaks.
 
-Config-driven, client-side, and the reason ``crow-cli run`` and the TUI can
+Config-driven, client-side, and the reason every client can
 both launch somebody else's agent without a code change:
 
     agent_servers:
@@ -34,10 +34,9 @@ returns the terminal envelope) without changing what the v1 sessions on the
 same box are handed. Both shapes are the same mapping the global key uses, so
 an entry can be copied between them.
 
-This module knows nothing about the TUI's Agent store schema and nothing about
-either wire protocol: it turns config into an argv, an environment and an
-optional protocol override. :mod:`crow_cli.tui.agent_servers` builds the
-store-facing ``Agent`` TypedDict on top of it.
+This module knows nothing about either wire protocol: it turns config into an
+argv, an environment and an optional protocol override — the whole of what a
+client needs to spawn an agent by name.
 """
 
 from __future__ import annotations
@@ -237,7 +236,7 @@ def default_agent_server(
     one config orders both surfaces. Crow's own agent when the registry is
     empty — and then ``fallback_protocol`` decides which of crow's entry points
     a client gets, because there is no entry left to declare it: a v2 client
-    asks for ``acp2``, the v1 TUI for ``acp``.
+    asks for ``acp2``, a v1 client for ``acp``.
     """
     top = next(iter(parse_agent_servers(agent_servers).values()), None)
     if top is not None:

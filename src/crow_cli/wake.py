@@ -30,7 +30,7 @@ fire-and-forget bus degrades to latency rather than to a wrong answer:
   and whichever process does own it got its own copy of the same broadcast.
 
 That last case is why there is ONE channel for the whole deployment instead of
-one per session. Several processes share a sqlite — a TUI, an ACP spawn, an MCP
+one per session. Several processes share a sqlite — a client, an ACP spawn, an MCP
 server running the task subtool, a celery worker — and any of them may have
 written the row. Broadcasting to one channel and letting every subscriber
 ignore what is not theirs costs one JSON parse per wake and removes the need to
