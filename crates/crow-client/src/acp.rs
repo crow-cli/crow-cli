@@ -1,4 +1,4 @@
-//! Official ACP client (`agent-client-protocol` 2.0).
+//! Official ACP client (`agent-client-protocol` 2.2).
 //!
 //! Speaks initialize / authenticate / session/new / session/resume / session/load /
 //! session/list / prompt / cancel / set_config_option / set_mode.
@@ -18,7 +18,8 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 use agent_client_protocol::schema::v1::{
     AuthCapabilities, AuthenticateRequest, CancelNotification, ClientCapabilities,
-    ClientSessionCapabilities, ContentBlock, CreateElicitationRequest, CreateElicitationResponse,
+    ClientSessionCapabilities, CompactionCapabilities, ContentBlock, CreateElicitationRequest,
+    CreateElicitationResponse,
     CreateTerminalRequest, CreateTerminalResponse, ElicitationAcceptAction, ElicitationAction,
     ElicitationCapabilities, ElicitationContentValue, ElicitationFormCapabilities,
     ElicitationScope, ErrorCode,
@@ -361,7 +362,16 @@ pub(crate) fn initialize_request() -> InitializeRequest {
                 .terminal(true)
                 .session(
                     ClientSessionCapabilities::new()
-                        .config_options(SessionConfigOptionsCapabilities::new()),
+                        .config_options(SessionConfigOptionsCapabilities::new())
+                        // v1 gates compaction on this advertisement — the schema
+                        // says an agent MUST NOT send `compaction_update` or
+                        // `compaction_summary_chunk` unless the client asked for
+                        // them — so without it the parser arms in `events.rs` are
+                        // dead code on a v1 connection. v2 has no compaction
+                        // capability at all and emits unconditionally; it ignores
+                        // this key the same way it already ignores `fs`,
+                        // `terminal` and the rest of the v1-shaped union.
+                        .compaction(CompactionCapabilities::new()),
                 )
                 .auth(
                     AuthCapabilities::new()

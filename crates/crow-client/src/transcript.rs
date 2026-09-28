@@ -43,6 +43,40 @@ pub enum NoticeLevel {
     Error,
 }
 
+/// The compaction lifecycle, from `compaction_update.status`. Both protocol
+/// versions spell it the same way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompactionStatus {
+    InProgress,
+    Completed,
+    Failed,
+    Cancelled,
+    /// A status this client does not know. The schema reserves `_`-prefixed
+    /// values for implementations and the rest for future ACP statuses, so this
+    /// is expected to happen. It renders as SETTLED: an unrecognized terminal
+    /// status is a cosmetic miss, while treating it as in-progress strands the
+    /// cell spinning forever — and an unsettled cell also blocks transcript
+    /// pruning, so the leak is not only visual.
+    Other(String),
+}
+
+impl CompactionStatus {
+    pub fn parse(status: &str) -> Self {
+        match status {
+            "in_progress" => Self::InProgress,
+            "completed" => Self::Completed,
+            "failed" => Self::Failed,
+            "cancelled" => Self::Cancelled,
+            other => Self::Other(other.to_string()),
+        }
+    }
+
+    /// True only while the compaction has not reached a terminal state.
+    pub fn open(&self) -> bool {
+        matches!(self, Self::InProgress)
+    }
+}
+
 #[derive(Debug)]
 pub enum CellKind {
     User {
@@ -99,6 +133,21 @@ pub enum CellKind {
     /// Latest standard ACP plan snapshot. Replaced in place as statuses move.
     Plan {
         summary: String,
+    },
+    /// ACP context compaction: the agent traded its history for a summary.
+    /// Upserted by `compactionId`, so the first update fixes this cell's
+    /// position in the timeline and every later one patches it in place.
+    Compaction {
+        status: CompactionStatus,
+        /// The retained summary. `compaction_summary_chunk` APPENDS to it while
+        /// the compaction is open; a terminal `summary` patch REPLACES it.
+        summary: String,
+        /// Why it failed. Only ever set alongside [`CompactionStatus::Failed`].
+        error: Option<String>,
+        agent: Option<String>,
+        started: Instant,
+        /// None while open, so the header can tick; fixed once it settles.
+        seconds: Option<f32>,
     },
     Notice {
         level: NoticeLevel,
@@ -289,6 +338,19 @@ fn build_body(
                 return BodyBuild::plain(Vec::new(), 0);
             }
             BodyBuild::plain(crate::markdown::render(text, theme, tone, width), 0)
+        }
+        CellKind::Compaction { summary, .. } => {
+            let body = summary.trim();
+            if body.is_empty() {
+                return BodyBuild::plain(Vec::new(), 0);
+            }
+            // The retained summary IS the handoff that replaced the session's
+            // history, so it is a document worth reading rather than a status
+            // line: same markdown pipeline as assistant text. `meta` carries the
+            // line count the header quotes.
+            let lines = crate::markdown::render(body, theme, tone, width);
+            let meta = lines.len();
+            BodyBuild::plain(lines, meta)
         }
         CellKind::Tool {
             request,
@@ -579,6 +641,11 @@ pub struct Transcript {
     open_assistant: HashMap<String, usize>,
     open_reasoning: HashMap<String, usize>,
     tools: HashMap<String, usize>,
+    /// `compactionId` -> cell index. Unlike `tools`, entries are NOT removed
+    /// when the compaction settles: a later update for the same id patches the
+    /// entity in place, and the schema lets a terminal update arrive after the
+    /// chunks.
+    compactions: HashMap<String, usize>,
     agents: HashMap<String, String>,
     agent_seq: usize,
     image_seq: u32,
@@ -620,6 +687,7 @@ impl Transcript {
             open_assistant: HashMap::new(),
             open_reasoning: HashMap::new(),
             tools: HashMap::new(),
+            compactions: HashMap::new(),
             agents: HashMap::new(),
             agent_seq: 0,
             image_seq: 0,
@@ -665,6 +733,7 @@ impl Transcript {
         self.open_assistant.clear();
         self.open_reasoning.clear();
         self.tools.clear();
+        self.compactions.clear();
         self.plan_cell = None;
         self.last_finish = None;
         self.gen = self.gen.wrapping_add(1);
@@ -703,6 +772,7 @@ impl Transcript {
             &mut self.open_assistant,
             &mut self.open_reasoning,
             &mut self.tools,
+            &mut self.compactions,
         ] {
             map.retain(|_, idx| *idx >= cut);
             for idx in map.values_mut() {
@@ -727,6 +797,7 @@ impl Transcript {
                 CellKind::Reasoning { done, .. } => !*done,
                 CellKind::Tool { ok, .. } => ok.is_none(),
                 CellKind::Shell { output, .. } => output.is_none(),
+                CellKind::Compaction { status, .. } => status.open(),
                 _ => false,
             })
             .unwrap_or(self.cells.len())
@@ -872,6 +943,47 @@ impl Transcript {
         self.tool_started.clear();
     }
 
+    /// Settle compactions still open when the turn ends.
+    ///
+    /// agent2 always reports its own terminal status — `cancelled` is a separate
+    /// branch in its `compaction.run()` precisely because `asyncio.CancelledError`
+    /// is a `BaseException` and `except Exception` sails past it — so this only
+    /// fires when the agent or the connection died mid-pass. It is not cosmetic:
+    /// an unsettled cell caps [`Self::settled_prefix`], so one stranded
+    /// compaction would pin the transcript against pruning forever and let it
+    /// grow without bound.
+    fn settle_open_compactions(&mut self, kind: &str) {
+        if self.compactions.is_empty() {
+            return;
+        }
+        let (status, error) = match kind {
+            "interrupted" | "cancelled" => (CompactionStatus::Cancelled, None),
+            _ => (
+                CompactionStatus::Failed,
+                Some(self.locale.tr("turn ended", "本轮结束").to_string()),
+            ),
+        };
+        for idx in self.compactions.values().copied().collect::<Vec<_>>() {
+            if let Some(cell) = self.cells.get_mut(idx) {
+                if let CellKind::Compaction {
+                    status: current,
+                    error: current_error,
+                    started,
+                    seconds,
+                    ..
+                } = &mut cell.kind
+                {
+                    if current.open() {
+                        *current = status.clone();
+                        *current_error = error.clone();
+                        *seconds = Some(started.elapsed().as_secs_f32());
+                        cell.bump();
+                    }
+                }
+            }
+        }
+    }
+
     fn close_open(&mut self, session: &str) {
         if let Some(idx) = self.open_assistant.remove(session) {
             if let Some(cell) = self.cells.get_mut(idx) {
@@ -948,6 +1060,7 @@ impl Transcript {
                     } else {
                         "turn ended"
                     });
+                    self.settle_open_compactions(&kind);
                     self.last_finish = Some(kind.clone());
                     if let Some(t0) = self.turn_started.take() {
                         self.stats.turn_millis += t0.elapsed().as_millis() as u64;
@@ -1188,6 +1301,87 @@ impl Transcript {
             // Absolute reading: overwrite, never accumulate.
             UiEvent::ContextUsage { used, size, .. } => {
                 self.context = Some(ContextUsage { used, size });
+            }
+            UiEvent::Compaction {
+                session,
+                id,
+                status,
+                summary,
+                error,
+            } => {
+                self.close_open(&session);
+                let status = CompactionStatus::parse(&status);
+                if let Some(&idx) = self.compactions.get(&id) {
+                    if let Some(cell) = self.cells.get_mut(idx) {
+                        if let CellKind::Compaction {
+                            status: current,
+                            summary: buf,
+                            error: current_error,
+                            started,
+                            seconds,
+                            ..
+                        } = &mut cell.kind
+                        {
+                            *current = status.clone();
+                            // Patch semantics, and the distinction is the whole
+                            // feature: an absent `summary` keeps what the chunks
+                            // accumulated, a present one replaces it outright.
+                            if let Some(replacement) = summary {
+                                *buf = replacement;
+                            }
+                            if error.is_some() {
+                                *current_error = error;
+                            }
+                            if !status.open() && seconds.is_none() {
+                                *seconds = Some(started.elapsed().as_secs_f32());
+                            }
+                        }
+                        cell.bump();
+                    } else {
+                        self.compactions.remove(&id);
+                    }
+                    return;
+                }
+                let agent = self.agent_label(&session);
+                let open = status.open();
+                self.cells.push(Cell::new(CellKind::Compaction {
+                    status,
+                    summary: summary.unwrap_or_default(),
+                    error,
+                    agent,
+                    started: Instant::now(),
+                    // A compaction whose first update is already terminal was
+                    // replayed, not watched: there is no duration to report.
+                    seconds: if open { None } else { Some(0.0) },
+                }));
+                self.compactions.insert(id, self.cells.len() - 1);
+            }
+            UiEvent::CompactionChunk { id, text, .. } => {
+                // A chunk with no `in_progress` ahead of it is out of spec, but
+                // dropping the summary on the floor is worse than opening the
+                // entity late — the id still fixes its timeline position.
+                let idx = match self.compactions.get(&id) {
+                    Some(&idx) => idx,
+                    None => {
+                        self.cells.push(Cell::new(CellKind::Compaction {
+                            status: CompactionStatus::InProgress,
+                            summary: String::new(),
+                            error: None,
+                            agent: None,
+                            started: Instant::now(),
+                            seconds: None,
+                        }));
+                        let idx = self.cells.len() - 1;
+                        self.compactions.insert(id.clone(), idx);
+                        idx
+                    }
+                };
+                if let Some(cell) = self.cells.get_mut(idx) {
+                    if let CellKind::Compaction { summary: buf, .. } = &mut cell.kind {
+                        buf.push_str(&text);
+                    }
+                    cell.bump();
+                }
             }
             UiEvent::UserInjected {
                 source, preview, ..
@@ -1540,6 +1734,7 @@ impl Transcript {
                     | CellKind::Assistant { .. }
                     | CellKind::Tool { .. }
                     | CellKind::Shell { .. }
+                    | CellKind::Compaction { .. }
             ) {
                 cell.ensure_render(key);
             }
@@ -1723,6 +1918,80 @@ impl Transcript {
                             render.body.len().saturating_sub(COLLAPSED_REASONING_PREVIEW)
                         };
                         for l in &render.body[skip..] {
+                            emit(&mut out, &mut owners, l.clone(), None);
+                        }
+                    }
+                }
+                CellKind::Compaction {
+                    status,
+                    error,
+                    agent,
+                    started,
+                    seconds,
+                    ..
+                } => {
+                    let render = cell.render.as_ref().expect("body cache");
+                    emit(&mut out, &mut owners, Line::default(), None);
+                    let head = if let CompactionStatus::InProgress = status {
+                        // The glyph slot takes the frame spinner, exactly like
+                        // an open tool or shell card: this cell is running.
+                        Line::from(Span::styled(
+                            format!(
+                                "{spinner} {}compacting context… {}s",
+                                agent_prefix(agent),
+                                started.elapsed().as_secs()
+                            ),
+                            Style::default().fg(theme.brand_soft),
+                        ))
+                    } else {
+                        let dur = seconds.map(|s| format!(" · {s:.1}s")).unwrap_or_default();
+                        let agent = agent_prefix(agent);
+                        // `InProgress` is handled above; the wildcard is
+                        // `Completed`, not `unreachable!()`, so a status added
+                        // to `CompactionStatus` later degrades to the receipt
+                        // line instead of panicking the paint loop.
+                        let (label, style) = match status {
+                            CompactionStatus::Failed => (
+                                format!(
+                                    "{agent}compaction failed · {}",
+                                    error.as_deref().unwrap_or("unknown")
+                                ),
+                                Style::default().fg(theme.err),
+                            ),
+                            CompactionStatus::Cancelled => (
+                                format!("{agent}compaction cancelled{dur}"),
+                                Style::default().fg(theme.warn_soft()),
+                            ),
+                            CompactionStatus::Other(raw) => (
+                                format!("{agent}compaction {raw}{dur}"),
+                                Style::default().fg(theme.caption),
+                            ),
+                            _ => {
+                                // An empty summary means the agent compacted
+                                // without streaming or reporting what it kept,
+                                // so quoting "0 lines" would be noise.
+                                let n = render.meta;
+                                let kept = if n == 0 {
+                                    String::new()
+                                } else {
+                                    format!(" · {n} line{}", plural(n))
+                                };
+                                (
+                                    format!("{agent}context compacted{dur}{kept}"),
+                                    Style::default().fg(theme.caption),
+                                )
+                            }
+                        };
+                        Line::from(Span::styled(format!("≡ {label}"), style))
+                    };
+                    emit(&mut out, &mut owners, head, None);
+                    // The retained summary is the handoff that replaced this
+                    // session's history: collapsed the cell is a one-line
+                    // receipt, expanded it is the document. While the pass runs
+                    // the stream is the only liveness signal there is, so it
+                    // paints under the ticking header too.
+                    if expanded {
+                        for l in &render.body {
                             emit(&mut out, &mut owners, l.clone(), None);
                         }
                     }

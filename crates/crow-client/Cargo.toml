@@ -48,7 +48,7 @@ tui-markdown = { version = "0.3.9", default-features = false }
 syntect = { version = "5", default-features = false, features = ["parsing", "default-syntaxes", "regex-fancy"] }
 pulldown-cmark = { version = "0.13.4", default-features = false }
 tui-tree-widget = "0.24"
-agent-client-protocol = { version = "2.0.0", features = ["unstable_auth_methods", "unstable_elicitation", "unstable_end_turn_token_usage", "unstable_protocol_v2"] }
+agent-client-protocol = { version = "2.2.0", features = ["unstable_end_turn_token_usage", "unstable_protocol_v2", "unstable_session_compaction"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "io-util", "fs", "net", "time", "sync"] }
 tokio-util = { version = "0.7.19", features = ["compat"] }
 futures = "0.3.34"

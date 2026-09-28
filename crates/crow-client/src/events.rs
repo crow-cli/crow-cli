@@ -64,6 +64,35 @@ pub enum UiEvent {
         used: u64,
         size: u64,
     },
+    /// ACP `compaction_update`: the agent traded conversation history for a
+    /// summary. This is what makes the [`Self::ContextUsage`] meter drop.
+    ///
+    /// Upsert keyed on `id` — the first update for an id fixes the entity's
+    /// position in the transcript and later ones patch it in place.
+    Compaction {
+        session: String,
+        id: String,
+        /// Raw lifecycle status: `in_progress`, `completed`, `failed`,
+        /// `cancelled`, or a future one this client has not heard of.
+        status: String,
+        /// The `summary` patch, which is a complete REPLACEMENT of the retained
+        /// summary. `None` means the field was absent, and under the schema's
+        /// patch semantics that leaves whatever the chunks accumulated alone —
+        /// agent2 omits it whenever anything streamed, precisely so the model's
+        /// prose is not overwritten by the whole handoff. `Some("")` is the
+        /// `null`/`[]` case: an explicit clear.
+        summary: Option<String>,
+        /// Only ever meaningful alongside a `failed` status.
+        error: Option<String>,
+    },
+    /// ACP `compaction_summary_chunk`: one content block APPENDED to the
+    /// retained summary of an in-progress compaction. The spec only allows these
+    /// between the `in_progress` update and the terminal one for the same id.
+    CompactionChunk {
+        session: String,
+        id: String,
+        text: String,
+    },
     UserInjected {
         session: String,
         source: String,
@@ -503,6 +532,39 @@ fn parse_session_update(params: &Value) -> Vec<UiEvent> {
             }],
             _ => Vec::new(),
         },
+        // Context compaction. v2 has no capability handshake for it at all —
+        // there is no `CompactionCapabilities` in the v2 schema and agent2
+        // emits these unconditionally — while v1 gates them on the
+        // `session.compaction` advertisement `acp.rs::initialize_request` now
+        // makes. Either way these two arms are the whole of the client's side.
+        // Without them the updates fall to the `_` below and a compaction is
+        // invisible: the context meter just drops with nothing to say why.
+        "compaction_update" => {
+            let id = str_field(update, "compactionId");
+            if id.is_empty() {
+                return Vec::new();
+            }
+            vec![UiEvent::Compaction {
+                session,
+                id,
+                status: str_field(update, "status"),
+                // Absent stays `None` (keep what streamed); `null` and `[]`
+                // both concat to "" and read as the explicit clear they are.
+                summary: update.get("summary").map(concat_text_blocks),
+                error: update
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+            }]
+        }
+        "compaction_summary_chunk" => {
+            let id = str_field(update, "compactionId");
+            let text = acp_text_content(update.get("content"));
+            if id.is_empty() || text.is_empty() {
+                return Vec::new();
+            }
+            vec![UiEvent::CompactionChunk { session, id, text }]
+        }
         _ => Vec::new(),
     }
 }
@@ -1151,9 +1213,10 @@ fn u64_field(v: &Value, key: &str) -> Option<u64> {
 /// updates are state-replacing, so merging adjacent ones is lossless for the
 /// final transcript:
 ///
-/// - consecutive text chunks (`agent_message_chunk` / `agent_thought_chunk`)
-///   for the same session and message are concatenated; a trailing `_meta`
-///   (model attribution on the final chunk) is preserved;
+/// - consecutive text chunks (`agent_message_chunk` / `agent_thought_chunk` /
+///   `compaction_summary_chunk`) for the same session and message or compaction
+///   are concatenated; a trailing `_meta` (model attribution on the final chunk)
+///   is preserved;
 /// - consecutive *bare* `tool_call_update`s for the same session and call
 ///   keep only the latest state. Updates carrying `content`, `rawOutput`,
 ///   or `_meta` (diff blocks, terminal streams) are never dropped.
@@ -1209,22 +1272,12 @@ fn merge_update(prev: &mut Value, new: &Value) -> MergeOutcome {
         .unwrap_or_default();
     match kind {
         "agent_message_chunk" | "agent_thought_chunk" => {
-            if !same_str(prev_update, new_update, "messageId") {
-                return MergeOutcome::Keep;
-            }
-            let Some(new_text) = new_update.pointer("/content/text").and_then(Value::as_str) else {
-                return MergeOutcome::Keep;
-            };
-            match prev_update.pointer_mut("/content/text") {
-                Some(Value::String(buf)) => buf.push_str(new_text),
-                _ => return MergeOutcome::Keep,
-            }
-            // The final chunk of a message carries the model attribution.
-            if let Some(meta) = new_update.get("_meta") {
-                prev_update["_meta"] = meta.clone();
-            }
-            MergeOutcome::Merged
+            merge_text_chunks(prev_update, new_update, "messageId")
         }
+        // A streamed compaction summary is the same burst as a streamed message
+        // — append-only text under one id — and a real pass writes it token by
+        // token, so it gets the same treatment.
+        "compaction_summary_chunk" => merge_text_chunks(prev_update, new_update, "compactionId"),
         "tool_call_update" => {
             if !same_str(prev_update, new_update, "toolCallId") {
                 return MergeOutcome::Keep;
@@ -1240,6 +1293,29 @@ fn merge_update(prev: &mut Value, new: &Value) -> MergeOutcome {
         }
         _ => MergeOutcome::Keep,
     }
+}
+
+/// Merge one append-only text chunk into the chunk ahead of it: same `id_key`,
+/// text concatenated, a trailing `_meta` carried forward (the final chunk of a
+/// message is where model attribution rides). Lossless for the text the two
+/// chunks would have built, which is the only thing a merge may change.
+fn merge_text_chunks(prev_update: &mut Value, new_update: &Value, id_key: &str) -> MergeOutcome {
+    if prev_update.get(id_key).and_then(Value::as_str)
+        != new_update.get(id_key).and_then(Value::as_str)
+    {
+        return MergeOutcome::Keep;
+    }
+    let Some(new_text) = new_update.pointer("/content/text").and_then(Value::as_str) else {
+        return MergeOutcome::Keep;
+    };
+    match prev_update.pointer_mut("/content/text") {
+        Some(Value::String(buf)) => buf.push_str(new_text),
+        _ => return MergeOutcome::Keep,
+    }
+    if let Some(meta) = new_update.get("_meta") {
+        prev_update["_meta"] = meta.clone();
+    }
+    MergeOutcome::Merged
 }
 
 #[cfg(test)]

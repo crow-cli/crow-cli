@@ -1,14 +1,20 @@
 //! ACP v2 wire-shape pins.
 //!
-//! These exist because the hosted migration docs are AHEAD of every SDK
-//! installed on this box, and because the crate this project pins
+//! These exist because the hosted migration docs were AHEAD of every SDK
+//! installed on this box, and because the crate this project pinned
 //! (`agent-client-protocol` 2.0.0 → `agent-client-protocol-schema` 1.5.0)
-//! carries a v2 module that is complete for the stable protocol but missing
-//! two fields crow's own v2 agent emits. Each test below pins one of those
-//! facts so a dependency bump shows up as a diff here rather than as a
-//! silently changed wire.
+//! carried a v2 module that was complete for the stable protocol but missing
+//! two fields crow's own v2 agent emits. Each test pinned one of those facts so
+//! a dependency bump would show up as a diff here rather than as a silently
+//! changed wire.
+//!
+//! That is exactly what happened. The bump to 2.2.0 → schema 1.9.1 closed both
+//! gaps, the two canaries fired on purpose, and the pins below now record the
+//! shapes the SDK really has. They stay worth keeping: the next bump should
+//! trip them again rather than quietly move the wire underneath the client.
 
 use agent_client_protocol::schema::v2 as v2;
+use agent_client_protocol::schema::MaybeUndefined;
 use agent_client_protocol::schema::ProtocolVersion;
 use agent_client_protocol::Client;
 use serde_json::{json, Value};
@@ -182,15 +188,20 @@ fn v2_unknown_update_is_preserved_not_rejected() {
     }
 }
 
-/// RULING 2's gap, pinned: `crow-cli acp2` emits `name` on tool calls, and the
-/// schema this crate resolves (1.5.0) has no such field — it is
-/// `unstable_tool_call_name`, which arrives with schema 1.7.0. serde ignores
-/// the unknown key, so nothing fails to parse, but the typed struct loses it.
-/// crow forwards updates as raw JSON, so `events.rs` reads `name` from
-/// there. If a dependency bump ever adds the field, this test fails on purpose
-/// and the raw-JSON read can be retired.
+/// RULING 2's gap, closed by the 1.9.1 bump. `crow-cli acp2` emits `name` on
+/// tool calls; schema 1.5.0 had no such field — it was `unstable_tool_call_name`
+/// — so serde ignored the unknown key, the typed struct lost it, and `events.rs`
+/// could only read it from the raw JSON crow forwards. 1.9.1 has the field with
+/// no feature gate, as `MaybeUndefined<String>` under patch semantics (omitted
+/// means unchanged, `null` clears, a string replaces).
+///
+/// crow still forwards `session/update` raw, and this pins that the reason is no
+/// longer `name`: `SessionUpdate` is `#[non_exhaustive]` and its fields
+/// deserialize through `DefaultOnError`, so a typed round trip drops any update
+/// kind the pinned schema predates. Compaction is the live example — agent2
+/// emits it unconditionally and there is no capability handshake in v2.
 #[test]
-fn v2_tool_call_name_survives_only_in_raw_json() {
+fn v2_tool_call_name_is_typed_and_still_survives_raw_forwarding() {
     let fixture = json!({"sessionUpdate": "tool_call_update", "toolCallId": "c1",
                          "name": "execute", "title": "Running", "status": "in_progress"});
     let parsed: v2::SessionUpdate = serde_json::from_value(fixture.clone()).unwrap();
@@ -198,30 +209,52 @@ fn v2_tool_call_name_survives_only_in_raw_json() {
         panic!("expected ToolCallUpdate");
     };
     assert_eq!(tool_call.tool_call_id.to_string(), "c1");
-    let serialized = serde_json::to_value(&tool_call).unwrap();
+    // The typed field the 1.5.0 pin could not see.
     assert!(
-        serialized.get("name").is_none(),
-        "schema 1.5.0 has no ToolCallUpdate.name; if this fires, the dep was \
-         bumped and events.rs can read the typed field instead of raw JSON"
+        matches!(&tool_call.name, MaybeUndefined::Value(name) if name == "execute"),
+        "schema 1.9.1 types ToolCallUpdate.name; got {:?}",
+        tool_call.name
     );
+    // It round-trips now, so re-serializing no longer drops it either.
+    let serialized = serde_json::to_value(&tool_call).unwrap();
+    assert_eq!(serialized.get("name").and_then(Value::as_str), Some("execute"));
+    // Omission is patch semantics, not an error and not a clear.
+    let bare: v2::SessionUpdate = serde_json::from_value(
+        json!({"sessionUpdate": "tool_call_update", "toolCallId": "c1"}),
+    )
+    .unwrap();
+    let v2::SessionUpdate::ToolCallUpdate(bare) = bare else {
+        panic!("expected ToolCallUpdate");
+    };
+    assert!(bare.name.is_undefined());
+    // And the raw params crow actually forwards keep it whatever the schema does.
     assert_eq!(fixture.get("name").and_then(Value::as_str), Some("execute"));
 }
 
-/// RULING 1, pinned: the hosted migration docs say the v2 `session/prompt`
-/// response carries a required `messageId`. Nothing installed agrees — Rust
-/// 1.5.0, Rust 1.7.0 and Python alpha.3 all define `PromptResponse` as `_meta`
-/// only. The response is an ACK; the stop reason arrives on `state_update:
-/// idle`. A newer agent that does send `messageId` must still parse.
+/// RULING 1, closed by the 1.9.1 bump. The hosted migration docs always said
+/// the v2 `session/prompt` response carries a required `messageId`; Rust 1.5.0,
+/// Rust 1.7.0 and Python alpha.3 all defined `PromptResponse` as `_meta` only.
+/// 1.9.1 agrees with the docs — and with crow's own agent, which was already
+/// sending the field (`agent2/agent.py` returns
+/// `v2.PromptResponse(message_id=...)`), so the Rust client had been discarding
+/// an id its agent supplied.
+///
+/// The response is still only an ACK. The stop reason arrives on `state_update:
+/// idle`, never here, which is the fact `v2.rs::spawn_prompt` depends on when it
+/// treats `Ok(_)` as "accepted" and waits for the board.
 #[test]
-fn v2_prompt_response_is_an_ack_with_no_stop_reason() {
-    let ack: v2::PromptResponse = serde_json::from_value(json!({})).unwrap();
-    assert!(serde_json::to_value(&ack).unwrap().get("stopReason").is_none());
-    // Forward tolerance for the documented-but-unimplemented newer draft.
-    let with_id: v2::PromptResponse =
+fn v2_prompt_response_is_an_ack_requiring_message_id() {
+    // "Required and non-null. Omission and explicit `null` are both invalid."
+    assert!(serde_json::from_value::<v2::PromptResponse>(json!({})).is_err());
+    assert!(serde_json::from_value::<v2::PromptResponse>(json!({"messageId": null})).is_err());
+
+    let ack: v2::PromptResponse =
         serde_json::from_value(json!({"messageId": "msg_user_8f7a1"})).unwrap();
-    let value = serde_json::to_value(&with_id).unwrap();
-    assert!(value.get("stopReason").is_none());
-    assert!(value.get("messageId").is_none(), "the ack does not round-trip it");
+    assert_eq!(ack.message_id.to_string(), "msg_user_8f7a1");
+    let value = serde_json::to_value(&ack).unwrap();
+    assert!(value.get("stopReason").is_none(), "the outcome is not in the ack");
+    // It round-trips now; the 1.5.0 pin asserted the opposite.
+    assert_eq!(value.get("messageId").and_then(Value::as_str), Some("msg_user_8f7a1"));
 }
 
 #[test]
@@ -285,11 +318,29 @@ fn v2_permission_request_separates_prompt_copy_from_tool_state() {
     assert_eq!(parsed.options.len(), 1);
 }
 
-/// Compile-time proof that the pinned crate exposes both v2 entry points the
-/// dual-stack connector needs: the v2-only builder and the negotiating
-/// connector that starts v2 and falls back to v1 when the agent answers 1.
+/// Compile-time proof that the pinned crate still exposes the entry point crow's
+/// v2 stack is actually built on.
+///
+/// `without_acp_version_guard` is load-bearing, not cosmetic. It is the only way
+/// to get a v2-speaking connection whose callbacks receive a raw `ConnectionTo`,
+/// and crow needs exactly that because `negotiate::probe` consumes the
+/// `initialize` round trip at the transport layer before any connection exists.
+/// Build the v2 stack on `Client::v2()` instead and the connection never leaves
+/// `Uninitialized`, so every request is rejected with "ACP initialization must
+/// complete before ... can be used". If a future SDK drops or renames the escape
+/// hatch this stops compiling — which is the point of pinning it here.
+///
+/// The other two still exist and crow deliberately uses neither: `Client::v2()`
+/// hands back a `V2ConnectionTo` that cannot convert back to the type v1 uses,
+/// which would split `control::run_version_neutral` in two, and
+/// `Client::protocol_connector()` re-spawns the agent on a v1 answer. Both
+/// reasons are written out in `negotiate.rs`.
 #[test]
 fn v2_client_entry_points_exist() {
-    let _builder = Client.v2().name(env!("CARGO_PKG_NAME"));
+    let _builder = Client
+        .builder()
+        .without_acp_version_guard()
+        .name(env!("CARGO_PKG_NAME"));
+    let _v2_builder = Client.v2().name(env!("CARGO_PKG_NAME"));
     let _connector = Client.protocol_connector();
 }

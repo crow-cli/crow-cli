@@ -665,6 +665,48 @@ fn a_v2_turn_ends_on_the_idle_state_not_on_the_prompt_acknowledgement() {
     pane.assert_alive();
 }
 
+/// A v2 compaction paints end to end. There is no capability handshake for it —
+/// the v2 schema has no `CompactionCapabilities` at all and the real agent emits
+/// these unconditionally — so the pane is the only thing that can prove the
+/// client parsed the updates instead of dropping them into
+/// `parse_session_update`'s catch-all. That is exactly what it used to do: the
+/// context meter fell with nothing on screen to say why.
+#[test]
+fn a_v2_compaction_paints_its_receipt_and_the_summary_it_streamed() {
+    let stub = [
+        ("STUB_PROTOCOL", "2"),
+        ("STUB_CAPS", "both"),
+        ("STUB_COMPACT", "1"),
+    ];
+    let Some(mut pane) = launch_with("v2-compact", &[], &stub, Some(SUPPLY)) else {
+        return;
+    };
+    pane.expect(&["stub-default"]);
+    pane.send("compact the context\r");
+    // The stub's terminal update carries NO `summary`, so this text can only be
+    // on the pane if the two chunks were accumulated and then left alone by the
+    // patch that followed them.
+    pane.expect(&[
+        "context compacted",
+        "stub kept the plan and the last three answers",
+    ]);
+    let screen = pane.text.clone();
+    assert!(
+        screen.contains("≡ context compacted"),
+        "a settled compaction is a receipt under its own glyph:\n{}",
+        pane.squeezed()
+    );
+    assert!(
+        !screen.contains("compacting context"),
+        "the cell settled, so the ticking row is gone:\n{}",
+        pane.squeezed()
+    );
+    // A compaction is mid-turn machinery, not a result: the turn still has to
+    // finish, and the acknowledgement the stub sent first is not its end.
+    pane.expect(&["stub reply ok"]);
+    pane.assert_alive();
+}
+
 #[test]
 fn a_v2_resume_repaints_the_transcript_the_agent_replays() {
     let Some(mut pane) = launch_with("v2-resume", &STARTUP, &V2_STUB, Some(SUPPLY)) else {

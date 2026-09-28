@@ -119,6 +119,12 @@ impl ControlWorkers {
 /// v2 connection gets the same chrome as a v1 one instead of reporting the
 /// queue and plugin planes as unsupported. Returns `true` when `cmd` was one of
 /// these and is now fully handled.
+///
+/// That one-type fact is load-bearing and worth defending: SDK 2.2 moved
+/// `Client::v2()` onto a separate `V2ConnectionTo` that cannot be converted
+/// back, which would split this dispatcher in two. crow keeps a single type by
+/// building the v2 stack on `Client::builder()` with the version guard off —
+/// see [`super::v2`].
 pub(super) async fn run_version_neutral(
     cmd: &Cmd,
     cx: &ConnectionTo<Agent>,
