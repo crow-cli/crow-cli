@@ -731,12 +731,42 @@ pub(super) async fn connect(
     let bus_p = bus.clone();
 
     Client
-        .v2()
+        .builder()
+        // Not `Client::v2()`, and the reason is the handshake. SDK 2.2 put the
+        // v2 builder on a connection that enforces an `initialize` round trip it
+        // can *see*, and crow's is invisible to it: `negotiate::probe` sends the
+        // one union `initialize` as a raw transport frame before any connection
+        // exists, then hands the already-initialized channel to whichever stack
+        // won. Under `Client::v2()` the connection stays `Uninitialized` forever
+        // and every later request dies with "ACP initialization must complete
+        // before `session/new` can be used".
+        //
+        // `without_acp_version_guard` is the SDK's own escape hatch for precisely
+        // this consumer — "protocol-routing infrastructure that inspects and
+        // validates raw initialize requests and responses itself before
+        // selecting a version-specific implementation" — and it is deliberately
+        // offered only on builders whose callbacks receive a raw `ConnectionTo`.
+        // That is the second reason to be here: it keeps v1 and v2 on ONE
+        // connection type, so `control::run_version_neutral` stays a single
+        // dispatcher instead of growing a `V2ConnectionTo` twin.
+        //
+        // What is given up is version *tracking*, not v2: the guard only stamps
+        // and checks `protocolVersion`. The v2 typed requests below are ordinary
+        // JSON-RPC payloads and crow does its own version validation in
+        // `negotiate::classify`, which is where the union probe already lives.
+        .without_acp_version_guard()
         .name(env!("CARGO_PKG_NAME"))
         // One untyped handler for every notification. `session/update` is
-        // forwarded as the RAW params, not a re-serialization of a typed
-        // struct: schema 1.5.0's `ToolCallUpdate` has no `name` field, so a
-        // typed round trip would silently drop it.
+        // forwarded as the RAW params, never a re-serialization of a typed
+        // struct. The typed parse below is confined to the `StateUpdate` the
+        // turn board needs, and it sits inside `if let Ok` for the same reason:
+        // `SessionUpdate` is `#[non_exhaustive]` and its fields deserialize
+        // through `DefaultOnError`, so a typed round trip silently drops
+        // anything the pinned schema does not know yet. agent2 emits
+        // unconditionally — compaction has no capability handshake in v2 — so
+        // the schema is always the thing that lags. Keeping the params raw is
+        // what lets `events::parse_session_update` pick up a new update kind
+        // without an SDK bump.
         .on_receive_notification(
             {
                 async move |msg: UntypedMessage, cx| {

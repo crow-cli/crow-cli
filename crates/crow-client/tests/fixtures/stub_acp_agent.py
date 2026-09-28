@@ -56,6 +56,12 @@ MODEL_OPTIONS = [
 
 LAST_PROMPT = ""
 
+# The id of the user message a v2 prompt inserts. The `session/prompt`
+# acknowledgement and the `user_message` echo have to carry the SAME id — the
+# schema requires the ack's `messageId` and documents the echo as "the
+# corresponding user-message session update carries this same identifier".
+PROMPT_MESSAGE_ID = "u1"
+
 
 def note(msg):
     log.write(json.dumps({"t": round(time.time(), 3), "msg": msg}) + "\n")
@@ -111,16 +117,16 @@ def state(sid, name, **extra):
 def turn(sid, text="stub reply ok"):
     """One v2 turn, in the order the real agent sends it.
 
-    `session/prompt` answers `{}` first: that is an acknowledgement, not a
-    result, and a client that treats it as the end of the turn stops listening
-    before the agent has said anything.
+    `session/prompt` answers first with an acknowledgement carrying nothing but
+    the inserted message's id: not a result, and a client that treats it as the
+    end of the turn stops listening before the agent has said anything.
     """
     # The echo of the prompt the client already drew. Forwarded to the
     # transcript it would print the line twice; dropped outright it would take
     # the replayed copy of an old prompt with it.
     send({"jsonrpc": "2.0", "method": "session/update", "params": {
         "sessionId": sid,
-        "update": {"sessionUpdate": "user_message", "messageId": "u1",
+        "update": {"sessionUpdate": "user_message", "messageId": PROMPT_MESSAGE_ID,
                    "content": [{"type": "text", "text": LAST_PROMPT}]},
     }})
     state(sid, "running")
@@ -337,7 +343,10 @@ for line in sys.stdin:
         if V2:
             # The acknowledgement goes out first, exactly as the real agent
             # does. Everything the turn actually produced follows it.
-            send({"jsonrpc": "2.0", "id": rid, "result": {}})
+            # `messageId` is required and non-null as of schema 1.9.1 — an empty
+            # result is a parse error on the client, not a silent empty ack.
+            send({"jsonrpc": "2.0", "id": rid,
+                  "result": {"messageId": PROMPT_MESSAGE_ID}})
             if ASK_PERMISSION:
                 ask_permission(sid)
                 continue

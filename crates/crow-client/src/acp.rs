@@ -1,4 +1,4 @@
-//! Official ACP client (`agent-client-protocol` 2.0).
+//! Official ACP client (`agent-client-protocol` 2.2).
 //!
 //! Speaks initialize / authenticate / session/new / session/resume / session/load /
 //! session/list / prompt / cancel / set_config_option / set_mode.

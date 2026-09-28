@@ -15,6 +15,17 @@
 //! all for an attach endpoint, where the "factory" is a dup'd fd or a socket the
 //! peer already accepted and the peer has already eaten one `initialize`.
 //!
+//! Consuming the handshake here has one consequence worth knowing about, because
+//! it is invisible from this file: the adopted connection never sees an
+//! `initialize`, so it cannot be built with the SDK's own version guard on.
+//! Since 2.2 that guard is a state machine — `Client::v2()` starts the
+//! connection `Uninitialized` and rejects every request until it has watched the
+//! round trip happen. Both stacks therefore build on `Client::builder()`, and
+//! the v2 one adds `without_acp_version_guard()`, which the SDK documents for
+//! exactly this consumer: routing infrastructure that validates the raw
+//! `initialize` itself before picking an implementation. `classify` below is that
+//! validation.
+//!
 //! [`Client::protocol_connector`]: agent_client_protocol::Client::protocol_connector
 
 use std::collections::VecDeque;
