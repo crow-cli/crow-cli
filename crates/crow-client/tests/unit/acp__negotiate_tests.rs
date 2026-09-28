@@ -132,9 +132,13 @@ async fn a_v1_only_peer_answers_one_and_lands_on_the_v1_stack() {
     // broker (acp_term.rs), so it advertises one. crow-cli declines it to make
     // the agent fall through to its own MCP supply.
     assert_eq!(caps["terminal"].as_bool(), Some(true));
-    // v2 has no fs and no terminal capability, so its half must not grow one.
+    // An empty presence marker: v1 gates compaction updates on seeing it.
+    assert_eq!(caps["session"]["compaction"], json!({}));
+    // v2 has no fs, no terminal and no session capability block at all, so its
+    // half must not grow one.
     assert!(params["capabilities"].get("fs").is_none());
     assert!(params["capabilities"].get("terminal").is_none());
+    assert!(params["capabilities"].get("session").is_none());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

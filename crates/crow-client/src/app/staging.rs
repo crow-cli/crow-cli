@@ -19,6 +19,8 @@ pub(crate) fn ui_session(event: &crate::events::UiEvent) -> Option<&str> {
         | UiEvent::ToolResult { session, .. }
         | UiEvent::Usage { session, .. }
         | UiEvent::ContextUsage { session, .. }
+        | UiEvent::Compaction { session, .. }
+        | UiEvent::CompactionChunk { session, .. }
         | UiEvent::UserInjected { session, .. }
         | UiEvent::UserMessage { session, .. }
         | UiEvent::SessionTitle { session, .. }

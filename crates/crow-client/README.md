@@ -86,10 +86,11 @@ no terminal), plus the hicolor icon ladder `Icon=crow` resolves through and
 
 What it does: spawns an [ACP](https://agentclientprotocol.com/) agent as a child
 process over stdio and renders the conversation — streaming text, reasoning,
-tool calls, plans, token usage, images, persisted sessions. The protocol is
-**negotiated, never declared**: one union `initialize` goes out over the live
-channel and the response decides whether `src/acp.rs` (v1) or `src/acp/v2.rs`
-handles the connection. A harness is an argv, not a config schema.
+tool calls, plans, context compaction, token usage, images, persisted sessions.
+The protocol is **negotiated, never declared**: one union `initialize` goes out
+over the live channel and the response decides whether `src/acp.rs` (v1) or
+`src/acp/v2.rs` handles the connection. A harness is an argv, not a config
+schema.
 
 - `agent-client-protocol` 2.2.0 (schema 1.9.1), behind `unstable_protocol_v2`,
   `unstable_session_compaction` and `unstable_end_turn_token_usage`

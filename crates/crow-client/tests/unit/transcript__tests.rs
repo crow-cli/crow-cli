@@ -1398,3 +1398,367 @@ fn prune_is_inert_below_the_high_mark() {
     assert!(tr.measure.is_some(), "an inert prune dropped the measure cache");
     assert_eq!(tr.row_count(&theme, tone, 100, ' ', false), total);
 }
+
+
+// ---------------------------------------------------------------------------
+// ACP v2 context compaction. `compaction_update` is an UPSERT: the first update
+// for an id fixes the cell's position in the timeline and every later one
+// patches it in place, while `compaction_summary_chunk` appends to the summary
+// the terminal update may then replace outright. Getting patch-vs-replace wrong
+// is the whole failure mode of this feature — it either loses the streamed
+// prose or resurrects a summary the agent retracted.
+// ---------------------------------------------------------------------------
+
+fn compact(id: &str, status: &str, summary: Option<&str>, error: Option<&str>) -> UiEvent {
+    UiEvent::Compaction {
+        session: "s".into(),
+        id: id.into(),
+        status: status.into(),
+        summary: summary.map(str::to_string),
+        error: error.map(str::to_string),
+    }
+}
+
+fn chunk(id: &str, text: &str) -> UiEvent {
+    UiEvent::CompactionChunk {
+        session: "s".into(),
+        id: id.into(),
+        text: text.into(),
+    }
+}
+
+/// The transcript as one string, a line per row, so an assertion can quote the
+/// row it meant instead of matching across a span boundary.
+fn paint(tr: &mut Transcript, spinner: char) -> String {
+    tr.lines(&Theme::dark(), crate::markdown::ToneMode::Single, 80, spinner)
+        .iter()
+        .map(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn compaction_chunks_accumulate_and_a_terminal_update_without_a_summary_keeps_them() {
+    let mut tr = t("s");
+    tr.apply(compact("cmp_1", "in_progress", None, None));
+    tr.apply(chunk("cmp_1", "hello "));
+    tr.apply(chunk("cmp_1", "world"));
+    tr.apply(compact("cmp_1", "completed", None, None));
+
+    assert_eq!(tr.cells.len(), 1, "a compaction is ONE cell, upserted");
+    match &tr.cells[0].kind {
+        CellKind::Compaction {
+            status,
+            summary,
+            seconds,
+            ..
+        } => {
+            assert_eq!(*status, CompactionStatus::Completed);
+            assert_eq!(
+                summary, "hello world",
+                "an absent terminal summary is a patch that changes nothing"
+            );
+            assert!(seconds.is_some(), "settling fixes the duration");
+        }
+        other => panic!("expected a compaction, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_terminal_summary_patch_replaces_what_streamed() {
+    let mut tr = t("s");
+    tr.apply(compact("cmp_1", "in_progress", None, None));
+    tr.apply(chunk("cmp_1", "streamed prose"));
+    tr.apply(compact("cmp_1", "completed", Some("full summary"), None));
+
+    match &tr.cells[0].kind {
+        CellKind::Compaction { summary, .. } => assert_eq!(
+            summary, "full summary",
+            "a present summary is a complete replacement, not an append"
+        ),
+        other => panic!("expected a compaction, got {other:?}"),
+    }
+
+    // `null`/`[]` on the wire arrive as `Some("")`: an explicit clear.
+    tr.apply(compact("cmp_1", "completed", Some(""), None));
+    match &tr.cells[0].kind {
+        CellKind::Compaction { summary, .. } => assert_eq!(summary, "", "a clear is a clear"),
+        other => panic!("expected a compaction, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_first_compaction_update_fixes_its_position_in_the_timeline() {
+    let mut tr = t("s");
+    tr.push_user("first".into(), false);
+    tr.apply(compact("cmp_1", "in_progress", None, None));
+    tr.push_user("second".into(), false);
+    tr.apply(compact("cmp_1", "completed", Some("kept"), None));
+
+    assert_eq!(tr.cells.len(), 3, "the terminal update appended a cell");
+    assert!(
+        matches!(
+            &tr.cells[1].kind,
+            CellKind::Compaction {
+                status: CompactionStatus::Completed,
+                ..
+            }
+        ),
+        "the patch belongs where the entity was born, not at the end: {:?}",
+        tr.cells[1].kind
+    );
+}
+
+#[test]
+fn a_failed_compaction_carries_its_error() {
+    let mut tr = t("s");
+    tr.apply(compact("cmp_1", "in_progress", None, None));
+    tr.apply(compact("cmp_1", "failed", None, Some("boom")));
+
+    match &tr.cells[0].kind {
+        CellKind::Compaction { status, error, .. } => {
+            assert_eq!(*status, CompactionStatus::Failed);
+            assert_eq!(error.as_deref(), Some("boom"));
+        }
+        other => panic!("expected a compaction, got {other:?}"),
+    }
+    assert!(paint(&mut tr, ' ').contains("compaction failed · boom"));
+}
+
+/// A chunk with no `in_progress` ahead of it is out of spec, but dropping the
+/// summary on the floor is worse than opening the entity late — the id still
+/// fixes its timeline position.
+#[test]
+fn an_orphan_summary_chunk_still_opens_the_entity() {
+    let mut tr = t("s");
+    tr.apply(chunk("cmp_9", "orphan "));
+    tr.apply(chunk("cmp_9", "text"));
+
+    assert_eq!(tr.cells.len(), 1);
+    match &tr.cells[0].kind {
+        CellKind::Compaction { status, summary, .. } => {
+            assert_eq!(*status, CompactionStatus::InProgress);
+            assert_eq!(summary, "orphan text");
+        }
+        other => panic!("expected a compaction, got {other:?}"),
+    }
+}
+
+/// The schema's status set is open, and an unrecognized value renders as
+/// SETTLED. This is not cosmetic: an unsettled cell caps `settled_prefix`, so
+/// one stranded compaction pins the transcript against pruning forever and lets
+/// it grow without bound (the issue #94 freeze class of bug).
+#[test]
+fn an_unknown_compaction_status_settles_instead_of_spinning() {
+    let mut tr = t("s");
+    tr.apply(compact("cmp_1", "_vendor_paused", None, None));
+
+    assert!(!CompactionStatus::parse("_vendor_paused").open());
+    assert_eq!(
+        tr.settled_prefix(),
+        tr.cells.len(),
+        "an unrecognized status must not block pruning"
+    );
+    assert!(
+        paint(&mut tr, '⠋').contains("≡ compaction _vendor_paused"),
+        "an unknown status still gets a receipt row"
+    );
+}
+
+/// agent2 always reports its own terminal status — `cancelled` is a separate
+/// branch in its `compaction.run()` precisely because `asyncio.CancelledError`
+/// is a `BaseException` and `except Exception` sails past it — so this only
+/// fires when the agent or the connection died mid-pass.
+#[test]
+fn turn_end_settles_a_stranded_compaction() {
+    let mut tr = t("s");
+    tr.apply(compact("cmp_1", "in_progress", None, None));
+    assert_eq!(tr.settled_prefix(), 0, "an open compaction is unsettled");
+
+    tr.apply(UiEvent::TurnEnd {
+        session: "s".into(),
+        kind: "completed".into(),
+    });
+    match &tr.cells[0].kind {
+        CellKind::Compaction {
+            status,
+            error,
+            seconds,
+            ..
+        } => {
+            assert_eq!(*status, CompactionStatus::Failed);
+            assert_eq!(error.as_deref(), Some("turn ended"));
+            assert!(seconds.is_some(), "a settled cell stops ticking");
+        }
+        other => panic!("expected a compaction, got {other:?}"),
+    }
+    assert_eq!(tr.settled_prefix(), tr.cells.len(), "pruning is unblocked");
+
+    // An interrupted turn is a cancellation, not a failure.
+    let mut tr = t("s");
+    tr.apply(compact("cmp_2", "in_progress", None, None));
+    tr.apply(UiEvent::TurnEnd {
+        session: "s".into(),
+        kind: "interrupted".into(),
+    });
+    match &tr.cells[0].kind {
+        CellKind::Compaction { status, error, .. } => {
+            assert_eq!(*status, CompactionStatus::Cancelled);
+            assert_eq!(error.as_deref(), None, "a cancellation is nobody's fault");
+        }
+        other => panic!("expected a compaction, got {other:?}"),
+    }
+}
+
+/// A terminal update that arrives after the turn already settled the cell must
+/// win: the agent's own report beats the client's inference.
+#[test]
+fn a_late_terminal_update_overrides_the_turn_end_settlement() {
+    let mut tr = t("s");
+    tr.apply(compact("cmp_1", "in_progress", None, None));
+    tr.apply(UiEvent::TurnEnd {
+        session: "s".into(),
+        kind: "completed".into(),
+    });
+    tr.apply(compact("cmp_1", "completed", Some("kept"), None));
+
+    match &tr.cells[0].kind {
+        CellKind::Compaction {
+            status,
+            summary,
+            error,
+            ..
+        } => {
+            assert_eq!(*status, CompactionStatus::Completed);
+            assert_eq!(summary, "kept");
+            assert_eq!(
+                error.as_deref(),
+                Some("turn ended"),
+                "the error patch is absent, so it stays"
+            );
+        }
+        other => panic!("expected a compaction, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_running_compaction_ticks_and_streams_its_summary() {
+    let mut tr = t("s");
+    tr.apply(compact("cmp_1", "in_progress", None, None));
+    tr.apply(chunk("cmp_1", "kept the plan"));
+
+    let out = paint(&mut tr, '⠋');
+    assert!(out.contains("⠋ compacting context… 0s"), "{out}");
+    assert!(
+        out.contains("kept the plan"),
+        "watching the pass write is the only liveness signal there is: {out}"
+    );
+}
+
+#[test]
+fn a_completed_compaction_reads_as_a_receipt_and_expands_to_the_summary() {
+    let mut tr = t("s");
+    tr.apply(compact(
+        "cmp_1",
+        "completed",
+        Some("# Handoff\n\nkept the plan"),
+        None,
+    ));
+
+    let out = paint(&mut tr, ' ');
+    assert!(out.contains("≡ context compacted"), "{out}");
+    assert!(out.contains("line"), "a retained summary quotes its length: {out}");
+    assert!(!out.contains('⠋'), "a settled cell does not spin");
+    assert!(out.contains("kept the plan"), "{out}");
+}
+
+/// An empty summary means the agent compacted without streaming or reporting
+/// what it kept, so quoting "0 lines" would be noise.
+#[test]
+fn a_compaction_that_kept_nothing_does_not_quote_zero_lines() {
+    let mut tr = t("s");
+    tr.apply(compact("cmp_1", "completed", None, None));
+
+    let out = paint(&mut tr, ' ');
+    assert!(out.contains("≡ context compacted"), "{out}");
+    assert!(!out.contains("0 line"), "{out}");
+}
+
+#[test]
+fn a_cancelled_compaction_says_so() {
+    let mut tr = t("s");
+    tr.apply(compact("cmp_1", "cancelled", None, None));
+    assert!(paint(&mut tr, ' ').contains("≡ compaction cancelled"));
+}
+
+/// Collapsed, the cell is a one-line receipt; the summary is a document worth
+/// the scroll, not something to spill into the transcript by default.
+#[test]
+fn a_collapsed_compaction_is_just_the_receipt() {
+    let mut tr = t("s");
+    tr.apply(compact("cmp_1", "completed", Some("kept the plan"), None));
+    tr.cells[0].expanded = false;
+
+    let out = paint(&mut tr, ' ');
+    assert!(out.contains("≡ context compacted"), "{out}");
+    assert!(!out.contains("kept the plan"), "{out}");
+}
+
+/// A subagent's compaction is attributed, exactly like its thoughts and tools.
+#[test]
+fn a_subagent_compaction_is_attributed() {
+    let mut tr = t("s");
+    tr.apply(UiEvent::SubagentStarted {
+        parent: "s".into(),
+        child: "sub".into(),
+    });
+    tr.apply(UiEvent::Compaction {
+        session: "sub".into(),
+        id: "cmp_1".into(),
+        status: "completed".into(),
+        summary: Some("kept".into()),
+        error: None,
+    });
+
+    let out = paint(&mut tr, ' ');
+    assert!(out.contains("context compacted"), "{out}");
+    assert!(
+        out.lines().any(|l| l.contains("≡") && l.contains("subagent 1")),
+        "the receipt should name the agent that compacted: {out}"
+    );
+}
+
+/// Pruning shifts every cell index, so the id map has to shift with it or a
+/// later patch for a surviving compaction writes into the wrong cell.
+#[test]
+fn compaction_ids_survive_a_prune() {
+    let theme = Theme::dark();
+    let tone = crate::markdown::ToneMode::Single;
+    let width = 100u16;
+    let mut tr = long_transcript(width);
+    tr.apply(compact("cmp_1", "in_progress", None, None));
+    // Settle it: pruning refuses to cut into an in-flight cell.
+    tr.apply(compact("cmp_1", "completed", Some("kept"), None));
+    let before = tr.cells.len();
+    let idx = before - 1;
+
+    let total = tr.row_count(&theme, tone, width, ' ', false);
+    assert!(tr.prune_oldest(total) > 0, "the fixture is meant to be over the high mark");
+    let cut = before - tr.cells.len();
+    assert!(cut > 0 && cut <= idx, "cut {cut} of {before} cells");
+
+    tr.apply(compact("cmp_1", "completed", Some("patched after the cut"), None));
+    assert_eq!(tr.cells.len(), before - cut, "the patch appended a cell");
+    match &tr.cells[idx - cut].kind {
+        CellKind::Compaction { summary, .. } => assert_eq!(
+            summary, "patched after the cut",
+            "the id map did not shift with the prune"
+        ),
+        other => panic!("expected the surviving compaction, got {other:?}"),
+    }
+}

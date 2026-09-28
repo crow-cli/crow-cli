@@ -974,6 +974,59 @@ fn the_final_chunks_meta_survives_a_merge() {
     assert_eq!(params["update"]["_meta"]["acme"]["model"], "acme-v4-flash");
 }
 
+/// A streamed compaction summary is the same burst as a streamed message, so it
+/// coalesces the same way — and must not coalesce ACROSS compaction ids, or two
+/// passes inside one drained batch would end up sharing a summary.
+#[test]
+fn adjacent_compaction_summary_chunks_merge_per_compaction_id() {
+    let chunk = |id: &str, text: &str| {
+        update_ev(
+            "s1",
+            json!({
+                "sessionUpdate": "compaction_summary_chunk",
+                "compactionId": id,
+                "content": { "type": "text", "text": text },
+            }),
+        )
+    };
+    let mut events = vec![
+        chunk("cmp_1", "hello "),
+        chunk("cmp_1", "world"),
+        chunk("cmp_2", "another pass"),
+    ];
+    coalesce_session_updates(&mut events);
+    assert_eq!(events.len(), 2);
+    let crate::bus::AppEvent::Rpc { params, .. } = &events[0] else {
+        panic!("rpc")
+    };
+    assert_eq!(params["update"]["content"]["text"], "hello world");
+    assert_eq!(params["update"]["compactionId"], "cmp_1");
+    let crate::bus::AppEvent::Rpc { params, .. } = &events[1] else {
+        panic!("rpc")
+    };
+    assert_eq!(params["update"]["compactionId"], "cmp_2");
+}
+
+/// A `compaction_update` is an upsert the transcript applies field by field, so
+/// two of them must never merge the way a bare `tool_call_update` pair does:
+/// dropping the earlier one drops a status transition, and `summary` patch
+/// semantics make "absent" and "cleared" different outcomes.
+#[test]
+fn compaction_updates_never_merge() {
+    let mut events = vec![
+        update_ev(
+            "s1",
+            json!({ "sessionUpdate": "compaction_update", "compactionId": "cmp_1", "status": "in_progress" }),
+        ),
+        update_ev(
+            "s1",
+            json!({ "sessionUpdate": "compaction_update", "compactionId": "cmp_1", "status": "completed" }),
+        ),
+    ];
+    coalesce_session_updates(&mut events);
+    assert_eq!(events.len(), 2, "a status transition is not a state replacement");
+}
+
 fn bare_tool_update(session: &str, call: &str, status: &str) -> crate::bus::AppEvent {
     update_ev(
         session,
@@ -1613,5 +1666,261 @@ fn v2_config_option_update_notification_reports_the_new_model() {
             session: "s1".into(),
             model: "alibaba:qwen3.8-max".into(),
         }]
+    );
+}
+
+
+// ---------------------------------------------------------------------------
+// ACP v2 context compaction. There is no capability handshake to negotiate —
+// the v2 schema has no `CompactionCapabilities` at all and agent2 emits these
+// unconditionally — so this parser is the whole of the client's support. Before
+// these two arms existed the updates fell through to the `_` catch-all and a
+// compaction was invisible: the context meter dropped with nothing on screen to
+// say why. The JSON below is verbatim from the live Python schema.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn v2_compaction_update_carries_the_whole_lifecycle() {
+    assert_eq!(
+        v2_update(
+            "s1",
+            json!({ "sessionUpdate": "compaction_update", "compactionId": "cmp_1", "status": "in_progress" })
+        ),
+        vec![UiEvent::Compaction {
+            session: "s1".into(),
+            id: "cmp_1".into(),
+            status: "in_progress".into(),
+            // Absent, NOT empty: under the schema's patch semantics a missing
+            // `summary` leaves whatever the chunks accumulated alone. agent2
+            // relies on that — it omits the field whenever anything streamed.
+            summary: None,
+            error: None,
+        }]
+    );
+
+    assert_eq!(
+        v2_update(
+            "s1",
+            json!({
+                "sessionUpdate": "compaction_update",
+                "compactionId": "cmp_1",
+                "status": "completed",
+                "summary": [{ "type": "text", "text": "full summary" }],
+            })
+        ),
+        vec![UiEvent::Compaction {
+            session: "s1".into(),
+            id: "cmp_1".into(),
+            status: "completed".into(),
+            summary: Some("full summary".into()),
+            error: None,
+        }]
+    );
+
+    assert_eq!(
+        v2_update(
+            "s1",
+            json!({ "sessionUpdate": "compaction_update", "compactionId": "cmp_1", "status": "failed", "error": "boom" })
+        ),
+        vec![UiEvent::Compaction {
+            session: "s1".into(),
+            id: "cmp_1".into(),
+            status: "failed".into(),
+            summary: None,
+            error: Some("boom".into()),
+        }]
+    );
+
+    assert_eq!(
+        v2_update(
+            "s1",
+            json!({ "sessionUpdate": "compaction_update", "compactionId": "cmp_1", "status": "cancelled" })
+        ),
+        vec![UiEvent::Compaction {
+            session: "s1".into(),
+            id: "cmp_1".into(),
+            status: "cancelled".into(),
+            summary: None,
+            error: None,
+        }]
+    );
+}
+
+/// `summary: null` and `summary: []` are the schema's explicit CLEAR, and both
+/// have to arrive as `Some("")`. Collapsing them to `None` would silently turn
+/// a retraction into "keep what streamed".
+#[test]
+fn v2_compaction_null_and_empty_summary_are_a_clear_not_an_absence() {
+    for summary in [serde_json::Value::Null, json!([])] {
+        assert_eq!(
+            v2_update(
+                "s1",
+                json!({
+                    "sessionUpdate": "compaction_update",
+                    "compactionId": "cmp_1",
+                    "status": "completed",
+                    "summary": summary,
+                })
+            ),
+            vec![UiEvent::Compaction {
+                session: "s1".into(),
+                id: "cmp_1".into(),
+                status: "completed".into(),
+                summary: Some(String::new()),
+                error: None,
+            }],
+            "summary: {summary} is a clear"
+        );
+    }
+}
+
+#[test]
+fn v2_compaction_summary_chunk_appends_one_content_block() {
+    assert_eq!(
+        v2_update(
+            "s1",
+            json!({
+                "sessionUpdate": "compaction_summary_chunk",
+                "compactionId": "cmp_1",
+                "content": { "type": "text", "text": "hello " },
+            })
+        ),
+        vec![UiEvent::CompactionChunk {
+            session: "s1".into(),
+            id: "cmp_1".into(),
+            text: "hello ".into(),
+        }]
+    );
+}
+
+/// The schema types `status` as an open set (`Other(String)`), with `_`-prefixed
+/// values reserved for implementations and the rest for future ACP statuses. An
+/// unknown one has to reach the transcript instead of being dropped here —
+/// whether it settles or spins is a render decision, not a parser's.
+#[test]
+fn v2_compaction_passes_an_unknown_status_through() {
+    assert_eq!(
+        v2_update(
+            "s1",
+            json!({ "sessionUpdate": "compaction_update", "compactionId": "cmp_1", "status": "_vendor_paused" })
+        ),
+        vec![UiEvent::Compaction {
+            session: "s1".into(),
+            id: "cmp_1".into(),
+            status: "_vendor_paused".into(),
+            summary: None,
+            error: None,
+        }]
+    );
+}
+
+/// Without a `compactionId` there is nothing to upsert against, and an empty
+/// chunk would only churn the cell's cache key. Both are dropped rather than
+/// inventing an entity.
+#[test]
+fn v2_compaction_updates_without_an_id_or_text_are_dropped() {
+    assert!(
+        v2_update("s1", json!({ "sessionUpdate": "compaction_update", "status": "in_progress" }))
+            .is_empty(),
+        "an update with no id has no timeline position"
+    );
+    assert!(
+        v2_update(
+            "s1",
+            json!({ "sessionUpdate": "compaction_summary_chunk", "content": { "type": "text", "text": "hi" } })
+        )
+        .is_empty()
+    );
+    assert!(
+        v2_update(
+            "s1",
+            json!({ "sessionUpdate": "compaction_summary_chunk", "compactionId": "cmp_1", "content": { "type": "text", "text": "" } })
+        )
+        .is_empty(),
+        "an empty chunk carries nothing to append"
+    );
+}
+
+
+/// The verbatim frames crow's own v2 agent puts on the wire, captured by running
+/// `Emitter.compaction`/`compaction_chunk` against a capturing connection and
+/// dumping each update the way the SDK does (`by_alias`, `exclude_unset`). Not
+/// hand-written JSON: this is the recorded artifact, so the sequence below is
+/// what `crow-cli acp2` actually sends, including the case that matters most —
+/// `cmp_1` streams two chunks and its terminal update then carries NO `summary`,
+/// because `compaction.run()` omits it whenever anything streamed.
+#[test]
+fn the_real_agent2_compaction_sequence_parses_end_to_end() {
+    let captured = r#"
+{"sessionId": "s1", "update": {"compactionId": "cmp_1", "status": "in_progress", "sessionUpdate": "compaction_update"}}
+{"sessionId": "s1", "update": {"compactionId": "cmp_1", "content": {"text": "hello ", "type": "text"}, "sessionUpdate": "compaction_summary_chunk"}}
+{"sessionId": "s1", "update": {"compactionId": "cmp_1", "content": {"text": "world", "type": "text"}, "sessionUpdate": "compaction_summary_chunk"}}
+{"sessionId": "s1", "update": {"compactionId": "cmp_1", "status": "completed", "sessionUpdate": "compaction_update"}}
+{"sessionId": "s1", "update": {"compactionId": "cmp_2", "status": "completed", "summary": [{"text": "full summary", "type": "text"}], "sessionUpdate": "compaction_update"}}
+{"sessionId": "s1", "update": {"compactionId": "cmp_3", "status": "failed", "error": "boom", "sessionUpdate": "compaction_update"}}
+{"sessionId": "s1", "update": {"compactionId": "cmp_4", "status": "cancelled", "sessionUpdate": "compaction_update"}}
+"#;
+
+    let events = captured
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .flat_map(|line| {
+            let frame: serde_json::Value = serde_json::from_str(line).expect("captured frame");
+            parse_notification("session/update", &frame)
+        })
+        .collect::<Vec<_>>();
+
+    let s = "s1".to_string();
+    assert_eq!(
+        events,
+        vec![
+            UiEvent::Compaction {
+                session: s.clone(),
+                id: "cmp_1".into(),
+                status: "in_progress".into(),
+                summary: None,
+                error: None,
+            },
+            UiEvent::CompactionChunk {
+                session: s.clone(),
+                id: "cmp_1".into(),
+                text: "hello ".into(),
+            },
+            UiEvent::CompactionChunk {
+                session: s.clone(),
+                id: "cmp_1".into(),
+                text: "world".into(),
+            },
+            UiEvent::Compaction {
+                session: s.clone(),
+                id: "cmp_1".into(),
+                status: "completed".into(),
+                summary: None,
+                error: None,
+            },
+            // A strategy that never streams gets the replacement instead, or the
+            // client would retain nothing at all.
+            UiEvent::Compaction {
+                session: s.clone(),
+                id: "cmp_2".into(),
+                status: "completed".into(),
+                summary: Some("full summary".into()),
+                error: None,
+            },
+            UiEvent::Compaction {
+                session: s.clone(),
+                id: "cmp_3".into(),
+                status: "failed".into(),
+                summary: None,
+                error: Some("boom".into()),
+            },
+            UiEvent::Compaction {
+                session: s,
+                id: "cmp_4".into(),
+                status: "cancelled".into(),
+                summary: None,
+                error: None,
+            },
+        ]
     );
 }

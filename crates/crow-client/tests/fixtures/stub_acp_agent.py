@@ -22,6 +22,12 @@ its behavior from the environment:
                     turn until the client answers. The reply is printed, so a
                     test can read the user's decision off the pane as well as
                     off the wire.
+  STUB_COMPACT=1    a v2 prompt compacts the context mid-turn before it answers:
+                    `in_progress`, two `compaction_summary_chunk`s, then a
+                    terminal `completed` that carries NO `summary`. That absence
+                    is the shape the real agent sends whenever anything
+                    streamed, and it is the one a client that reads `summary` as
+                    a replacement rather than a patch gets wrong.
 """
 import json
 import os
@@ -35,6 +41,7 @@ HAS_RESUME = CAPS in ("resume", "both")
 REFUSE = os.environ.get("STUB_LOAD_FAIL") == "1"
 HOLD = os.environ.get("STUB_HOLD") == "1"
 ASK_PERMISSION = os.environ.get("STUB_ASK_PERMISSION") == "1"
+COMPACT = os.environ.get("STUB_COMPACT") == "1"
 V2 = os.environ.get("STUB_PROTOCOL", "1") == "2"
 
 # The request id of the permission ask in flight, and the session holding it.
@@ -61,6 +68,13 @@ LAST_PROMPT = ""
 # schema requires the ack's `messageId` and documents the echo as "the
 # corresponding user-message session update carries this same identifier".
 PROMPT_MESSAGE_ID = "u1"
+
+# The compaction a STUB_COMPACT turn runs. Its summary arrives in two chunks and
+# the terminal update deliberately omits `summary`, so the pane can only show
+# the text if the client accumulated the chunks and then left them alone.
+COMPACTION_ID = "cmp_1"
+COMPACTION_CHUNKS = ("stub kept the plan ", "and the last three answers")
+COMPACTION_SUMMARY = "".join(COMPACTION_CHUNKS)
 
 
 def note(msg):
@@ -114,6 +128,25 @@ def state(sid, name, **extra):
     update(sid, "state_update", state=name, **extra)
 
 
+def compaction_pass(sid):
+    """A v2 context compaction, in the shapes the schema allows.
+
+    `compaction_update` is an UPSERT: the first one fixes the entity's position
+    in the client's timeline and the terminal one patches it in place. Its
+    `summary` is a patch field, so absent means "keep what the chunks
+    accumulated" — which is why the terminal update here carries none. There is
+    no capability handshake for any of this, because v2 has no
+    `CompactionCapabilities` at all and the real agent emits unconditionally.
+    """
+    update(sid, "compaction_update", compactionId=COMPACTION_ID,
+           status="in_progress")
+    for chunk in COMPACTION_CHUNKS:
+        update(sid, "compaction_summary_chunk", compactionId=COMPACTION_ID,
+               content={"type": "text", "text": chunk})
+    update(sid, "compaction_update", compactionId=COMPACTION_ID,
+           status="completed")
+
+
 def turn(sid, text="stub reply ok"):
     """One v2 turn, in the order the real agent sends it.
 
@@ -130,6 +163,8 @@ def turn(sid, text="stub reply ok"):
                    "content": [{"type": "text", "text": LAST_PROMPT}]},
     }})
     state(sid, "running")
+    if COMPACT:
+        compaction_pass(sid)
     update(sid, "agent_message_chunk", messageId="m2",
            content={"type": "text", "text": text})
     update(sid, "usage_update", used=1200, size=180000)

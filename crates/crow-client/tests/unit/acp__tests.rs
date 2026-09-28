@@ -257,6 +257,11 @@ fn initialize_advertises_backchat_auth_caps() {
     assert_eq!(caps["auth"]["terminal"], true);
     assert_eq!(caps["auth"]["_meta"]["gateway"], true);
     assert_eq!(caps["session"]["configOptions"], json!({}));
+    // v1 forbids an agent from sending `compaction_update` /
+    // `compaction_summary_chunk` unless the client advertised this, so it is
+    // what makes the compaction parser arms live on a v1 connection. v2 has no
+    // compaction capability and emits unconditionally.
+    assert_eq!(caps["session"]["compaction"], json!({}));
     assert_eq!(caps["elicitation"]["form"], json!({}));
     assert_eq!(caps["fs"]["readTextFile"], true);
     assert_eq!(caps["fs"]["writeTextFile"], true);
