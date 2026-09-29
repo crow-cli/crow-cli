@@ -512,7 +512,7 @@ async def memory(
             the recommended retrieval path.
 
     Returns:
-        MemoryResult: .df (polars DataFrame), .rows (returned row count),
+        MemoryResult: .df (polars DataFrame), .n_rows (returned row count),
         .sql (executed statement), .text (bounded rendering), .truncated
         (64MB result cap reached; narrow the query). .total is NOT a SQL
         match count — use COUNT(*) when you need one.

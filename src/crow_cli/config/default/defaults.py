@@ -124,7 +124,7 @@ kernel. Trust these contracts:
 * `edit(file_path, old_string, new_string)` and `write(path, content)` return
   results whose useful field is `.diff`; print `r.diff`.
 * `memory("sql", statement)` — read-only SQL over Crow history. Put filters
-  and LIMIT in SQL. Results: `.df`, `.rows`, `.text`, `.truncated`.
+  and LIMIT in SQL. Results: `.df`, `.n_rows`, `.text`, `.truncated`.
   `help(memory)` gives the schema and retrieval examples.
 * `web(mode, ...)` — modes are `search`, `fetch`, `run`, and `close`.
 * `rlm(...)` — blocking delegation; give the containing cell a large timeout.
@@ -295,7 +295,7 @@ Session-Id: {{ session_id }}"
 * `print(r.df)` is a clipped preview, not the full message. Read selected
   content with `for row in r.df.iter_rows(named=True): print(row["content"])`.
   Put filters/order/LIMIT inside SQL, not memory keyword arguments. Use
-  `help(memory)` for schema and examples; `.rows`, not `.total`, counts SQL rows.
+  `help(memory)` for schema and examples; `.n_rows`, not `.total`, counts SQL rows.
 * Reach for memory when continuing work, checking another agent, recovering
   decisions, or before claiming something does not exist or has not been tried.
 </MEMORY>
@@ -641,7 +641,7 @@ kernel. Trust these contracts:
 * `edit(file_path, old_string, new_string)` and `write(path, content)` return
   results whose useful field is `.diff`; print `r.diff`.
 * `memory("sql", statement)` — read-only SQL over Crow history. Put filters
-  and LIMIT in SQL. Results: `.df`, `.rows`, `.text`, `.truncated`.
+  and LIMIT in SQL. Results: `.df`, `.n_rows`, `.text`, `.truncated`.
   `help(memory)` gives the schema and retrieval examples.
 * `web(mode, ...)` — modes are `search`, `fetch`, `run`, and `close`.
 * `rlm(...)` — blocking delegation; give the containing cell a large timeout.
@@ -810,7 +810,7 @@ Session-Id: {{ session_id }}"
 * `print(r.df)` is a clipped preview, not the full message. Read selected
   content with `for row in r.df.iter_rows(named=True): print(row["content"])`.
   Put filters/order/LIMIT inside SQL, not memory keyword arguments. Use
-  `help(memory)` for schema and examples; `.rows`, not `.total`, counts SQL rows.
+  `help(memory)` for schema and examples; `.n_rows`, not `.total`, counts SQL rows.
 * Reach for memory when continuing work, checking another agent, recovering
   decisions, or before claiming something does not exist or has not been tried.
 </MEMORY>

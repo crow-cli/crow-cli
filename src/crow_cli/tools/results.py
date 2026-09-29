@@ -568,13 +568,19 @@ class MemoryResult(ToolResult):
         }
 
     @property
-    def rows(self) -> int:
+    def n_rows(self) -> int:
+        """How many rows came back — ``df.height``, spelled as a count.
+
+        Not ``rows``: a bare ``r.rows`` reads like the rows themselves, and
+        next to ``total`` (which is NOT a SQL match count) the ambiguity cost
+        more than the two characters. Mirrors polars' own ``n_rows()``.
+        """
         return self.df.height
 
     @property
     def text(self) -> str:
-        head = f"{self.subject} — {self.rows:,} row(s)"
-        if self.total > self.rows:
+        head = f"{self.subject} — {self.n_rows:,} row(s)"
+        if self.total > self.n_rows:
             head += f" of {self.total:,} matching"
         lines = [head, repr(_compact(self.df))]
         if self.truncated:

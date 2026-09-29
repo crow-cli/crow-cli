@@ -280,7 +280,7 @@ async def test_list_sessions_is_most_recently_active_first(db):
     assert isinstance(r, MemoryResult) and r
     assert r.df.columns == SESSION_COLS
     assert r.df["session_id"].to_list() == ["alpha-one", "beta-two", "gamma-empty"]
-    assert r.rows == 3 == r.total
+    assert r.n_rows == 3 == r.total
     assert r.subject == "sessions"
     assert "GROUP BY a.session_id" in r.sql
 
@@ -312,7 +312,7 @@ async def test_list_sessions_a_session_that_never_spoke(db):
 @pytest.mark.asyncio
 async def test_list_sessions_limit_keeps_total(db):
     r = await memory("list", limit=1)
-    assert r.rows == 1 and r.total == 3
+    assert r.n_rows == 1 and r.total == 3
     assert r.df["session_id"].to_list() == ["alpha-one"]
     # "1 of 3" is what tells the model to raise the limit; "1" is not.
     assert r.text.startswith("sessions — 1 row(s) of 3 matching")
@@ -362,7 +362,7 @@ async def test_list_messages_are_the_tail_in_chronological_order(db):
     r = await memory("list", session_id="alpha-one")
     assert r.df.columns == MESSAGE_COLS
     assert r.subject == "alpha-one"
-    assert r.rows == 7 == r.total
+    assert r.n_rows == 7 == r.total
     assert "ORDER BY m.id DESC" in r.sql
     assert r.df["id"].to_list() == sorted(r.df["id"].to_list())
     assert r.df["role"].to_list() == [
@@ -384,7 +384,7 @@ async def test_list_messages_are_the_tail_in_chronological_order(db):
 @pytest.mark.asyncio
 async def test_list_messages_limit_is_the_last_n_not_the_first_n(db):
     r = await memory("list", session_id="alpha-one", limit=3)
-    assert r.rows == 3 and r.total == 7
+    assert r.n_rows == 3 and r.total == 7
     assert r.df["id"].to_list() == [db["reasoned"], db["compact"], db["compacted"]]
     assert r.text.startswith("alpha-one — 3 row(s) of 7 matching")
 
@@ -395,7 +395,7 @@ async def test_list_messages_roles_are_pushed_into_the_query(db):
     asked for; total has to respect the filter too, or it lies."""
     users = await memory("list", session_id="alpha-one", roles=("user",))
     assert users.df["id"].to_list() == [db["question"], db["compact"]]
-    assert users.rows == 2 == users.total
+    assert users.n_rows == 2 == users.total
 
     # A string is a sequence of characters, not of roles.
     assistants = await memory("list", session_id="alpha-one", roles="assistant")
@@ -412,7 +412,7 @@ async def test_list_messages_roles_are_pushed_into_the_query(db):
 @pytest.mark.asyncio
 async def test_list_messages_include_forks_adds_only_what_the_fork_said(db):
     r = await memory("list", session_id="alpha-one", include_forks=True)
-    assert r.rows == 8 == r.total
+    assert r.n_rows == 8 == r.total
     last = r.df.row(-1, named=True)
     assert last["id"] == db["fork"]
     assert (last["agent_idx"], last["fork_idx"]) == (1, 2)
@@ -477,7 +477,7 @@ async def test_list_messages_resolves_a_wire_agent_id(db):
     scopes to exactly that fork. This is the documented async-delegation
     collection path; before the dual-identity fix it raised "no session …"."""
     r = await memory("list", session_id="alpha-one-1-2")
-    assert r.total == 1 and r.rows == 1
+    assert r.total == 1 and r.n_rows == 1
     row = r.df.row(0, named=True)
     assert row["fork_idx"] == 2
     assert "forked question about zebras" in row["text"]
@@ -493,11 +493,11 @@ async def test_list_messages_blank_session_id_raises(db):
 async def test_limit_zero_is_an_empty_frame_with_its_total(db):
     """How many are there, without paying to fetch any."""
     sessions = await memory("list", limit=0)
-    assert sessions.rows == 0 and sessions.total == 3
+    assert sessions.n_rows == 0 and sessions.total == 3
     assert sessions.df.columns == SESSION_COLS
 
     messages = await memory("list", session_id="alpha-one", limit=0)
-    assert messages.rows == 0 and messages.total == 7
+    assert messages.n_rows == 0 and messages.total == 7
     assert messages.df.columns == MESSAGE_COLS
 
 
@@ -552,7 +552,7 @@ async def test_search_excerpt_falls_back_token_by_token(db):
 @pytest.mark.asyncio
 async def test_search_sees_reasoning(db):
     r = await memory("search", "pools")
-    assert r.rows == 1
+    assert r.n_rows == 1
     row = r.df.row(0, named=True)
     assert row["id"] == db["reasoned"] and row["role"] == "assistant"
     assert THINKING in row["excerpt"]
@@ -566,7 +566,7 @@ async def test_search_cannot_see_tool_calls_but_sql_can(db):
     normally — and a LIKE scan sees everything, which is the documented
     workaround."""
     assert (await memory("search", "register")).df["id"].to_list() == [db["result"]]
-    assert (await memory("search", "setdefault")).rows == 0
+    assert (await memory("search", "setdefault")).n_rows == 0
 
     scan = await memory(
         "sql", "select id, role from messages where data like '%setdefault%'"
@@ -581,12 +581,12 @@ async def test_search_scopes_to_a_session(db):
     returned the intersection of "best 20 globally" with "in this session",
     which for a common term is usually empty."""
     inside = await memory("search", "session", session_id="alpha-one")
-    assert inside.rows == 2
+    assert inside.n_rows == 2
     assert inside.subject == "session in alpha-one"
     assert inside.df["session_id"].unique().to_list() == ["alpha-one"]
 
     outside = await memory("search", "session", session_id="beta-two")
-    assert outside.rows == 0
+    assert outside.n_rows == 0
     assert outside.df.columns == SEARCH_COLS  # an empty frame keeps its shape
     assert outside.subject == "session in beta-two"
 
@@ -600,9 +600,9 @@ async def test_search_roles_are_pushed_down(db):
 
 @pytest.mark.asyncio
 async def test_search_include_forks(db):
-    assert (await memory("search", "zebras")).rows == 0
+    assert (await memory("search", "zebras")).n_rows == 0
     r = await memory("search", "zebras", include_forks=True)
-    assert r.rows == 1
+    assert r.n_rows == 1
     row = r.df.row(0, named=True)
     assert (row["id"], row["fork_idx"], row["agent_idx"]) == (db["fork"], 2, 1)
 
@@ -610,7 +610,7 @@ async def test_search_include_forks(db):
 @pytest.mark.asyncio
 async def test_search_limit_is_the_number_of_matches(db):
     r = await memory("search", "the", limit=2)
-    assert r.rows == 2
+    assert r.n_rows == 2
 
 
 # --- sql -------------------------------------------------------------------
@@ -706,7 +706,7 @@ async def test_sql_a_string_literal_with_a_colon_is_not_a_parameter(db):
 @pytest.mark.asyncio
 async def test_sql_empty_result_keeps_its_columns(db):
     r = await memory("sql", "select id, role from messages where id = -1")
-    assert r.rows == 0
+    assert r.n_rows == 0
     assert r.df.columns == ["id", "role"]
 
 
@@ -807,7 +807,7 @@ async def test_the_byte_cap_truncates_and_says_so(db, monkeypatch):
     monkeypatch.setattr(MOD, "_MEMORY_BYTES", 400)
     r = await memory("sql", "select id, data from messages order by id")
     assert r.truncated is True
-    assert 0 < r.rows < 10
+    assert 0 < r.n_rows < 10
     assert "TRUNCATED" in r.text
     assert "prefix of the answer" in r.text
 
@@ -818,14 +818,14 @@ async def test_the_first_row_survives_the_cap(db, monkeypatch):
     row in it, not an empty one that reads as "no matches"."""
     monkeypatch.setattr(MOD, "_MEMORY_BYTES", 1)
     r = await memory("sql", "select id, data from messages order by id")
-    assert r.rows == 1 and r.truncated is True
+    assert r.n_rows == 1 and r.truncated is True
     assert r.df["id"].to_list() == [db["system"]]
 
 
 @pytest.mark.asyncio
 async def test_an_uncapped_query_is_not_truncated(db):
     r = await memory("sql", "select id, data from messages")
-    assert r.truncated is False and r.rows == 10
+    assert r.truncated is False and r.n_rows == 10
 
 
 # --- the rail and the engine ----------------------------------------------
@@ -865,7 +865,7 @@ async def test_the_engine_is_rebuilt_when_the_uri_changes(db):
     second = MOD._engine()
     assert second is not first
     r = await memory("list")
-    assert r.rows == 0 and r.total == 0
+    assert r.n_rows == 0 and r.total == 0
 
 
 @pytest.mark.asyncio
@@ -879,7 +879,7 @@ async def test_reload_keeps_the_cached_engine(db):
     assert MOD._state["uri"] == db.uri
     assert MOD._engine() is before
     r = await MOD.memory("list")
-    assert r.rows == 3
+    assert r.n_rows == 3
 
 
 # --- register + write-through ---------------------------------------------

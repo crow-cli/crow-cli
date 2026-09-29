@@ -174,7 +174,7 @@ FROM messages m JOIN agents a ON a.agent_id = m.agent_id
 WHERE a.session_id = 'that-session-id' AND m.role = 'user'
 ORDER BY m.id ASC
 """)
-print(r.rows)
+print(r.n_rows)
 for row in r.df.iter_rows(named=True):
     print(f"\n===== [{row['id']} {row['created_at'][:16]}] =====\n{row['content']}")
 ```
