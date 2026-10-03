@@ -158,6 +158,21 @@ def run_agent2(
         "-m",
         help="Model to use (name from config.yaml models: section)",
     ),
+    http: bool = typer.Option(
+        False,
+        "--http",
+        help="Serve ACP v2 over Streamable HTTP + WebSocket instead of stdio",
+    ),
+    host: str = typer.Option(
+        "127.0.0.1",
+        "--host",
+        help="Bind address with --http (use 0.0.0.0 to expose)",
+    ),
+    port: int = typer.Option(
+        2771,
+        "--port",
+        help="Port with --http (default 2771)",
+    ),
 ):
     """Entry point for the ACP v2 agent (``crow_cli.agent2``).
 
@@ -165,9 +180,10 @@ def run_agent2(
     spawns when it needs a v2 subagent — :func:`crow_cli.client2.subagent.
     agent_argv` names it, so the two must not drift.
 
-    stdio only. v1's ``--http`` has no v2 counterpart: the server in
-    ``agent/main.py`` is v1 wire format end to end, and v2's runtime ships
-    ``run_agent`` over a stream pair rather than a transport choice.
+    stdio by default; ``--http`` serves v2 over Streamable HTTP + WebSocket
+    (same JSON-RPC lifecycle as ``crow-cli acp --http``) via an
+    ``AgentProtocolRouter``. Each connection negotiates v2 and binds one
+    ``CrowAgentV2``; sessions share the same store.
 
     Lazy import, and startup is the reason. ``crow_cli.cli.main`` already
     costs ~1.15s to import; ``agent2.main`` pulls
@@ -189,7 +205,7 @@ def run_agent2(
     if debug:
         config.chunk_log = True
 
-    agent2_main(config=config, model=model)
+    agent2_main(config=config, model=model, http=http, host=host, port=port)
 
 
 @app.command("mcp")
