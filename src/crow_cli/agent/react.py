@@ -669,6 +669,7 @@ async def _execute_tool_calls_inner(
                 update=ToolCallProgress(
                     session_update="tool_call_update",
                     tool_call_id=acp_tool_call_id,
+                    name=tool_name,
                     status="failed",
                 ),
             )

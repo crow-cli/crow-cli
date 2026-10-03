@@ -242,6 +242,7 @@ async def execute_acp_terminal(
                 session_update="tool_call",
                 tool_call_id=acp_tool_call_id,
                 title=command,
+                name="terminal",
                 kind="execute",
                 status="pending",
             ),
@@ -393,6 +394,7 @@ async def execute_acp_write(
                 title=title,
                 path=path,
                 content=content,
+                name="write",
             ),
         )
 
@@ -462,6 +464,7 @@ async def execute_acp_read(
                 tool_call_id=acp_tool_call_id,
                 title=title,
                 path=path,
+                name="read",
             ),
         )
 
@@ -543,6 +546,7 @@ async def execute_acp_edit(
                 title=title,
                 path=path,
                 content=new_text,
+                name="edit",
             ),
         )
 
@@ -615,6 +619,7 @@ async def execute_acp_task(
                 session_update="tool_call",
                 tool_call_id=acp_tool_call_id,
                 title="task",
+                name="task",
                 kind="other",
                 status="pending",
             ),
@@ -686,6 +691,7 @@ async def execute_acp_execute(
                 session_update="tool_call",
                 tool_call_id=acp_tool_call_id,
                 title="execute",
+                name="execute",
                 kind="execute",
                 status="pending",
                 content=[code_block],
@@ -838,6 +844,7 @@ async def _emit_subtool_call(
             update=start_tool_call(
                 sub_id,
                 title,
+                name=row.tool,
                 kind=kind,
                 status="pending",
                 locations=[ToolCallLocation(path=path)] if path else None,
@@ -1058,6 +1065,7 @@ async def execute_acp_tool(
                 session_update="tool_call",
                 tool_call_id=acp_tool_call_id,
                 title=title,
+                name=tool_name,
                 kind=kind,
                 status="pending",
             ),
