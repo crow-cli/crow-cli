@@ -1,8 +1,12 @@
 """Install commands for Crow Desktop IDE."""
 
+import io
+import os
 import platform
+import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -96,6 +100,81 @@ def download_asset(url: str, dest: Path) -> None:
                 for chunk in response.iter_bytes(chunk_size=8192):
                     f.write(chunk)
                     progress.update(task, advance=len(chunk))
+
+
+def deb_data_tar(deb_path: Path) -> bytes:
+    """Return the data.tar.* payload of a .deb.
+
+    A .deb is an ar archive (debian-binary, control.tar.*, data.tar.*); parsing
+    it here avoids needing dpkg, ar or bsdtar on non-Debian systems.
+    """
+    with deb_path.open("rb") as f:
+        if f.read(8) != b"!<arch>\n":
+            raise ValueError(f"{deb_path.name} is not a .deb archive")
+        while header := f.read(60):
+            name = header[:16].decode().strip().rstrip("/")
+            size = int(header[48:58])
+            if name.startswith("data.tar"):
+                return f.read(size)
+            f.seek(size + size % 2, os.SEEK_CUR)  # members are 2-byte aligned
+    raise ValueError(f"{deb_path.name} has no data.tar member")
+
+
+def missing_libraries(binary: Path) -> list[str]:
+    """Shared libraries the dynamic linker can't resolve for `binary`."""
+    result = subprocess.run(
+        ["ldd", str(binary)], capture_output=True, text=True, check=True
+    )
+    return [line.split()[0] for line in result.stdout.splitlines() if "not found" in line]
+
+
+def install_local(deb_path: Path, prefix: Path) -> bool:
+    """Install the .deb's usr/ tree for the current user, without root or dpkg.
+
+    Layout as Zed's Linux installer: prefix/crow.app/{bin,lib,share}, a
+    prefix/bin/Crow symlink and a desktop entry. Tauri finds its resources at
+    <real exe dir>/../lib/Crow, so the tree stays intact.
+    """
+    console.print(f"\n[cyan]Installing {deb_path.name}...[/cyan]")
+    app_dir = prefix / "crow.app"
+    exe = app_dir / "bin" / "Crow"
+    prefix.mkdir(parents=True, exist_ok=True)
+    for stale in prefix.glob(".crow.app-*"):  # staging left by a killed run
+        shutil.rmtree(stale)
+
+    # Stage beside app_dir so the swap is a rename; leaving the block deletes
+    # staging along with the replaced install.
+    with tempfile.TemporaryDirectory(dir=prefix, prefix=".crow.app-") as tmp:
+        staging = Path(tmp)
+        with tarfile.open(fileobj=io.BytesIO(deb_data_tar(deb_path))) as tar:
+            tar.extractall(staging, filter="data")
+        # Checked before the current install is touched: the app can't start without them.
+        if missing := missing_libraries(staging / "usr" / "bin" / "Crow"):
+            console.print(
+                f"[red]Missing system libraries: {', '.join(missing)}[/red]\n"
+                "Install WebKitGTK 4.1 (Arch: webkit2gtk-4.1) and re-run."
+            )
+            return False
+        if app_dir.exists():
+            app_dir.rename(staging / "replaced")
+        (staging / "usr").rename(app_dir)
+
+    link = prefix / "bin" / "Crow"
+    link.parent.mkdir(exist_ok=True)
+    link.unlink(missing_ok=True)
+    link.symlink_to(exe)
+
+    # Absolute paths: the session PATH may lack ~/.local/bin, and the icon
+    # isn't in an icon theme dir.
+    entry = (app_dir / "share/applications/Crow.desktop").read_text()
+    icon = app_dir / "share/icons/hicolor/256x256@2/apps/Crow.png"
+    desktop = prefix / "share/applications/Crow.desktop"
+    desktop.parent.mkdir(parents=True, exist_ok=True)
+    desktop.write_text(
+        entry.replace("Exec=Crow", f'Exec="{exe}"').replace("Icon=Crow", f"Icon={icon}")
+    )
+    console.print(f"[green]✓ Crow Desktop installed to {app_dir}[/green]")
+    return True
 
 
 def install_deb(deb_path: Path) -> bool:
@@ -211,14 +290,20 @@ def desktop(
 
         console.print(f"\n[green]✓ Downloaded to {dest}[/green]")
 
-        # Install
-        if not install_deb(dest):
+        # Install: dpkg/apt on Debian and derivatives; elsewhere (Arch, Fedora, ...)
+        # unpack the same .deb into ~/.local. Keyed on apt-get, not dpkg,
+        # because Arch can have dpkg installed.
+        if shutil.which("apt-get"):
+            installed = install_deb(dest)
+        else:
+            installed = install_local(dest, Path.home() / ".local")
+        if not installed:
             console.print("\n[red]Installation failed[/red]")
             raise typer.Exit(1)
 
     console.print(
         "\n[bold green]🎉 Crow Desktop is ready![/bold green]\n"
-        "Run [cyan]crow[/cyan] or find it in your applications menu."
+        "Run [cyan]Crow[/cyan] or find it in your applications menu."
     )
 
 
