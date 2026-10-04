@@ -22,10 +22,14 @@ impl Server {
         format!("ws://127.0.0.1:{}{path}", self.port)
     }
 
+    // Shared by both ws test binaries; each uses a subset, so the other
+    // binary sees these as dead code.
+    #[allow(dead_code)]
     pub fn disk(&self, rel: &str) -> Option<String> {
         std::fs::read_to_string(self.root.join(rel)).ok()
     }
 
+    #[allow(dead_code)]
     pub fn exists(&self, rel: &str) -> bool {
         self.root.join(rel).exists()
     }

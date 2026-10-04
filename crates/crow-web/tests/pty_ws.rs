@@ -79,15 +79,13 @@ impl Term {
     }
 
     async fn next_raw(&mut self) -> Message {
-        loop {
-            match tokio::time::timeout(Duration::from_secs(20), self.ws.next())
-                .await
-                .expect("the terminal went quiet")
-            {
-                Some(Ok(frame)) => return frame,
-                Some(Err(e)) => panic!("websocket error: {e}"),
-                None => panic!("the server closed the socket"),
-            }
+        match tokio::time::timeout(Duration::from_secs(20), self.ws.next())
+            .await
+            .expect("the terminal went quiet")
+        {
+            Some(Ok(frame)) => frame,
+            Some(Err(e)) => panic!("websocket error: {e}"),
+            None => panic!("the server closed the socket"),
         }
     }
 

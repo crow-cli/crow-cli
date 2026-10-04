@@ -91,6 +91,7 @@ pub enum Op {
     Close,
     Mkdir,
     Rename,
+    Copy,
     Delete,
 }
 
@@ -210,6 +211,15 @@ fn dispatch(fs: &Fs, client: u64, req: &Request) -> Result<(Value, Vec<Out>)> {
             Ok((
                 json!({ "path": path, "to": req.to }),
                 vec![moved("rename", path, Some(&req.to))],
+            ))
+        }
+        // The tree moved at the destination, so that is the parent clients
+        // are told to refresh.
+        Op::Copy => {
+            buffers.copy(path, &req.to)?;
+            Ok((
+                json!({ "path": path, "to": req.to }),
+                vec![moved("copy", &req.to, None)],
             ))
         }
         Op::Delete => {
@@ -659,6 +669,25 @@ mod tests {
         assert_eq!(event["data"]["to"], "pkg/b.txt");
         assert_eq!(event["data"]["parent"], "pkg");
         assert_eq!(root.disk("pkg/b.txt").unwrap(), "a");
+    }
+
+    #[test]
+    fn copy_tells_clients_to_refresh_the_destination_parent() {
+        let (root, fs) = server("copy-event");
+        root.put("pkg/a.txt", "a");
+        let mut events = fs.events.subscribe();
+        call(
+            &fs,
+            1,
+            r#"{"id":1,"op":"copy","path":"pkg/a.txt","to":"pkg/b.txt"}"#,
+        );
+        let event: Value = serde_json::from_str(&events.try_recv().unwrap()).unwrap();
+        assert_eq!(event["event"], "fs");
+        assert_eq!(event["data"]["kind"], "copy");
+        assert_eq!(event["data"]["path"], "pkg/b.txt");
+        assert_eq!(event["data"]["parent"], "pkg");
+        assert_eq!(root.disk("pkg/b.txt").unwrap(), "a");
+        assert_eq!(root.disk("pkg/a.txt").unwrap(), "a");
     }
 
     #[test]

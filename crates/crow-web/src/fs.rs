@@ -392,6 +392,30 @@ impl Buffers {
         Ok(())
     }
 
+    /// Duplicates a file or a directory tree on disk. The copy is what is
+    /// SAVED: a dirty source keeps its unsaved edits to itself, because a
+    /// copy that silently inherits work nobody committed would be a second
+    /// surprise buffer nobody asked to hold. A source that was never
+    /// committed has no bytes to copy and is an error.
+    pub fn copy(&mut self, from: &str, to: &str) -> Result<()> {
+        let src = normalize(from)?;
+        let dst = normalize(to)?;
+        let src_abs = self.root.join(&src);
+        let dst_abs = self.root.join(&dst);
+        if dst_abs.exists() || self.map.contains_key(&dst) {
+            bail!("{} already exists", dst.display());
+        }
+        if dst.starts_with(&src) {
+            bail!("cannot copy {} into itself", src.display());
+        }
+        let meta = match std::fs::symlink_metadata(&src_abs) {
+            Ok(meta) => meta,
+            Err(_) => bail!("no such file: {}", src.display()),
+        };
+        copy_tree(&meta, &src_abs, &dst_abs)?;
+        Ok(())
+    }
+
     /// Deletes a file or a directory tree, dropping the buffers with it — the
     /// user asked for those bytes to go away, so keeping a dirty buffer would
     /// only resurrect them at the next commit.
@@ -431,6 +455,29 @@ impl Buffers {
             dirty: buffer.dirty,
             mtime: millis(buffer.mtime),
         }
+    }
+}
+
+/// Recursive on-disk duplicate: directories are walked, symlinks are
+/// re-pointed rather than followed, and anything else is a byte copy.
+fn copy_tree(meta: &std::fs::Metadata, from: &Path, to: &Path) -> Result<()> {
+    if meta.is_dir() {
+        std::fs::create_dir(to).with_context(|| format!("mkdir {}", to.display()))?;
+        for entry in std::fs::read_dir(from).with_context(|| format!("read {}", from.display()))? {
+            let entry = entry?;
+            let child_meta = std::fs::symlink_metadata(entry.path())
+                .with_context(|| format!("stat {}", entry.path().display()))?;
+            copy_tree(&child_meta, &entry.path(), &to.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else if meta.is_symlink() {
+        let target =
+            std::fs::read_link(from).with_context(|| format!("readlink {}", from.display()))?;
+        std::os::unix::fs::symlink(&target, to).with_context(|| format!("symlink {}", to.display()))
+    } else {
+        std::fs::copy(from, to)
+            .with_context(|| format!("copy {} -> {}", from.display(), to.display()))?;
+        Ok(())
     }
 }
 
@@ -763,6 +810,55 @@ mod tests {
         let err = buffers.rename("a.txt", "b.txt").unwrap_err().to_string();
         assert!(err.contains("already exists"), "{err}");
         assert_eq!(root.disk("b.txt").unwrap(), "b");
+    }
+
+    #[test]
+    fn copy_duplicates_files_and_trees_off_the_disk() {
+        let (root, mut buffers) = registry("copy");
+        root.put("src.txt", "bytes");
+        root.put("pkg/one.rs", "1");
+        root.put("pkg/deep/two.rs", "2");
+        buffers.copy("src.txt", "dst.txt").unwrap();
+        buffers.copy("pkg", "pkg2").unwrap();
+        assert_eq!(root.disk("dst.txt").unwrap(), "bytes");
+        assert_eq!(root.disk("pkg2/one.rs").unwrap(), "1");
+        assert_eq!(root.disk("pkg2/deep/two.rs").unwrap(), "2");
+        assert!(root.exists("src.txt"), "the source stays");
+        assert!(
+            buffers.open_paths().is_empty(),
+            "a copy is not an open buffer"
+        );
+    }
+
+    #[test]
+    fn copy_refuses_existing_destinations_and_itself() {
+        let (root, mut buffers) = registry("copy-onto");
+        root.put("a.txt", "a");
+        root.put("b.txt", "b");
+        root.put("dir/inner.txt", "i");
+        let err = buffers.copy("a.txt", "b.txt").unwrap_err().to_string();
+        assert!(err.contains("already exists"), "{err}");
+        let err = buffers.copy("dir", "dir").unwrap_err().to_string();
+        assert!(err.contains("already exists"), "{err}");
+        let err = buffers.copy("dir", "dir/within").unwrap_err().to_string();
+        assert!(err.contains("into itself"), "{err}");
+        assert_eq!(root.disk("b.txt").unwrap(), "b");
+    }
+
+    #[test]
+    fn copy_of_unsaved_work_is_what_the_disk_holds() {
+        let (root, mut buffers) = registry("copy-dirty");
+        root.put("a.txt", "saved");
+        buffers.open(1, "a.txt").unwrap();
+        buffers.write(1, "a.txt", "unsaved".into()).unwrap();
+        buffers.copy("a.txt", "b.txt").unwrap();
+        assert_eq!(
+            root.disk("b.txt").unwrap(),
+            "saved",
+            "a copy does not inherit work nobody committed"
+        );
+        let err = buffers.copy("ghost.txt", "x.txt").unwrap_err().to_string();
+        assert!(err.contains("no such file"), "{err}");
     }
 
     #[test]
