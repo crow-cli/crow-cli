@@ -73,6 +73,27 @@ def insert_fts(
         )
 
 
+def delete_fts(conn, row_ids) -> None:
+    """Drop message rows from the keyword index, in the caller's transaction.
+
+    The index is a table of its own on both backends — an FTS5 virtual table,
+    a postgres side table — so nothing cascades to it. A message deleted
+    without this leaves a rowid that :func:`search_fts` still ranks and
+    :func:`search_rows`' join then throws away, which reads to a user as a
+    search that silently comes up short. Same SQL on both dialects, which is
+    why this one takes no engine.
+    """
+    ids = list(row_ids)
+    if not ids:
+        return
+    conn.execute(
+        text("DELETE FROM messages_fts WHERE rowid IN :ids").bindparams(
+            bindparam("ids", expanding=True)
+        ),
+        {"ids": ids},
+    )
+
+
 def search_fts(conn, engine, query: str, limit: int) -> list[tuple[int, float]]:
     """(rowid, rank) best-first; rank lower = better on both backends."""
     if _is_postgres(engine):

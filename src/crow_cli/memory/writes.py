@@ -18,6 +18,8 @@ from .models import (
     Goal,
     Message,
     Prompt,
+    SessionTab,
+    SubtoolCall,
     Task,
     TaskDelivery,
     now_iso,
@@ -496,3 +498,67 @@ def account_goal_usage(
         if result.rowcount == 0:
             return None
     return get_goal(engine, session_id)
+
+
+def delete_session(engine, wire_id: str) -> bool:
+    """Forget a session and everything keyed on it. False when there was
+    nothing to forget — the caller owes the user that answer, because "gone"
+    and "was never here" are different claims.
+
+    There are no foreign keys in this schema, so nothing cascades and the
+    footprint has to be named table by table. What goes, in one transaction:
+
+    * every ``agents`` row for the session — all agent_idx (compactions) and
+      all fork_idx (branches), because a fork is a branch OF this session and
+      outliving it would leave an agent whose trunk is gone
+    * their ``messages``, and those messages' rows in the keyword index
+    * ``goals``, ``task_deliveries`` and ``subtool_calls``, which are keyed on
+      the WIRE id — so the trunk's bare id and each fork's agent_id both have
+      to be matched, not just the one the caller passed
+    * ``tasks`` this session owned, and its ``session_tabs``
+
+    What deliberately stays:
+
+    * ``prompts``. Deduplicated by content and shared across sessions; a
+      prompt row outliving one of its readers is the point of deduplicating.
+    * image blobs. The store is content-addressed with no refcount, so the
+      only way to know a blob is unshared is to scan every remaining message
+      for its key. Orphaned bytes are cheap; deleting a blob another session
+      still renders is not.
+    * a ``tasks`` row that names this session only as its ``sub_session``.
+      That row is the OWNER's record of work it delegated, and the owner still
+      exists. Its pointer dangles, which :func:`reads.task_by_sub_session`
+      answers as "no such child" — the same answer it gives for a subagent
+      that never ran.
+
+    ``wire_id`` is a trunk's bare session_id or a fork's full agent_id. Both
+    delete the WHOLE session: ``session/list`` never hands out a fork id, so
+    arriving with one means the caller thinks a branch is a session, and
+    deleting just the branch would leave a trunk with a hole in its own
+    history.
+    """
+    try:
+        bare, _, _ = parse_agent_id(wire_id)
+    except ValueError:
+        bare = wire_id
+    with Session(engine) as db:
+        agent_rows = db.query(Agent.agent_id).filter(Agent.session_id == bare)
+        agent_ids = [a for (a,) in agent_rows.all()]
+        if not agent_ids:
+            return False
+        message_rows = db.query(Message.id).filter(Message.agent_id.in_(agent_ids))
+        message_ids = [m for (m,) in message_rows.all()]
+        wire_ids = sorted({bare, *agent_ids})
+        fts.delete_fts(db, message_ids)
+        for query in (
+            db.query(Message).filter(Message.id.in_(message_ids)),
+            db.query(Agent).filter(Agent.agent_id.in_(agent_ids)),
+            db.query(Goal).filter(Goal.session_id.in_(wire_ids)),
+            db.query(TaskDelivery).filter(TaskDelivery.session_id.in_(wire_ids)),
+            db.query(Task).filter(Task.owner_session.in_(wire_ids)),
+            db.query(SessionTab).filter(SessionTab.agent_session_id.in_(wire_ids)),
+            db.query(SubtoolCall).filter(SubtoolCall.session_id.in_(wire_ids)),
+        ):
+            query.delete(synchronize_session=False)
+        db.commit()
+        return True

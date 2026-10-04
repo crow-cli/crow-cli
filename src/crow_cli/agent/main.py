@@ -75,6 +75,7 @@ from acp.schema import (
     AvailableCommand,
     AvailableCommandsUpdate,
     ClientCapabilities,
+    DeleteSessionResponse,
     EmbeddedResourceContentBlock,
     ForkSessionResponse,
     HttpMcpServer,
@@ -87,6 +88,7 @@ from acp.schema import (
     SessionCapabilities,
     SessionConfigOptionSelect,
     SessionConfigSelectOption,
+    SessionDeleteCapabilities,
     SessionForkCapabilities,
     SessionInfo,
     SessionListCapabilities,
@@ -121,6 +123,9 @@ from crow_cli.memory import (
     subtool_calls_by_parent,
     wire_session_id,
 )
+# Aliased because AcpAgent.delete_session is the wire method and would
+# otherwise shadow this at every read of the call site below.
+from crow_cli.memory import delete_session as forget_session
 from crow_cli.agent.react import react_loop
 from crow_cli.agent.replay import replay
 from crow_cli.agent.session import (
@@ -436,6 +441,7 @@ class AcpAgent(Agent):
                 load_session=True,  # We support session loading
                 session_capabilities=SessionCapabilities(
                     list=SessionListCapabilities(),  # We support session/list
+                    delete=SessionDeleteCapabilities(),  # We support session/delete
                     fork=SessionForkCapabilities(),  # We support session/fork (unstable)
                 ),
                 prompt_capabilities=PromptCapabilities(
@@ -1166,6 +1172,71 @@ class AcpAgent(Agent):
             else None
         )
         return ListSessionsResponse(sessions=sessions, next_cursor=next_cursor)
+
+    async def delete_session(
+        self, session_id: str, **kwargs: Any
+    ) -> DeleteSessionResponse:
+        """Forget a thread, on disk and in this connection's memory.
+
+        Until this existed the method was inherited from the ``Agent``
+        protocol, whose body is ``...`` — so it returned None, the adapter
+        normalised that to ``{}``, and the client got the exact bytes a
+        successful delete returns while nothing was deleted. A thread that
+        cannot be removed and reports itself removed is the worst shape a bug
+        comes in: no error on the wire, none in the log, and the row is still
+        there on the next ``session/list``.
+
+        An unknown session is an error rather than a silent success, for the
+        same reason. Idempotent delete is a kindness that costs the caller the
+        ability to tell "gone" from "you gave me a bad id".
+        """
+        # get_engine builds a fresh pool per call, so this one is ours to close.
+        engine = get_engine(self._memory_db_uri)
+        try:
+            deleted = forget_session(engine, session_id)
+        finally:
+            engine.dispose()
+        if not deleted:
+            raise RequestError.invalid_params(f"no such session: '{session_id}'")
+        await self._forget_session_state(session_id)
+        self._logger.info("DELETE_SESSION: forgot %s", session_id)
+        return DeleteSessionResponse()
+
+    async def _forget_session_state(self, session_id: str) -> None:
+        """Drop this connection's in-memory state for a deleted session.
+
+        Two key spaces, and both have to be cleared. The per-session dicts are
+        keyed on the WIRE id the client used; ``_sessions`` is keyed on
+        agent_id, of which one session can have several (a compaction adds an
+        agent_idx, a fork a fork_idx). Leaving either behind means a session id
+        the agent later re-mints inherits an MCP client, config values and a
+        cancel event from a conversation that no longer exists.
+
+        The MCP client is closed here rather than left to the exit stack:
+        it is a spawned subprocess, and a long-lived connection that deletes
+        ten threads would otherwise carry ten of them until it hangs up.
+        ``Client.__aexit__`` refcounts and clamps at zero, so the stack's own
+        ``aclose`` later is a no-op rather than a double free.
+        """
+        try:
+            bare, _, _ = parse_agent_id(session_id)
+        except ValueError:
+            bare = session_id
+        for agent_id in [
+            a for a in self._sessions if a == bare or a.startswith(f"{bare}-")
+        ]:
+            session = self._sessions.pop(agent_id)
+            await session.close()
+        client = self._mcp_clients.pop(session_id, None)
+        if client is not None:
+            await client.__aexit__(None, None, None)
+        for table in (
+            self._tools,
+            self._cancel_events,
+            self._session_loggers,
+            self._config_values,
+        ):
+            table.pop(session_id, None)
 
 
 async def serve_http(
