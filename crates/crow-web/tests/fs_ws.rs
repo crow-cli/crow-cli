@@ -5,10 +5,11 @@
 //! protocol handler in isolation. This is the tier above them — the same shape
 //! the browser uses — so it asserts what the *disk* looks like after each op,
 //! because the server owning the state is only true if the bytes moved.
-use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+mod common;
+
 use std::time::Duration;
 
+use common::Server;
 use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio_tungstenite::tungstenite::{Error as WsError, Message};
@@ -16,62 +17,14 @@ use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 type WsStream =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
-/// A running server against a throwaway root.
-struct Server {
-    child: Child,
-    url: String,
-    root: PathBuf,
-}
-
-impl Server {
-    fn start(name: &str) -> Self {
-        let root = temp_root(name);
-        std::fs::create_dir_all(root.join("src")).expect("fixture dir");
-        std::fs::write(root.join("src/main.rs"), "fn main() {}\n").expect("fixture");
-        std::fs::write(root.join("README.md"), "# hello\n").expect("fixture");
-
-        let port = free_port();
-        let child = Command::new(env!("CARGO_BIN_EXE_crow-web"))
-            .args(["--port", &port.to_string(), "--root"])
-            .arg(&root)
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .expect("spawn crow-web");
-        // Wait for the listener instead of sleeping a guess.
-        let deadline = std::time::Instant::now() + Duration::from_secs(15);
-        loop {
-            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-                break;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "crow-web never listened on {port}"
-            );
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        Self {
-            child,
-            url: format!("ws://127.0.0.1:{port}/fs"),
-            root,
-        }
-    }
-
-    fn disk(&self, rel: &str) -> Option<String> {
-        std::fs::read_to_string(self.root.join(rel)).ok()
-    }
-
-    fn exists(&self, rel: &str) -> bool {
-        self.root.join(rel).exists()
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-        let _ = std::fs::remove_dir_all(&self.root);
-    }
+/// A running server against a throwaway root, with the fixtures the assertions
+/// expect already on disk.
+fn start(name: &str) -> Server {
+    let server = common::spawn(name, &[]);
+    std::fs::create_dir_all(server.root.join("src")).expect("fixture dir");
+    std::fs::write(server.root.join("src/main.rs"), "fn main() {}\n").expect("fixture");
+    std::fs::write(server.root.join("README.md"), "# hello\n").expect("fixture");
+    server
 }
 
 /// One connected tab: request/reply in order, with pushed events collected.
@@ -154,29 +107,10 @@ fn with_origin(url: &str, origin: &str) -> axum::http::Request<()> {
     request
 }
 
-fn free_port() -> u16 {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
-    listener.local_addr().expect("addr").port()
-}
-
-/// Hand-rolled, like the unit tests: no tempfile dev-dependency in this repo.
-fn temp_root(name: &str) -> PathBuf {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static N: AtomicU64 = AtomicU64::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "crow-web-ws-{name}-{}-{}",
-        std::process::id(),
-        N.fetch_add(1, Ordering::Relaxed),
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("create temp root");
-    dir
-}
-
 #[tokio::test]
 async fn every_op_over_a_real_socket() {
-    let server = Server::start("all-ops");
-    let mut a = Client::connect(&server.url).await;
+    let server = start("all-ops");
+    let mut a = Client::connect(&server.ws("/fs")).await;
 
     // --- hello -------------------------------------------------------------
     assert_eq!(a.hello()["event"], "hello");
@@ -302,7 +236,7 @@ async fn every_op_over_a_real_socket() {
     );
 
     // --- two tabs, one buffer ---------------------------------------------
-    let mut b = Client::connect(&server.url).await;
+    let mut b = Client::connect(&server.ws("/fs")).await;
     let held: Vec<&str> = b.hello()["data"]["buffers"]
         .as_array()
         .unwrap()
@@ -353,14 +287,14 @@ async fn every_op_over_a_real_socket() {
     // --- a socket that vanishes -------------------------------------------
     std::fs::write(server.root.join("only-c.txt"), "clean work\n").expect("fixture");
     {
-        let mut c = Client::connect(&server.url).await;
+        let mut c = Client::connect(&server.ws("/fs")).await;
         c.call(json!({"op": "read", "path": "README.md"})).await;
         c.call(json!({"op": "read", "path": "only-c.txt"})).await;
         // Dropped here without a close frame: the browser tab was killed.
     }
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    let mut d = Client::connect(&server.url).await;
+    let mut d = Client::connect(&server.ws("/fs")).await;
     let held: Vec<&str> = d.hello()["data"]["buffers"]
         .as_array()
         .unwrap()
@@ -390,18 +324,19 @@ async fn every_op_over_a_real_socket() {
 
 #[tokio::test]
 async fn a_foreign_origin_is_refused_and_loopback_is_not() {
-    let server = Server::start("origin");
+    let server = start("origin");
 
-    let err = tokio_tungstenite::connect_async(with_origin(&server.url, "https://evil.example"))
-        .await
-        .expect_err("a website must not reach the served tree");
+    let err =
+        tokio_tungstenite::connect_async(with_origin(&server.ws("/fs"), "https://evil.example"))
+            .await
+            .expect_err("a website must not reach the served tree");
     match err {
         WsError::Http(response) => assert_eq!(response.status(), 403, "{response:?}"),
         other => panic!("expected an HTTP refusal, got {other:?}"),
     }
 
     let (mut ws, response) =
-        tokio_tungstenite::connect_async(with_origin(&server.url, "http://localhost:5173"))
+        tokio_tungstenite::connect_async(with_origin(&server.ws("/fs"), "http://localhost:5173"))
             .await
             .expect("the vite dev origin is allowed");
     assert_eq!(response.status(), 101);

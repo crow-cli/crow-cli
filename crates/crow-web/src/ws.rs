@@ -14,6 +14,8 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
+use axum::routing::get;
+use axum::Router;
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -238,7 +240,7 @@ fn parent_of(path: &str) -> &str {
 /// visits could read and rewrite the served tree. No Origin at all means it is
 /// not a browser (curl, the python test client, the rust binary); anything
 /// else has to be loopback.
-fn origin_allowed(headers: &HeaderMap) -> bool {
+pub(crate) fn origin_allowed(headers: &HeaderMap) -> bool {
     let Some(origin) = headers
         .get(axum::http::header::ORIGIN)
         .and_then(|value| value.to_str().ok())
@@ -256,6 +258,10 @@ fn origin_allowed(headers: &HeaderMap) -> bool {
         return false;
     };
     matches!(host, "localhost" | "127.0.0.1" | "[::1]")
+}
+
+pub fn router(fs: Fs) -> Router {
+    Router::new().route("/fs", get(handler)).with_state(fs)
 }
 
 pub async fn handler(

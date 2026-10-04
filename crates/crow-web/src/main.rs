@@ -10,16 +10,19 @@ use axum::routing::get;
 use axum::Router;
 
 mod fs;
+mod pty;
 mod ws;
 
 struct Args {
     port: u16,
     root: PathBuf,
+    shell: Option<String>,
 }
 
 fn parse_args(argv: impl IntoIterator<Item = String>) -> anyhow::Result<Args> {
     let mut port = 2770u16;
     let mut root: Option<PathBuf> = None;
+    let mut shell: Option<String> = None;
     let mut it = argv.into_iter().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -31,12 +34,17 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> anyhow::Result<Args> {
                 let value = it.next().unwrap_or_else(|| panic!("--root needs a value"));
                 root = Some(PathBuf::from(value));
             }
+            "--shell" => {
+                let value = it.next().unwrap_or_else(|| panic!("--shell needs a value"));
+                shell = Some(value);
+            }
             other => panic!("unknown argument: {other}"),
         }
     }
     Ok(Args {
         port,
         root: root.unwrap_or_else(|| std::env::current_dir().expect("cwd")),
+        shell,
     })
 }
 
@@ -44,14 +52,22 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> anyhow::Result<Args> {
 async fn main() -> anyhow::Result<()> {
     let args = parse_args(std::env::args())?;
     let root = args.root.canonicalize()?;
-    let fs = ws::Fs::new(root)?;
+    let fs = ws::Fs::new(root.clone())?;
+    let pty = pty::Config::new(root, args.shell);
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
-        .route("/fs", get(ws::handler))
-        .with_state(fs.clone());
-    let addr = SocketAddr::from(([127, 0, 0, 1], args.port));
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    println!("crow-web serving {} on http://{addr}", fs.root());
+        .merge(ws::router(fs.clone()))
+        .merge(pty::router(pty.clone()));
+    let listener =
+        tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], args.port))).await?;
+    // The bound address, not the requested one: `--port 0` asks the kernel to
+    // pick, and this line is how a launcher (or a test) learns which.
+    let addr = listener.local_addr()?;
+    println!(
+        "crow-web serving {} on http://{addr} ({} for terminals)",
+        fs.root(),
+        pty.shell()
+    );
     axum::serve(listener, app).await?;
     Ok(())
 }
