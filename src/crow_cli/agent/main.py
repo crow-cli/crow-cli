@@ -118,6 +118,7 @@ from crow_cli.memory import (
     delegation_tool_call_ids,
     get_engine,
     parse_agent_id,
+    subtool_calls_by_parent,
     wire_session_id,
 )
 from crow_cli.agent.react import react_loop
@@ -690,11 +691,25 @@ class AcpAgent(Agent):
             # to show until these notifications land. Same order as v2's
             # resume — commands, then transcript, then the response.
             if self._conn is not None:
+                # The in-cell register is read HERE rather than inside replay:
+                # this module owns the db_uri and the engine lifecycle, and
+                # replay stays pure wire logic that a test can drive with plain
+                # objects. get_engine builds a fresh pool per call, so this one
+                # is ours to close. The store stays a thunk for the same reason
+                # MemoryClient.image_store is a property — a transcript with no
+                # images in it has no business probing an S3 endpoint.
+                engine = get_engine(self._memory_db_uri)
+                try:
+                    subtools = subtool_calls_by_parent(engine, session_id)
+                finally:
+                    engine.dispose()
                 await replay(
                     self._conn,
                     session_id,
                     session.messages,
                     self._session_loggers.get(session_id),
+                    subtools=subtools,
+                    resolve_store=lambda: session.client.image_store,
                 )
             config_options = self._get_config_options(session_id)
             return LoadSessionResponse(config_options=config_options)

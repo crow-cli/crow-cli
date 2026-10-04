@@ -87,6 +87,7 @@ from .reads import (
     search_messages,
     session_exists,
     session_title,
+    subtool_calls_by_parent,
 )
 from .writes import (
     account_goal_usage,
@@ -172,6 +173,7 @@ __all__ = [
     "set_agent_mcp_servers",
     "set_agent_model",
     "set_goal",
+    "subtool_calls_by_parent",
     "update_goal_status",
     "wire_session_id",
 ]

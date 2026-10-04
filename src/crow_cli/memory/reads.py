@@ -127,6 +127,47 @@ def delegation_tool_call_ids(
     return {r[0].rsplit("/", 1)[-1] for r in rows if r[0]}
 
 
+def subtool_calls_by_parent(engine, wire_id: str) -> dict[str, list[SubtoolCall]]:
+    """Every in-cell tool call this session made, grouped by the LLM id of
+    the execute call that made it, in the order the cell made them.
+
+    Same join as :func:`delegation_tool_call_ids`, different question: that
+    one answers "was this call a delegation" and returns a set, this one
+    returns the rows themselves so a replay can re-present each call as the
+    tool call it was — args, diff, location and all. The join is the last
+    path segment of ``parent_tool_call_id`` because ``TurnCtx.tcid`` is
+    ``f"{turn_id}/{llm_id}"`` and the turn id died with the process that
+    minted it, while the llm id is persisted in the assistant message's
+    ``tool_calls[].id``.
+
+    **Read-only by contract.** The live drain (``agent/tools.py
+    _emit_subtool_calls``) owns ``emitted`` as its queue marker and flips it
+    to claim rows; a replay is a re-presentation, not a consumption, so this
+    must not touch it or those calls vanish from the wire forever.
+
+    ``wire_id`` is a trunk's bare session_id or a fork's full agent_id, and
+    both are matched because the register stores whichever the agent injected
+    (``meta["session_id"]``). That cannot double-count: one parent id was
+    executed once, by one agent, which wrote its rows under one session_id.
+    """
+    try:
+        bare, _, _ = parse_agent_id(wire_id)
+    except ValueError:
+        bare = wire_id
+    with Session(engine) as db:
+        rows = (
+            db.query(SubtoolCall)
+            .filter(SubtoolCall.session_id.in_({wire_id, bare}))
+            .order_by(SubtoolCall.id)
+            .all()
+        )
+    grouped: dict[str, list[SubtoolCall]] = {}
+    for row in rows:
+        if row.parent_tool_call_id:
+            grouped.setdefault(row.parent_tool_call_id.rsplit("/", 1)[-1], []).append(row)
+    return grouped
+
+
 def get_task(engine, task_id: str) -> Task | None:
     with Session(engine) as db:
         return db.query(Task).filter_by(task_id=task_id).first()

@@ -8,10 +8,16 @@ are asserted field by field rather than "something arrived".
 
 from __future__ import annotations
 
+import base64
 import json
+from dataclasses import dataclass, field
 from typing import Any
 
+import pytest
+
 from crow_cli.agent.replay import replay
+from crow_cli.memory import create_database, get_engine, subtool_calls_by_parent
+from crow_cli.memory.models import SubtoolCall
 
 
 class FakeConn:
@@ -423,3 +429,417 @@ async def test_a_whole_conversation_replays_in_order():
     ]
     # one counted update per notification actually sent
     assert sent == len(conn.updates)
+
+
+# ---- calls made INSIDE an execute cell ----
+#
+# crow does most of its file work in cells, so this is the half of replay that
+# decides whether a reopened thread still shows its diffs.
+
+
+@dataclass
+class Row:
+    """A ``subtool_calls`` row.
+
+    The real one is ORM and replay only reads attributes off it, so a
+    dataclass with the same field names is the honest double — and a field
+    named wrong here fails a test instead of silently rendering an empty card.
+    """
+
+    id: int
+    tool: str
+    result_kind: str = "text"
+    mode: str | None = None
+    args: dict = field(default_factory=dict)
+    status: str = "completed"
+    acp_payload: dict | None = None
+    llm_images: list = field(default_factory=list)
+    error: str | None = None
+
+
+class FakeStore:
+    """An ImageStore: ``get(key) -> bytes | None``, and a call log."""
+
+    def __init__(self, blobs: dict[str, bytes]) -> None:
+        self.blobs = blobs
+        self.asked: list[str] = []
+
+    def get(self, key: str):
+        self.asked.append(key)
+        return self.blobs.get(key)
+
+
+class FakeLog:
+    def __init__(self) -> None:
+        self.warnings: list[str] = []
+
+    def warning(self, msg: str, *args) -> None:
+        self.warnings.append(msg % args if args else msg)
+
+    def info(self, msg: str, *args) -> None:
+        pass
+
+
+EXEC_ID = "call_00_VOERVqhdTHwtqW1abTBI1514"
+
+
+def cell_history(code: str = "r = await write('/f', 'x')", call_id: str = EXEC_ID) -> list[dict]:
+    """One user turn, one execute call, its answer, one closing assistant."""
+    return [
+        {"role": "user", "content": "do it"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [call("execute", {"code": code}, call_id)],
+        },
+        tool_result("wrote /f", call_id),
+        {"role": "assistant", "content": "done"},
+    ]
+
+
+def write_row(row_id: int = 7037, path: str = "/f", new: str = "x", old: str = "") -> Row:
+    """The row the register writes for an in-cell ``write`` — payload shape
+    copied from a real one (subtool_calls id 7037)."""
+    return Row(
+        id=row_id,
+        tool="write",
+        result_kind="diff",
+        args={"file_path": path, "content": new},
+        acp_payload={"content": "diff", "path": path, "old_text": old, "new_text": new},
+    )
+
+
+async def test_an_in_cell_write_replays_as_its_own_diff_call():
+    conn = FakeConn()
+    sent = await replay(
+        conn, "s1", cell_history(), subtools={EXEC_ID: [write_row()]}
+    )
+
+    # between the parent's start and the parent's ending, as live
+    assert conn.kinds() == [
+        "user_message_chunk",
+        "tool_call",
+        "tool_call",
+        "tool_call_update",
+        "tool_call_update",
+        "agent_message_chunk",
+    ]
+    assert sent == len(conn.updates) == 6
+
+    parent, sub = conn.of("tool_call")
+    assert parent.tool_call_id == f"replay/1/{EXEC_ID}"
+    assert parent.name == "execute"
+    assert sub.tool_call_id == "replay/2/call_sub7037"
+    assert sub.name == "write"
+    assert sub.title == "write: /f"
+    assert sub.kind == "edit"
+    assert sub.status == "pending"
+    assert [loc.path for loc in sub.locations] == ["/f"]
+    # the args the CODE passed, which is the only record of the call there is
+    assert sub.raw_input == {"file_path": "/f", "content": "x"}
+
+    sub_end, parent_end = conn.of("tool_call_update")
+    assert sub_end.tool_call_id == "replay/2/call_sub7037"
+    assert sub_end.status == "completed"
+    diff = sub_end.content[0]
+    assert diff.type == "diff"
+    assert (diff.path, diff.new_text, diff.old_text) == ("/f", "x", "")
+    # the parent still ends with its own cell + output
+    assert parent_end.tool_call_id == f"replay/1/{EXEC_ID}"
+    assert [c.type for c in parent_end.content] == ["content", "content"]
+
+
+async def test_in_cell_calls_replay_in_row_order_each_with_its_own_id():
+    conn = FakeConn()
+    rows = [write_row(10, "/a", "one"), write_row(11, "/b", "two")]
+    sent = await replay(conn, "s1", cell_history(), subtools={EXEC_ID: rows})
+
+    subs = [u for u in conn.of("tool_call") if "call_sub" in u.tool_call_id]
+    assert [s.tool_call_id for s in subs] == [
+        "replay/2/call_sub10",
+        "replay/4/call_sub11",
+    ]
+    assert [s.title for s in subs] == ["write: /a", "write: /b"]
+    # 1 user + 2 parent + 4 in-cell + 1 assistant
+    assert sent == len(conn.updates) == 8
+
+
+async def test_a_read_row_carries_the_text_the_cell_read():
+    conn = FakeConn()
+    row = Row(
+        id=5,
+        tool="fs",
+        mode="read",
+        result_kind="read",
+        args={"mode": "read", "path": "/f"},
+        acp_payload={"content": "read", "path": "/f", "text": "file body"},
+    )
+    await replay(conn, "s1", cell_history(), subtools={EXEC_ID: [row]})
+
+    sub = conn.of("tool_call")[1]
+    assert sub.title == "fs/read: /f"
+    assert sub.kind == "read"
+    assert [loc.path for loc in sub.locations] == ["/f"]
+    end = conn.of("tool_call_update")[0]
+    assert end.content[0].content.text == "file body"
+
+
+async def test_kind_follows_the_artifact_not_the_tool_name():
+    """``get_tool_kind("sql")`` is "other"; the artifact is rows read out of a
+    read-only connection, which is why the live drain consults a table first
+    and replay consults the SAME table."""
+    conn = FakeConn()
+    row = Row(
+        id=6,
+        tool="memory",
+        mode="sql",
+        result_kind="memory",
+        acp_payload={"text": "3 rows"},
+    )
+    await replay(conn, "s1", cell_history(), subtools={EXEC_ID: [row]})
+
+    assert conn.of("tool_call")[1].kind == "read"
+    assert conn.of("tool_call")[1].title == "memory/sql"
+
+
+async def test_a_subject_rides_the_title_and_never_a_location():
+    conn = FakeConn()
+    row = Row(
+        id=7,
+        tool="web",
+        mode="fetch",
+        result_kind="web",
+        acp_payload={"text": "the page", "subject": "https://crow-ai.dev"},
+    )
+    await replay(conn, "s1", cell_history(), subtools={EXEC_ID: [row]})
+
+    sub = conn.of("tool_call")[1]
+    assert sub.title == "web/fetch: https://crow-ai.dev"
+    assert sub.kind == "fetch"
+    assert sub.locations is None
+    assert conn.of("tool_call_update")[0].content[0].content.text == "the page"
+
+
+async def test_a_failed_row_replays_failed_with_its_error_as_the_content():
+    conn = FakeConn()
+    row = Row(
+        id=8,
+        tool="edit",
+        result_kind="error",
+        status="failed",
+        error="EditError: old_string not found in file",
+    )
+    await replay(conn, "s1", cell_history(), subtools={EXEC_ID: [row]})
+
+    assert conn.of("tool_call")[1].title == "edit"
+    end = conn.of("tool_call_update")[0]
+    assert end.status == "failed"
+    assert end.content[0].content.text == "edit failed: EditError: old_string not found in file"
+
+
+async def test_an_image_row_hydrates_through_the_store():
+    conn = FakeConn()
+    store = FakeStore({"k1": b"hello"})
+    row = Row(
+        id=9,
+        tool="vision",
+        result_kind="image",
+        llm_images=[{"key": "k1", "mime": "image/png"}],
+    )
+    await replay(
+        conn,
+        "s1",
+        cell_history(),
+        subtools={EXEC_ID: [row]},
+        resolve_store=lambda: store,
+    )
+
+    assert store.asked == ["k1"]
+    block = conn.of("tool_call_update")[0].content[0].content
+    assert block.type == "image"
+    assert block.mime_type == "image/png"
+    assert block.data == base64.b64encode(b"hello").decode()
+
+
+async def test_the_store_is_probed_only_when_a_row_carries_images():
+    """An S3 probe bought for a transcript with no images in it is a round
+    trip for nothing, so the thunk is the contract, not a nicety."""
+    probes: list[int] = []
+
+    def resolve():
+        probes.append(1)
+        return FakeStore({})
+
+    await replay(
+        FakeConn(),
+        "s1",
+        cell_history(),
+        subtools={EXEC_ID: [write_row()]},
+        resolve_store=resolve,
+    )
+    assert probes == []
+
+    rows = [
+        Row(id=1, tool="vision", result_kind="image", llm_images=[{"key": "a"}]),
+        Row(id=2, tool="vision", result_kind="image", llm_images=[{"key": "b"}]),
+    ]
+    await replay(
+        FakeConn(),
+        "s1",
+        cell_history(),
+        subtools={EXEC_ID: rows},
+        resolve_store=resolve,
+    )
+    # once for the whole replay, not once per row
+    assert probes == [1]
+
+
+async def test_a_missing_blob_warns_and_still_emits_the_call():
+    conn = FakeConn()
+    log = FakeLog()
+    row = Row(
+        id=9,
+        tool="vision",
+        result_kind="image",
+        llm_images=[{"key": "gone"}],
+    )
+    await replay(
+        conn,
+        "s1",
+        cell_history(),
+        log=log,
+        subtools={EXEC_ID: [row]},
+        resolve_store=lambda: FakeStore({}),
+    )
+
+    assert log.warnings == ["replay: image blob missing: gone"]
+    assert conn.of("tool_call_update")[0].status == "completed"
+    assert conn.of("tool_call_update")[0].content is None
+
+
+async def test_image_rows_without_a_store_say_so_rather_than_rendering_nothing_silently():
+    conn = FakeConn()
+    log = FakeLog()
+    row = Row(id=9, tool="vision", result_kind="image", llm_images=[{"key": "k"}])
+    await replay(conn, "s1", cell_history(), log=log, subtools={EXEC_ID: [row]})
+
+    assert log.warnings == [
+        "replay: subtool row 9 carries 1 image ref(s) but no image store was supplied"
+    ]
+    assert len(conn.of("tool_call")) == 2
+
+
+async def test_rows_keyed_on_another_call_do_not_leak_into_this_one():
+    conn = FakeConn()
+    sent = await replay(
+        conn, "s1", cell_history(), subtools={"call_some_other_turn": [write_row()]}
+    )
+
+    assert conn.kinds() == [
+        "user_message_chunk",
+        "tool_call",
+        "tool_call_update",
+        "agent_message_chunk",
+    ]
+    assert sent == 4
+
+
+async def test_an_orphaned_answer_still_replays_the_calls_its_cell_made():
+    """The assistant message carrying the call was never written, but the cell
+    ran and the register recorded what it touched — that is the part the user
+    cares about, and it is keyed on the answer's own id."""
+    conn = FakeConn()
+    history = [
+        {"role": "user", "content": "do it"},
+        tool_result("wrote /f", EXEC_ID),
+    ]
+    await replay(conn, "s1", history, subtools={EXEC_ID: [write_row()]})
+
+    assert conn.kinds() == [
+        "user_message_chunk",
+        "tool_call",
+        "tool_call",
+        "tool_call_update",
+        "tool_call_update",
+    ]
+    assert conn.of("tool_call")[1].tool_call_id == "replay/2/call_sub7037"
+
+
+async def test_two_replays_mint_the_same_in_cell_ids():
+    history = cell_history()
+    subtools = {EXEC_ID: [write_row(10), write_row(11)]}
+    first, second = FakeConn(), FakeConn()
+    await replay(first, "s1", history, subtools=subtools)
+    await replay(second, "s1", history, subtools=subtools)
+
+    ids = lambda c: [u.tool_call_id for u in c.updates if hasattr(u, "tool_call_id")]
+    assert ids(first) == ids(second)
+    assert "replay/2/call_sub10" in ids(first)
+
+
+# ---- the reader that supplies the mapping ----
+
+
+@pytest.fixture
+def register_db(tmp_path):
+    """A real sqlite db with real register rows, written the way the kernel's
+    write-through writes them: ``parent_tool_call_id`` is TurnCtx.tcid's
+    ``<turn_id>/<llm id>``, and the message history carries only the bare id.
+    """
+    db = f"sqlite:///{tmp_path / 'register.db'}"
+    create_database(db)
+    engine = get_engine(db)
+    with engine.begin() as conn:
+        for row in (
+            # two calls in one cell, ids out of insertion order on purpose
+            dict(id=21, session_id="s1", parent_tool_call_id="turn-1/call_A",
+                 tool="edit", result_kind="diff", status="completed", emitted=1),
+            dict(id=20, session_id="s1", parent_tool_call_id="turn-1/call_A",
+                 tool="write", result_kind="diff", status="completed", emitted=1),
+            dict(id=22, session_id="s1", parent_tool_call_id="turn-2/call_B",
+                 tool="fs", mode="read", result_kind="read", status="completed", emitted=0),
+            # no parent: a row nobody can attribute, skipped not crashed on
+            dict(id=23, session_id="s1", parent_tool_call_id=None,
+                 tool="write", result_kind="diff", status="completed", emitted=0),
+            dict(id=24, session_id="other", parent_tool_call_id="turn-9/call_A",
+                 tool="write", result_kind="diff", status="completed", emitted=0),
+        ):
+            conn.execute(SubtoolCall.__table__.insert().values(args={}, **row))
+    engine.dispose()
+    return db
+
+
+def test_the_reader_groups_on_the_persisted_llm_id(register_db):
+    engine = get_engine(register_db)
+    try:
+        grouped = subtool_calls_by_parent(engine, "s1")
+        assert set(grouped) == {"call_A", "call_B"}
+        # id order, which is the order the cell made the calls in
+        assert [r.id for r in grouped["call_A"]] == [20, 21]
+        assert [r.tool for r in grouped["call_A"]] == ["write", "edit"]
+        assert [r.id for r in grouped["call_B"]] == [22]
+        # a fork's wire id is its agent_id, and the rows carry the trunk's
+        # bare session id — both have to resolve to the same grouping
+        assert set(subtool_calls_by_parent(engine, "s1-2-2")) == {"call_A", "call_B"}
+        assert subtool_calls_by_parent(engine, "nope") == {}
+    finally:
+        engine.dispose()
+
+
+def test_the_reader_does_not_consume_the_queue(register_db):
+    """``emitted`` is the LIVE drain's claim marker. A replay that flipped it
+    would delete those calls from every future turn's wire, which is the one
+    way this read could do real damage."""
+    engine = get_engine(register_db)
+    try:
+        subtool_calls_by_parent(engine, "s1")
+        subtool_calls_by_parent(engine, "s1")
+        with engine.connect() as conn:
+            rows = conn.execute(
+                SubtoolCall.__table__.select().order_by(SubtoolCall.id)
+            ).all()
+        assert [(r.id, r.emitted) for r in rows] == [
+            (20, 1), (21, 1), (22, 0), (23, 0), (24, 0)
+        ]
+    finally:
+        engine.dispose()
