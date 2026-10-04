@@ -121,6 +121,7 @@ from crow_cli.memory import (
     wire_session_id,
 )
 from crow_cli.agent.react import react_loop
+from crow_cli.agent.replay import replay
 from crow_cli.agent.session import (
     AgentSession,
     get_session_by_cwd,
@@ -682,9 +683,19 @@ class AcpAgent(Agent):
                             )
                     self._config_values[session_id] = {"model": resolved}
 
-            # TODO: Replay conversation history to client
-
             await self._send_available_commands(session_id)
+            # Replay BEFORE answering: session/load's contract is that the
+            # client holds the conversation by the time the response arrives,
+            # and a client that resets its transcript on a switch has nothing
+            # to show until these notifications land. Same order as v2's
+            # resume — commands, then transcript, then the response.
+            if self._conn is not None:
+                await replay(
+                    self._conn,
+                    session_id,
+                    session.messages,
+                    self._session_loggers.get(session_id),
+                )
             config_options = self._get_config_options(session_id)
             return LoadSessionResponse(config_options=config_options)
         except Exception as e:
