@@ -1,0 +1,29 @@
+[package]
+name = "crow-web"
+version = "0.1.0"
+edition = "2021"
+description = "crow-web: the rust state server behind the crow web client (fs buffers, ptys)"
+license = "MIT"
+repository = "https://github.com/crow-cli/crow-cli"
+homepage = "https://crow-ai.dev"
+keywords = ["acp", "agent", "web", "editor", "terminal"]
+categories = ["development-tools"]
+
+# A member but NOT a default member: a bare `cargo build`/`cargo test` at the
+# repo root keeps building exactly the TUI it always did.
+[[bin]]
+name = "crow-web"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+axum = { version = "0.8", features = ["ws"] }
+futures = "0.3.34"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "io-util", "fs", "net", "time", "sync", "process"] }
+
+[dev-dependencies]
+# The websocket client for tests/fs_ws.rs, which drives the shipped binary over
+# a real socket — the same shape the browser uses.
+tokio-tungstenite = "0.29"
