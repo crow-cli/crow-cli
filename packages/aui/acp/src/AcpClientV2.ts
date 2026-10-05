@@ -199,6 +199,30 @@ function mapListSessions(raw: v2.ListSessionsResponse): AcpSessionListResult {
   };
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
+/** v1's renderer reads an execute cell's code from a fenced text content
+ * block; v2 puts the cell in `rawInput.code`. Re-synthesize the block so the
+ * v1-shaped downstream sees exactly what v1 would have sent. */
+const fencedCodeBlock = (code: string) => ({
+  type: "content",
+  content: { type: "text", text: `\`\`\`python\n${code}\n\`\`\`` },
+});
+
+/** v1's renderer reads an execute cell's output + exit code from a JSON
+ * envelope text block; v2 puts the same envelope in `rawOutput` as an object.
+ * Re-emit it as the text block the renderer already unwraps. */
+const outputEnvelopeBlock = (rawOutput: unknown) => {
+  if (isRecord(rawOutput) && typeof rawOutput.output === "string") {
+    return {
+      type: "content",
+      content: { type: "text", text: JSON.stringify(rawOutput) },
+    };
+  }
+  return undefined;
+};
+
 /**
  * The v2 client: same JSON-RPC transport as `AcpClient`, same
  * `AcpClientLike` surface for the controller, but the v2 wire dialect.
@@ -230,6 +254,14 @@ export class AcpClientV2 implements AcpClientLike {
   private readonly sessionUpdateListeners = new Set<AcpSessionUpdateListener>();
   private readonly connectionListeners = new Set<AcpConnectionListener>();
   private readonly promptWaiters: PromptWaiter[] = [];
+  /** v2's `tool_call_update` is an upsert: the create beat carries `rawInput`
+   * and `kind`, later beats (completion) carry only `content`/`rawOutput`.
+   * Remember the create fields so a later beat can still synthesize the
+   * v1-shaped fenced-code block. */
+  private readonly toolCallState = new Map<
+    string,
+    { rawInput?: unknown; isExecute?: boolean }
+  >();
 
   constructor(options: AcpClientOptions) {
     this.options = options;
@@ -707,16 +739,55 @@ export class AcpClientV2 implements AcpClientLike {
       | undefined;
     if (!params?.update) return;
     if (params.sessionId === this.loadingSessionId) return;
-    this.consumeTurnBoundary(params.update);
+    const update = this.mapSessionUpdate(params.update);
+    this.consumeTurnBoundary(update);
     for (const listener of [...this.sessionUpdateListeners]) {
       invokeUserCallback(
         "acp",
         "onSessionUpdate",
         listener,
         params.sessionId,
-        params.update,
+        update,
       );
     }
+  }
+
+  /** Normalize a v2 update into the v1 shape the controller and renderers
+   * already read. Most v2 updates are field-identical to their v1 cousins; the
+   * one that is not is `tool_call_update`, where crow's execute tool moved the
+   * cell and its output from content blocks into `rawInput`/`rawOutput`. */
+  private mapSessionUpdate(update: AcpSessionUpdate): AcpSessionUpdate {
+    if ((update as { sessionUpdate?: string }).sessionUpdate === "tool_call_update") {
+      return this.mapToolCallUpdate(update as any) as AcpSessionUpdate;
+    }
+    return update;
+  }
+
+  private mapToolCallUpdate(raw: any): any {
+    const id = raw.toolCallId as string | undefined;
+    const previous = typeof id === "string" ? this.toolCallState.get(id) : undefined;
+    const next = { ...previous };
+    if (raw.rawInput !== undefined) next.rawInput = raw.rawInput;
+    else if (raw.rawInput === null) next.rawInput = undefined;
+    if (raw.kind === "execute" || raw.name === "execute") next.isExecute = true;
+    if (typeof id === "string") this.toolCallState.set(id, next);
+
+    const rawInput = next.rawInput;
+    const code =
+      next.isExecute &&
+      isRecord(rawInput) &&
+      typeof rawInput.code === "string" &&
+      rawInput.code.length > 0
+        ? rawInput.code
+        : undefined;
+    const envelope = outputEnvelopeBlock(raw.rawOutput);
+    if (code === undefined && envelope === undefined && raw.content === undefined) {
+      return raw;
+    }
+    const content = raw.content != null ? [...raw.content] : [];
+    if (code !== undefined) content.unshift(fencedCodeBlock(code));
+    if (envelope !== undefined) content.push(envelope);
+    return { ...raw, content };
   }
 
   private consumeTurnBoundary(update: AcpSessionUpdate): void {
