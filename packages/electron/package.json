@@ -1,0 +1,13 @@
+{
+  "name": "crow-electron",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron shell that wraps the crow-web binary",
+  "main": "main.cjs",
+  "scripts": {
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0"
+  }
+}
