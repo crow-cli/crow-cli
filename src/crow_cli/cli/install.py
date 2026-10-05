@@ -1,4 +1,4 @@
-"""Install commands for Crow Desktop IDE."""
+"""Install commands: Crow Desktop IDE, and the crow-web tier."""
 
 import platform
 import subprocess
@@ -19,8 +19,12 @@ from rich.progress import (
     TransferSpeedColumn,
 )
 
-app = typer.Typer(help="Install Crow Desktop IDE")
+from crow_cli.cli.install_web import install_web
+
+app = typer.Typer(help="Install Crow Desktop IDE and the crow-web tier")
 console = Console()
+
+app.command(name="web")(install_web)
 
 GITHUB_REPO = "odellus/sidex"
 API_BASE = f"https://api.github.com/repos/{GITHUB_REPO}"
