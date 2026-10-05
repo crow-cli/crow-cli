@@ -16,10 +16,6 @@ declare const unknownVariant: unique symbol;
  */
 export type UnknownVariant<T> = T & { readonly [unknownVariant]: true };
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-type ClientOptions = {
-  baseUrl: `${string}://${string}` | (string & {});
-};
 
 /**
  * A JSON-RPC request object.

@@ -23,7 +23,9 @@ export {
   autoAllowPermissionHandler,
   cancelPermissionHandler,
 } from "./AcpClient";
+export { AcpClientV2 } from "./AcpClientV2";
 export type {
+  AcpClientLike,
   AcpClientOptions,
   AcpConnectionListener,
   AcpPermissionHandler,
