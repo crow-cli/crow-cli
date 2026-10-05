@@ -9,12 +9,17 @@ import {
   useIsMarkdownCodeBlock,
 } from "@assistant-ui/react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import { type FC, memo, useMemo, useRef } from "react";
 import type { TextMessagePartProps } from "@assistant-ui/react";
 import { CheckIcon, CopyIcon } from "lucide-react";
 
 import { TooltipIconButton } from "@/components/assistant-ui/elements/tooltip-icon-button";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
+import { MermaidDiagram } from "@/components/assistant-ui/elements/mermaid-diagram";
+import { preprocessMath } from "@/lib/markdown-math";
 import { CodeHighlighter } from "@/lib/syntax-highlighter";
 import { cn } from "@/lib/utils";
 
@@ -50,10 +55,14 @@ const MarkdownTextImpl: FC<MarkdownTextProps> = ({ components }) => {
 
   return (
     <MarkdownTextPrimitive
-      remarkPlugins={[remarkGfm]}
-      className="aui-md"
+      remarkPlugins={[remarkGfm, remarkMath]}
+      rehypePlugins={[rehypeKatex]}
+      preprocess={preprocessMath}
+      componentsByLanguage={{ mermaid: { SyntaxHighlighter: MermaidDiagram } }}
+      className="aui-md [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden [&_.katex-display]:py-1"
       components={markdownComponents}
       smooth={false}
+      defer
     />
   );
 };

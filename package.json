@@ -11,6 +11,7 @@
     "web:build": "bun run --filter @crow/chat build",
     "web:dev": "bun run --filter @crow/chat dev",
     "web:typecheck": "bun run --filter @crow/chat typecheck",
+    "web:test": "bun run --filter @crow/chat test",
     "web:watch": "bun run --filter @crow/chat build:watch"
   }
 }
