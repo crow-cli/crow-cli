@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::{broadcast, mpsc};
 
-use crate::fs::{Buffers, FileView};
+use crate::fs::{Buffers, Entry, EntryKind, FileView, Tree};
 
 /// Everything the server sends, in one flat envelope: a reply carries the
 /// request's `id`, an event does not.
@@ -95,6 +95,8 @@ pub enum Op {
     Delete,
     /// Serve a different directory: swap the root and rebroadcast ``hello``.
     Reroot,
+    /// List an absolute directory (the cwd picker browses outside the root).
+    Browse,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -126,7 +128,6 @@ pub struct Fs {
 
 struct FsState {
     root: String,
-    parent: Option<String>,
     buffers: Buffers,
 }
 
@@ -137,12 +138,10 @@ impl Fs {
             return Err(anyhow!("{} is not a directory", root.display()));
         }
         let root_str = root.display().to_string();
-        let parent = root.parent().map(|p| p.display().to_string());
         let (events, _) = broadcast::channel(256);
         Ok(Self {
             state: Arc::new(RwLock::new(FsState {
                 root: root_str,
-                parent,
                 buffers: Buffers::new(root)?,
             })),
             events,
@@ -152,11 +151,6 @@ impl Fs {
 
     pub fn root(&self) -> String {
         self.read().root.clone()
-    }
-
-    /// The canonical parent of the served root, for "go up" — ``None`` at `/`.
-    pub fn parent(&self) -> Option<String> {
-        self.read().parent.clone()
     }
 
     fn read(&self) -> std::sync::RwLockReadGuard<'_, FsState> {
@@ -187,18 +181,16 @@ impl Fs {
             return Err(anyhow!("{raw} is not a directory"));
         }
         let root_str = root.display().to_string();
-        let parent = root.parent().map(|p| p.display().to_string());
         let buffers = Buffers::new(root)?;
         let mut state = self.write();
         state.root = root_str;
-        state.parent = parent;
         state.buffers = buffers;
         Ok(())
     }
 
-    /// What a fresh socket is told before it asks anything: the root, its
-    /// parent (for "go up"), and every buffer the server is still holding —
-    /// which is how a reloaded page finds work left dirty, not localStorage.
+    /// What a fresh socket is told before it asks anything: the root, and
+    /// every buffer the server is still holding — which is how a reloaded
+    /// page finds work left dirty, not localStorage.
     fn hello(&self) -> Out {
         let state = self.read();
         let views: Vec<FileView> = state
@@ -207,10 +199,7 @@ impl Fs {
             .iter()
             .filter_map(|path| state.buffers.view_of(path).ok().flatten())
             .collect();
-        Out::event(
-            "hello",
-            json!({ "root": state.root, "parent": state.parent, "buffers": views }),
-        )
+        Out::event("hello", json!({ "root": state.root, "buffers": views }))
     }
 }
 
@@ -218,15 +207,24 @@ impl Fs {
 /// registry lock is never held across an await.
 fn run(fs: &Fs, client: u64, req: Request) -> Out {
     let id = req.id;
-    if req.op == Op::Reroot {
-        return match fs.reroot(&req.path) {
-            Ok(()) => {
-                let hello = fs.hello();
-                fs.publish(hello);
-                Out::ok(id, json!({ "root": fs.root() }))
+    match req.op {
+        Op::Reroot => {
+            return match fs.reroot(&req.path) {
+                Ok(()) => {
+                    let hello = fs.hello();
+                    fs.publish(hello);
+                    Out::ok(id, json!({ "root": fs.root() }))
+                }
+                Err(e) => Out::err(id, format!("{e:#}")),
+            };
+        }
+        Op::Browse => {
+            return match browse(&req.path) {
+                Ok(tree) => Out::ok(id, json!(tree)),
+                Err(e) => Out::err(id, format!("{e:#}")),
             }
-            Err(e) => Out::err(id, format!("{e:#}")),
-        };
+        }
+        _ => {}
     }
     match dispatch(fs, client, &req) {
         Ok((reply, events)) => {
@@ -286,9 +284,67 @@ fn dispatch(fs: &Fs, client: u64, req: &Request) -> Result<(Value, Vec<Out>)> {
             buffers.delete(path)?;
             Ok((json!({ "path": path }), vec![moved("delete", path, None)]))
         }
-        // Reroot is intercepted in `run` before dispatch.
-        Op::Reroot => unreachable!("reroot is handled in run()"),
+        // Reroot and browse are intercepted in `run` before dispatch.
+        Op::Reroot | Op::Browse => unreachable!("handled in run()"),
     }
+}
+
+/// Lists an absolute directory without touching the served root — the cwd
+/// picker's browsing surface. It returns the same [`Tree`] shape `tree` does,
+/// but with absolute paths, and with `dirty` always false (the picker is not
+/// looking at this tree's buffers).
+fn browse(path: &str) -> Result<Tree> {
+    let dir = PathBuf::from(path)
+        .canonicalize()
+        .map_err(|e| anyhow!("cannot resolve {path}: {e}"))?;
+    if !dir.is_dir() {
+        return Err(anyhow!("{path} is not a directory"));
+    }
+    let mut entries = Vec::new();
+    for entry in std::fs::read_dir(&dir).with_context(|| format!("list {}", dir.display()))? {
+        let entry = entry.with_context(|| format!("list {}", dir.display()))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let abs = dir.join(&name);
+        // metadata() follows symlinks; a dangling one falls back to lstat.
+        let meta = std::fs::metadata(&abs).or_else(|_| std::fs::symlink_metadata(&abs));
+        let (kind, size, mtime) = match meta {
+            Ok(meta) if meta.is_dir() => (EntryKind::Dir, None, mtime_of(meta.modified().ok())),
+            Ok(meta) => (
+                EntryKind::File,
+                Some(meta.len()),
+                mtime_of(meta.modified().ok()),
+            ),
+            Err(_) => (EntryKind::File, None, None),
+        };
+        entries.push(Entry {
+            name,
+            path: abs.display().to_string(),
+            kind,
+            size,
+            mtime,
+            dirty: false,
+        });
+    }
+    entries.sort_by_key(|entry| {
+        (
+            entry.kind == EntryKind::File,
+            entry.name.to_lowercase(),
+            entry.name.clone(),
+        )
+    });
+    Ok(Tree {
+        path: dir.display().to_string(),
+        entries,
+    })
+}
+
+fn mtime_of(mtime: Option<std::time::SystemTime>) -> Option<i64> {
+    Some(
+        mtime?
+            .duration_since(std::time::SystemTime::UNIX_EPOCH)
+            .ok()?
+            .as_millis() as i64,
+    )
 }
 
 /// The tree-invalidation push: `kind` says what happened, `path` says where,
@@ -770,10 +826,6 @@ mod tests {
         );
         assert_eq!(reply["ok"]["root"].as_str(), Some(target.as_str()));
         assert_eq!(fs.root(), target);
-        assert_eq!(
-            fs.parent(),
-            other.path.parent().map(|p| p.display().to_string())
-        );
         assert!(
             fs.write().buffers.open_paths().is_empty(),
             "a re-root is a new workspace, not a rename"
@@ -801,6 +853,49 @@ mod tests {
         );
         assert!(
             err["error"].as_str().unwrap().contains("not a directory"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn browse_lists_an_absolute_directory_without_touching_the_root() {
+        let (root, fs) = server("browse");
+        root.put("inside.txt", "inside");
+        let other = TempRoot::new("browse-target");
+        other.put("a.txt", "a");
+        other.put("sub/b.txt", "b");
+
+        let target = other.path.canonicalize().unwrap().display().to_string();
+        let reply = call(
+            &fs,
+            1,
+            &format!(r#"{{"id":1,"op":"browse","path":"{target}"}}"#),
+        );
+        assert_eq!(reply["ok"]["path"].as_str(), Some(target.as_str()));
+        let names: Vec<&str> = reply["ok"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["sub", "a.txt"], "directories first");
+        let paths: Vec<&str> = reply["ok"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["path"].as_str().unwrap())
+            .collect();
+        assert!(paths.iter().all(|p| p.starts_with(&target)), "{paths:?}");
+
+        // Browsing is non-destructive: the served root never moved.
+        assert_eq!(
+            fs.root(),
+            root.path.canonicalize().unwrap().display().to_string()
+        );
+
+        let err = call(&fs, 1, r#"{"id":2,"op":"browse","path":"/no/such/dir"}"#);
+        assert!(
+            err["error"].as_str().unwrap().contains("cannot resolve"),
             "{err}"
         );
     }

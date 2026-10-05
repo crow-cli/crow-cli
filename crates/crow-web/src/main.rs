@@ -62,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
     let args = parse_args(std::env::args())?;
     let root = args.root.canonicalize()?;
     let fs = ws::Fs::new(root.clone())?;
-    let pty = pty::Config::new(root, args.shell);
+    let pty = pty::Config::new(fs.clone(), args.shell);
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .merge(ws::router(fs.clone()))

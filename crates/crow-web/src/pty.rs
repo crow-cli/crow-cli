@@ -40,24 +40,33 @@ pub const DEFAULT_COLS: u16 = 80;
 pub const DEFAULT_ROWS: u16 = 24;
 
 /// What shells are spawned into. One per server, shared by every connection.
-#[derive(Clone, Debug)]
+///
+/// The cwd is read from the `/fs` state at spawn time, not baked in: when a
+/// re-root moves the served tree, the *next* terminal tab starts there. A
+/// shell that is already running stays where it was born — the same rule as a
+/// real terminal's "cd" being per-shell, never global.
+#[derive(Clone)]
 pub struct Config {
     shell: String,
-    cwd: PathBuf,
+    fs: crate::ws::Fs,
 }
 
 impl Config {
     /// `shell` falls back to `$SHELL`, then to bash: under a systemd unit
     /// there is no `$SHELL`, and failing at spawn time per connection would be
     /// a worse answer than starting the shell the machine has.
-    pub fn new(cwd: PathBuf, shell: Option<String>) -> Self {
+    pub fn new(fs: crate::ws::Fs, shell: Option<String>) -> Self {
         let shell = shell
             .unwrap_or_else(|| std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string()));
-        Self { shell, cwd }
+        Self { shell, fs }
     }
 
     pub fn shell(&self) -> &str {
         &self.shell
+    }
+
+    fn cwd(&self) -> PathBuf {
+        PathBuf::from(self.fs.root())
     }
 }
 
@@ -132,13 +141,13 @@ impl Session {
             })
             .context("openpty")?;
         let mut command = CommandBuilder::new(&config.shell);
-        command.cwd(&config.cwd);
+        command.cwd(config.cwd());
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
         let child = pair
             .slave
             .spawn_command(command)
-            .with_context(|| format!("spawn {} in {}", config.shell, config.cwd.display()))?;
+            .with_context(|| format!("spawn {} in {}", config.shell, config.cwd().display()))?;
         let pid = child.process_id();
 
         let (out_tx, out_rx) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -333,7 +342,8 @@ mod tests {
     /// `/bin/sh`, not `$SHELL`: no rc files, no prompt themes, no surprises.
     fn config(name: &str) -> (PathBuf, Config) {
         let root = temp_root(name);
-        let config = Config::new(root.clone(), Some("/bin/sh".to_string()));
+        let fs = crate::ws::Fs::new(root.clone()).expect("fs state");
+        let config = Config::new(fs, Some("/bin/sh".to_string()));
         (root, config)
     }
 
@@ -462,8 +472,8 @@ mod tests {
 
     #[tokio::test]
     async fn spawn_reports_a_shell_that_is_not_there() {
-        let (_root, config) = config("noshell");
-        let config = Config::new(config.cwd.clone(), Some("/nonexistent/shell".to_string()));
+        let fs = crate::ws::Fs::new(std::env::temp_dir()).expect("fs state");
+        let config = Config::new(fs, Some("/nonexistent/shell".to_string()));
         let err = match Session::spawn(&config, 80, 24) {
             Ok(_) => panic!("a shell that is not there should not spawn"),
             Err(e) => e.to_string(),
@@ -473,9 +483,10 @@ mod tests {
 
     #[test]
     fn config_falls_back_to_the_environment_then_bash() {
-        let explicit = Config::new("/tmp".into(), Some("/bin/zsh".to_string()));
+        let fs = crate::ws::Fs::new("/tmp".into()).expect("fs state");
+        let explicit = Config::new(fs.clone(), Some("/bin/zsh".to_string()));
         assert_eq!(explicit.shell(), "/bin/zsh");
-        let from_env = Config::new("/tmp".into(), None);
+        let from_env = Config::new(fs, None);
         let expected = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
         assert_eq!(from_env.shell(), expected);
     }
