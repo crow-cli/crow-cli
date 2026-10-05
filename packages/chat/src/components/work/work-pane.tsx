@@ -7,9 +7,9 @@ import {
   FilePlusIcon,
   PanelBottomCloseIcon,
   PanelBottomOpenIcon,
-  PanelLeftIcon,
-  PanelLeftOpenIcon,
   PanelRightCloseIcon,
+  PanelRightIcon,
+  PanelRightOpenIcon,
 } from "lucide-react";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 import { CodeEditor, languageOfPath } from "@crow/editor";
@@ -135,9 +135,9 @@ export function WorkPane() {
           onClick={toggleExplorer}
         >
           {explorerHidden ? (
-            <PanelLeftOpenIcon className="size-4" />
+            <PanelRightOpenIcon className="size-4" />
           ) : (
-            <PanelLeftIcon className="size-4" />
+            <PanelRightIcon className="size-4" />
           )}
         </Button>
         <OpenPath />
@@ -167,18 +167,6 @@ export function WorkPane() {
               defaultLayout={inner ?? DEFAULT_INNER}
               onLayoutChanged={(next, meta) => setInner(meta.requestedLayout ?? next)}
             >
-              <ResizablePanel
-                id="explorer"
-                collapsible
-                collapsedSize={0}
-                minSize="22"
-                maxSize="60"
-                panelRef={explorerRef}
-                className="min-w-0"
-              >
-                <Explorer />
-              </ResizablePanel>
-              <ResizableHandle />
               <ResizablePanel id="editor" minSize="30" className="min-w-0">
                 <div className="flex h-full min-h-0 flex-col">
                   <EditorTabs />
@@ -198,6 +186,18 @@ export function WorkPane() {
                     )}
                   </div>
                 </div>
+              </ResizablePanel>
+              <ResizableHandle />
+              <ResizablePanel
+                id="explorer"
+                collapsible
+                collapsedSize={0}
+                minSize="22"
+                maxSize="60"
+                panelRef={explorerRef}
+                className="min-w-0"
+              >
+                <Explorer />
               </ResizablePanel>
             </ResizablePanelGroup>
           </ResizablePanel>
