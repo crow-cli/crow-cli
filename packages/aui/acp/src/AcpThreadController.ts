@@ -8,7 +8,7 @@ import {
   type ThreadMessageLike,
 } from "@assistant-ui/core";
 import { invokeUserCallback } from "@assistant-ui/core/internal";
-import { autoAllowPermissionHandler, type AcpClient } from "./AcpClient";
+import { autoAllowPermissionHandler, type AcpClientLike } from "./AcpClient";
 import {
   filterPromptBlocks,
   resolvePermissionOutcome,
@@ -36,7 +36,7 @@ import type {
 export type AcpPermissionsMode = "ask" | "auto-allow";
 
 export type AcpThreadControllerOptions = {
-  client: AcpClient;
+  client: AcpClientLike;
   permissions?: AcpPermissionsMode | undefined;
   autoConnect?: boolean | undefined;
   /**
@@ -120,7 +120,7 @@ export class AcpThreadController implements AcpThreadControllerLike {
   private state: AcpThreadState;
   private readonly listeners = new Set<() => void>();
   private readonly pendingPermissions = new Map<string, PendingPermission>();
-  private client: AcpClient;
+  private client: AcpClientLike;
   private permissionsMode: AcpPermissionsMode;
   private autoConnect: boolean;
   private restoreOnConnect: boolean;

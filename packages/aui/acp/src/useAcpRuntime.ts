@@ -33,10 +33,12 @@ import {
 import { invokeUserCallback } from "@assistant-ui/core/internal";
 import {
   AcpClient,
+  type AcpClientLike,
   type AcpClientOptions,
   type AcpWebSocketFactory,
   type AcpWebSocketLike,
 } from "./AcpClient";
+import { AcpClientV2 } from "./AcpClientV2";
 import {
   AcpThreadController,
   type AcpPermissionsMode,
@@ -49,7 +51,13 @@ import type { AcpImplementation, AcpMcpServer, AcpSessionInfo } from "./types";
 
 export type UseAcpRuntimeOptions = ExternalStoreSharedOptions & {
   /** Pre-built ACP client instance. Provide this OR `url`. */
-  client?: AcpClient;
+  client?: AcpClientLike;
+  /**
+   * Which protocol to speak: `1` (v1 `AcpClient`), `2` (v2 `AcpClientV2`), or
+   * `"auto"` (default) — v2 when the URL looks like the `acp2 --http` endpoint
+   * (`:2771` or `acp2`), v1 otherwise. Ignored when `client` is provided.
+   */
+  protocol?: "auto" | 1 | 2;
   /** WebSocket endpoint of the ACP agent, e.g. `ws://127.0.0.1:2770/`. */
   url?: string;
   /**
@@ -111,9 +119,16 @@ type ManagedAcpClientOptions = Pick<
   "url" | "cwd" | "mcpServers" | "clientInfo"
 >;
 
+/** `"auto"` protocol choice: v2 for the `acp2 --http` endpoint, v1 otherwise. */
+const wantsV2 = (options: UseAcpRuntimeOptions): boolean => {
+  if (options.protocol === 2) return true;
+  if (options.protocol === 1) return false;
+  return /(acp2|:2771\b)/.test(options.url ?? "");
+};
+
 type AcpRegistry = {
   readonly key: string;
-  readonly client: AcpClient;
+  readonly client: AcpClientLike;
   readonly controller: AcpThreadController;
   activate(): void;
   release(): void;
@@ -121,7 +136,7 @@ type AcpRegistry = {
 
 const createRegistry = (
   key: string,
-  client: AcpClient,
+  client: AcpClientLike,
   ownsClient: boolean,
 ): AcpRegistry => {
   let disposeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -197,17 +212,19 @@ export function useAcpRuntime(options: UseAcpRuntimeOptions): AssistantRuntime {
   const managedClientOptions = externalClient
     ? undefined
     : buildManagedClientOptions(options);
+  const useV2 = !externalClient && wantsV2(options);
   const registryKey = externalClient
     ? "external"
-    : JSON.stringify(managedClientOptions);
+    : JSON.stringify({ ...managedClientOptions, v2: useV2 });
 
-  const createRegistryClient = () =>
-    externalClient
-      ? externalClient
-      : new AcpClient({
-          ...managedClientOptions!,
-          webSocketFactory: stableWebSocketFactory,
-        });
+  const createRegistryClient = (): AcpClientLike => {
+    if (externalClient) return externalClient;
+    const managed = {
+      ...managedClientOptions!,
+      webSocketFactory: stableWebSocketFactory,
+    };
+    return useV2 ? new AcpClientV2(managed) : new AcpClient(managed);
+  };
 
   const ownsClient = !externalClient;
 
