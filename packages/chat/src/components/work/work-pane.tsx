@@ -29,7 +29,6 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { useColorScheme } from "@/lib/theme";
 import {
   DEFAULT_INNER,
   DEFAULT_VERT,
@@ -65,8 +64,6 @@ export function WorkPane() {
   const attachTermPanel = useWorkStore((s) => s.attachTermPanel);
   const termHidden = useWorkStore((s) => s.termCollapsed);
   const toggleTerm = useWorkStore((s) => s.toggleTerm);
-  const scheme = useColorScheme();
-
   const explorerRef = useCallback(
     (handle: PanelImperativeHandle | null) => attachExplorerPanel(handle),
     [attachExplorerPanel],
@@ -177,7 +174,6 @@ export function WorkPane() {
                         language={languageOfPath(active)}
                         value={buffer.content}
                         rev={buffer.rev}
-                        scheme={scheme}
                         onChange={(content) => edit(active, content)}
                         onSave={() => void save(active)}
                       />

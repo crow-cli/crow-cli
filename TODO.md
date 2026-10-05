@@ -1,51 +1,34 @@
-# TODO — M6: ACP v2 wire layer in the web frontend
+# TODO — Web build, editor themes, and the Electron GUI
 
 ## **DO NOT ASK USER FOR FEEDBACK — THIS IS THE USER FEEDBACK.**
 ## **DO NOT ASK USER FOR NEXT STEPS — THESE ARE THE NEXT STEPS.**
 
-Sprint: M6 (ACP v2) in the vendored `@assistant-ui/acp` package. Backend v2 is
-already merged (`acp2 --http`, commit `3fcf7fd7`). This is the frontend client
-half: a NEW code path for protocol version 2, leaving v1 `AcpClient` intact.
-
-**COMPLETE — all items verified.** Evidence below; see PLAN.md for the phase
-trajectory.
+Sprint: turn the embedded `crow-web` binary into a clean desktop GUI and give the
+editor real themes (not just dark vs light). Repo root = MAIN
+(`~/.agents/crow/src/crow-cli`).
 
 ## Items (unordered)
 
-- [x] Add v2 reducer arms (`state_update`, `user_message`, `agent_message`,
-      `agent_thought`, `tool_call_content_chunk`) — `9a4ad3fc`.
-- [x] Commit the reducer/types/AcpClientLike work as one coherent unit —
-      `9a4ad3fc` `feat(acp): add v2 reducer arms, session-update types, and AcpClientLike`.
-- [x] `AcpClientV2` (new file, never touching v1 `AcpClient`) —
-      `1a7d445f`:
-      - `initialize` sends `{ protocolVersion: 2, info }` (NOT `clientInfo`).
-      - `prompt()` resolves on the matching idle `state_update` (or cancel),
-        NOT the `session/prompt` ack — v2 `PromptResponse` is only `{messageId}`.
-      - `session/new`, `session/list`, `session/resume` (replaces `session/load`),
-        `session/set_config_option` with `{sessionId, configId, value, type}`.
-      - `session/delete` and `session/close` per v2 capability surface.
-      - routes `state_update` into controller run-end handling.
-      - cancel via `session/cancel` notification.
-      - maps v2 `InitializeResponse`/`NewSessionResponse`/`ResumeSessionResponse`
-        to the v1-shaped `AcpInitializeResponse`/`AcpSessionResponse` the
-        controller already consumes.
-- [x] Negotiate/probe v1 vs v2: choose `AcpClientV2` for `acp2 --http` (`:2771`)
-      or when `protocol` option says 2; otherwise keep `AcpClient` v1 —
-      `33db5ddc` (useAcpRuntime `protocol?: "auto" | 1 | 2`, `wantsV2`).
-- [x] `AcpThreadController` + `useAcpRuntime` accept `AcpClientLike` instead of
-      concrete `AcpClient` — `33db5ddc`.
-- [x] Verify: `bun run web:typecheck` exit 0, `bun run web:build` exit 0,
-      `cargo test -p crow-web` passes (64 tests), backend `uv run pytest
-      tests/integration/test_acp2_http.py` passes (1 test). All green this sprint.
-- [x] Commit v2 client + negotiation + controller rewiring (Session-Id trailer)
-      — `1a7d445f` + `33db5ddc`.
+- [x] Push main (the ACP v2 execute fix) — `a92fc4a3` → origin/main.
+- [x] Confirm `crow-cli install web` is already wired
+      (`src/crow_cli/cli/install_web.py`): `bun install` → `bun run web:build`
+      → `cargo build --release -p crow-web` → `~/.local/bin/crow-web` + systemd
+      user unit. Verify with `crow-cli install web --help`.
+- [x] Editor theming: CodeMirror editor follows the app theme (latte/mocha/
+      macchiato) by building its highlight style from the `--code-*` token
+      variables instead of hardcoded `oneDark`/`defaultHighlightStyle`.
+      Verify: `bun run web:typecheck` + `bun run web:build` exit 0; live browser
+      shows editor token colours change with the theme dropdown.
+- [ ] Electron shell: `packages/electron` (standalone, NOT a workspace member)
+      whose main process spawns the `crow-web` binary (embedded SPA) and loads
+      its loopback URL in a BrowserWindow. Pure spawn/parse logic in
+      `launcher.cjs`, unit-tested with `bun test`.
+      Verify: `bun test` green, `node --check main.cjs` clean.
+- [ ] `crow-cli install gui`: build SPA + crow-web (reuse the web build), install
+      the Electron app + a `~/.local/bin/crow-gui` launcher + a `.desktop` entry.
+      Verify: `crow-cli install gui --help` lists it; `--dry-run` reaches the
+      copy/launcher steps without downloading electron.
+- [ ] Remove the `install desktop` / `install check` cruft that downloads
+      `odellus/sidex` (a different repo) — the real GUI install replaces it.
 
-## Verification criteria (the floor for every item)
-
-- [x] `bun run web:typecheck` exit 0 (from MAIN).
-- [x] `bun run web:build` exit 0 (from MAIN).
-- [x] `cargo test -p crow-web` passes — 64 passed, 0 failed.
-- [x] `uv run pytest tests/integration/test_acp2_http.py` passes — 1 passed.
-- [x] v1 `AcpClient.ts` behavior is unchanged — diff `9cdd623a..HEAD` on
-      `AcpClient.ts` is purely additive (the `AcpClientLike` type export); no
-      edits to v1 request/response logic.
+**Floor gates (every item):** `bun run web:typecheck` + `bun run web:build` PASS.

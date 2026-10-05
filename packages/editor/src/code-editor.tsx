@@ -6,6 +6,9 @@
  * It is deliberately not a controlled component. CodeMirror owns the document
  * while you type; React hands it a new one only when `rev` moves, which the
  * store bumps solely for changes that came from somewhere else.
+ *
+ * The theme is `editorTheme`, driven entirely by the app's CSS variables, so
+ * switching the app theme recolors the editor without a reconfigure.
  */
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { Compartment, EditorState } from "@codemirror/state";
@@ -19,8 +22,7 @@ import {
 } from "@codemirror/view";
 import { useEffect, useRef } from "react";
 import { loadLanguageExtension, normalizeLanguage } from "./language";
-import { getThemeExtensions } from "./theme";
-import type { ColorScheme } from "./theme";
+import { editorTheme } from "./theme";
 
 export type CodeEditorProps = {
   language: string;
@@ -28,20 +30,18 @@ export type CodeEditorProps = {
   value: string;
   /** Moves only when the content changed somewhere other than this editor. */
   rev: number;
-  scheme: ColorScheme;
   onChange: (content: string) => void;
   onSave: () => void;
 };
 
-export function CodeEditor({ language, value, rev, scheme, onChange, onSave }: CodeEditorProps) {
+export function CodeEditor({ language, value, rev, onChange, onSave }: CodeEditorProps) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const langSlot = useRef(new Compartment());
-  const themeSlot = useRef(new Compartment());
   // What CodeMirror holds, so an echo of our own write can be told apart from
   // somebody else's without asking the store.
   const doc = useRef(value);
-  const initial = useRef({ scheme, value });
+  const initial = useRef({ value });
   const change = useRef(onChange);
   const save = useRef(onSave);
   change.current = onChange;
@@ -87,7 +87,7 @@ export function CodeEditor({ language, value, rev, scheme, onChange, onSave }: C
           highlightActiveLine(),
           highlightActiveLineGutter(),
           drawSelection(),
-          themeSlot.current.of(getThemeExtensions(initial.current.scheme)),
+          editorTheme,
           langSlot.current.of([]),
         ],
       }),
@@ -111,12 +111,6 @@ export function CodeEditor({ language, value, rev, scheme, onChange, onSave }: C
       cancelled = true;
     };
   }, [language]);
-
-  useEffect(() => {
-    view.current?.dispatch({
-      effects: themeSlot.current.reconfigure(getThemeExtensions(scheme)),
-    });
-  }, [scheme]);
 
   useEffect(() => {
     const editor = view.current;

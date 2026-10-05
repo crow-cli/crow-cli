@@ -12,4 +12,4 @@ export {
   getLanguageCandidates,
   loadLanguageExtension,
 } from "./language";
-export { baseTheme, getThemeExtensions, type ColorScheme } from "./theme";
+export { baseTheme, editorTheme, highlightStyle } from "./theme";

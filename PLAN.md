@@ -1,64 +1,75 @@
-# PLAN — M6: ACP v2 frontend client path
+# PLAN — Web → GUI (install web walkthrough, editor themes, Electron shell)
 
 ## **DO NOT ASK USER FOR FEEDBACK — THIS IS THE USER FEEDBACK.**
 ## **DO NOT ASK USER FOR NEXT STEPS — THESE ARE THE NEXT STEPS.**
 
 Scope capture: `TODO.md`. Repo root = MAIN (`~/.agents/crow/src/crow-cli`).
 
-**Gate (floor for every item):** `bun run web:typecheck` — PASS
-**Gate (before declaring the phase done):** `bun run web:build` — PASS
-**Backend regression:** `uv run pytest tests/integration/test_acp2_http.py` — PASS (1 passed)
-**Rust regression:** `cargo test -p crow-web` — PASS (64 passed)
+**Gates (floor for every item):**
+- `bun run web:typecheck` — PASS
+- `bun run web:build` — PASS
+- `cargo test -p crow-web` — PASS (unchanged, unless crow-web touched)
+- `uv run pytest tests/unit -q` — PASS (unchanged, unless install_web/install touched)
 
-Trajectory is numeric: 1 → 2 → 3 → 4. Committed at each phase boundary with the
+Trajectory is numeric: 1 → 2 → 3 → 4. Commit at each phase boundary with the
 `Session-Id:` trailer.
 
 ---
 
-## Phase 1 — commit the reducer/types/AcpClientLike groundwork — DONE
+## Phase 1 — confirm `install web` is wired — (no code change)
 
-1. `git status` + `git diff` confirmed the only changes were
-   `packages/aui/acp/src/types.ts`, `acpThreadState.ts`, `AcpClient.ts`, and the
-   untracked `v2/` files.
-2. `bun run web:typecheck` green.
-3. Committed — `9a4ad3fc` `feat(acp): add v2 reducer arms, session-update types, and AcpClientLike`.
+1. Explain the build pipeline in the chat response:
+   - `bun install` (workspace)
+   - `bun run web:build` → `@crow/chat` `tsc -b && vite build` → `packages/chat/dist`
+   - `cargo build --release -p crow-web` → embeds `packages/chat/dist` via
+     `rust-embed` (or reads it from disk under the `dev-web` feature)
+   - binary → `~/.local/bin/crow-web` + `systemd --user` unit
+2. Verify: `uv run crow-cli install web --help` prints the command and options.
+3. Mark TODO item done; no commit.
 
-## Phase 2 — implement `AcpClientV2` — DONE
+## Phase 2 — editor theming (latte/mocha/macchiato)
 
-1. New file `packages/aui/acp/src/AcpClientV2.ts`, sharing the JSON-RPC plumbing
-   shape of v1 but with v2 request/response shapes.
-2. `initialize` → `{ protocolVersion: 2, info }`; maps `info`→`agentInfo`,
-   `capabilities`→`agentCapabilities`.
-3. `session/new` → `{ cwd, mcpServers }` → `{ sessionId, configOptions }`.
-4. `session/list` → `{ cwd?, cursor? }` → `{ sessions, nextCursor }`.
-5. `session/resume` → `{ sessionId, cwd, mcpServers, replayFrom: {type:"start"} }`
-   → `{ configOptions }` (replaces v1 `session/load`).
-6. `session/set_config_option` → `{ sessionId, configId, value, type: "id" }`
-   → `{ configOptions }`.
-7. `session/delete` → capability-gated; crow does NOT claim it, so refuses with a
-   clear error (same shape as v1's delete gate).
-8. `prompt()` → send `session/prompt`, await ack, then resolve on the next
-   idle `state_update` (or `stopReason: "cancelled"`); FIFO-queue idle edges so
-   steers resolve in send order.
-9. `cancel()` → `session/cancel` notification.
-10. `releaseSession()` → local clear only (server keeps the thread for
-    `session/list`), matching v1 semantics.
-11. Exported `AcpClientV2` from `index.ts`.
+1. Rewrite `packages/editor/src/theme.ts`:
+   - Drop `oneDark` + `defaultHighlightStyle`; import `HighlightStyle`,
+     `syntaxHighlighting` from `@codemirror/language` and `tags` from
+     `@lezer/highlight`.
+   - Build one `HighlightStyle` from `var(--code-*)` for every Lezer tag, so
+     the editor inherits whatever palette `<html data-theme>` publishes — no
+     per-theme code, and future themes come free.
+   - Export a single `editorTheme` extension = `[baseTheme,
+     syntaxHighlighting(highlightStyle, { fallback: true })]`.
+2. `packages/editor/src/code-editor.tsx`: drop the `scheme` prop and the
+   `themeSlot` compartment; use `editorTheme` statically.
+3. `packages/editor/src/index.ts`: export `editorTheme` (+ keep `baseTheme`),
+   remove `getThemeExtensions`/`ColorScheme`.
+4. `packages/chat/src/components/work/work-pane.tsx`: stop passing `scheme`;
+   drop the now-unused `useColorScheme` import.
+5. Add `@lezer/highlight` to `packages/editor/package.json` dependencies.
+6. Verify: `bun run web:typecheck` + `bun run web:build` exit 0; live browser
+   switches editor token colours with the theme dropdown.
+7. Commit.
 
-Committed — `1a7d445f` `feat(acp): add AcpClientV2 — the protocol-2 client path, v1 untouched`.
+## Phase 3 — Electron shell
 
-## Phase 3 — negotiation + controller takes `AcpClientLike` — DONE
+1. `packages/electron/launcher.cjs`: pure `buildArgs` + `parsePort` (no electron
+   import) so it is bun-testable.
+2. `packages/editor/…` (no): `packages/electron/main.cjs`: `require("electron")`,
+   spawn `crow-web --port 0`, parse the bound-port line, open a BrowserWindow.
+3. `packages/electron/launcher.test.cjs`: `bun test` for the two pure helpers.
+4. `packages/electron/package.json`: `main: main.cjs`, devDep `electron`,
+   `scripts.test: bun test`. NOT added to the root workspace glob.
+5. Verify: `bun test` green; `node --check main.cjs` clean.
+6. Commit.
 
-1. `AcpThreadControllerOptions.client` and `private client` became `AcpClientLike`.
-2. `useAcpRuntime` gained `protocol?: "auto" | 1 | 2` (default "auto"); `"auto"`
-   constructs `AcpClientV2` when the URL looks like `acp2`/`:2771`, else v1.
-3. Typecheck + build green.
+## Phase 4 — `crow-cli install gui`
 
-Committed — `33db5ddc` `feat(acp): controller/runtime speak AcpClientLike with v1/v2 negotiation`.
-
-## Phase 4 — full verification + final commit — DONE
-
-1. `bun run web:typecheck` — exit 0; `bun run web:build` — exit 0.
-2. `cargo test -p crow-web` — 64 passed, 0 failed.
-3. `uv run pytest tests/integration/test_acp2_http.py` — 1 passed.
-4. Remaining work committed — `33db5ddc`.
+1. New `gui` command in `src/crow_cli/cli/install.py`, reusing
+   `install_web.build(repo)` for the SPA + binary.
+2. Install layout: `~/.local/share/crow/gui/{crow-web, main.cjs, launcher.cjs,
+   package.json}`, then `bun install` there to fetch electron.
+3. `~/.local/bin/crow-gui` launcher (env-overridable `CROW_ROOT`, `CROW_ACP_URL`,
+   `CROW_WEB_BIN`) + `~/.local/share/applications/crow.desktop`.
+4. Remove the `desktop`/`check` cruft (`odellus/sidex`) from `install.py`.
+5. Verify: `crow-cli install gui --help`; `--dry-run` reaches the copy/launcher
+   steps; `crow-cli install web --help` still intact.
+6. Commit.
