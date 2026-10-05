@@ -1,247 +1,136 @@
-"""Install commands: Crow Desktop IDE, and the crow-web tier."""
+"""Install commands: the crow-web tier, and the Electron GUI that wraps it."""
 
-import platform
-import subprocess
-import sys
-import tempfile
+import shutil
 from pathlib import Path
-from typing import Optional
 
-import httpx
 import typer
 from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    DownloadColumn,
-    Progress,
-    TextColumn,
-    TimeRemainingColumn,
-    TransferSpeedColumn,
-)
 
-from crow_cli.cli.install_web import install_web
+from crow_cli.cli import install_web
 
-app = typer.Typer(help="Install Crow Desktop IDE and the crow-web tier")
+app = typer.Typer(help="Install the crow-web tier and the crow desktop GUI")
 console = Console()
 
-app.command(name="web")(install_web)
+app.command(name="web")(install_web.install_web)
 
-GITHUB_REPO = "odellus/sidex"
-API_BASE = f"https://api.github.com/repos/{GITHUB_REPO}"
-DOWNLOAD_BASE = f"https://github.com/{GITHUB_REPO}/releases/download"
-
-
-def get_system_info() -> tuple[str, str]:
-    """Detect OS and architecture, return (os, arch) tuple."""
-    system = platform.system().lower()
-    machine = platform.machine().lower()
-
-    # Map architecture names
-    arch_map = {
-        "x86_64": "amd64",
-        "amd64": "amd64",
-        "aarch64": "arm64",
-        "arm64": "arm64",
-    }
-    arch = arch_map.get(machine, machine)
-
-    # Validate OS
-    if system not in ("linux", "darwin", "windows"):
-        console.print(f"[red]Unsupported OS: {system}[/red]")
-        console.print("[yellow]Currently only Linux is supported[/yellow]")
-        raise typer.Exit(1)
-
-    if system != "linux":
-        console.print(f"[red]{system.title()} builds are not yet available[/red]")
-        console.print("[dim]Linux (amd64/arm64) is currently supported[/dim]")
-        raise typer.Exit(1)
-
-    return system, arch
+# The Electron app lives under ~/.local/share/crow/gui, out of the way of both
+# the crow-web systemd unit (~/.local/bin) and the bun workspace. The launcher
+# shim and .desktop entry point at it, and the env overrides let a user point
+# the same install at a different workspace or agent without reinstalling.
+GUI_DIR = ".local/share/crow/gui"
 
 
-def get_latest_release() -> dict:
-    """Fetch latest release info from GitHub API."""
-    url = f"{API_BASE}/releases/latest"
-    try:
-        response = httpx.get(url, timeout=10, follow_redirects=True)
-        response.raise_for_status()
-        return response.json()
-    except httpx.HTTPError as e:
-        console.print(f"[red]Failed to fetch latest release: {e}[/red]")
-        raise typer.Exit(1)
+def app_dir(home: Path | None = None) -> Path:
+    return (home or Path.home()) / Path(GUI_DIR)
 
 
-def find_asset(assets: list[dict], arch: str) -> Optional[dict]:
-    """Find the appropriate .deb asset for the architecture."""
-    for asset in assets:
-        name = asset["name"]
-        if name.endswith(f"_{arch}.deb"):
-            return asset
-    return None
+def launcher_text() -> str:
+    """The `crow-gui` shim. `CROW_WEB_BIN` is exported because the electron
+    main process reads it (via launcher.cjs) to find the bundled binary; the
+    other overrides (CROW_ROOT, CROW_ACP_URL) pass straight through the
+    environment."""
+    return """#!/usr/bin/env sh
+# crow-gui — run the Electron shell that wraps crow-web.
+# Env overrides: CROW_GUI_DIR (app dir), CROW_WEB_BIN (crow-web binary),
+# CROW_ROOT (directory crow-web serves), CROW_ACP_URL (agent endpoint).
+set -e
+APP_DIR="${CROW_GUI_DIR:-$HOME/.local/share/crow/gui}"
+export CROW_WEB_BIN="${CROW_WEB_BIN:-$APP_DIR/crow-web}"
+exec "$APP_DIR/node_modules/.bin/electron" "$APP_DIR"
+"""
 
 
-def download_asset(url: str, dest: Path) -> None:
-    """Download a file with progress bar."""
-    with httpx.stream("GET", url, follow_redirects=True, timeout=300) as response:
-        response.raise_for_status()
-        total = int(response.headers.get("Content-Length", 0))
-
-        with Progress(
-            TextColumn("[bold blue]{task.description}"),
-            BarColumn(),
-            DownloadColumn(),
-            TransferSpeedColumn(),
-            TimeRemainingColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task("Downloading", total=total)
-
-            with open(dest, "wb") as f:
-                for chunk in response.iter_bytes(chunk_size=8192):
-                    f.write(chunk)
-                    progress.update(task, advance=len(chunk))
-
-
-def install_deb(deb_path: Path) -> bool:
-    """Install a .deb package using dpkg."""
-    console.print(f"\n[cyan]Installing {deb_path.name}...[/cyan]")
-
-    # Check if we have sudo
-    has_sudo = subprocess.run(
-        ["which", "sudo"], capture_output=True
-    ).returncode == 0
-
-    cmd = ["sudo", "dpkg", "-i", str(deb_path)] if has_sudo else ["dpkg", "-i", str(deb_path)]
-
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True)
-
-        if result.returncode != 0:
-            console.print(f"[red]Installation failed:[/red]")
-            console.print(result.stderr)
-
-            # Try to fix dependencies if needed
-            if "dependency problems" in result.stderr.lower():
-                console.print("\n[yellow]Attempting to fix dependencies...[/yellow]")
-                fix_cmd = (
-                    ["sudo", "apt-get", "install", "-f", "-y"]
-                    if has_sudo
-                    else ["apt-get", "install", "-f", "-y"]
-                )
-                subprocess.run(fix_cmd, check=True)
-                console.print("[green]Dependencies fixed![/green]")
-                return True
-            return False
-
-        console.print("[green]✓ Crow Desktop installed successfully![/green]")
-        return True
-
-    except subprocess.CalledProcessError as e:
-        console.print(f"[red]Installation failed: {e}[/red]")
-        return False
-    except FileNotFoundError:
-        console.print("[red]dpkg not found. Are you on a Debian-based system?[/red]")
-        return False
+def desktop_text(launcher: Path) -> str:
+    return f"""[Desktop Entry]
+Type=Application
+Name=Crow
+Comment=Crow desktop GUI
+Exec={launcher}
+Terminal=false
+Categories=Development;IDE;
+"""
 
 
 @app.command()
-def desktop(
-    version: Optional[str] = typer.Option(
-        None, "--version", "-v", help="Specific version to install (e.g., v0.1.6)"
+def gui(
+    root: Path = typer.Option(
+        None, "--root", help="Directory the editor and explorer serve (default: cwd)"
+    ),
+    acp_url: str = typer.Option(
+        "ws://127.0.0.1:2769/acp",
+        "--acp-url",
+        help="The agent's http endpoint, proxied at /acp",
     ),
     dry_run: bool = typer.Option(
-        False, "--dry-run", help="Show what would be installed without installing"
+        False, "--dry-run", help="Print the install plan without writing anything"
     ),
-):
-    """
-    Install Crow Desktop IDE.
+    no_build: bool = typer.Option(
+        False, "--no-build", help="Reuse target/release/crow-web instead of building"
+    ),
+    no_desktop: bool = typer.Option(
+        False, "--no-desktop", help="Write the launcher but no .desktop entry"
+    ),
+) -> None:
+    """Build crow-web and install the Electron GUI shell and its launcher."""
+    repo = install_web.repo_root()
+    root = (root or Path.cwd()).resolve()
+    home = Path.home()
+    app = app_dir(home)
+    launcher = home / ".local" / "bin" / "crow-gui"
+    desktop = home / ".local" / "share" / "applications" / "crow.desktop"
+    electron_src = repo / "packages" / "electron"
 
-    Detects your system architecture and downloads the appropriate package
-    from the latest GitHub release.
-    """
-    console.print("\n[bold magenta]🪶 Crow Desktop Installer[/bold magenta]\n")
-
-    # Detect system
-    os_name, arch = get_system_info()
-    console.print(f"System: [cyan]{os_name}[/cyan] / [cyan]{arch}[/cyan]")
-
-    # Get release info
-    if version:
-        tag = version if version.startswith("v") else f"v{version}"
-        console.print(f"Installing specific version: [cyan]{tag}[/cyan]")
-        release_url = f"{API_BASE}/releases/tags/{tag}"
-        try:
-            response = httpx.get(release_url, timeout=10, follow_redirects=True)
-            response.raise_for_status()
-            release = response.json()
-        except httpx.HTTPError:
-            console.print(f"[red]Version {tag} not found[/red]")
-            raise typer.Exit(1)
-    else:
-        console.print("Fetching latest release...")
-        release = get_latest_release()
-        tag = release["tag_name"]
-
-    console.print(f"Release: [green]{tag}[/green]")
-
-    # Find appropriate asset
-    assets = release.get("assets", [])
-    asset = find_asset(assets, arch)
-
-    if not asset:
-        console.print(f"[red]No {arch} package found in release {tag}[/red]")
-        console.print("[dim]Available assets:[/dim]")
-        for a in assets[:10]:
-            console.print(f"  - {a['name']}")
-        raise typer.Exit(1)
-
-    console.print(f"Package: [cyan]{asset['name']}[/cyan]")
-    console.print(f"Size: [cyan]{asset['size'] / 1024 / 1024:.1f} MB[/cyan]")
+    console.print("[bold magenta]🪶 crow GUI installer[/bold magenta]")
+    console.print(f"repo:   [cyan]{repo}[/cyan]")
+    console.print(f"root:   [cyan]{root}[/cyan]")
+    console.print(f"app:    [cyan]{app}[/cyan]")
 
     if dry_run:
-        console.print("\n[yellow]Dry run - not downloading[/yellow]")
-        console.print(f"URL: {asset['browser_download_url']}")
+        console.print("\n[yellow]Dry run — writing nothing, downloading nothing[/yellow]")
+        console.print(
+            "would build SPA + crow-web"
+            + (" (skipped: --no-build)" if no_build else "")
+        )
+        console.print(f"would copy crow-web            → [cyan]{app / 'crow-web'}[/cyan]")
+        for name in ("main.cjs", "launcher.cjs", "package.json"):
+            console.print(f"would copy electron/{name:<12} → [cyan]{app / name}[/cyan]")
+        console.print(f"would run `bun install` in [cyan]{app}[/cyan] to fetch electron")
+        console.print(f"would write launcher           → [cyan]{launcher}[/cyan]")
+        if not no_desktop:
+            console.print(f"would write .desktop           → [cyan]{desktop}[/cyan]")
         return
 
-    # Download
-    with tempfile.TemporaryDirectory() as tmpdir:
-        dest = Path(tmpdir) / asset["name"]
-
-        try:
-            download_asset(asset["browser_download_url"], dest)
-        except httpx.HTTPError as e:
-            console.print(f"\n[red]Download failed: {e}[/red]")
+    built = repo / "target" / "release" / "crow-web"
+    if no_build:
+        if not built.is_file():
+            console.print(f"[red]--no-build but there is no {built}[/red]")
             raise typer.Exit(1)
+    else:
+        built = install_web.build(repo)
 
-        console.print(f"\n[green]✓ Downloaded to {dest}[/green]")
+    if not electron_src.is_dir():
+        console.print(f"[red]electron shell missing at {electron_src}[/red]")
+        raise typer.Exit(1)
 
-        # Install
-        if not install_deb(dest):
-            console.print("\n[red]Installation failed[/red]")
-            raise typer.Exit(1)
+    app.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(built, app / "crow-web")
+    (app / "crow-web").chmod(0o755)
+    for name in ("main.cjs", "launcher.cjs", "package.json"):
+        shutil.copy2(electron_src / name, app / name)
+    console.print(f"[green]✓[/green] app files at [cyan]{app}[/cyan]")
 
-    console.print(
-        "\n[bold green]🎉 Crow Desktop is ready![/bold green]\n"
-        "Run [cyan]crow[/cyan] or find it in your applications menu."
-    )
+    # Electron is a devDependency of the app's own package.json; this is the
+    # one network fetch in the command, and the step --dry-run skips.
+    install_web.run(["bun", "install"], app)
 
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_text(launcher_text())
+    launcher.chmod(0o755)
+    console.print(f"[green]✓[/green] launcher at [cyan]{launcher}[/cyan]")
 
-@app.command()
-def check():
-    """Check for available Crow Desktop releases."""
-    console.print("\n[bold magenta]🪶 Crow Release Info[/bold magenta]\n")
+    if not no_desktop:
+        desktop.parent.mkdir(parents=True, exist_ok=True)
+        desktop.write_text(desktop_text(launcher))
+        console.print(f"[green]✓[/green] desktop entry at [cyan]{desktop}[/cyan]")
 
-    release = get_latest_release()
-
-    console.print(f"[bold]Latest Release:[/bold] {release['tag_name']}")
-    console.print(f"[bold]Published:[/bold] {release['published_at']}")
-    console.print(f"[bold]URL:[/bold] {release['html_url']}")
-
-    if release.get("body"):
-        console.print(f"\n[bold]Release Notes:[/bold]")
-        console.print(release["body"][:500] + "..." if len(release["body"]) > 500 else release["body"])
-
-    console.print(f"\n[bold]Available Packages:[/bold]")
-    for asset in release.get("assets", []):
-        size_mb = asset["size"] / 1024 / 1024
-        console.print(f"  • {asset['name']} ({size_mb:.1f} MB)")
+    console.print("\n[bold green]crow GUI is installed — run `crow-gui`[/bold green]")

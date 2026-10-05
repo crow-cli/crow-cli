@@ -16,7 +16,7 @@ Trajectory is numeric: 1 → 2 → 3 → 4. Commit at each phase boundary with t
 
 ---
 
-## Phase 1 — confirm `install web` is wired — (no code change)
+## Phase 1 — confirm `install web` is wired — (no code change) ✅ done
 
 1. Explain the build pipeline in the chat response:
    - `bun install` (workspace)
@@ -27,7 +27,7 @@ Trajectory is numeric: 1 → 2 → 3 → 4. Commit at each phase boundary with t
 2. Verify: `uv run crow-cli install web --help` prints the command and options.
 3. Mark TODO item done; no commit.
 
-## Phase 2 — editor theming (latte/mocha/macchiato)
+## Phase 2 — editor theming (latte/mocha/macchiato) ✅ done
 
 1. Rewrite `packages/editor/src/theme.ts`:
    - Drop `oneDark` + `defaultHighlightStyle`; import `HighlightStyle`,
@@ -49,7 +49,7 @@ Trajectory is numeric: 1 → 2 → 3 → 4. Commit at each phase boundary with t
    switches editor token colours with the theme dropdown.
 7. Commit.
 
-## Phase 3 — Electron shell
+## Phase 3 — Electron shell ✅ done
 
 1. `packages/electron/launcher.cjs`: pure `buildArgs` + `parsePort` (no electron
    import) so it is bun-testable.
@@ -61,7 +61,7 @@ Trajectory is numeric: 1 → 2 → 3 → 4. Commit at each phase boundary with t
 5. Verify: `bun test` green; `node --check main.cjs` clean.
 6. Commit.
 
-## Phase 4 — `crow-cli install gui`
+## Phase 4 — `crow-cli install gui` ✅ done
 
 1. New `gui` command in `src/crow_cli/cli/install.py`, reusing
    `install_web.build(repo)` for the SPA + binary.

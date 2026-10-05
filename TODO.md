@@ -19,16 +19,16 @@ editor real themes (not just dark vs light). Repo root = MAIN
       variables instead of hardcoded `oneDark`/`defaultHighlightStyle`.
       Verify: `bun run web:typecheck` + `bun run web:build` exit 0; live browser
       shows editor token colours change with the theme dropdown.
-- [ ] Electron shell: `packages/electron` (standalone, NOT a workspace member)
+- [x] Electron shell: `packages/electron` (standalone, NOT a workspace member)
       whose main process spawns the `crow-web` binary (embedded SPA) and loads
       its loopback URL in a BrowserWindow. Pure spawn/parse logic in
       `launcher.cjs`, unit-tested with `bun test`.
       Verify: `bun test` green, `node --check main.cjs` clean.
-- [ ] `crow-cli install gui`: build SPA + crow-web (reuse the web build), install
+- [x] `crow-cli install gui`: build SPA + crow-web (reuse the web build), install
       the Electron app + a `~/.local/bin/crow-gui` launcher + a `.desktop` entry.
       Verify: `crow-cli install gui --help` lists it; `--dry-run` reaches the
       copy/launcher steps without downloading electron.
-- [ ] Remove the `install desktop` / `install check` cruft that downloads
+- [x] Remove the `install desktop` / `install check` cruft that downloads
       `odellus/sidex` (a different repo) — the real GUI install replaces it.
 
 **Floor gates (every item):** `bun run web:typecheck` + `bun run web:build` PASS.
