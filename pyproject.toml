@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 license = "MIT"
 dependencies = [
-    "agent-client-protocol[http]>=1.0.0rc2,<1.1.0",
+    "agent-client-protocol[http]>=0.12.1",
     "aiosqlite>=0.22.1",
     "boto3>=1.40.0",
     "click>=8.4.0",
@@ -79,3 +79,9 @@ python_functions = ["test_*"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-v --strict-markers"
+
+[tool.uv.sources]
+# Local checkout of agentclientprotocol/python-sdk carrying the v2-over-HTTP
+# work (https://github.com/agentclientprotocol/python-sdk/pull/163). Restore the
+# versioned constraint above and delete this block once that ships upstream.
+agent-client-protocol = { path = "/home/thomas/src/agentclientprotocol/python-sdk", editable = true }
