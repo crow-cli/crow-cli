@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Thread,
   type ThreadComponents,
@@ -42,6 +42,7 @@ function Chat({
   onTheme: (next: Theme) => void;
 }) {
   useCollapseAllKey();
+  const [acpError, setAcpError] = useState<string | null>(null);
   const mcpServers = useMemo(() => parseMcpConfig(mcpText).servers, [mcpText]);
   const runtime = useAcpRuntime({
     url: ACP_URL,
@@ -57,7 +58,10 @@ function Chat({
     // prompt on the wire at once — see components/send-queue.tsx for the shelf
     // that shows what is waiting.
     unstable_enableMessageQueue: true,
-    onError: (error) => console.error("[acp]", error.message),
+    onError: (error) => {
+      console.error("[acp]", error.message);
+      setAcpError(error.message);
+    },
   });
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -66,6 +70,7 @@ function Chat({
           <AppSidebar />
           <main className="flex min-w-0 flex-1 flex-col">
             <AppHeader
+              acpError={acpError}
               cwd={cwd}
               onSaveCwd={onSaveCwd}
               mcpText={mcpText}

@@ -35,6 +35,7 @@ const DOT: Record<string, string> = {
 
 export type AppHeaderProps = {
   cwd: string;
+  acpError: string | null;
   onSaveCwd: (next: string) => void;
   mcpText: string;
   onSaveMcp: (next: string) => void;
@@ -47,6 +48,7 @@ export type AppHeaderProps = {
 // come from hooks that subscribe on their own. A streamed chunk re-renders the
 // host that owns the runtime; none of it lands here.
 export const AppHeader = memo(function AppHeader({
+  acpError,
   cwd,
   onSaveCwd,
   mcpText,
@@ -78,6 +80,15 @@ export const AppHeader = memo(function AppHeader({
           <span className="text-muted-foreground ml-2 text-xs">
             {agentInfo.title ?? agentInfo.name}
             {agentInfo.version ? ` v${agentInfo.version}` : ""}
+          </span>
+        )}
+        {connectionState === "disconnected" && acpError && (
+          <span
+            data-testid="connection-error"
+            className="ms-2 truncate text-xs text-destructive"
+            title={acpError}
+          >
+            {acpError}
           </span>
         )}
         <SessionBadge className="ms-2" />

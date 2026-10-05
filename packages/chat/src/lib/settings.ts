@@ -1,12 +1,8 @@
 import { useCallback, useState } from "react";
 import { DEFAULT_MCP_CONFIG } from "@/lib/mcp-config";
 
-/**
- * One origin, always: crow-web proxies `/acp` to the agent's http server, so
- * the browser never learns the agent's port and a deployed crow-web behind
- * tls just works.
- */
-export const ACP_URL = `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/acp`;
+/** The ACP agent's WebSocket endpoint — a simple, explicit string. */
+export const ACP_URL = "ws://127.0.0.1:2771/acp";
 export const DEFAULT_CWD = "/home/thomas/src/crow-web/crow-chat";
 
 const CWD_KEY = "crow-chat.cwd";
