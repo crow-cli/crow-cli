@@ -7,7 +7,7 @@
 //! after anything that moves the tree — so no client has to poll or guess.
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, RwLock};
 
 use anyhow::{anyhow, Result};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -93,6 +93,8 @@ pub enum Op {
     Rename,
     Copy,
     Delete,
+    /// Serve a different directory: swap the root and rebroadcast ``hello``.
+    Reroot,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -113,33 +115,56 @@ pub struct Request {
 }
 
 /// Shared by every connection: the registry, the event fan-out and the client
-/// id counter.
+/// id counter. Root and buffers sit behind one lock so a re-root swaps them
+/// atomically — two tabs can never see a mix of the old and the new tree.
 #[derive(Clone)]
 pub struct Fs {
-    root: String,
-    buffers: Arc<Mutex<Buffers>>,
+    state: Arc<RwLock<FsState>>,
     events: broadcast::Sender<String>,
     clients: Arc<AtomicU64>,
 }
 
+struct FsState {
+    root: String,
+    parent: Option<String>,
+    buffers: Buffers,
+}
+
 impl Fs {
     pub fn new(root: PathBuf) -> Result<Self> {
-        let display = root.display().to_string();
+        let root = root.canonicalize()?;
+        if !root.is_dir() {
+            return Err(anyhow!("{} is not a directory", root.display()));
+        }
+        let root_str = root.display().to_string();
+        let parent = root.parent().map(|p| p.display().to_string());
         let (events, _) = broadcast::channel(256);
         Ok(Self {
-            root: display,
-            buffers: Arc::new(Mutex::new(Buffers::new(root)?)),
+            state: Arc::new(RwLock::new(FsState {
+                root: root_str,
+                parent,
+                buffers: Buffers::new(root)?,
+            })),
             events,
             clients: Arc::new(AtomicU64::new(1)),
         })
     }
 
-    pub fn root(&self) -> &str {
-        &self.root
+    pub fn root(&self) -> String {
+        self.read().root.clone()
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Buffers> {
-        self.buffers.lock().expect("the fs registry lock")
+    /// The canonical parent of the served root, for "go up" — ``None`` at `/`.
+    pub fn parent(&self) -> Option<String> {
+        self.read().parent.clone()
+    }
+
+    fn read(&self) -> std::sync::RwLockReadGuard<'_, FsState> {
+        self.state.read().expect("the fs state lock")
+    }
+
+    fn write(&self) -> std::sync::RwLockWriteGuard<'_, FsState> {
+        self.state.write().expect("the fs state lock")
     }
 
     fn next_client(&self) -> u64 {
@@ -151,17 +176,41 @@ impl Fs {
         let _ = self.events.send(out.to_json());
     }
 
-    /// What a fresh socket is told before it asks anything: the root, and
-    /// every buffer the server is already holding — which is how a reloaded
-    /// page finds the work it left dirty instead of trusting localStorage.
+    /// Serve a different directory. The old buffers are dropped with their
+    /// claims — a re-root is a new workspace, not a rename of the old one, so
+    /// a client that wants its dirty edits must commit before asking.
+    pub fn reroot(&self, raw: &str) -> Result<()> {
+        let root = PathBuf::from(raw)
+            .canonicalize()
+            .map_err(|e| anyhow!("cannot resolve {raw}: {e}"))?;
+        if !root.is_dir() {
+            return Err(anyhow!("{raw} is not a directory"));
+        }
+        let root_str = root.display().to_string();
+        let parent = root.parent().map(|p| p.display().to_string());
+        let buffers = Buffers::new(root)?;
+        let mut state = self.write();
+        state.root = root_str;
+        state.parent = parent;
+        state.buffers = buffers;
+        Ok(())
+    }
+
+    /// What a fresh socket is told before it asks anything: the root, its
+    /// parent (for "go up"), and every buffer the server is still holding —
+    /// which is how a reloaded page finds work left dirty, not localStorage.
     fn hello(&self) -> Out {
-        let buffers = self.lock();
-        let views: Vec<FileView> = buffers
+        let state = self.read();
+        let views: Vec<FileView> = state
+            .buffers
             .open_paths()
             .iter()
-            .filter_map(|path| buffers.view_of(path).ok().flatten())
+            .filter_map(|path| state.buffers.view_of(path).ok().flatten())
             .collect();
-        Out::event("hello", json!({ "root": self.root, "buffers": views }))
+        Out::event(
+            "hello",
+            json!({ "root": state.root, "parent": state.parent, "buffers": views }),
+        )
     }
 }
 
@@ -169,6 +218,16 @@ impl Fs {
 /// registry lock is never held across an await.
 fn run(fs: &Fs, client: u64, req: Request) -> Out {
     let id = req.id;
+    if req.op == Op::Reroot {
+        return match fs.reroot(&req.path) {
+            Ok(()) => {
+                let hello = fs.hello();
+                fs.publish(hello);
+                Out::ok(id, json!({ "root": fs.root() }))
+            }
+            Err(e) => Out::err(id, format!("{e:#}")),
+        };
+    }
     match dispatch(fs, client, &req) {
         Ok((reply, events)) => {
             for event in events {
@@ -182,7 +241,8 @@ fn run(fs: &Fs, client: u64, req: Request) -> Out {
 }
 
 fn dispatch(fs: &Fs, client: u64, req: &Request) -> Result<(Value, Vec<Out>)> {
-    let mut buffers = fs.lock();
+    let mut state = fs.write();
+    let buffers = &mut state.buffers;
     let path = &req.path;
     match req.op {
         Op::Tree => Ok((json!(buffers.list_dir(path)?), vec![])),
@@ -226,6 +286,8 @@ fn dispatch(fs: &Fs, client: u64, req: &Request) -> Result<(Value, Vec<Out>)> {
             buffers.delete(path)?;
             Ok((json!({ "path": path }), vec![moved("delete", path, None)]))
         }
+        // Reroot is intercepted in `run` before dispatch.
+        Op::Reroot => unreachable!("reroot is handled in run()"),
     }
 }
 
@@ -368,7 +430,7 @@ async fn serve(socket: WebSocket, fs: Fs) {
 
     // The socket is gone. Give up its claims; anything that drops is work
     // nobody had saved, but the other tabs still want to hear about it.
-    for path in fs.lock().disconnect(client) {
+    for path in fs.write().buffers.disconnect(client) {
         fs.publish(moved("close", &path, None));
     }
     drop(tx);
@@ -602,7 +664,7 @@ mod tests {
         // A socket that vanishes without closing gives up its claims.
         call(&fs, 3, r#"{"id":7,"op":"read","path":"a.txt"}"#);
         assert_eq!(
-            fs.lock().disconnect(3),
+            fs.write().buffers.disconnect(3),
             Vec::<String>::new(),
             "dirty is kept"
         );
@@ -612,7 +674,7 @@ mod tests {
         assert_eq!(committed["ok"]["dirty"], false);
         assert_eq!(root.disk("a.txt").unwrap(), "from tab one");
         assert!(
-            fs.lock().open_paths().is_empty(),
+            fs.write().buffers.open_paths().is_empty(),
             "a clean buffer nobody holds is dropped"
         );
     }
@@ -634,7 +696,7 @@ mod tests {
         let hello: Value = serde_json::from_str(&events.try_recv().unwrap()).unwrap();
         assert_eq!(hello["event"], "hello");
         assert_eq!(hello["data"]["buffers"].as_array().unwrap().len(), 0);
-        assert_eq!(hello["data"]["root"], fs.root());
+        assert_eq!(hello["data"]["root"].as_str(), Some(fs.root().as_str()));
 
         let wrote: Value = serde_json::from_str(&events.try_recv().unwrap()).unwrap();
         assert_eq!(wrote["event"], "buffer");
@@ -688,6 +750,59 @@ mod tests {
         assert_eq!(event["data"]["parent"], "pkg");
         assert_eq!(root.disk("pkg/b.txt").unwrap(), "a");
         assert_eq!(root.disk("pkg/a.txt").unwrap(), "a");
+    }
+
+    #[test]
+    fn reroot_swaps_the_root_and_drops_the_old_workspace() {
+        let (root, fs) = server("reroot");
+        root.put("old.txt", "old bytes");
+        call(&fs, 1, r#"{"id":1,"op":"read","path":"old.txt"}"#);
+
+        let other = TempRoot::new("reroot-target");
+        other.put("new.txt", "new bytes");
+        let target = other.path.canonicalize().unwrap().display().to_string();
+
+        let mut events = fs.events.subscribe();
+        let reply = call(
+            &fs,
+            1,
+            &format!(r#"{{"id":2,"op":"reroot","path":"{target}"}}"#),
+        );
+        assert_eq!(reply["ok"]["root"].as_str(), Some(target.as_str()));
+        assert_eq!(fs.root(), target);
+        assert_eq!(
+            fs.parent(),
+            other.path.parent().map(|p| p.display().to_string())
+        );
+        assert!(
+            fs.write().buffers.open_paths().is_empty(),
+            "a re-root is a new workspace, not a rename"
+        );
+
+        let hello: Value = serde_json::from_str(&events.try_recv().unwrap()).unwrap();
+        assert_eq!(hello["event"], "hello");
+        assert_eq!(hello["data"]["root"].as_str(), Some(target.as_str()));
+        assert_eq!(hello["data"]["buffers"].as_array().unwrap().len(), 0);
+
+        let tree = call(&fs, 1, r#"{"id":3,"op":"tree","path":""}"#);
+        let names: Vec<&str> = tree["ok"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["new.txt"]);
+
+        let file = other.path.join("new.txt").display().to_string();
+        let err = call(
+            &fs,
+            1,
+            &format!(r#"{{"id":4,"op":"reroot","path":"{file}"}}"#),
+        );
+        assert!(
+            err["error"].as_str().unwrap().contains("not a directory"),
+            "{err}"
+        );
     }
 
     #[test]
