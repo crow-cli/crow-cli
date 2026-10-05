@@ -13,7 +13,12 @@ import { useAcpRuntime } from "@assistant-ui/acp";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { useCollapseAllKey } from "@/lib/collapse-all";
 import { parseMcpConfig } from "@/lib/mcp-config";
-import { ACP_URL, DEFAULT_CWD, useCwdSetting, useMcpSetting } from "@/lib/settings";
+import {
+  DEFAULT_CWD,
+  useAcpUrlSetting,
+  useCwdSetting,
+  useMcpSetting,
+} from "@/lib/settings";
 import { useTheme, type Theme } from "@/lib/theme";
 import { useWorkStore } from "@/lib/work-store";
 
@@ -27,6 +32,8 @@ const THREAD_COMPONENTS = {
 // The runtime owns its session, and both cwd and the MCP tool supply are
 // read at session/new, so any change to either rebuilds the whole subtree.
 function Chat({
+  acpUrl,
+  onSaveAcpUrl,
   cwd,
   mcpText,
   onSaveCwd,
@@ -34,6 +41,8 @@ function Chat({
   theme,
   onTheme,
 }: {
+  acpUrl: string;
+  onSaveAcpUrl: (next: string) => void;
   cwd: string;
   mcpText: string;
   onSaveCwd: (next: string) => void;
@@ -45,7 +54,7 @@ function Chat({
   const [acpError, setAcpError] = useState<string | null>(null);
   const mcpServers = useMemo(() => parseMcpConfig(mcpText).servers, [mcpText]);
   const runtime = useAcpRuntime({
-    url: ACP_URL,
+    url: acpUrl,
     cwd,
     mcpServers,
     clientInfo: { name: "crow-chat", version: "0.1.0" },
@@ -71,6 +80,8 @@ function Chat({
           <main className="flex min-w-0 flex-1 flex-col">
             <AppHeader
               acpError={acpError}
+              acpUrl={acpUrl}
+              onSaveAcpUrl={onSaveAcpUrl}
               cwd={cwd}
               onSaveCwd={onSaveCwd}
               mcpText={mcpText}
@@ -91,6 +102,7 @@ function Chat({
 }
 
 export default function App() {
+  const [acpUrl, setAcpUrl] = useAcpUrlSetting();
   const [cwd, setCwd] = useCwdSetting();
   const [mcpText, setMcpText] = useMcpSetting();
   const [theme, setTheme] = useTheme();
@@ -109,7 +121,9 @@ export default function App() {
 
   return (
     <Chat
-      key={`${cwd}\n${mcpText}`}
+      key={`${acpUrl}\n${cwd}\n${mcpText}`}
+      acpUrl={acpUrl}
+      onSaveAcpUrl={setAcpUrl}
       cwd={cwd}
       mcpText={mcpText}
       onSaveCwd={saveCwd}

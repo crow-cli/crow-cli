@@ -1,13 +1,26 @@
 import { useCallback, useState } from "react";
 import { DEFAULT_MCP_CONFIG } from "@/lib/mcp-config";
 
-/** The ACP agent's WebSocket endpoint — a simple, explicit string. */
-export const ACP_URL = "ws://127.0.0.1:2771/acp";
+/** Default ACP WebSocket endpoint, overridable from the header input. */
+export const DEFAULT_ACP_URL = "ws://127.0.0.1:2771/acp";
 export const DEFAULT_CWD = "/home/thomas/src/crow-web/crow-chat";
 
+const ACP_KEY = "crow-chat.acp-url";
 const CWD_KEY = "crow-chat.cwd";
 const MCP_KEY = "crow-chat.mcp";
 const SIDEBAR_KEY = "crow-chat.sidebar";
+
+export function useAcpUrlSetting(): [string, (next: string) => void] {
+  const [url, setUrl] = useState(
+    () => localStorage.getItem(ACP_KEY) ?? DEFAULT_ACP_URL,
+  );
+  const save = useCallback((next: string) => {
+    const value = next.trim() || DEFAULT_ACP_URL;
+    localStorage.setItem(ACP_KEY, value);
+    setUrl(value);
+  }, []);
+  return [url, save];
+}
 
 export function useCwdSetting(): [string, (next: string) => void] {
   const [cwd, setCwd] = useState(

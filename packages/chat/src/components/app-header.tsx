@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useAcpAgentInfo, useAcpConnectionState } from "@assistant-ui/acp";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ContextMeter } from "@/components/context-meter";
 import { DirectoryPicker } from "@/components/directory-picker";
 import { ModelSelector } from "@/components/model-selector";
@@ -36,6 +37,8 @@ const DOT: Record<string, string> = {
 export type AppHeaderProps = {
   cwd: string;
   acpError: string | null;
+  acpUrl: string;
+  onSaveAcpUrl: (next: string) => void;
   onSaveCwd: (next: string) => void;
   mcpText: string;
   onSaveMcp: (next: string) => void;
@@ -49,6 +52,8 @@ export type AppHeaderProps = {
 // host that owns the runtime; none of it lands here.
 export const AppHeader = memo(function AppHeader({
   acpError,
+  acpUrl,
+  onSaveAcpUrl,
   cwd,
   onSaveCwd,
   mcpText,
@@ -65,6 +70,7 @@ export const AppHeader = memo(function AppHeader({
   const toggleWork = useWorkStore((s) => s.togglePane);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
+  const [acpDraft, setAcpDraft] = useState(acpUrl);
 
   return (
     <header className="flex h-12 shrink-0 items-center gap-3 border-b px-4">
@@ -93,6 +99,21 @@ export const AppHeader = memo(function AppHeader({
         )}
         <SessionBadge className="ms-2" />
       </div>
+      <Input
+        data-testid="acp-url"
+        value={acpDraft}
+        aria-label="ACP WebSocket URL"
+        title="ACP WebSocket URL"
+        className="h-8 w-56 shrink-0 text-xs"
+        onChange={(e) => setAcpDraft(e.target.value)}
+        onBlur={() => onSaveAcpUrl(acpDraft)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            onSaveAcpUrl(acpDraft);
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+      />
       <ModelSelector />
       <ContextMeter />
       <Button
