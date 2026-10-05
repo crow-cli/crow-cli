@@ -67,6 +67,43 @@ export type AcpClientOptions = {
   permissionHandler?: AcpPermissionHandler;
 };
 
+/**
+ * The surface both the v1 `AcpClient` and the v2 `AcpClientV2` implement, so
+ * `AcpThreadController` and `useAcpRuntime` can take whichever the version
+ * negotiation chose without knowing the wire dialect.
+ */
+export type AcpClientLike = {
+  subscribeSessionUpdate(listener: AcpSessionUpdateListener): () => void;
+  subscribeConnectionChange(listener: AcpConnectionListener): () => void;
+  readonly hasConfiguredPermissionHandler: boolean;
+  readonly connectionState: AcpConnectionState;
+  readonly sessionId: string | undefined;
+  readonly agentInfo: AcpImplementation | undefined;
+  readonly agentCapabilities: AcpAgentCapabilities | undefined;
+  readonly modes: AcpSessionModeState | undefined;
+  readonly configOptions: readonly AcpSessionConfigOption[] | undefined;
+  permissionHandler: AcpPermissionHandler;
+  connect(): Promise<AcpInitializeResponse>;
+  ensureSession(): Promise<string>;
+  listSessions(options?: {
+    cwd?: string;
+    cursor?: string;
+  }): Promise<AcpSessionListResult>;
+  loadSession(sessionId: string): Promise<string>;
+  deleteSession(sessionId: string): Promise<void>;
+  setConfigOption(
+    configId: string,
+    value: string,
+  ): Promise<readonly AcpSessionConfigOption[]>;
+  releaseSession(): void;
+  prompt(
+    content: readonly AcpContentBlock[],
+    signal?: AbortSignal,
+  ): Promise<AcpStopReason>;
+  cancel(): Promise<void>;
+  dispose(): void;
+};
+
 type AcpSessionResponse = {
   sessionId: string;
   modes?: AcpSessionModeState | null;

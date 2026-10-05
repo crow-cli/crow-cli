@@ -88,7 +88,8 @@ export type AcpToolCallStatus =
   | "pending"
   | "in_progress"
   | "completed"
-  | "failed";
+  | "failed"
+  | "cancelled";
 
 export type AcpToolCallContent =
   | { readonly type: "content"; readonly content: AcpContentBlock }
@@ -242,7 +243,37 @@ export type AcpSessionUpdate =
       readonly title?: string | null;
       readonly updatedAt?: string | null;
     }
-  | ({ readonly sessionUpdate: "usage_update" } & AcpUsage);
+  | ({ readonly sessionUpdate: "usage_update" } & AcpUsage)
+  | AcpV2StateUpdate
+  | AcpV2MessageUpsert
+  | AcpV2ToolCallContentChunkUpdate;
+
+/**
+ * ACP v2 additions. v1's tags above are unchanged; v2 speaks these on the
+ * same `session/update` notification once `initialize` negotiates version 2.
+ * `state_update` is the v2 turn boundary (running -> idle carries the stop
+ * reason the v1 `session/prompt` response used to). Whole-message upserts
+ * (`user_message`/`agent_message`/`agent_thought`) replace the chunk streams
+ * for replay; live turns still stream `*_chunk`.
+ */
+export type AcpV2StateUpdate = {
+  readonly sessionUpdate: "state_update";
+  readonly state: "running" | "idle" | "requires_action" | (string & {});
+  readonly stopReason?: AcpStopReason | null;
+  readonly usage?: AcpUsage | null;
+};
+
+export type AcpV2MessageUpsert = {
+  readonly sessionUpdate: "user_message" | "agent_message" | "agent_thought";
+  readonly messageId: string;
+  readonly content?: readonly AcpContentBlock[] | null;
+};
+
+export type AcpV2ToolCallContentChunkUpdate = {
+  readonly sessionUpdate: "tool_call_content_chunk";
+  readonly toolCallId: string;
+  readonly content: AcpToolCallContent;
+};
 
 export type AcpPermissionOptionKind =
   | "allow_once"

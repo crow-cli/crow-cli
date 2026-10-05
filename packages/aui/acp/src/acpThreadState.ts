@@ -9,6 +9,7 @@ import type {
   AcpAgentCapabilities,
   AcpAvailableCommand,
   AcpConnectionState,
+  AcpContentBlock,
   AcpImplementation,
   AcpPermissionRequest,
   AcpPlanEntry,
@@ -19,7 +20,9 @@ import type {
   AcpUsage,
 } from "./types";
 import {
+  appendContentBlock,
   applySessionUpdateToContent,
+  applyToolCallUpdate,
   attachToolCallApproval,
   permissionOptionToApprovalOption,
   resolveToolCallApproval,
@@ -317,6 +320,67 @@ const patchAssistantAt = (
   return state;
 };
 
+/**
+ * A whole-message assistant upsert (v2 `agent_message` / `agent_thought`).
+ * Its `content` is a replacement snapshot, but for a replay — and for a live
+ * agent that chose the upsert form — applying each block in order lands on the
+ * same content, because the target message is empty at first sight.
+ */
+const applyAssistantBlocks = (
+  state: AcpThreadState,
+  kind: "text" | "reasoning",
+  blocks: readonly AcpContentBlock[],
+): AcpThreadState => {
+  let next = state;
+  for (const block of blocks) {
+    next = patchAssistant(ensureReplayAssistant(next), (message) => {
+      const content = appendContentBlock(message.content, block, kind);
+      return content === undefined ? undefined : { ...message, content };
+    });
+  }
+  return next;
+};
+
+/** A whole user-message upsert (v2 `user_message`), replay only. */
+const applyUserBlocks = (
+  state: AcpThreadState,
+  blocks: readonly AcpContentBlock[],
+): AcpThreadState => {
+  let next = state;
+  for (const block of blocks) {
+    const parts = userPartsFromBlock(block);
+    if (parts.length === 0) continue;
+    const existing = headMessage(next, "user");
+    if (existing) {
+      next = {
+        ...next,
+        messagesById: {
+          ...next.messagesById,
+          [existing.id]: {
+            ...existing,
+            content: appendUserParts(existing.content, parts),
+          },
+        },
+      };
+      continue;
+    }
+    const seq = next.replay.type === "active" ? next.replay.seq : 0;
+    const message: AcpUserMessage = {
+      role: "user",
+      id: replayId(seq),
+      parentId: next.headId,
+      createdAt: Date.now(),
+      content: parts,
+      attachments: [],
+    };
+    next = {
+      ...withMessage(next, message),
+      replay: { type: "active", seq: seq + 1 },
+    };
+  }
+  return next;
+};
+
 const reduceSessionUpdate = (
   state: AcpThreadState,
   update: AcpSessionUpdate,
@@ -386,6 +450,37 @@ const reduceSessionUpdate = (
         ...withMessage(state, message),
         replay: { type: "active", seq: state.replay.seq + 1 },
       };
+    }
+    case "state_update":
+      // v2's turn boundary. The client's prompt promise resolves on the idle
+      // edge (and run-end is dispatched there), so the reducer has nothing to
+      // move. Returning here also keeps a stray `state_update` during replay
+      // from minting a spurious assistant message in the default arm.
+      return state;
+    case "user_message": {
+      // Live echo of the accepted prompt: already on screen. In a replay the
+      // whole-message upsert is the only copy there is.
+      if (state.replay.type !== "active") return state;
+      return applyUserBlocks(state, update.content ?? []);
+    }
+    case "agent_message":
+      return applyAssistantBlocks(state, "text", update.content ?? []);
+    case "agent_thought":
+      return applyAssistantBlocks(state, "reasoning", update.content ?? []);
+    case "tool_call_content_chunk": {
+      // v2 streams tool output as content chunks. Fold each into its tool call
+      // as a one-item content update so text keeps streaming; the default arm
+      // would drop it, and an explicit arm stops it from minting during replay.
+      const toolCallId = update.toolCallId;
+      const knownStatus = state.toolCallStatuses[toolCallId];
+      return patchAssistant(ensureReplayAssistant(state), (message) => {
+        const content = applyToolCallUpdate(
+          message.content,
+          { toolCallId, content: [update.content] },
+          knownStatus,
+        );
+        return content === undefined ? undefined : { ...message, content };
+      });
     }
     default: {
       const toolCall = update as Parameters<
