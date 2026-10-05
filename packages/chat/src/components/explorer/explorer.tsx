@@ -69,6 +69,7 @@ const MENU = new Set([
 
 export function Explorer() {
   const scheme = useColorScheme();
+  const root = useWorkStore((s) => s.root);
   const [data, setData] = useState<IEntity[] | null>(null);
   const apiRef = useRef<IApi | null>(null);
 
@@ -117,6 +118,22 @@ export function Explorer() {
       off();
     };
   }, [refresh]);
+
+  // A re-root swaps the served tree while the socket stays open, so the
+  // open-state effect above does not fire again. Re-read the root on change.
+  useEffect(() => {
+    let live = true;
+    fsClient
+      .ready()
+      .then(() => fsClient.call<Tree>("tree", { path: "" }))
+      .then((tree) => {
+        if (live) setData(tree.entries.map(toEntity));
+      })
+      .catch((error) => useWorkStore.getState().fail(error));
+    return () => {
+      live = false;
+    };
+  }, [root]);
 
   const onRequestData = useCallback(
     (ev: { id: string }) => {

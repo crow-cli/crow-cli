@@ -200,6 +200,58 @@ async fn two_tabs_are_two_independent_shells() {
 }
 
 #[tokio::test]
+async fn a_reroot_moves_new_shells_and_leaves_running_ones() {
+    let server = start("reroot");
+    let root_a = server.root.canonicalize().unwrap().display().to_string();
+
+    // A shell born before the re-root starts in the original root.
+    let mut before = Term::connect(&pty_url(&server, 80, 24)).await;
+    before.send("pwd\r").await;
+    before.expect(&root_a).await;
+
+    // Re-root the served tree to a second directory over /fs.
+    let other = common::temp_root("reroot-target");
+    let root_b = other.canonicalize().unwrap().display().to_string();
+    {
+        let (mut ws, _) = tokio_tungstenite::connect_async(server.ws("/fs"))
+            .await
+            .expect("connect /fs");
+        let _ = ws.next().await.expect("hello");
+        ws.send(Message::Text(
+            json!({"id": 1, "op": "reroot", "path": root_b})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .expect("send reroot");
+        // The reply and the rebroadcast hello race; find the correlated reply.
+        loop {
+            let Message::Text(text) = ws.next().await.expect("frame").expect("text") else {
+                continue;
+            };
+            let v: Value = serde_json::from_str(&text).expect("json");
+            if v.get("id").is_some() {
+                assert!(v["ok"]["root"].is_string(), "{v}");
+                break;
+            }
+        }
+    }
+
+    // The running shell is untouched: still the original root.
+    before.send("pwd\r").await;
+    before.expect(&root_a).await;
+
+    // A new shell starts in the re-rooted directory.
+    let mut after = Term::connect(&pty_url(&server, 80, 24)).await;
+    after.send("pwd\r").await;
+    after.expect(&root_b).await;
+
+    drop(before);
+    drop(after);
+    let _ = std::fs::remove_dir_all(&other);
+}
+
+#[tokio::test]
 async fn a_shell_that_exits_reports_its_code_and_closes() {
     let server = start("exit");
     let mut term = Term::connect(&pty_url(&server, 80, 24)).await;

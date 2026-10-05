@@ -52,6 +52,8 @@ type WorkState = {
   termPanel: PanelImperativeHandle | null;
 
   open: (path: string, opts?: { dropIfMissing?: boolean }) => Promise<void>;
+  /** Re-root the served tree to `path`; the server's hello does the reset. */
+  reroot: (path: string) => Promise<void>;
   activate: (path: string | null) => void;
   edit: (path: string, content: string) => void;
   save: (path: string) => Promise<void>;
@@ -107,6 +109,15 @@ export const useWorkStore = create<WorkState>()(
 
       fail: (error: unknown) =>
         set({ error: error instanceof Error ? error.message : String(error) }),
+
+      reroot: async (path) => {
+        await fsClient.ready();
+        try {
+          await fsClient.call("reroot", { path });
+        } catch (error) {
+          get().fail(error);
+        }
+      },
 
       open: async (path, opts) => {
         try {
@@ -289,6 +300,19 @@ export function bootWorkStore() {
     const state = useWorkStore.getState();
     if (event.event === "hello") {
       const { root, buffers } = event.data;
+      // A re-root is a new workspace: the server already dropped the old
+      // buffers, so drop the old tabs and let the explorer re-read. The first
+      // hello (root was still "") is a boot/reconnect, not a re-root.
+      if (state.root && state.root !== root) {
+        useWorkStore.setState({
+          root,
+          tabs: [],
+          active: null,
+          buffers: {},
+          treeRev: state.treeRev + 1,
+        });
+        return;
+      }
       const held: Record<string, Buffer> = {};
       const restored: string[] = [];
       for (const view of buffers) {

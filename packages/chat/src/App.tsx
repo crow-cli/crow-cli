@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import {
   Thread,
   type ThreadComponents,
@@ -13,8 +13,9 @@ import { useAcpRuntime } from "@assistant-ui/acp";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { useCollapseAllKey } from "@/lib/collapse-all";
 import { parseMcpConfig } from "@/lib/mcp-config";
-import { ACP_URL, useCwdSetting, useMcpSetting } from "@/lib/settings";
+import { ACP_URL, DEFAULT_CWD, useCwdSetting, useMcpSetting } from "@/lib/settings";
 import { useTheme, type Theme } from "@/lib/theme";
+import { useWorkStore } from "@/lib/work-store";
 
 // Tool calls render through the ACP card: kind icon, path link, diff,
 // terminal — see components/tools/acp-tool-card.tsx.
@@ -88,12 +89,25 @@ export default function App() {
   const [cwd, setCwd] = useCwdSetting();
   const [mcpText, setMcpText] = useMcpSetting();
   const [theme, setTheme] = useTheme();
+
+  // Saving the cwd moves both the chat session (the `key` below rebuilds the
+  // runtime) and the work pane's served root — the same directory, two
+  // consumers, one choice.
+  const saveCwd = useCallback(
+    (next: string) => {
+      const value = next.trim() || DEFAULT_CWD;
+      setCwd(next);
+      void useWorkStore.getState().reroot(value);
+    },
+    [setCwd],
+  );
+
   return (
     <Chat
       key={`${cwd}\n${mcpText}`}
       cwd={cwd}
       mcpText={mcpText}
-      onSaveCwd={setCwd}
+      onSaveCwd={saveCwd}
       onSaveMcp={setMcpText}
       theme={theme}
       onTheme={setTheme}

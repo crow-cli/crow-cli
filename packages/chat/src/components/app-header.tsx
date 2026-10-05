@@ -10,8 +10,8 @@ import {
 } from "lucide-react";
 import { useAcpAgentInfo, useAcpConnectionState } from "@assistant-ui/acp";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { ContextMeter } from "@/components/context-meter";
+import { DirectoryPicker } from "@/components/directory-picker";
 import { ModelSelector } from "@/components/model-selector";
 import { SessionBadge } from "@/components/session-badge";
 import { McpSettingsDialog } from "@/components/mcp-settings-dialog";
@@ -22,11 +22,6 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import { collapseAll, useCollapseAll } from "@/lib/collapse-all";
 import { useWorkStore } from "@/lib/work-store";
 import { cn } from "@/lib/utils";
@@ -66,8 +61,7 @@ export const AppHeader = memo(function AppHeader({
   // runtime subtree, and this is not the runtime's business.
   const workHidden = useWorkStore((s) => s.collapsed);
   const toggleWork = useWorkStore((s) => s.togglePane);
-  const [draft, setDraft] = useState(cwd);
-  const [open, setOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [mcpOpen, setMcpOpen] = useState(false);
 
   return (
@@ -148,46 +142,21 @@ export const AppHeader = memo(function AppHeader({
       >
         <PlugIcon className="size-4" />
       </Button>
-      <Popover
-        open={open}
-        onOpenChange={(next) => {
-          setOpen(next);
-          if (next) setDraft(cwd);
-        }}
+      <Button
+        variant="ghost"
+        size="icon"
+        aria-label="Session settings"
+        title="Working directory"
+        onClick={() => setPickerOpen(true)}
       >
-        <PopoverTrigger asChild>
-          <Button variant="ghost" size="icon" aria-label="Session settings">
-            <FolderOpenIcon className="size-4" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent align="end" className="w-96">
-          <form
-            className="flex flex-col gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              onSaveCwd(draft);
-              setOpen(false);
-            }}
-          >
-            <label htmlFor="cwd" className="text-xs font-medium">
-              Working directory
-            </label>
-            <p className="text-muted-foreground text-xs">
-              Sessions are created against this directory. Saving starts a new
-              session.
-            </p>
-            <Input
-              id="cwd"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              className="font-mono text-xs"
-            />
-            <Button type="submit" size="sm" className="self-end">
-              Save
-            </Button>
-          </form>
-        </PopoverContent>
-      </Popover>
+        <FolderOpenIcon className="size-4" />
+      </Button>
+      <DirectoryPicker
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        initial={cwd}
+        onSelect={onSaveCwd}
+      />
       <McpSettingsDialog
         open={mcpOpen}
         onOpenChange={setMcpOpen}

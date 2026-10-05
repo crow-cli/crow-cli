@@ -55,7 +55,9 @@ export type Op =
   | "mkdir"
   | "rename"
   | "copy"
-  | "delete";
+  | "delete"
+  | "reroot"
+  | "browse";
 
 export type ConnectionState = "connecting" | "open" | "closed";
 
