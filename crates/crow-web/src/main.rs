@@ -11,18 +11,21 @@ use axum::Router;
 
 mod fs;
 mod pty;
+mod web;
 mod ws;
 
 struct Args {
     port: u16,
     root: PathBuf,
     shell: Option<String>,
+    acp_url: String,
 }
 
 fn parse_args(argv: impl IntoIterator<Item = String>) -> anyhow::Result<Args> {
     let mut port = 2770u16;
     let mut root: Option<PathBuf> = None;
     let mut shell: Option<String> = None;
+    let mut acp_url = "ws://127.0.0.1:2769/acp".to_string();
     let mut it = argv.into_iter().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -38,6 +41,11 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> anyhow::Result<Args> {
                 let value = it.next().unwrap_or_else(|| panic!("--shell needs a value"));
                 shell = Some(value);
             }
+            "--acp-url" => {
+                acp_url = it
+                    .next()
+                    .unwrap_or_else(|| panic!("--acp-url needs a value"));
+            }
             other => panic!("unknown argument: {other}"),
         }
     }
@@ -45,6 +53,7 @@ fn parse_args(argv: impl IntoIterator<Item = String>) -> anyhow::Result<Args> {
         port,
         root: root.unwrap_or_else(|| std::env::current_dir().expect("cwd")),
         shell,
+        acp_url,
     })
 }
 
@@ -57,16 +66,20 @@ async fn main() -> anyhow::Result<()> {
     let app = Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .merge(ws::router(fs.clone()))
-        .merge(pty::router(pty.clone()));
+        .merge(pty::router(pty.clone()))
+        .merge(web::router(web::Config::new(args.acp_url.clone())))
+        // The SPA: hashed assets, and index.html for every client-side route.
+        .fallback_service(get(web::static_handler));
     let listener =
         tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], args.port))).await?;
     // The bound address, not the requested one: `--port 0` asks the kernel to
     // pick, and this line is how a launcher (or a test) learns which.
     let addr = listener.local_addr()?;
     println!(
-        "crow-web serving {} on http://{addr} ({} for terminals)",
+        "crow-web serving {} on http://{addr} ({} for terminals, acp via {})",
         fs.root(),
-        pty.shell()
+        pty.shell(),
+        args.acp_url
     );
     axum::serve(listener, app).await?;
     Ok(())
@@ -81,6 +94,12 @@ mod tests {
         let args = parse_args(["crow-web".to_string()]).unwrap();
         assert_eq!(args.port, 2770);
         assert_eq!(args.root, std::env::current_dir().unwrap());
+    }
+
+    #[test]
+    fn acp_url_defaults_to_the_agent_http_port() {
+        let args = parse_args(["crow-web".to_string()]).unwrap();
+        assert_eq!(args.acp_url, "ws://127.0.0.1:2769/acp");
     }
 
     #[test]

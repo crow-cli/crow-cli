@@ -19,14 +19,22 @@ path = "src/main.rs"
 anyhow = "1"
 axum = { version = "0.8", features = ["ws"] }
 futures = "0.3.34"
+# What the embedded SPA's files are, by extension.
+mime_guess = "2"
 # The pty behind /pty. xterm.js is the emulator in the browser; this is only
 # spawn/resize/kill plus the byte pump — no VT parsing on this side.
 portable-pty = "0.9"
+# The web client, compiled in: one executable, one origin.
+rust-embed = "8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "io-util", "fs", "net", "time", "sync", "process"] }
-
-[dev-dependencies]
-# The websocket client for tests/fs_ws.rs, which drives the shipped binary over
-# a real socket — the same shape the browser uses.
+# The /acp proxy's upstream half; tests use it for the client half too.
 tokio-tungstenite = "0.29"
+
+# Read packages/chat/dist from disk instead of embedding it, so a frontend
+# rebuild lands without a rust one.
+[features]
+dev-web = []
+
+

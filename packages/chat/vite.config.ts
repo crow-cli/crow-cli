@@ -63,6 +63,7 @@ export default defineConfig({
     proxy: {
       "/fs": { target: CROW_WEB, ws: true },
       "/pty": { target: CROW_WEB, ws: true },
+      "/acp": { target: CROW_WEB, ws: true },
     },
     fs: {
       // the workspace packages (aui, editor) live above the app root
