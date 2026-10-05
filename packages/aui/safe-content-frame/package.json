@@ -1,0 +1,26 @@
+{
+  "name": "safe-content-frame",
+  "version": "0.0.31",
+  "description": "Secure iframe rendering for untrusted content using SafeContentFrame",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./shadow_dom": {
+      "types": "./dist/shadow_dom.d.ts",
+      "default": "./dist/shadow_dom.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "homepage": "https://www.assistant-ui.com/safe-content-frame",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/assistant-ui/assistant-ui.git",
+    "directory": "packages/safe-content-frame"
+  }
+}

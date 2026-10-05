@@ -1,0 +1,1 @@
+export declare const DEFAULT_TTL_MS: number;

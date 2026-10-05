@@ -1,0 +1,17 @@
+export { shallowEqual } from "./utils/shallow-equal.js";
+export { createAssistantClient, type AssistantClientHandle, type AssistantClientSource, type AssistantConfigSource, } from "./createAssistantClient.js";
+export { DefaultAssistantClient, useAssistantContextProvider, useAssistantContextValue, } from "./utils/react-assistant-context.js";
+export { useConfiguredAui } from "./useAui.js";
+export { useDestroySignalProvider } from "./utils/destroy-signal-context.js";
+export { getProxiedAssistantState } from "./utils/proxied-assistant-state.js";
+export { useAssistantClientRef, useAssistantEmit, useAssistantScopeEffect, } from "./utils/tap-assistant-context.js";
+export { useClientResource } from "./useClientResource.js";
+export { useClientLookup } from "./useClientLookup.js";
+export { attachTransformScopes, type ScopesConfig, } from "./attachTransformScopes.js";
+export { AuiConfig } from "./AuiConfig.js";
+export { Derived, type DerivedElement } from "./Derived.js";
+export { normalizeEventSelector, type AssistantEventName, type AssistantEventCallback, type AssistantEventSelector, type AssistantEventPayload, } from "./types/events.js";
+export type { AssistantClient, AssistantClientAccessor, AssistantState, ClientElement, ClientEvents, ClientMeta, ClientMethods, ClientNames, ClientOutput, ClientSchema, InferClientState, ScopeRegistry, Unsubscribe, } from "./types/client.js";
+export { createClientFacade } from "./utils/client-facade.js";
+export { createLastValidCache, createStaleReporter, } from "./utils/last-valid-cache.js";
+export { isUserScrollUp, isViewportAtBottom, observeContentResize, viewportOverflows, type ViewportMetrics, } from "./utils/viewport-scroll.js";

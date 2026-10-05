@@ -1,0 +1,17 @@
+import { AuiConfig } from "./AuiConfig.js";
+import { DefaultAssistantClient, useAssistantContextProvider, useAssistantContextValue } from "./utils/react-assistant-context.js";
+import { attachTransformScopes } from "./attachTransformScopes.js";
+import { normalizeEventSelector } from "./types/events.js";
+import { useClientResource } from "./useClientResource.js";
+import { getProxiedAssistantState } from "./utils/proxied-assistant-state.js";
+import { useAssistantClientRef, useAssistantEmit, useAssistantScopeEffect } from "./utils/tap-assistant-context.js";
+import { useDestroySignalProvider } from "./utils/destroy-signal-context.js";
+import { shallowEqual } from "./utils/shallow-equal.js";
+import { useConfiguredAui } from "./useAui.js";
+import { Derived } from "./Derived.js";
+import { createAssistantClient } from "./createAssistantClient.js";
+import { useClientLookup } from "./useClientLookup.js";
+import { createClientFacade } from "./utils/client-facade.js";
+import { createLastValidCache, createStaleReporter } from "./utils/last-valid-cache.js";
+import { isUserScrollUp, isViewportAtBottom, observeContentResize, viewportOverflows } from "./utils/viewport-scroll.js";
+export { AuiConfig, DefaultAssistantClient, Derived, attachTransformScopes, createAssistantClient, createClientFacade, createLastValidCache, createStaleReporter, getProxiedAssistantState, isUserScrollUp, isViewportAtBottom, normalizeEventSelector, observeContentResize, shallowEqual, useAssistantClientRef, useAssistantContextProvider, useAssistantContextValue, useAssistantEmit, useAssistantScopeEffect, useClientLookup, useClientResource, useConfiguredAui, useDestroySignalProvider, viewportOverflows };

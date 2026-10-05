@@ -1,0 +1,325 @@
+/*
+ * svar's icon font, vendored: the widget's chrome (tree toggles, toolbar
+ * search/refresh, context-menu glyphs) is these wxi-* classes, and the theme's
+ * `fonts` prop would load them from cdn.svar.dev at runtime. crow-web serves
+ * itself, so the font lives here instead. MIT, (c) 2025 XB Software Sp. z o.o.
+ * Fetched from https://cdn.svar.dev/fonts/wxi/ (cache-buster query stripped).
+ */
+@font-face {
+    font-family: "wx-icons";
+    src: url("./wx-icons.woff") format("woff"),
+url("./wx-icons.woff2") format("woff2");
+}
+
+i[class^="wxi-"]:before, i[class*=" wxi-"]:before {
+    font-family: wx-icons !important;
+    font-style: normal;
+    font-weight: normal !important;
+    font-variant: normal;
+    text-transform: none;
+    
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+.wxi-account:before {
+    content: "\f101";
+}
+.wxi-alert:before {
+    content: "\f102";
+}
+.wxi-angle-dbl-down:before {
+    content: "\f103";
+}
+.wxi-angle-dbl-left:before {
+    content: "\f104";
+}
+.wxi-angle-dbl-right:before {
+    content: "\f105";
+}
+.wxi-angle-dbl-up:before {
+    content: "\f106";
+}
+.wxi-angle-down:before {
+    content: "\f107";
+}
+.wxi-angle-left:before {
+    content: "\f108";
+}
+.wxi-angle-right:before {
+    content: "\f109";
+}
+.wxi-angle-up:before {
+    content: "\f10a";
+}
+.wxi-arrow-down:before {
+    content: "\f10b";
+}
+.wxi-arrow-left:before {
+    content: "\f10c";
+}
+.wxi-arrow-right:before {
+    content: "\f10d";
+}
+.wxi-arrow-up:before {
+    content: "\f10e";
+}
+.wxi-arrows-h:before {
+    content: "\f10f";
+}
+.wxi-arrows-v:before {
+    content: "\f110";
+}
+.wxi-asc:before {
+    content: "\f111";
+}
+.wxi-assign:before {
+    content: "\f112";
+}
+.wxi-bullhorn:before {
+    content: "\f113";
+}
+.wxi-calendar:before {
+    content: "\f114";
+}
+.wxi-camera:before {
+    content: "\f115";
+}
+.wxi-cash:before {
+    content: "\f116";
+}
+.wxi-cat:before {
+    content: "\f117";
+}
+.wxi-check:before {
+    content: "\f118";
+}
+.wxi-clock:before {
+    content: "\f119";
+}
+.wxi-close:before {
+    content: "\f11a";
+}
+.wxi-collapse:before {
+    content: "\f11b";
+}
+.wxi-content-copy:before {
+    content: "\f11c";
+}
+.wxi-content-cut:before {
+    content: "\f11d";
+}
+.wxi-content-paste:before {
+    content: "\f11e";
+}
+.wxi-convert:before {
+    content: "\f11f";
+}
+.wxi-currency-usd:before {
+    content: "\f120";
+}
+.wxi-delete-outline:before {
+    content: "\f121";
+}
+.wxi-delete:before {
+    content: "\f122";
+}
+.wxi-desc:before {
+    content: "\f123";
+}
+.wxi-dots-h:before {
+    content: "\f124";
+}
+.wxi-dots-v:before {
+    content: "\f125";
+}
+.wxi-download:before {
+    content: "\f126";
+}
+.wxi-drag:before {
+    content: "\f127";
+}
+.wxi-duplicate:before {
+    content: "\f128";
+}
+.wxi-earth:before {
+    content: "\f129";
+}
+.wxi-edit-outline:before {
+    content: "\f12a";
+}
+.wxi-edit:before {
+    content: "\f12b";
+}
+.wxi-emoticon-outline:before {
+    content: "\f12c";
+}
+.wxi-empty:before {
+    content: "\f12d";
+}
+.wxi-expand:before {
+    content: "\f12e";
+}
+.wxi-external:before {
+    content: "\f12f";
+}
+.wxi-eye:before {
+    content: "\f130";
+}
+.wxi-file-multiple-outline:before {
+    content: "\f131";
+}
+.wxi-file:before {
+    content: "\f132";
+}
+.wxi-filter-check:before {
+    content: "\f133";
+}
+.wxi-filter-multiple-outline:before {
+    content: "\f134";
+}
+.wxi-filter-multiple:before {
+    content: "\f135";
+}
+.wxi-filter-outline:before {
+    content: "\f136";
+}
+.wxi-filter-plus-outline:before {
+    content: "\f137";
+}
+.wxi-filter-plus:before {
+    content: "\f138";
+}
+.wxi-folder:before {
+    content: "\f139";
+}
+.wxi-food-fork-drink:before {
+    content: "\f13a";
+}
+.wxi-human-handsdown:before {
+    content: "\f13b";
+}
+.wxi-indent:before {
+    content: "\f13c";
+}
+.wxi-information-outline:before {
+    content: "\f13d";
+}
+.wxi-like:before {
+    content: "\f13e";
+}
+.wxi-loading:before {
+    content: "\f13f";
+}
+.wxi-map-marker-outline:before {
+    content: "\f140";
+}
+.wxi-menu:before {
+    content: "\f141";
+}
+.wxi-menu-down:before {
+    content: "\f142";
+}
+.wxi-menu-right:before {
+    content: "\f143";
+}
+.wxi-message-question-outline:before {
+    content: "\f144";
+}
+.wxi-message:before {
+    content: "\f145";
+}
+.wxi-paperclip:before {
+    content: "\f146";
+}
+.wxi-paste:before {
+    content: "\f147";
+}
+.wxi-pin-outline:before {
+    content: "\f148";
+}
+.wxi-plus:before {
+    content: "\f149";
+}
+.wxi-pound:before {
+    content: "\f14a";
+}
+.wxi-redo:before {
+    content: "\f14b";
+}
+.wxi-refresh:before {
+    content: "\f14c";
+}
+.wxi-rename:before {
+    content: "\f14d";
+}
+.wxi-search:before {
+    content: "\f14e";
+}
+.wxi-soccer:before {
+    content: "\f14f";
+}
+.wxi-sort:before {
+    content: "\f150";
+}
+.wxi-split:before {
+    content: "\f151";
+}
+.wxi-star-outline:before {
+    content: "\f152";
+}
+.wxi-star:before {
+    content: "\f153";
+}
+.wxi-subtask:before {
+    content: "\f154";
+}
+.wxi-table-column-plus-after:before {
+    content: "\f155";
+}
+.wxi-table-row-plus-after:before {
+    content: "\f156";
+}
+.wxi-table-row-plus-before:before {
+    content: "\f157";
+}
+.wxi-undo:before {
+    content: "\f158";
+}
+.wxi-unindent:before {
+    content: "\f159";
+}
+.wxi-upload:before {
+    content: "\f15a";
+}
+.wxi-view-column:before {
+    content: "\f15b";
+}
+.wxi-view-grid:before {
+    content: "\f15c";
+}
+.wxi-view-sequential:before {
+    content: "\f15d";
+}
+.wxi-menu-left:before {
+    content: "\f15e";
+}
+.wxi-arrow-split:before {
+    content: "\f15f";
+}
+.wxi-flag:before {
+    content: "\f160";
+}
+.wxi-triangles-out-h:before {
+    content: "\f161";
+}
+.wxi-link:before {
+    content: "\f162";
+}
+.wxi-warning:before {
+    content: "\f163";
+}
+
+.wxi-spin {
+    -webkit-animation:fa-spin 2s linear infinite;animation:fa-spin 2s linear infinite
+}

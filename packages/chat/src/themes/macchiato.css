@@ -1,0 +1,55 @@
+/* Catppuccin Macchiato — https://catppuccin.com/palette
+   base #24273a · mantle #1e2030 · crust #181926 · surface0 #363a4f
+   surface1 #494d64 · surface2 #5a5f7a · text #cad3f5 · subtext0 #a5adcb
+   lavender #b7bdf8 (the one accent) · red #ed8796 (the one warning color) */
+[data-theme="macchiato"] {
+  color-scheme: dark;
+  --radius: 0.625rem;
+  --background: #24273a;
+  --foreground: #cad3f5;
+  --card: #363a4f;
+  --card-foreground: #cad3f5;
+  --popover: #363a4f;
+  --popover-foreground: #cad3f5;
+  --primary: #b7bdf8;
+  --primary-foreground: #24273a;
+  --secondary: #363a4f;
+  --secondary-foreground: #cad3f5;
+  --muted: #363a4f;
+  --muted-foreground: #a5adcb;
+  --accent: #494d64;
+  --accent-foreground: #cad3f5;
+  --destructive: #ed8796;
+  --success: #a6da95;
+  --warning: #eed49f;
+  --border: #494d64;
+  --input: #5a5f7a;
+  --ring: #b7bdf8;
+  --chart-1: #b7bdf8;
+  --chart-2: #8bd5ca;
+  --chart-3: #eed49f;
+  --chart-4: #f5a97f;
+  --chart-5: #f5bde6;
+  --sidebar: #1e2030;
+  --sidebar-foreground: #cad3f5;
+  --sidebar-primary: #b7bdf8;
+  --sidebar-primary-foreground: #24273a;
+  --sidebar-accent: #363a4f;
+  --sidebar-accent-foreground: #cad3f5;
+  --sidebar-border: #363a4f;
+  --sidebar-ring: #b7bdf8;
+
+  /* prism token palette (macchiato) */
+  --code-comment: #6e738d;
+  --code-punctuation: #939ab7;
+  --code-property: #b7bdf8;
+  --code-type: #c6a0f6;
+  --code-string: #a6da95;
+  --code-number: #f5a97f;
+  --code-operator: #91d7e3;
+  --code-function: #8aadf4;
+  --code-attr: #eed49f;
+  --code-keyword: #c6a0f6;
+  --code-inserted: #a6da95;
+  --code-deleted: #ed8796;
+}

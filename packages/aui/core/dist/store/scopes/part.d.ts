@@ -1,0 +1,58 @@
+import type { ToolResponse } from "assistant-stream";
+import type { ThreadUserMessagePart, ThreadAssistantMessagePart, ToolApprovalResponse, ToolCallMessagePartStatus, Unstable_ToolInteractionInput } from "../../types/message.js";
+import type { MessagePartStatus } from "../../types/message.js";
+import type { MessagePartRuntime } from "../../runtime/api/message-part-runtime.js";
+export type PartState = (ThreadUserMessagePart | ThreadAssistantMessagePart) & {
+    readonly status: MessagePartStatus | ToolCallMessagePartStatus;
+};
+export type PartMethods = {
+    /**
+     * Get the current state of the message part.
+     */
+    getState(): PartState;
+    /**
+     * Add tool result to a tool call message part that has no tool result yet.
+     * This is useful when you are collecting a tool result via user input ("human tool calls").
+     */
+    addToolResult(result: unknown | ToolResponse<unknown>): void;
+    /**
+     * Resume a tool call that is waiting for human input with a payload.
+     * This is useful when a tool has requested human input and is waiting for a response.
+     */
+    resumeToolCall(payload: unknown): void;
+    /**
+     * Respond to a server-side tool approval gate. The approval id is read from
+     * the part. Accepts a boolean decision, the id of one of the approval's
+     * options, or a free-form answer when the request asks for one.
+     *
+     * Resolves once the runtime has accepted the response, and rejects when it
+     * could not be recorded, so a renderer can leave its controls retryable.
+     */
+    respondToToolApproval(response: ToolApprovalResponse): Promise<void>;
+    /**
+     * Record a user interaction on a tool call part. Resolves once recorded and
+     * rejects when it cannot be.
+     */
+    unstable_recordInteraction?(input: Unstable_ToolInteractionInput): Promise<void>;
+    __internal_getRuntime?(): MessagePartRuntime;
+};
+export type PartMeta = {
+    source: "message";
+    query: {
+        type: "index";
+        index: number;
+    } | {
+        type: "toolCallId";
+        toolCallId: string;
+    };
+} | {
+    source: "chainOfThought";
+    query: {
+        type: "index";
+        index: number;
+    };
+};
+export type PartClientSchema = {
+    methods: PartMethods;
+    meta: PartMeta;
+};

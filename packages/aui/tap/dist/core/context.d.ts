@@ -1,0 +1,11 @@
+import type { Context as ReactContext } from "react";
+import type { ResourceContext, ResourceContextDeps, ResourceFiber } from "./types.js";
+export declare const cloneCurrentTapContext: () => ResourceContext;
+export declare const withTapContextRoot: <TResult>(context: ResourceContext, fn: () => TResult) => TResult;
+export declare const attachDefaultValueToContext: <T>(context: ReactContext<T>, defaultValue: T) => void;
+export declare const isReadableTapContext: (context: unknown) => context is ReactContext<unknown>;
+export declare const useContextProvider: <T, TResult>(context: ReactContext<T>, value: T, fn: () => TResult) => TResult;
+export declare const useContext: <T>(context: ReactContext<T>) => T;
+export declare const bubbleContextDeps: (fiber: ResourceFiber<any>, contextDeps?: ResourceContextDeps | null) => void;
+export declare const hasChangedContexts: () => boolean;
+export declare const hasContextDepsChanged: (fiber: ResourceFiber<any>) => boolean;

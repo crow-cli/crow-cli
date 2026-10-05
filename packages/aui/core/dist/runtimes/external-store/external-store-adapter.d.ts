@@ -1,0 +1,233 @@
+import type { AppendMessage, ThreadMessage, ToolCallMessagePart } from "../../types/message.js";
+import type { ThreadMessageLike } from "../../runtime/utils/thread-message-like.js";
+import type { AttachmentAdapter } from "../../adapters/attachment.js";
+import type { SpeechSynthesisAdapter, DictationAdapter } from "../../adapters/speech.js";
+import type { RealtimeVoiceAdapter } from "../../adapters/voice.js";
+import type { FeedbackAdapter } from "../../adapters/feedback.js";
+import type { AddToolResultOptions, RespondToToolApprovalOptions, Unstable_RecordToolInteractionOptions, StartRunConfig, ResumeRunConfig, ThreadSuggestion } from "../../runtime/interfaces/thread-runtime-core.js";
+import type { ExportedMessageRepository, MessageRepository } from "../../runtime/utils/message-repository.js";
+import type { ReadonlyJSONValue } from "assistant-stream/utils";
+import type { ToolExecutionStatus } from "../tool-invocations/ToolInvocationTracker.js";
+import type { ExternalThreadQueueAdapter } from "../../runtime/queue/external-thread-queue-adapter.js";
+export type ExternalStoreThreadData<TState extends "regular" | "archived"> = {
+    status: TState;
+    id: string;
+    remoteId?: string | undefined;
+    externalId?: string | undefined;
+    title?: string | undefined;
+    custom?: Record<string, unknown> | undefined;
+};
+export type ExternalStoreThreadListAdapter = {
+    /**
+     * @deprecated This API is still under active development and might change without notice.
+     */
+    threadId?: string | undefined;
+    isLoading?: boolean | undefined;
+    threads?: readonly ExternalStoreThreadData<"regular">[] | undefined;
+    archivedThreads?: readonly ExternalStoreThreadData<"archived">[] | undefined;
+    /**
+     * @deprecated This API is still under active development and might change without notice.
+     */
+    onSwitchToNewThread?: (() => Promise<void> | void) | undefined;
+    /**
+     * @deprecated This API is still under active development and might change without notice.
+     */
+    onSwitchToThread?: ((threadId: string) => Promise<void> | void) | undefined;
+    onRename?: (threadId: string, newTitle: string) => (Promise<void> | void) | undefined;
+    onUpdateCustom?: ((threadId: string, custom: Record<string, unknown> | undefined) => Promise<void> | void) | undefined;
+    onArchive?: ((threadId: string) => Promise<void> | void) | undefined;
+    onUnarchive?: ((threadId: string) => Promise<void> | void) | undefined;
+    onDelete?: ((threadId: string) => Promise<void> | void) | undefined;
+};
+export type ExternalStoreMessageConverter<T> = (message: T, idx: number) => ThreadMessageLike;
+/**
+ * @deprecated This API is still under active development and might change without notice.
+ */
+export type ExternalStoreBranchChange = {
+    headId: string | null;
+    visibleMessageIds: readonly string[];
+};
+type ExternalStoreMessageConverterAdapter<T> = {
+    convertMessage: ExternalStoreMessageConverter<T>;
+};
+type ExternalStoreAdapterBase<T> = {
+    /**
+     * The runtime writes its messages to the thread list's history adapter
+     * itself, so `useExternalStoreRuntime` does not copy them.
+     */
+    unstable_persistsHistory?: boolean | undefined;
+    /**
+     * Whether the entire thread is disabled. When `true`, the composer's input
+     * is also disabled (the user cannot type, attach files, or submit). For a
+     * narrower gate that keeps the input usable but blocks only sending, use
+     * `isSendDisabled`.
+     */
+    isDisabled?: boolean | undefined;
+    /**
+     * Whether sending new messages is currently disabled. When `true`, the
+     * thread composer's input remains usable but `send()` becomes a no-op
+     * and the thread composer's `canSend` is `false`. Use this to gate
+     * sending on external React state (e.g. while tool config is loading)
+     * without disabling the input itself the way `isDisabled` does. Edit
+     * composers (saving message edits) intentionally ignore this flag.
+     */
+    isSendDisabled?: boolean | undefined;
+    /**
+     * Whether the thread is running. When provided, this value flows directly
+     * to `thread.isRunning`, letting the application keep the thread in a
+     * running state even after the last assistant message has completed (for
+     * example while non-message stream chunks like suggestions or metadata
+     * updates are still arriving). When omitted, `thread.isRunning` falls back
+     * to the last-message-status heuristic.
+     */
+    isRunning?: boolean | undefined;
+    isLoading?: boolean | undefined;
+    messages?: readonly T[];
+    messageRepository?: ExportedMessageRepository;
+    /**
+     * An externally owned message repository instance. When provided, the
+     * thread runtime adopts it as its branch store and swaps to it atomically
+     * whenever a different instance is passed, so hosts that route multiple
+     * conversations through one runtime keep each conversation's history and
+     * branches isolated in its own instance. Omit it to keep the runtime's own
+     * repository.
+     */
+    unstable_messageRepositoryInstance?: MessageRepository | undefined;
+    suggestions?: readonly ThreadSuggestion[] | undefined;
+    state?: ReadonlyJSONValue | undefined;
+    extras?: unknown;
+    /**
+     * Applies a message list the runtime rewrote, and is what tells the runtime
+     * a removal it makes will survive the next snapshot. Without it, cancelling a
+     * run leaves a trailing user message in the thread and the composer
+     * untouched; an adapter that removes that message itself owns handing it
+     * back, because the runtime cannot see a removal it did not make.
+     */
+    setMessages?: ((messages: readonly T[]) => void) | undefined;
+    /**
+     * Called with each message a voice session adds to the thread: every finalized transcript, and every text message typed into a session that takes typed text (it carries no `metadata.modality`). The host appends it to its own messages under the same id, which is how the runtime knows the host carries it. A message that finalizes while `isLoading` is true is delivered once loading ends, to the callback on the adapter current at that moment, and is not delivered at all when the conversation changed while it waited. A host that routes conversations through one runtime is recognized by its `unstable_messageRepositoryInstance`; one that swaps only its `messages` cannot be told apart from a load finishing. A host that does not implement this callback keeps these messages for the session only.
+     */
+    onVoiceTranscript?: ((message: ThreadMessage) => void) | undefined;
+    /**
+     * Fires when the user explicitly switches branches via the runtime's
+     * `switchToBranch` action (e.g. a BranchPicker click). It does not fire on
+     * adapter resync, `append`, edit/regenerate, content-only updates, or while
+     * the thread is running. Consecutive switches that resolve to the same
+     * canonical head are de-duped.
+     *
+     * `headId` is the canonical (persisted) head of the now-visible branch —
+     * optimistic/transient ids are never surfaced. `visibleMessageIds` lists the
+     * visible path in order.
+     *
+     * This complements `setMessages` rather than replacing it: switching still
+     * requires `setMessages`, and this callback does not on its own enable branch
+     * switching.
+     *
+     * @deprecated This API is still under active development and might change without notice.
+     */
+    unstable_onBranchChange?: ((event: ExternalStoreBranchChange) => void) | undefined;
+    onImport?: ((messages: readonly ThreadMessage[]) => void) | undefined;
+    onExportExternalState?: (() => any) | undefined;
+    onLoadExternalState?: ((state: any) => void) | undefined;
+    onNew: (message: AppendMessage) => Promise<void>;
+    /** Opt in to message queuing. Typically produced by `createMessageQueue`. */
+    queue?: ExternalThreadQueueAdapter | undefined;
+    onEdit?: ((message: AppendMessage) => Promise<void>) | undefined;
+    /**
+     * Removes a message from the host's store. The runtime drops the message
+     * from its branches when `messages` stops carrying the id, and reads a
+     * `messages` update that still carries it after every call for it has
+     * settled as a declined delete. A host that accepts the delete therefore
+     * publishes the removal before the returned promise settles.
+     */
+    onDelete?: ((messageId: string) => Promise<void> | void) | undefined;
+    onReload?: ((parentId: string | null, config: StartRunConfig) => Promise<void>) | undefined;
+    onResume?: ((config: ResumeRunConfig) => Promise<void>) | undefined;
+    onCancel?: (() => Promise<void>) | undefined;
+    /**
+     * Re-fetches the thread's state from the backing store, in place; a
+     * rejection reaches the `threads.reloadMainThread()` caller. Unrelated to
+     * `onReload`, which re-generates an assistant message.
+     *
+     * The caller does not stop a run in progress first, so an adapter that can
+     * stream owns whatever coordination one needs.
+     */
+    onRefetchThread?: (() => Promise<void>) | undefined;
+    onAddToolResult?: ((options: AddToolResultOptions) => Promise<void> | void) | undefined;
+    onResumeToolCall?: ((options: {
+        toolCallId: string;
+        payload: unknown;
+    }) => void) | undefined;
+    onRespondToToolApproval?: ((options: RespondToToolApprovalOptions) => Promise<void> | void) | undefined;
+    /**
+     * Stores a user interaction on a tool call part of a message this store
+     * owns and exposes it on that part's `unstable_interactions`. Without it,
+     * recording an interaction rejects and nothing is kept.
+     */
+    unstable_onRecordToolInteraction?: ((options: Unstable_RecordToolInteractionOptions) => Promise<void> | void) | undefined;
+    convertMessage?: ExternalStoreMessageConverter<T> | undefined;
+    adapters?: {
+        attachments?: AttachmentAdapter | undefined;
+        speech?: SpeechSynthesisAdapter | undefined;
+        dictation?: DictationAdapter | undefined;
+        voice?: RealtimeVoiceAdapter | undefined;
+        feedback?: FeedbackAdapter | undefined;
+        /**
+         * @deprecated This API is still under active development and might change without notice.
+         */
+        threadList?: ExternalStoreThreadListAdapter | undefined;
+    } | undefined;
+    unstable_capabilities?: {
+        copy?: boolean | undefined;
+    } | undefined;
+    /**
+     * Opt in to the built-in client-side tool-invocations pipeline
+     * (`streamCall` / `execute` / tool-status tracking) for this thread.
+     *
+     * Defaults to `false` — the runtime does *not* drive client-side tool
+     * callbacks on its own. Set to `true` to have the runtime construct a
+     * `ToolInvocationTracker` and feed every snapshot through it, so tool
+     * callbacks fire automatically for tool-call parts in `messages`.
+     *
+     * Opt-in by default because most external-store runtimes either run
+     * tools entirely server-side, or already wire their own client-side
+     * dispatch path. Enabling the embedded tracker on top of an existing
+     * dispatch path would cause tool callbacks to run twice.
+     *
+     * When enabled, client-side tool results (from `execute()` returning,
+     * or from `streamCall` resolving) flow back through
+     * `adapter.onAddToolResult` like any other tool result, with
+     * `modelContent` populated when present.
+     */
+    unstable_enableToolInvocations?: boolean | undefined;
+    /**
+     * Decides whether a tool call's result is produced on the client. Only
+     * consulted when `unstable_enableToolInvocations` is `true`.
+     *
+     * A provider that runs tools itself answers its own calls, and its result
+     * arrives one or more snapshots after the call's arguments complete. In
+     * that window the call is complete and result-less, so a registered tool
+     * of the same name would otherwise execute locally and produce a result
+     * the provider never asked for. An adapter that can tell the two apart
+     * supplies this predicate; it is read once per tool call, when the call is
+     * first observed live.
+     *
+     * The predicate is also what licenses running a frontend tool while the
+     * provider's run is still open. Without it, ownership is unknown until the
+     * run ends, so a registered tool executes only once the run's outcome is
+     * known and cannot fire on a call the provider was about to answer or gate.
+     */
+    unstable_isClientToolCall?: ((toolCall: ToolCallMessagePart) => boolean) | undefined;
+    /**
+     * Receives the current per-tool-call execution status map whenever it
+     * changes. Only invoked when `unstable_enableToolInvocations` is `true`
+     * — the runtime maintains the map via the embedded tracker.
+     *
+     * Wire this into local React state and feed it into the converter's
+     * `metadata.toolStatuses` so the UI can render `executing` spinners
+     * and human-input prompts.
+     */
+    setToolStatuses?: ((statuses: Record<string, ToolExecutionStatus>) => void) | undefined;
+};
+export type ExternalStoreAdapter<T = ThreadMessage> = ExternalStoreAdapterBase<T> & (T extends ThreadMessage ? object : ExternalStoreMessageConverterAdapter<T>);
+export {};

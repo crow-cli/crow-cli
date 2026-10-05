@@ -1,0 +1,73 @@
+import type { ThreadListItemGenerateTitleOptions, ThreadListItemRuntime } from "../../runtime/api/thread-list-item-runtime.js";
+import type { ThreadListItemStatus } from "../../runtime/interfaces/thread-list-runtime-core.js";
+export type ThreadListItemState = {
+    readonly id: string;
+    readonly remoteId: string | undefined;
+    readonly externalId: string | undefined;
+    readonly title?: string | undefined;
+    readonly lastMessageAt?: Date | undefined;
+    readonly status: ThreadListItemStatus;
+    readonly custom?: Record<string, unknown> | undefined;
+    /**
+     * Whether this thread has a run in progress, including a run that continues
+     * after the user switches to another thread. A thread list that mounts only
+     * the open thread has no runtime to run the others, so they read as not
+     * running rather than as unknown.
+     */
+    readonly isRunning: boolean;
+};
+export type ThreadListItemMethods = {
+    getState(): ThreadListItemState;
+    switchTo(options?: {
+        unarchive?: boolean;
+    }): void;
+    rename(newTitle: string): void;
+    updateCustom(custom: Record<string, unknown> | undefined): void;
+    archive(): void;
+    unarchive(): void;
+    delete(): void;
+    generateTitle(options?: ThreadListItemGenerateTitleOptions): void;
+    initialize(): Promise<{
+        remoteId: string;
+        externalId: string | undefined;
+    }>;
+    detach(): void;
+    __internal_getRuntime?(): ThreadListItemRuntime;
+};
+export type ThreadListItemMeta = {
+    source: "threads";
+    query: {
+        type: "main";
+    } | {
+        type: "id";
+        id: string;
+    } | {
+        type: "index";
+        index: number;
+        archived?: boolean;
+    };
+};
+export type ThreadListItemEvents = {
+    /**
+     * @deprecated Use `threads.selectionChanged` instead; its `threadId` is the
+     * newly selected thread. Inside a per-item `threadListItem` scope, filter by
+     * `threadId === threadListItem.id` to reproduce the per-item delivery. Kept
+     * for backward compatibility.
+     */
+    "threadListItem.switchedTo": {
+        threadId: string;
+    };
+    /**
+     * @deprecated Use `threads.selectionChanged` instead; its
+     * `previousThreadId` is the thread that was switched away from. Kept for
+     * backward compatibility.
+     */
+    "threadListItem.switchedAway": {
+        threadId: string;
+    };
+};
+export type ThreadListItemClientSchema = {
+    methods: ThreadListItemMethods;
+    meta: ThreadListItemMeta;
+    events: ThreadListItemEvents;
+};

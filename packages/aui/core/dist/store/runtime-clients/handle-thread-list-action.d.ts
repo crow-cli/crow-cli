@@ -1,0 +1,1 @@
+export declare const handleThreadListAction: (action: string, execute: () => Promise<void>) => Promise<void>;

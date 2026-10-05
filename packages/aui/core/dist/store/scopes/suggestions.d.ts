@@ -1,0 +1,23 @@
+import type { SuggestionMethods } from "./suggestion.js";
+export type Suggestion = {
+    title: string;
+    label: string;
+    prompt: string;
+};
+export type SuggestionsState = {
+    suggestions: Suggestion[];
+};
+export type SuggestionsMethods = {
+    getState(): SuggestionsState;
+    suggestion(query: {
+        index: number;
+    }): SuggestionMethods;
+};
+export type SuggestionsMeta = {
+    source: "thread";
+    query: Record<string, never>;
+};
+export type SuggestionsClientSchema = {
+    methods: SuggestionsMethods;
+    meta: SuggestionsMeta;
+};

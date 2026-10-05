@@ -1,0 +1,32 @@
+"use client";
+import { useAuiState } from "@assistant-ui/store";
+//#region src/primitives/messagePart/useMessagePartData.ts
+/**
+* @deprecated Use {@link useAuiState} to select and narrow `s.part`.
+* Return `null` for optional rendering. Do not throw inside the selector:
+* selectors run inside `useSyncExternalStore`'s `getSnapshot`, so a transient
+* part mismatch during thread switches can unmount the React root.
+*
+* @example
+* ```tsx
+* const part = useAuiState((s) =>
+*   s.part.type === "data" && (!name || s.part.name === name)
+*     ? s.part
+*     : null,
+* );
+* ```
+*
+* See the {@link https://assistant-ui.com/docs/migrations/v0-12 migration guide}.
+*/
+const useMessagePartData = (name) => {
+	const part = useAuiState(_temp);
+	if (!part) return null;
+	if (name && part.name !== name) return null;
+	return part;
+};
+function _temp(s) {
+	if (s.part.type !== "data") return null;
+	return s.part;
+}
+//#endregion
+export { useMessagePartData };

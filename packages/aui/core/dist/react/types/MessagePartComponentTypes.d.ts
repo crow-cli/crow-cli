@@ -1,0 +1,93 @@
+import type { ComponentType, PropsWithChildren } from "react";
+import type { MessagePartStatus, DataMessagePart, FileMessagePart, GenerativeUIMessagePart, GenerativeUISpec, ImageMessagePart, ReasoningMessagePart, SourceMessagePart, TextMessagePart, ToolApprovalResponse, ToolCallMessagePart, Unstable_AudioMessagePart, Unstable_ToolInteractionInput, QuoteInfo } from "../../index.js";
+import type { MessagePartState } from "../../index.js";
+import type { ToolResponse } from "assistant-stream";
+export type EmptyMessagePartProps = {
+    status: MessagePartStatus;
+};
+export type EmptyMessagePartComponent = ComponentType<EmptyMessagePartProps>;
+export type TextMessagePartProps = MessagePartState & TextMessagePart;
+export type TextMessagePartComponent = ComponentType<TextMessagePartProps>;
+export type ReasoningMessagePartProps = MessagePartState & ReasoningMessagePart;
+export type ReasoningMessagePartComponent = ComponentType<ReasoningMessagePartProps>;
+export type ReasoningGroupProps = PropsWithChildren<{
+    startIndex: number;
+    endIndex: number;
+}>;
+export type ReasoningGroupComponent = ComponentType<ReasoningGroupProps>;
+export type SourceMessagePartProps = MessagePartState & SourceMessagePart;
+export type SourceMessagePartComponent = ComponentType<SourceMessagePartProps>;
+export type ImageMessagePartProps = MessagePartState & ImageMessagePart;
+export type ImageMessagePartComponent = ComponentType<ImageMessagePartProps>;
+export type FileMessagePartProps = MessagePartState & FileMessagePart;
+export type FileMessagePartComponent = ComponentType<FileMessagePartProps>;
+/**
+ * @deprecated Use {@link FileMessagePartProps} and render `audio/*` mime types
+ * from the `File` slot.
+ */
+export type Unstable_AudioMessagePartProps = MessagePartState & Unstable_AudioMessagePart;
+/**
+ * @deprecated Use {@link FileMessagePartComponent} and render `audio/*` mime
+ * types from the `File` slot.
+ */
+export type Unstable_AudioMessagePartComponent = ComponentType<Unstable_AudioMessagePartProps>;
+export type DataMessagePartProps<T = any> = MessagePartState & DataMessagePart<T>;
+export type DataMessagePartComponent<T = any> = ComponentType<DataMessagePartProps<T>>;
+export type ToolCallMessagePartProps<TArgs = any, TResult = unknown> = MessagePartState & ToolCallMessagePart<TArgs, TResult> & {
+    /**
+     * Sets the result for this tool-call message part.
+     *
+     * Use when the renderer, rather than a tool `execute` function, is the
+     * source of the result.
+     */
+    addResult: (result: TResult | ToolResponse<TResult>) => void;
+    /**
+     * Supplies the payload requested by `context.human(...)` and resumes the
+     * paused frontend tool execution.
+     */
+    resume: (payload: unknown) => void;
+    /**
+     * Responds to a server-side tool approval gate. Only valid while
+     * `approval` is set on the part, `approval.approved === undefined`, and
+     * no `approval.resolution` is recorded. Accepts a boolean decision, the
+     * id of one of `approval.options` (option kinds resolve to the boolean),
+     * or a free-form answer when the request accepts one.
+     *
+     * Resolves once the runtime has accepted the response, and rejects when
+     * it could not be recorded, so the controls can stay retryable.
+     */
+    respondToApproval: (response: ToolApprovalResponse) => Promise<void>;
+    /**
+     * Records what the user did in this call's UI on the part, so a stored
+     * conversation keeps it. Resolves once recorded, and rejects when the
+     * payload is not plain JSON, is over the size limit, or the runtime
+     * cannot record interactions; the user's action itself is unaffected.
+     */
+    unstable_recordInteraction?: ((input: Unstable_ToolInteractionInput) => Promise<void>) | undefined;
+};
+/** Component used to render a tool-call message part. */
+export type ToolCallMessagePartComponent<TArgs = any, TResult = any> = ComponentType<ToolCallMessagePartProps<TArgs, TResult>>;
+export type QuoteMessagePartProps = QuoteInfo;
+export type QuoteMessagePartComponent = ComponentType<QuoteMessagePartProps>;
+/**
+ * The consumer-provided allowlist of components a generative-ui spec is
+ * permitted to render. Keys are the component names referenced in the spec
+ * (e.g. `"Card"`, `"Button"`); values are the React components.
+ *
+ * This registry is the security boundary in the same-realm rendering path —
+ * any name not present in the registry is rejected with a typed error.
+ */
+export type GenerativeUIComponentRegistry = Record<string, ComponentType<any>>;
+export type GenerativeUIMessagePartProps = MessagePartState & GenerativeUIMessagePart;
+export type GenerativeUIMessagePartComponent = ComponentType<GenerativeUIMessagePartProps>;
+export type GenerativeUIRenderProps = {
+    /** The JSON spec to render. */
+    spec: GenerativeUISpec;
+    /** The component allowlist. */
+    components: GenerativeUIComponentRegistry;
+    /** Optional fallback for unknown component names. */
+    Fallback?: ComponentType<{
+        component: string;
+        props?: unknown;
+    }> | undefined;
+};

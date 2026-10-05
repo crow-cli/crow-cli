@@ -1,0 +1,1 @@
+export declare function withPromiseOrValue<T>(callback: () => T | PromiseLike<T>, thenHandler: (value: T) => PromiseLike<void> | void, catchHandler: (error: unknown) => PromiseLike<void> | void): PromiseLike<void> | void;

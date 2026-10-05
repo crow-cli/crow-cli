@@ -1,0 +1,112 @@
+/**
+ * The explorer column: svar's filemanager, sized for a column instead of a
+ * page, and painted with crow-chat's theme tokens.
+ *
+ * The widget assumes it owns the viewport. Two of its assumptions break in a
+ * sidebar: it measures its container against a 768px "narrow" breakpoint and
+ * then still subtracts the (now absolutely positioned) tree drawer from the
+ * content width, and its table is a three-column Name/Size/Date layout with
+ * pixel widths written inline. Both are corrected here rather than in the
+ * widget, which stays stock.
+ */
+
+.crow-explorer {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.crow-explorer-loading {
+  background: var(--muted);
+}
+
+/* The theme wrapper is a bare div; without a height the widget collapses to
+   its content and the table never gets a scroll box. */
+.crow-explorer > .wx-theme {
+  height: 100%;
+  min-height: 0;
+}
+
+/* Paint the widget with the app's tokens. The declarations have to sit on the
+   theme element itself: a theme class re-declares every --wx-* var, so values
+   inherited from .crow-explorer would be shadowed. The doubled class beats the
+   library's own single-class rule and also reaches the menus and dialogs the
+   widget portals to the top of the document, outside .crow-explorer. */
+.wx-willow-theme.wx-willow-theme,
+.wx-willow-dark-theme.wx-willow-dark-theme {
+  --wx-font-family: var(--font-sans);
+  --wx-fm-background: var(--background);
+  --wx-background: var(--background);
+  --wx-background-alt: var(--muted);
+  --wx-background-hover: var(--accent);
+  --wx-border-color: var(--border);
+  --wx-color-font: var(--foreground);
+  --wx-color-font-alt: var(--muted-foreground);
+  --wx-color-font-disabled: var(--muted-foreground);
+  --wx-color-primary: var(--primary);
+  --wx-color-primary-font: var(--primary-foreground);
+  --wx-color-primary-selected: var(--accent);
+  --wx-color-secondary-hover: var(--accent);
+  --wx-color-danger: var(--destructive);
+  --wx-color-link: var(--primary);
+  --wx-input-background: var(--background);
+  --wx-popup-background: var(--popover);
+  --wx-modal-background: var(--popover);
+}
+
+/* Narrow mode is the only mode a column this size ever gets: the tree becomes
+   a drawer, and the content width the widget computed for it is negative. */
+.crow-explorer .wx-sidebar-narrow + .wx-content {
+  width: 100% !important;
+}
+
+/* The drawer floats over the table, so it brings its own background — and it
+   is 238px wide by default, which in a column this size is a drawer that
+   spills into the editor and gets clipped mid-button. */
+.crow-explorer .wx-sidebar-narrow {
+  width: 100%;
+  background: var(--background);
+  border-right: 1px solid var(--border);
+}
+
+/* The column-resize grip hangs 9px off the last header cell, which is what a
+   horizontal scrollbar in a 180px column would be made of. */
+.crow-explorer .wx-grip {
+  display: none;
+}
+
+/* Preview is intercepted off (see explorer.tsx); the menu entry that would
+   offer it goes with it. */
+.wx-menu [data-id=":preview"] {
+  display: none;
+}
+
+/* Name only: Size and Date are 220px of the widget's 3-column layout, and the
+   grid writes those pixels inline, so they go with !important and the boxes
+   that were sized around them come back to 100%. */
+.crow-explorer [data-header-id=":size"],
+.crow-explorer [data-header-id=":date"],
+.crow-explorer [data-col-id=":size"],
+.crow-explorer [data-col-id=":date"] {
+  display: none !important;
+}
+
+.crow-explorer .wx-header,
+.crow-explorer .wx-body {
+  width: 100% !important;
+}
+
+.crow-explorer [data-header-id=":name"],
+.crow-explorer [data-col-id=":name"] {
+  width: auto !important;
+  min-width: 0 !important;
+  flex: 1 1 auto !important;
+}
+
+/* Search filters the folders that happen to be loaded, which with a lazy tree
+   is an answer that looks complete and is not; the view switcher has one
+   setting a column can use. Both go, and the toolbar keeps the drawer toggle. */
+.crow-explorer .wx-search-input,
+.crow-explorer .wx-modes {
+  display: none;
+}

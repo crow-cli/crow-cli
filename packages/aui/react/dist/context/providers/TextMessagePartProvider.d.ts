@@ -1,0 +1,1 @@
+export { TextMessagePartProvider } from "@assistant-ui/core/react";

@@ -1,0 +1,1 @@
+export declare const useOnResizeContent: (callback: () => void) => (el: HTMLElement | null) => void;

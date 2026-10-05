@@ -1,0 +1,15 @@
+{
+  "name": "crow-cli-web",
+  "private": true,
+  "description": "bun workspace for the crow web client embedded in the crow-web binary",
+  "workspaces": [
+    "packages/chat",
+    "packages/editor",
+    "packages/aui/*"
+  ],
+  "scripts": {
+    "web:build": "bun run --filter @crow/chat build",
+    "web:dev": "bun run --filter @crow/chat dev",
+    "web:typecheck": "bun run --filter @crow/chat typecheck"
+  }
+}

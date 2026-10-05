@@ -1,0 +1,48 @@
+{
+  "name": "@assistant-ui/react",
+  "version": "0.15.23",
+  "description": "Open-source TypeScript/React library for building production-grade AI chat experiences",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "dependencies": {
+    "@assistant-ui/core": "workspace:*",
+    "@assistant-ui/store": "workspace:*",
+    "@assistant-ui/tap": "workspace:*",
+    "assistant-cloud": "workspace:*",
+    "assistant-stream": "workspace:*",
+    "radix-ui": "^1.6.7",
+    "react-textarea-autosize": "^8.5.9",
+    "safe-content-frame": "workspace:*",
+    "zod": "^4.6.5",
+    "zustand": "^5.0.15"
+  },
+  "peerDependencies": {
+    "@types/react": "*",
+    "@types/react-dom": "*",
+    "react": "^18 || ^19",
+    "react-dom": "^18 || ^19"
+  },
+  "peerDependenciesMeta": {
+    "@types/react": {
+      "optional": true
+    },
+    "@types/react-dom": {
+      "optional": true
+    }
+  },
+  "homepage": "https://www.assistant-ui.com/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/assistant-ui/assistant-ui.git",
+    "directory": "packages/react"
+  }
+}

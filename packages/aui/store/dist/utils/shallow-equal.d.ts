@@ -1,0 +1,1 @@
+export declare const shallowEqual: (a: object, b: object) => boolean;

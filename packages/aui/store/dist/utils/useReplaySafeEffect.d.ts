@@ -1,0 +1,2 @@
+/** `useEffect` for a teardown that must survive a replay. Fast Refresh and a StrictMode double mount run an effect's cleanup and then its setup in the same tick with unchanged deps; both are skipped, so the work the effect started keeps running. A deps change still runs the old cleanup before the new setup, and an unmount or a hidden `<Activity>` runs the cleanup one microtask later. */
+export declare const useReplaySafeEffect: (effect: () => (() => void) | void, deps: readonly unknown[]) => void;

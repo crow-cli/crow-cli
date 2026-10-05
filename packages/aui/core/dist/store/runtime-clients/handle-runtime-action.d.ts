@@ -1,0 +1,1 @@
+export declare const handleRuntimeAction: (label: string, execute: () => Promise<void>) => Promise<void>;

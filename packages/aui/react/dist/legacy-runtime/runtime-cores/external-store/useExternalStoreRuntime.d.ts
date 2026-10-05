@@ -1,0 +1,1 @@
+export { useExternalStoreRuntime } from "@assistant-ui/core/react";

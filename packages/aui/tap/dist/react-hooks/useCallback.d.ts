@@ -1,0 +1,1 @@
+export declare const useCallback: <T extends (...args: any[]) => any>(fn: T, deps: readonly unknown[]) => T;

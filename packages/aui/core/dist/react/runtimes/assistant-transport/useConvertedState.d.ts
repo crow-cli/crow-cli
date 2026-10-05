@@ -1,0 +1,3 @@
+import type { AssistantTransportCommand, AssistantTransportState, AssistantTransportStateConverter } from "./types.js";
+import type { ToolExecutionStatus } from "../../../runtimes/tool-invocations/ToolInvocationTracker.js";
+export declare function useConvertedState<T>(converter: AssistantTransportStateConverter<T>, agentState: T, pendingCommands: AssistantTransportCommand[], isSending: boolean, toolStatuses: Record<string, ToolExecutionStatus>): AssistantTransportState;

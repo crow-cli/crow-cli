@@ -1,0 +1,1 @@
+export declare const useDevStrictMode: () => () => "root" | "child" | null;

@@ -1,0 +1,108 @@
+export type ResourceElement<V> = {
+    readonly hook: (...args: any[]) => V;
+    readonly args: readonly unknown[];
+    readonly key?: string | number;
+    readonly deps?: readonly unknown[];
+};
+export type Resource<V, A extends readonly unknown[] = any[]> = (...args: A) => ResourceElement<V>;
+export type ExtractResourceReturnType<T> = T extends ResourceElement<infer V> ? V : T extends Resource<infer V, any> ? V : never;
+export interface ChangelogRecord {
+    readonly fiber: ResourceFiber<any>;
+    readonly cell: ReducerCell;
+    readonly action: any;
+    hasEagerState: boolean;
+    eagerState: any;
+    prevState: any;
+    settled: boolean;
+    queued: boolean;
+    logged: boolean;
+}
+export type ReducerCell = {
+    readonly type: "reducer";
+    readonly dispatch: (action: any) => void;
+    queue: ChangelogRecord[] | null;
+    renderQueue: any[] | null;
+    workInProgress: any;
+    current: any;
+    reducer: (state: any, action: any) => any;
+    isDirty: boolean;
+};
+export type MemoCell<T = any> = {
+    readonly type: "memo";
+    current: T;
+    currentDeps: readonly unknown[];
+    wip: T;
+    wipDeps: readonly unknown[];
+    wipIsRefreshing: boolean;
+    isDirty: boolean;
+};
+export type RefCell<T = any> = {
+    readonly type: "ref";
+    readonly ref: {
+        current: T;
+    };
+};
+export type RefreshCell = {
+    readonly type: "refresh";
+    token: unknown;
+    isCommitted: boolean;
+};
+export type EffectCell = {
+    readonly type: "effect" | "insertion";
+    setup: (() => (() => void) | undefined) | undefined;
+    setupDeps: readonly unknown[] | undefined;
+    cleanup: (() => void) | undefined;
+    deps: readonly unknown[] | null | undefined;
+    generation: number;
+};
+export type HostCell = {
+    readonly type: "host";
+    fiber: ResourceFiber<unknown> | null;
+    readonly fibers: Map<string | number, {
+        fiber: ResourceFiber<unknown>;
+    }> | null;
+};
+export type Cell = ReducerCell | MemoCell | RefCell | RefreshCell | EffectCell | HostCell;
+export type CommitCallback = () => void;
+export type CommitCallbacks = CommitCallback[];
+export type ResourceContext = Map<object, ResourceContextValue>;
+export type ResourceContextDeps = Map<object, ResourceFiber<any> | null>;
+export interface ResourceContextValue {
+    value: unknown;
+    source: ResourceFiber<any> | null;
+}
+export interface TapRoot {
+    version: number;
+    committedVersion: number;
+    readonly changelog: ChangelogRecord[];
+    readonly committedLog: ChangelogRecord[];
+    unsettledCount: number;
+    readonly dispatchUpdate: (evaluate: () => boolean, apply: () => boolean) => void;
+    readonly rollbackCallbacks: (() => void)[];
+}
+export interface ResourceFiber<R> {
+    readonly root: TapRoot;
+    readonly hook: (...args: any[]) => R;
+    readonly markDirty: (() => void) | undefined;
+    readonly devStrictMode: "root" | "child" | null;
+    cells: Cell[];
+    effectCells: EffectCell[];
+    insertionCells: EffectCell[] | null;
+    hostCells: HostCell[] | null;
+    wipContextDeps: ResourceContextDeps | null;
+    contextDeps: ResourceContextDeps | null;
+    wipCommitCallbacks: CommitCallbacks | null;
+    currentIndex: number;
+    isRefreshing: boolean;
+    memoCache: {
+        current: unknown[][] | null;
+        workInProgress: unknown[][] | null;
+        refreshedIndices: Set<number> | null;
+        index: number;
+    };
+    renderPendingCells: Set<ReducerCell> | null;
+    isMounted: boolean;
+    isReleased: boolean;
+    isFirstRender: boolean;
+    isNeverMounted: boolean;
+}

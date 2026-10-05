@@ -1,0 +1,1 @@
+export declare const useMediaQuery: (query: string | null) => boolean;

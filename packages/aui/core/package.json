@@ -1,0 +1,60 @@
+{
+  "name": "@assistant-ui/core",
+  "version": "0.3.22",
+  "description": "Framework-agnostic core runtime for assistant-ui",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./internal": {
+      "types": "./dist/internal.d.ts",
+      "default": "./dist/internal.js"
+    },
+    "./store": {
+      "types": "./dist/store/index.d.ts",
+      "default": "./dist/store/index.js"
+    },
+    "./store/internal": {
+      "types": "./dist/store/internal.d.ts",
+      "default": "./dist/store/internal.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "default": "./dist/react/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "dependencies": {
+    "assistant-stream": "workspace:*",
+    "nanoid": "^6.0.1"
+  },
+  "peerDependencies": {
+    "@assistant-ui/store": "workspace:*",
+    "@assistant-ui/tap": "workspace:*",
+    "@types/react": "*",
+    "react": "^18 || ^19",
+    "assistant-cloud": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@types/react": {
+      "optional": true
+    },
+    "assistant-cloud": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  },
+  "homepage": "https://www.assistant-ui.com/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/assistant-ui/assistant-ui.git",
+    "directory": "packages/core"
+  }
+}

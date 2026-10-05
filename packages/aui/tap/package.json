@@ -1,0 +1,62 @@
+{
+  "name": "@assistant-ui/tap",
+  "version": "0.9.20",
+  "description": "Reactive state management inspired by React hooks",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./internal": {
+      "types": "./dist/internal.d.ts",
+      "default": "./dist/internal.js"
+    },
+    "./react-shim": {
+      "types": null,
+      "default": "./dist/react-shim/index.js"
+    },
+    "./react-shim/compiler-runtime": {
+      "types": null,
+      "default": "./dist/react-shim/compiler-runtime.js"
+    },
+    "./standalone-shim": {
+      "types": null,
+      "default": "./dist/standalone-shim/index.js"
+    },
+    "./standalone-shim/compiler-runtime": {
+      "types": null,
+      "default": "./dist/standalone-shim/compiler-runtime.js"
+    },
+    "./standalone-shim/jsx-runtime": {
+      "types": null,
+      "default": "./dist/standalone-shim/jsx-runtime.js"
+    },
+    "./standalone-shim/jsx-dev-runtime": {
+      "types": null,
+      "default": "./dist/standalone-shim/jsx-dev-runtime.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "peerDependencies": {
+    "@types/react": "*",
+    "react": "^18 || ^19"
+  },
+  "peerDependenciesMeta": {
+    "@types/react": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  },
+  "homepage": "https://www.assistant-ui.com/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/assistant-ui/assistant-ui.git",
+    "directory": "packages/tap"
+  }
+}

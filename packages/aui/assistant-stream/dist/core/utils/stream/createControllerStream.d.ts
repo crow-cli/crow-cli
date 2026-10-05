@@ -1,0 +1,3 @@
+import type { UnderlyingReadable } from "./UnderlyingReadable.js";
+export declare const createControllerStream: <TChunk, TController>(readable: UnderlyingReadable<TController>, makeController: (controller: ReadableStreamDefaultController<TChunk>) => TController) => ReadableStream<TChunk>;
+export declare const createControllerStreamPair: <TChunk, TController>(makeController: (controller: ReadableStreamDefaultController<TChunk>) => TController, onCancel?: (controller: TController, reason: unknown) => void | PromiseLike<void>) => readonly [ReadableStream<TChunk>, TController];

@@ -1,0 +1,1 @@
+export declare const ASSISTANT_CLOUD_VERSION: string;

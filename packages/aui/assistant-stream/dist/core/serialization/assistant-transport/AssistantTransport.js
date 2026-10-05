@@ -1,0 +1,133 @@
+import { PipeableTransformStream } from "../../utils/stream/PipeableTransformStream.js";
+import { SSE_HEADERS, createSSEJsonDecoder, createSSEJsonEncoder } from "../../utils/stream/SSEJson.js";
+import sjson from "secure-json-parse";
+//#region src/core/serialization/assistant-transport/AssistantTransport.ts
+const noFields = () => true;
+const requiredObject = (key) => (c) => {
+	const value = c[key];
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+};
+const requiredString = (key) => (c) => typeof c[key] === "string";
+const requiredArray = (key) => (c) => Array.isArray(c[key]);
+const optionalBoolean = (key) => (c) => c[key] === void 0 || typeof c[key] === "boolean";
+const KNOWN_CHUNK_TYPES = {
+	"part-start": {
+		kind: "message",
+		valid: requiredObject("part")
+	},
+	"part-finish": {
+		kind: "part-addressed",
+		valid: noFields
+	},
+	"tool-call-args-text-finish": {
+		kind: "part-addressed",
+		valid: noFields
+	},
+	"text-delta": {
+		kind: "part-addressed",
+		valid: requiredString("textDelta")
+	},
+	annotations: {
+		kind: "message",
+		valid: requiredArray("annotations")
+	},
+	data: {
+		kind: "message",
+		valid: requiredArray("data")
+	},
+	"step-start": {
+		kind: "message",
+		valid: noFields
+	},
+	"step-finish": {
+		kind: "message",
+		valid: requiredString("finishReason")
+	},
+	"message-finish": {
+		kind: "message",
+		valid: requiredString("finishReason")
+	},
+	result: {
+		kind: "part-addressed",
+		valid: optionalBoolean("isError")
+	},
+	error: {
+		kind: "message",
+		valid: noFields
+	},
+	"update-state": {
+		kind: "message",
+		valid: requiredArray("operations")
+	}
+};
+const parseChunk = (data) => {
+	let value;
+	try {
+		value = sjson.parse(data);
+	} catch {
+		return "unparseable";
+	}
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return "not-an-object";
+	const { type, path } = value;
+	if (typeof type !== "string" || !Object.prototype.hasOwnProperty.call(KNOWN_CHUNK_TYPES, type)) return "unknown-type";
+	const rule = KNOWN_CHUNK_TYPES[type];
+	if (!rule.valid(value)) return `invalid-fields:${type}`;
+	if (path === void 0) {
+		if (rule.kind !== "message") return `missing-path:${type}`;
+		return {
+			...value,
+			path: []
+		};
+	}
+	if (!Array.isArray(path) || !path.every((entry) => Number.isInteger(entry) && entry >= 0)) return "invalid-path";
+	return value;
+};
+/**
+* AssistantTransportEncoder encodes AssistantStreamChunks into SSE format
+* and emits [DONE] when the stream completes.
+*/
+var AssistantTransportEncoder = class extends PipeableTransformStream {
+	headers = new Headers(SSE_HEADERS);
+	constructor() {
+		super(createSSEJsonEncoder("[DONE]"));
+	}
+};
+/**
+* AssistantTransportDecoder decodes SSE format into AssistantStreamChunks.
+* It stops decoding when it encounters [DONE].
+*/
+var AssistantTransportDecoder = class extends PipeableTransformStream {
+	constructor(options = {}) {
+		const strict = options.strict ?? true;
+		const warnedReasons = /* @__PURE__ */ new Set();
+		super(createSSEJsonDecoder({
+			parse(data, controller) {
+				const chunk = parseChunk(data);
+				if (typeof chunk === "string") {
+					if (!warnedReasons.has(chunk)) {
+						warnedReasons.add(chunk);
+						console.warn(`Dropped invalid assistant-transport chunk (${chunk}): ${data.slice(0, 200)}`);
+					}
+				} else controller.enqueue(chunk);
+			},
+			done: {
+				marker: "[DONE]",
+				onMissing() {
+					if (strict) throw new Error("Stream ended abruptly without receiving [DONE] marker");
+					console.warn("Stream ended abruptly without receiving [DONE] marker");
+				}
+			},
+			...strict ? { strict: true } : {
+				strict: false,
+				onUnknownEvent(event) {
+					if (!warnedReasons.has(`event:${event}`)) {
+						warnedReasons.add(`event:${event}`);
+						console.error(`Ignored unknown SSE event type: ${event}`);
+					}
+				}
+			}
+		}));
+	}
+};
+//#endregion
+export { AssistantTransportDecoder, AssistantTransportEncoder };

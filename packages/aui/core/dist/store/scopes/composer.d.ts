@@ -1,0 +1,155 @@
+import type { Attachment, CreateAttachment } from "../../types/attachment.js";
+import type { MessageRole } from "../../types/message.js";
+import type { QuoteInfo } from "../../types/quote.js";
+import type { RunConfig } from "../../types/message.js";
+import type { ComposerRuntime } from "../../runtime/api/composer-runtime.js";
+import type { AttachmentAddErrorReason, ComposerSubmission, DictationState, SendOptions } from "../../runtime/interfaces/composer-runtime-core.js";
+import type { AttachmentMethods } from "./attachment.js";
+import type { QueueItemState, QueueItemMethods } from "./queue-item.js";
+export type ComposerSendOptions = SendOptions & {
+    /**
+     * Whether to steer (process this message next, interrupting the current run
+     * when the runtime supports it). A runtime whose agent takes a second
+     * prompt mid-turn sends it immediately instead — see
+     * `ExternalThreadQueueAdapter.sendNow`. Defaults to true while a queued run
+     * is in flight and false when idle. Pass false to queue behind the pending
+     * messages.
+     */
+    steer?: boolean;
+};
+export type ComposerState = {
+    readonly text: string;
+    readonly role: MessageRole;
+    readonly attachments: readonly Attachment[];
+    readonly runConfig: RunConfig;
+    readonly isEditing: boolean;
+    /**
+     * Whether the composer can cancel the current run. `true` when the runtime
+     * supports cancel and a run is in flight, not merely when cancel is a
+     * capability.
+     */
+    readonly canCancel: boolean;
+    /**
+     * Whether the composer is currently willing to send. `true` when the
+     * composer is in editing mode and has non-empty content; for thread
+     * composers also requires the thread's `isSendDisabled` flag to be unset
+     * and, while a voice session is connected, a session that takes typed text
+     * (`voice.canSendText`) and a draft without attachments. Edit composers
+     * (saving message edits) ignore `isSendDisabled` since it is a
+     * thread-scoped gate and never send while a voice session is connected.
+     * Cross-thread gating (running, queue capability) is layered on top by
+     * `useComposerSend`.
+     */
+    readonly canSend: boolean;
+    readonly attachmentAccept: string;
+    readonly isEmpty: boolean;
+    readonly type: "thread" | "edit";
+    /**
+     * The current state of dictation.
+     * Undefined when dictation is not active.
+     */
+    readonly dictation: DictationState | undefined;
+    /**
+     * The currently quoted text, if any.
+     * Undefined when no quote is set.
+     */
+    readonly quote: QuoteInfo | undefined;
+    /**
+     * The queue of messages waiting to be processed.
+     * Empty when no messages are queued.
+     */
+    readonly queue: readonly QueueItemState[];
+    /**
+     * The message this composer sent while its attachments are prepared. The
+     * thread renders it as its last message until the runtime takes it.
+     * Undefined when no send is being prepared.
+     */
+    readonly submission?: ComposerSubmission | undefined;
+    /**
+     * Messages this composer handed to the runtime that the thread does not
+     * show yet, oldest first. The thread renders them after its own messages
+     * until the runtime shows each one.
+     */
+    readonly inTransit?: readonly ComposerSubmission[] | undefined;
+};
+export type ComposerMethods = {
+    getState(): ComposerState;
+    setText(text: string): void;
+    setRole(role: MessageRole): void;
+    setRunConfig(runConfig: RunConfig): void;
+    addAttachment(fileOrAttachment: File | CreateAttachment): Promise<void>;
+    clearAttachments(): Promise<void>;
+    attachment(selector: {
+        index: number;
+    } | {
+        id: string;
+    }): AttachmentMethods;
+    reset(): Promise<void>;
+    send(opts?: ComposerSendOptions): void;
+    cancel(): void;
+    beginEdit(): void;
+    /**
+     * Start dictation to convert voice to text input.
+     * Requires a DictationAdapter to be configured.
+     */
+    startDictation(): void;
+    /**
+     * Stop the current dictation session.
+     */
+    stopDictation(): void;
+    /**
+     * Set a quote for the next message. Pass undefined to clear.
+     */
+    setQuote(quote: QuoteInfo | undefined): void;
+    /**
+     * Access a queue item by index or id.
+     */
+    queueItem(selector: {
+        index: number;
+    } | {
+        id: string;
+    }): QueueItemMethods;
+    __internal_getRuntime?(): ComposerRuntime;
+};
+export type ComposerMeta = {
+    source: "thread" | "message";
+    query: Record<string, never>;
+};
+export type ComposerEvents = {
+    /**
+     * The user sent a message, from the composer or through `thread.append`.
+     * `messageId` is set when the send came from an edit composer.
+     */
+    "composer.send": {
+        threadId: string;
+        messageId?: string;
+        chars: number;
+        attachments: number;
+        suggestion?: boolean;
+    };
+    /**
+     * An attachment was added to the composer. `messageId` is set when the
+     * attachment was added to an edit composer.
+     */
+    "composer.attachmentAdd": {
+        threadId: string;
+        messageId?: string;
+        contentType?: string;
+    };
+    "composer.attachmentAddError": {
+        threadId: string;
+        messageId?: string;
+        attachmentId?: string;
+        reason: AttachmentAddErrorReason;
+        message: string;
+        contentType?: string;
+    };
+    "composer.cancel": {
+        threadId: string;
+    };
+};
+export type ComposerClientSchema = {
+    methods: ComposerMethods;
+    meta: ComposerMeta;
+    events: ComposerEvents;
+};

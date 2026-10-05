@@ -1,0 +1,124 @@
+import type { ThreadMessage } from "../../types/message.js";
+import type { RunConfig } from "../../types/message.js";
+import type { SpeechState } from "../../runtime/interfaces/thread-runtime-core.js";
+import type { MessageRuntime } from "../../runtime/api/message-runtime.js";
+import type { ComposerSubmission } from "../../runtime/interfaces/composer-runtime-core.js";
+import type { ComposerMethods, ComposerState } from "./composer.js";
+import type { PartMethods, PartState } from "./part.js";
+import type { AttachmentMethods } from "./attachment.js";
+export type MessageState = ThreadMessage & {
+    readonly parentId: string | null;
+    readonly isLast: boolean;
+    readonly branchNumber: number;
+    readonly branchCount: number;
+    /**
+     * @deprecated This API is still under active development and might change without notice.
+     *
+     * To enable text-to-speech, provide a `SpeechSynthesisAdapter` to the runtime.
+     *
+     * @example
+     * ```ts
+     * import { WebSpeechSynthesisAdapter } from "@assistant-ui/react";
+     * import { useChatRuntime } from "@assistant-ui/ai-sdk";
+     *
+     * const runtime = useChatRuntime({
+     *   adapters: {
+     *     speech: new WebSpeechSynthesisAdapter(),
+     *   },
+     * });
+     */
+    readonly speech: SpeechState | undefined;
+    readonly composer: ComposerState;
+    readonly parts: readonly PartState[];
+    readonly isCopied: boolean;
+    readonly isHovering: boolean;
+    /** The position of this message in the thread (0 for first message) */
+    readonly index: number;
+    /**
+     * Set while this row is a message the composer sent that the thread does
+     * not show as one of its own yet. Its attachments live here rather than on
+     * `attachments`, which only ever holds the ones a thread message was
+     * delivered with.
+     */
+    readonly submission?: ComposerSubmission | undefined;
+};
+export type MessageMethods = {
+    /**
+     * Get the current state of the message.
+     */
+    getState(): MessageState;
+    composer(): ComposerMethods;
+    delete(): void | Promise<void>;
+    reload(config?: {
+        runConfig?: RunConfig;
+    }): void;
+    /** @deprecated This API is still under active development and might change without notice. */
+    speak(): void;
+    /** @deprecated This API is still under active development and might change without notice. */
+    stopSpeaking(): void;
+    submitFeedback(feedback: {
+        type: "positive" | "negative";
+        comment?: string;
+    }): void;
+    switchToBranch(options: {
+        position?: "previous" | "next";
+        branchId?: string;
+    }): void;
+    getCopyText(): string;
+    part(selector: {
+        index: number;
+    } | {
+        toolCallId: string;
+    }): PartMethods;
+    attachment(selector: {
+        index: number;
+    } | {
+        id: string;
+    }): AttachmentMethods;
+    setIsCopied(value: boolean): void;
+    setIsHovering(value: boolean): void;
+    __internal_getRuntime?(): MessageRuntime;
+};
+export type MessageMeta = {
+    source: "thread";
+    query: {
+        type: "id";
+        id: string;
+    } | {
+        type: "index";
+        index: number;
+    };
+};
+export type MessageEvents = {
+    /** The user asked for this assistant message to be generated again. */
+    "message.reload": {
+        threadId: string;
+        messageId: string;
+    };
+    /** The user moved to another branch at this message. */
+    "message.branchSwitched": {
+        threadId: string;
+        messageId: string;
+    };
+    /** The user copied this message. */
+    "message.copied": {
+        threadId: string;
+        messageId: string;
+    };
+    /** Speech synthesis started for this message. */
+    "message.speak": {
+        threadId: string;
+        messageId: string;
+    };
+    /** This message entered an error status. */
+    "message.error": {
+        threadId: string;
+        messageId: string;
+        reason: "error";
+    };
+};
+export type MessageClientSchema = {
+    methods: MessageMethods;
+    meta: MessageMeta;
+    events: MessageEvents;
+};

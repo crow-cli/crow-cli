@@ -35,5 +35,11 @@ sandbox/lancedb-testing/pylate_lancedb/
 # Rust
 target/
 
+# web workspace (bun): node_modules everywhere; the vendored aui dists ARE
+# the source of truth for packages/aui, so they stay tracked
+node_modules/
+!packages/aui/*/dist/
+!packages/aui/*/dist/**
+
 # playwright-cli scratch state
 .playwright-cli/

@@ -1,0 +1,1 @@
+export declare const useMessageError: () => string | number | boolean | import("assistant-stream/utils").ReadonlyJSONObject | import("assistant-stream/utils").ReadonlyJSONArray | undefined;

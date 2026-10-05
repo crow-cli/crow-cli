@@ -1,0 +1,37 @@
+import type { AssistantState } from "./types/client.js";
+/**
+ * Subscribes to a slice of {@link AssistantState} and re-renders the
+ * component whenever that slice changes.
+ *
+ * The `selector` is called on every store update; its return value is
+ * compared by `Object.is`, and the component re-renders only when the
+ * selected slice changes. Returning the entire state object is not
+ * supported and throws at runtime — select a specific field instead, or
+ * compose multiple `useAuiState` calls. Returning a new object or array
+ * literal, including spreading `s.thread` into a new object, causes a
+ * re-render on every store update; either select primitives or return a
+ * memoized reference.
+ *
+ * Scopes that may be unavailable can be read via `s.optional.<scope>`,
+ * which resolves to `undefined` instead of throwing.
+ *
+ * @param selector - Pure function that derives a value from the current
+ *   assistant state. Should be cheap and referentially stable for equal
+ *   inputs (plain field reads, primitives, or memoized values).
+ * @returns The currently selected slice.
+ *
+ * @example
+ * ```tsx
+ * // Disable a button while a run is in flight.
+ * const isRunning = useAuiState((s) => s.thread.isRunning);
+ * ```
+ *
+ * @example
+ * ```tsx
+ * // Prefer multiple selectors over an inline object literal, which would
+ * // create a new reference on every render.
+ * const text = useAuiState((s) => s.composer.text);
+ * const canSend = useAuiState((s) => s.composer.canSend);
+ * ```
+ */
+export declare const useAuiState: <T>(selector: (state: AssistantState) => T) => T;

@@ -1,0 +1,135 @@
+import type { ToolModelContentPart } from "assistant-stream";
+import type { AssistantCloud } from "assistant-cloud";
+import type { ThreadMessage } from "../../../types/message.js";
+import type { ReadonlyJSONValue } from "assistant-stream/utils";
+import type { AttachmentAdapter } from "../../../adapters/attachment.js";
+import type { ThreadHistoryAdapter } from "../../../adapters/thread-history.js";
+import type { LanguageModelV1CallSettings, LanguageModelConfig } from "../../../model-context/types.js";
+import type { UserCommands } from "../../../types/augmentations.js";
+import type { ToolExecutionStatus } from "../../../runtimes/tool-invocations/ToolInvocationTracker.js";
+export type TextPart = {
+    readonly type: "text";
+    readonly text: string;
+};
+export type ImagePart = {
+    readonly type: "image";
+    readonly image: string;
+};
+export type UserMessagePart = TextPart | ImagePart;
+export type UserMessage = {
+    readonly role: "user";
+    readonly id?: string;
+    readonly parts: readonly UserMessagePart[];
+};
+export type AssistantMessage = {
+    readonly role: "assistant";
+    readonly parts: readonly TextPart[];
+};
+export type AddMessageCommand = {
+    readonly type: "add-message";
+    readonly message: UserMessage | AssistantMessage;
+    readonly parentId: string | null;
+    readonly sourceId: string | null;
+};
+export type AddToolResultCommand = {
+    readonly type: "add-tool-result";
+    readonly toolCallId: string;
+    readonly toolName: string;
+    readonly result: ReadonlyJSONValue;
+    readonly isError: boolean;
+    readonly artifact?: ReadonlyJSONValue;
+    readonly modelContent?: readonly ToolModelContentPart[];
+};
+export type AssistantTransportCommand = AddMessageCommand | AddToolResultCommand | UserCommands;
+export type AssistantTransportState = {
+    readonly messages: readonly ThreadMessage[];
+    readonly state?: ReadonlyJSONValue;
+    readonly isRunning: boolean;
+};
+export type AssistantTransportConnectionMetadata = {
+    pendingCommands: AssistantTransportCommand[];
+    isSending: boolean;
+    toolStatuses: Record<string, ToolExecutionStatus>;
+};
+export type AssistantTransportStateConverter<T> = (state: T, connectionMetadata: AssistantTransportConnectionMetadata) => AssistantTransportState;
+export type CommandQueueState = {
+    queued: AssistantTransportCommand[];
+    inTransit: AssistantTransportCommand[];
+};
+export type QueuedCommand = AssistantTransportCommand;
+export type HeadersValue = Record<string, string> | Headers;
+export type AssistantTransportProtocol = "data-stream" | "assistant-transport";
+export type SendCommandsRequestBody = {
+    commands: QueuedCommand[];
+    /** Absent on a resume with `resumeStateApi`; the server replays from its retained snapshot. */
+    state?: unknown;
+    runId?: string;
+    system: string | undefined;
+    tools: Record<string, unknown> | undefined;
+    callSettings: LanguageModelV1CallSettings | undefined;
+    config: LanguageModelConfig | undefined;
+    /** Remote id of the thread; absent only when resuming a thread that has none. */
+    threadId?: string;
+    parentId?: string | null;
+    [key: string]: unknown;
+};
+export type AssistantTransportOptions<T> = {
+    initialState: T;
+    api: string;
+    /**
+     * Backs the thread list with Assistant Cloud; requests carry the cloud thread id.
+     * Without it, `NEXT_PUBLIC_ASSISTANT_BASE_URL` selects Assistant Cloud on Next.js, as for `useLocalRuntime`.
+     */
+    cloud?: AssistantCloud | undefined;
+    resumeApi?: string;
+    /** Endpoint that returns the retained initial state and run ID for a resume stream. A 204 response means no run is active and the resume is skipped. */
+    resumeStateApi?: string;
+    protocol?: AssistantTransportProtocol;
+    /**
+     * When `false`, stream decoding and state reconciliation tolerate malformed
+     * input (invalid chunks are dropped with a console log) instead of throwing.
+     * Resume runs always decode leniently. Defaults to `true`.
+     */
+    strict?: boolean;
+    converter: AssistantTransportStateConverter<T>;
+    headers: HeadersValue | (() => Promise<HeadersValue>);
+    body?: object | (() => Promise<object | undefined>);
+    /**
+     * Transform the request body before it is sent to the API.
+     * Receives the fully assembled body and returns the (potentially transformed) body.
+     *
+     * @example
+     * ```ts
+     * prepareSendCommandsRequest: (body) => ({
+     *   ...body,
+     *   trackingId: crypto.randomUUID(),
+     * })
+     * ```
+     */
+    prepareSendCommandsRequest?: (body: SendCommandsRequestBody) => Record<string, unknown> | Promise<Record<string, unknown>>;
+    onResponse?: (response: Response) => void | Promise<void>;
+    onFinish?: () => void;
+    onError?: (error: Error, params: {
+        commands: AssistantTransportCommand[];
+        updateState: (updater: (state: T) => T) => void;
+    }) => void | Promise<void>;
+    /**
+     * Called when commands are cancelled.
+     *
+     * When an error occurs, queued commands are automatically cancelled after `onError` settles.
+     * In this case, the `error` parameter contains the error that caused the cancellation.
+     */
+    onCancel?: (params: {
+        commands: AssistantTransportCommand[];
+        updateState: (updater: (state: T) => T) => void;
+        error?: Error;
+    }) => void;
+    capabilities?: {
+        edit?: boolean;
+    };
+    adapters?: {
+        attachments?: AttachmentAdapter | undefined;
+        /** @deprecated This runtime never reads it; pass `cloud` to keep threads in Assistant Cloud. */
+        history?: ThreadHistoryAdapter | undefined;
+    };
+};

@@ -1,0 +1,1 @@
+export { ComposerPrimitiveAttachments, ComposerPrimitiveAttachmentByIndex, } from "@assistant-ui/core/react";

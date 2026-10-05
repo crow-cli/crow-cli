@@ -1,0 +1,1 @@
+export declare const c: (size: number) => unknown[];

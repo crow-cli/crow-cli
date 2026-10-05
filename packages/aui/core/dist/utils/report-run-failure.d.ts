@@ -1,0 +1,1 @@
+export declare const reportRunFailure: (label: string, task: void | Promise<void>) => void;

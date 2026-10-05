@@ -1,0 +1,250 @@
+import type { ToolModelContentPart } from "assistant-stream";
+import type { ReadonlyJSONValue } from "assistant-stream/utils";
+import type { ModelContext } from "../../model-context/types.js";
+import type { Unsubscribe } from "../../types/unsubscribe.js";
+import type { AppendMessage, ThreadMessage, Unstable_ToolInteraction } from "../../types/message.js";
+import type { RunConfig } from "../../types/message.js";
+import type { SpeechSynthesisAdapter } from "../../adapters/speech.js";
+import type { RealtimeVoiceAdapter } from "../../adapters/voice.js";
+import type { ChatModelRunOptions, ChatModelRunResult } from "../utils/chat-model-adapter.js";
+import type { ExportedMessageRepository } from "../utils/message-repository.js";
+import type { ThreadMessageLike } from "../utils/thread-message-like.js";
+import type { EditComposerRuntimeCore, ThreadComposerRuntimeCore } from "./composer-runtime-core.js";
+import type { QueueItemState } from "../queue/queue-item.js";
+import type { QueuePlacement } from "../queue/external-thread-queue-adapter.js";
+export type RuntimeCapabilities = {
+    readonly switchToBranch: boolean;
+    readonly switchBranchDuringRun: boolean;
+    readonly edit: boolean;
+    readonly reload: boolean;
+    /** Whether the runtime can refetch this thread's remote state in place. */
+    readonly refetchThread: boolean;
+    readonly delete: boolean;
+    readonly cancel: boolean;
+    readonly unstable_copy: boolean;
+    readonly speech: boolean;
+    readonly dictation: boolean;
+    readonly voice: boolean;
+    readonly attachments: boolean;
+    readonly feedback: boolean;
+    readonly queue: boolean;
+    /** Whether the thread can answer a waiting tool call by adding its result, resuming it, or responding to its approval. */
+    readonly answerToolCall: boolean;
+};
+export type AddToolResultOptions = {
+    messageId: string;
+    toolName: string;
+    toolCallId: string;
+    result: ReadonlyJSONValue;
+    isError: boolean;
+    artifact?: ReadonlyJSONValue | undefined;
+    /**
+     * Optional model-content payload produced by the tool. Populated when a
+     * client-side `execute()` or `streamCall` returns a `ToolResponse` with
+     * `modelContent`. Forwarded through `adapter.onAddToolResult` so the
+     * adapter can include it when sending the result back to its backend.
+     */
+    modelContent?: readonly ToolModelContentPart[] | undefined;
+};
+export type ResumeToolCallOptions = {
+    toolCallId: string;
+    payload: unknown;
+};
+export type Unstable_RecordToolInteractionOptions = {
+    messageId: string;
+    toolCallId: string;
+    interaction: Unstable_ToolInteraction;
+};
+export type RespondToToolApprovalOptions = {
+    approvalId: string;
+    approved: boolean;
+    /** The approval option that produced this decision, when the request carried options. */
+    optionId?: string;
+    /** The free-form answer, when the request asked for one. */
+    text?: string;
+    reason?: string;
+};
+export type SubmitFeedbackOptions = {
+    messageId: string;
+    type: "negative" | "positive";
+    comment?: string;
+};
+export type ThreadSuggestion = {
+    /** Display heading for the suggestion. Falls back to the prompt when absent. */
+    title?: string;
+    /** Secondary display text shown alongside the title. */
+    label?: string;
+    /** The message text sent when the suggestion is selected. */
+    prompt: string;
+};
+export type SpeechState = {
+    readonly messageId: string;
+    readonly status: SpeechSynthesisAdapter.Status;
+};
+export type VoiceSessionState = {
+    readonly status: RealtimeVoiceAdapter.Status;
+    readonly isMuted: boolean;
+    readonly mode: RealtimeVoiceAdapter.Mode;
+    /**
+     * Whether the running session takes typed text. While true, `append` routes a plain text user message into the session and the thread composer can send.
+     */
+    readonly canSendText: boolean;
+};
+export type SubmittedFeedback = {
+    readonly type: "negative" | "positive";
+    readonly comment?: string;
+};
+export type ThreadRuntimeEventPayload = {
+    /**
+     * Truly transient. A history adapter write rejected, so the stored history may no longer match the thread. A write whose promise reaches a caller still rejects there as well, and the runtime logs every failed write with console.error.
+     */
+    historyWriteError: {
+        operation: "append" | "update" | "delete";
+        messageIds: readonly string[];
+        message: string;
+        error: unknown;
+    };
+    toolApprovalAnswered: {
+        messageId: string;
+        toolCallId: string;
+        toolName: string;
+        approved: boolean;
+    };
+    /**
+     * @deprecated State-derivable. Observe `state.isRunning` flipping to `true`
+     * via `subscribe` + `getState` instead. Note: this event fires at the
+     * transition point and may run before the next subscriber notification.
+     * Kept for backward compatibility.
+     */
+    runStart: Record<string, never>;
+    /**
+     * @deprecated State-derivable. Observe `state.isRunning` flipping to `false`
+     * via `subscribe` + `getState` instead. Note: this event fires at the
+     * transition point and may run before the next subscriber notification.
+     * Kept for backward compatibility.
+     */
+    runEnd: Record<string, never>;
+    /**
+     * @deprecated State-derivable. Observe `state.messages` becoming non-empty
+     * via a regular `subscribe` callback instead. This event fires once at the
+     * initialization transition; subscribers that attach afterwards receive a
+     * one-off replay (on a microtask), by which point the thread already has
+     * messages, so handler-visible state differs between live and replayed
+     * delivery. Kept for backward compatibility.
+     */
+    initialize: Record<string, never>;
+    /**
+     * Truly transient. The model context lives in a provider, not in thread
+     * state, so this event has no state-derivable equivalent.
+     */
+    modelContextUpdate: Record<string, never>;
+};
+export type ThreadRuntimeEventType = keyof ThreadRuntimeEventPayload;
+export type ThreadRuntimeEventCallback<E extends ThreadRuntimeEventType> = (payload: ThreadRuntimeEventPayload[E]) => void;
+export type StartRunConfig = {
+    parentId: string | null;
+    sourceId: string | null;
+    runConfig: RunConfig;
+};
+export type ResumeRunConfig = StartRunConfig & {
+    stream?: (options: ChatModelRunOptions) => AsyncGenerator<ChatModelRunResult, void, unknown>;
+};
+export type ThreadRuntimeCore = Readonly<{
+    getMessageById: (messageId: string) => {
+        parentId: string | null;
+        message: ThreadMessage;
+        index: number;
+    } | undefined;
+    getBranches: (messageId: string) => readonly string[];
+    switchToBranch: (branchId: string) => void;
+    append: (message: AppendMessage) => void;
+    deleteMessage: (messageId: string) => void | Promise<void>;
+    startRun: (config: StartRunConfig) => void;
+    resumeRun: (config: ResumeRunConfig) => void;
+    cancelRun: () => void;
+    unstable_notifySessionReset: () => void;
+    addToolResult: (options: AddToolResultOptions) => void;
+    resumeToolCall: (options: ResumeToolCallOptions) => void;
+    /**
+     * Records a decision on a tool approval gate. Resolves once the runtime has
+     * accepted the response and rejects when it could not be recorded, so a
+     * caller can leave the gate retryable rather than spending it. A capability
+     * or state precondition still throws synchronously; a failure to record
+     * arrives as a rejection, including one an adapter raises synchronously.
+     *
+     * Acceptance is as far as the runtime can see the response: one that records
+     * the decision locally settles on the record, while one that answers by
+     * resuming a run settles on the resume. A failure of the work the decision
+     * unblocks is reported through the runtime's own error channel, not here.
+     */
+    respondToToolApproval: (options: RespondToToolApprovalOptions) => Promise<void>;
+    /**
+     * Appends a validated interaction to a tool call part and persists it where
+     * the runtime persists messages. Rejects when the runtime cannot record it.
+     */
+    unstable_recordToolInteraction?: (options: Unstable_RecordToolInteractionOptions) => Promise<void>;
+    speak: (messageId: string) => void;
+    stopSpeaking: () => void;
+    connectVoice: () => void;
+    disconnectVoice: () => void;
+    muteVoice: () => void;
+    unmuteVoice: () => void;
+    submitFeedback: (feedback: SubmitFeedbackOptions) => void;
+    getModelContext: () => ModelContext;
+    composer: ThreadComposerRuntimeCore;
+    getEditComposer: (messageId: string) => EditComposerRuntimeCore | undefined;
+    beginEdit: (messageId: string) => void;
+    getQueueItems?: () => readonly QueueItemState[];
+    getSteerQueueItems?: () => readonly QueueItemState[];
+    moveQueueItem?: (queueItemId: string, placement: QueuePlacement) => void;
+    editQueueItem?: (queueItemId: string, message: AppendMessage) => void;
+    removeQueueItem?: (queueItemId: string) => void;
+    speech: SpeechState | undefined;
+    voice: VoiceSessionState | undefined;
+    capabilities: Readonly<RuntimeCapabilities>;
+    isDisabled: boolean;
+    /**
+     * Whether sending from this thread's composer is disabled. Surfaces the
+     * `isSendDisabled` flag from external-store adapters; internal runtimes
+     * default to `false`. Composer state derives `canSend` from this.
+     */
+    isSendDisabled: boolean;
+    isLoading: boolean;
+    /**
+     * Optional explicit thread-level running flag. When provided, takes
+     * precedence over the last-message-status heuristic. When omitted, falls
+     * back to the legacy behavior. External-store runtimes surface this via
+     * `ExternalStoreAdapter.isRunning`.
+     */
+    isRunning?: boolean | undefined;
+    messages: readonly ThreadMessage[];
+    state: ReadonlyJSONValue;
+    suggestions: readonly ThreadSuggestion[];
+    extras: unknown;
+    subscribe: (callback: () => void) => Unsubscribe;
+    getVoiceVolume: () => number;
+    subscribeVoiceVolume: (callback: () => void) => Unsubscribe;
+    import(repository: ExportedMessageRepository): void;
+    export(): ExportedMessageRepository;
+    exportExternalState(): any;
+    importExternalState(state: any): void;
+    reset(initialMessages?: readonly ThreadMessageLike[]): void;
+    /**
+     * Re-fetches this thread's state from its backing store, in place: no
+     * runtime-hook remount, so runtime identity and composer drafts survive.
+     * Presence signals the capability to `threads.reloadMainThread()`, which
+     * calls this and propagates its rejection. It does not touch a run in
+     * progress first, because stopping one is `cancelRun`, whose contract is
+     * that the user abandoned a send: it returns the trailing user message to
+     * the composer. An implementation is therefore responsible for whatever
+     * coordination a concurrent run needs. Runtimes without remote state leave
+     * it undefined.
+     */
+    unstable_refetchThread?: (() => Promise<void>) | undefined;
+    /**
+     * @deprecated This API is still under active development and might change without notice.
+     * For state-derivable transitions, prefer `subscribe` + `getState`. This channel is the
+     * escape hatch for transient occurrences not represented in state.
+     */
+    unstable_on<E extends ThreadRuntimeEventType>(event: E, callback: ThreadRuntimeEventCallback<E>): Unsubscribe;
+}>;

@@ -1,0 +1,1 @@
+export { CloudFileAttachmentAdapter } from "@assistant-ui/core/react";

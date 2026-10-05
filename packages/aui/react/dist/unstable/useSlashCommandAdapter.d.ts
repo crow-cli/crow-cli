@@ -1,0 +1,48 @@
+import type { Unstable_TriggerAdapter, Unstable_TriggerItem } from "@assistant-ui/core";
+import type { Unstable_IconComponent } from "./useMentionAdapter.js";
+export type Unstable_SlashCommand = {
+    readonly id: string;
+    readonly label?: string | undefined;
+    readonly description?: string | undefined;
+    readonly icon?: string | undefined;
+    readonly execute: () => void;
+};
+export type Unstable_UseSlashCommandAdapterOptions = {
+    readonly commands: readonly Unstable_SlashCommand[];
+    /** Strip the trigger text from the composer after executing. @default false */
+    readonly removeOnExecute?: boolean | undefined;
+    /** Maps `metadata.icon` / `category.id` string keys to React components. */
+    readonly iconMap?: Record<string, Unstable_IconComponent>;
+    /** Fallback icon when no entry in `iconMap` matches. */
+    readonly fallbackIcon?: Unstable_IconComponent;
+};
+export type Unstable_SlashCommandAction = {
+    readonly onExecute: (item: Unstable_TriggerItem) => void;
+    readonly removeOnExecute?: boolean | undefined;
+};
+/**
+ * @deprecated Under active development and may change without notice.
+ *
+ * Bundles slash command definitions (with inline `execute` callbacks) into
+ * `{adapter, action}` that plug directly into `ComposerTriggerPopover`.
+ * `execute` stays in the hook closure and is never attached to the returned
+ * `TriggerItem`, keeping items serializable.
+ *
+ * @example
+ * ```tsx
+ * const slash = unstable_useSlashCommandAdapter({
+ *   commands: [
+ *     { id: "summarize", execute: () => runSummarize(), icon: "FileText" },
+ *     { id: "translate", execute: () => runTranslate(), icon: "Languages" },
+ *   ],
+ * });
+ *
+ * <ComposerTriggerPopover char="/" {...slash} />
+ * ```
+ */
+export declare function unstable_useSlashCommandAdapter(options: Unstable_UseSlashCommandAdapterOptions): {
+    adapter: Unstable_TriggerAdapter;
+    action: Unstable_SlashCommandAction;
+    iconMap?: Record<string, Unstable_IconComponent>;
+    fallbackIcon?: Unstable_IconComponent;
+};
