@@ -35,9 +35,9 @@ export function useCwdSetting(): [string, (next: string) => void] {
 }
 
 /** The thread list rail, remembered across reloads and cwd switches. */
-export function useSidebarSetting(): [boolean, (next: boolean) => void] {
+export function useSidebarSetting(defaultCollapsed = false): [boolean, (next: boolean) => void] {
   const [collapsed, setCollapsed] = useState(
-    () => localStorage.getItem(SIDEBAR_KEY) === "collapsed",
+    () => (localStorage.getItem(SIDEBAR_KEY) ?? (defaultCollapsed ? "collapsed" : "expanded")) === "collapsed",
   );
   const save = useCallback((next: boolean) => {
     localStorage.setItem(SIDEBAR_KEY, next ? "collapsed" : "expanded");

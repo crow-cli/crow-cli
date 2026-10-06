@@ -212,13 +212,15 @@ def diff_content(path: str, cwd: str, new_text: str, old_text: Optional[str]) ->
     # that against its own process — but a patch header that read `a//tmp/x`
     # is not a path anything can open.
     header = abs_path.lstrip("/")
+    patch_lines = difflib.unified_diff(
+        before,
+        after,
+        fromfile="/dev/null" if added else f"a/{header}",
+        tofile=f"b/{header}",
+    )
     patch = "".join(
-        difflib.unified_diff(
-            before,
-            after,
-            fromfile="/dev/null" if added else f"a/{header}",
-            tofile=f"b/{header}",
-        )
+        line if line.endswith("\n") else line + "\n\\ No newline at end of file\n"
+        for line in patch_lines
     )
     change = (
         v2.AddDiffChange(path=abs_path, file_type="text")
@@ -686,7 +688,10 @@ async def drain_subtool_calls(ctx: TurnCtx, parent_acp_id: str) -> list[dict]:
                 locations=[v2.ToolCallLocation(path=absolute(path, cwd))],
                 content=[
                     diff_content(
-                        path, cwd, payload.get("new_text", ""), payload.get("old_text")
+                        path,
+                        cwd,
+                        payload.get("new_text", ""),
+                        None if payload.get("created") else payload.get("old_text"),
                     )
                 ],
             )

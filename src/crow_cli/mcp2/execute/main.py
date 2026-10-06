@@ -43,6 +43,7 @@ import json
 import os
 import sys
 from logging import getLogger
+from pathlib import Path
 from typing import Optional
 
 from fastmcp import Context
@@ -139,23 +140,30 @@ def _prologue(
     )
 
 
-def get_kernel(key: str, cwd: str) -> CrowKernel:
+def get_kernel(
+    key: str,
+    cwd: str,
+    prelude_path: str | None = None,
+    python_path: str | None = None,
+) -> CrowKernel:
     """Get or lazily start the persistent kernel for a key."""
     kernel = _kernels.get(key)
     if kernel is None:
         logger.info("Starting new IPython kernel for %s in %s", key, cwd)
-        kernel = CrowKernel(python_path=sys.executable, cwd=cwd)
-        _run_prelude(kernel)
+        kernel = CrowKernel(python_path=python_path or sys.executable, cwd=cwd)
+        _run_prelude(kernel, prelude_path)
         _kernels[key] = kernel
     return kernel
 
 
-def _run_prelude(kernel: CrowKernel) -> None:
-    """Zero-day imports: every fresh kernel (start AND reset both come through
-    get_kernel) comes up with crow_cli.tools ambient. Best effort — a broken
-    prelude logs, it never bricks the kernel."""
+def _run_prelude(kernel: CrowKernel, prelude_path: str | None = None) -> None:
+    """Start a fresh kernel with Crow's built-in prelude, or a custom one.
+
+    A custom prelude replaces the built-in imports, which may not be available
+    in an alternate interpreter. A broken prelude is logged, not fatal."""
     try:
-        result = kernel.execute(PRELUDE_V2)
+        prelude = Path(prelude_path).read_text() if prelude_path else PRELUDE_V2
+        result = kernel.execute(prelude)
         if result.text.strip():
             logger.warning("Kernel prelude produced output: %s", result.text[:200])
     except Exception:
@@ -176,6 +184,8 @@ async def execute(
     code: str,
     reset: bool = False,
     timeout: float | None = 30.0,
+    prelude_path: str | None = None,
+    python_path: str | None = None,
 ) -> str:
     """Execute one cell in this session's persistent IPython kernel.
 
@@ -194,8 +204,12 @@ async def execute(
     Crow's tool modules in the current kernel without clearing your variables,
     imports, or cwd. Use ``reset=True`` only when you intentionally want a
     completely new kernel; it discards all state and starts the prelude again.
+    ``python_path`` selects the interpreter for that new kernel, and
+    ``prelude_path`` replaces Crow's built-in prelude with the contents of a
+    Python file. Both are honored only with ``reset=True``; later plain resets
+    return to Crow's interpreter and built-in prelude.
 
-    It runs with crow-cli's own Python interpreter, so crow's libraries are
+    The default interpreter is crow-cli's own, so crow's libraries are
     available and you can interrogate crow.db. Use it for multi-step Python
     work where you want to build on previous results.
 
@@ -208,6 +222,11 @@ async def execute(
                all state (variables, imports). Use if the kernel is in a bad
                state. With empty code, just resets. Cannot clear a single
                variable — reset clears everything.
+        prelude_path: Optional Python file to run as the new kernel's prelude
+               instead of Crow's built-in imports. Honored only with
+               reset=True; later plain resets use the built-in prelude.
+        python_path: Optional interpreter path for the new kernel. Honored
+               only with reset=True; later plain resets use Crow's interpreter.
         timeout: seconds to wait for the cell to finish (default 30). The cell
                is NOT killed on timeout — IPython keeps running it — so a
                long-running process returns a "(kernel busy: …)" notice and
@@ -230,6 +249,8 @@ async def execute(
         execute("print(x * 2)")           # -> "84"
         execute("import sqlalchemy; print(sqlalchemy.__version__)")
         execute("", reset=True)           # fresh kernel, all state cleared
+        execute("", reset=True, python_path="/env/bin/python")
+        execute("", reset=True, prelude_path="/env/prelude.py")
     """
     try:
         (
@@ -243,12 +264,22 @@ async def execute(
             rlm_depth,
         ) = _kernel_context(ctx)
 
+        if (prelude_path or python_path) and not reset:
+            return json.dumps(
+                {
+                    "exit_code": 1,
+                    "output": "Error: prelude_path and python_path describe the kernel "
+                    "a reset creates — pass reset=True with them.",
+                    "timed_out": False,
+                    "raw_bytes_b64": "",
+                }
+            )
         if reset:
             old = _kernels.pop(key, None)
             if old:
                 old.shutdown()
                 logger.info("Reset kernel for %s", key)
-            if not code.strip():
+            if not code.strip() and not (prelude_path or python_path):
                 return json.dumps(
                     {
                         "exit_code": 0,
@@ -258,7 +289,21 @@ async def execute(
                     }
                 )
 
-        kernel = get_kernel(key, cwd)
+        kernel = get_kernel(key, cwd, prelude_path, python_path)
+        if reset and not code.strip():
+            message = "Kernel reset successfully. All previous state lost."
+            if prelude_path:
+                message += f" Prelude loaded from {prelude_path}."
+            if python_path:
+                message += f" Interpreter: {python_path}."
+            return json.dumps(
+                {
+                    "exit_code": 0,
+                    "output": message,
+                    "timed_out": False,
+                    "raw_bytes_b64": "",
+                }
+            )
         if code.strip():
             code = (
                 _prologue(

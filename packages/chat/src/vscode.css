@@ -1,0 +1,59 @@
+/* The same chat components, colored by the workbench rather than a Crow theme. */
+body { padding: 0; }
+body, #root, #root .dark {
+  --background: var(--vscode-editor-background);
+  --foreground: var(--vscode-editor-foreground);
+  --card: var(--vscode-editor-background);
+  --card-foreground: var(--vscode-foreground);
+  --popover: var(--vscode-editorWidget-background);
+  --popover-foreground: var(--vscode-editorWidget-foreground);
+  --primary: var(--vscode-button-background);
+  --primary-foreground: var(--vscode-button-foreground);
+  --secondary: var(--vscode-button-secondaryBackground);
+  --secondary-foreground: var(--vscode-button-secondaryForeground);
+  --muted: var(--vscode-textBlockQuote-background);
+  --muted-foreground: var(--vscode-descriptionForeground);
+  --accent: var(--vscode-list-hoverBackground);
+  --accent-foreground: var(--vscode-list-hoverForeground);
+  --border: var(--vscode-panel-border);
+  --input: var(--vscode-input-border);
+  --ring: var(--vscode-focusBorder);
+  --destructive: var(--vscode-errorForeground);
+  --success: var(--vscode-gitDecoration-addedResourceForeground);
+  --warning: var(--vscode-editorWarning-foreground);
+  --sidebar: var(--vscode-sideBar-background);
+  --sidebar-foreground: var(--vscode-sideBar-foreground);
+  --sidebar-border: var(--vscode-sideBar-border);
+  --font-sans: var(--vscode-font-family);
+  color: var(--foreground);
+  background: var(--background);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+}
+button:focus-visible, textarea:focus-visible, input:focus-visible {
+  outline: 1px solid var(--vscode-focusBorder);
+  outline-offset: -1px;
+}
+.vscode-high-contrast [data-slot="acp-tool-diff"],
+.vscode-high-contrast-light [data-slot="acp-tool-diff"] {
+  border: 1px solid var(--vscode-contrastBorder);
+  box-shadow: none;
+}
+@media (max-width: 640px) {
+  [data-testid="thread-sidebar"][data-state="expanded"] { width: 10rem; }
+  .crow-chat-layout[data-host="sidebar"] { flex-direction: column; }
+  [data-host="sidebar"] [data-testid="thread-sidebar"] {
+    width: 100%;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  [data-host="sidebar"] [data-testid="thread-sidebar"][data-state="expanded"] {
+    flex-basis: 35%;
+    min-height: 9rem;
+    flex-shrink: 1;
+  }
+  [data-host="sidebar"] [data-testid="thread-sidebar"][data-state="collapsed"] {
+    flex-direction: row;
+    padding: 2px 4px;
+  }
+}

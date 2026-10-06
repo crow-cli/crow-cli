@@ -29,6 +29,7 @@ async def test_write_new_file(tmp_path):
     assert result
     assert target.read_text() == "hello\nworld\n"
     assert result.old_text == ""
+    assert result.acp_payload()["created"] is True
     assert result.new_text == "hello\nworld\n"
     assert result.added == 2 and result.removed == 0
     assert result.result_kind == "diff"
@@ -47,6 +48,15 @@ async def test_write_overwrite_diffs_against_old(tmp_path):
     assert result.old_text == "one\ntwo\n"
     assert result.added == 2 and result.removed == 1
     assert "-two" in result.diff and "+TWO" in result.diff
+
+
+@pytest.mark.asyncio
+async def test_write_existing_empty_file_is_not_created(tmp_path):
+    target = tmp_path / "empty.txt"
+    target.touch()
+    result = await write(str(target), "hello")
+    assert not result.created
+    assert "created" not in result.acp_payload()
 
 
 @pytest.mark.asyncio

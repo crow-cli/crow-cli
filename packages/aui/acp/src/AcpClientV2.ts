@@ -752,10 +752,8 @@ export class AcpClientV2 implements AcpClientLike {
     }
   }
 
-  /** Normalize a v2 update into the v1 shape the controller and renderers
-   * already read. Most v2 updates are field-identical to their v1 cousins; the
-   * one that is not is `tool_call_update`, where crow's execute tool moved the
-   * cell and its output from content blocks into `rawInput`/`rawOutput`. */
+  /** Project execute input/output into display blocks. Protocol-native diff
+   * content remains intact; shared consumers support both v1 and v2 diffs. */
   private mapSessionUpdate(update: AcpSessionUpdate): AcpSessionUpdate {
     if ((update as { sessionUpdate?: string }).sessionUpdate === "tool_call_update") {
       return this.mapToolCallUpdate(update as any) as AcpSessionUpdate;

@@ -1,0 +1,96 @@
+{
+  "name": "crow-acp",
+  "displayName": "Crow ACP Chat",
+  "description": "Crow assistant-ui chat connected directly to a local ACP WebSocket agent.",
+  "version": "0.1.0",
+  "publisher": "crow-ai",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "main": "./dist/extension.cjs",
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onCommand:crowAcp.open",
+    "onCommand:crowAcp.openSidebar",
+    "onView:crowAcp.sidebar"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "crowAcp.open",
+        "title": "Crow ACP: Open Chat"
+      },
+      {
+        "command": "crowAcp.openSidebar",
+        "title": "Crow ACP: Open Sidebar"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "crowAcp", "title": "Crow", "icon": "media/crow.svg" }
+      ]
+    },
+    "views": {
+      "crowAcp": [
+        { "id": "crowAcp.sidebar", "name": "Crow ACP Chat", "type": "webview" }
+      ]
+    },
+    "configuration": {
+      "title": "Crow ACP",
+      "properties": {
+        "crowAcp.accessibilityVerbosity": {
+          "type": "boolean",
+          "default": true,
+          "tags": ["accessibility"],
+          "description": "Announce how to open chat accessibility help when the chat gains focus."
+        },
+        "crowAcp.endpoint": {
+          "type": "string",
+          "default": "ws://127.0.0.1:2771/acp",
+          "description": "Local ACP WebSocket endpoint, reached directly by the chat webview."
+        },
+        "crowAcp.cwd": {
+          "type": "string",
+          "default": "",
+          "description": "Agent working directory. Empty uses the active workspace folder (a Linux path when the extension runs in WSL)."
+        },
+        "crowAcp.protocol": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "1",
+            "2"
+          ],
+          "default": "2",
+          "description": "ACP protocol version. Auto uses the existing Crow client endpoint detection."
+        },
+        "crowAcp.mcpConfig": {
+          "type": "string",
+          "default": "mcpServers:\n  crow-mcp:\n    transport: stdio\n    command: crow-cli\n    args: [mcp2]\n",
+          "description": "MCP server configuration (YAML or JSON) supplied to the agent. Stdio commands run on the agent machine."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "bun build src/extension.ts --target=node --format=cjs --external=vscode --outfile=dist/extension.cjs && bun ../chat/node_modules/vite/bin/vite.js build --config vite.config.ts",
+    "typecheck": "tsc --noEmit && bun run --cwd ../chat typecheck",
+    "package": "bun run build && vsce package --no-dependencies --allow-missing-repository --out crow-acp-0.1.0.vsix"
+  },
+  "type": "module",
+  "devDependencies": {
+    "vite": "^8.3.2",
+    "@vitejs/plugin-react": "^6.1.1",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/vscode": "^1.100.0",
+    "@vscode/vsce": "^3.7.0",
+    "typescript": "^5.9.3"
+  }
+}

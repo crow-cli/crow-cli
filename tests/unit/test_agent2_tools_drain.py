@@ -175,6 +175,24 @@ def test_diff_carries_absolute_changes_and_a_git_patch(drained):
     assert conn.updates[0]["locations"] == [{"path": f"{ctx.cwd}/target.py"}]
 
 
+async def test_created_write_keeps_add_operation_through_the_drain(drained):
+    ctx, conn, _ = drained
+    engine = get_engine(ctx.config.db_uri)
+    with engine.begin() as db:
+        db.execute(SubtoolCall.__table__.insert().values(
+            session_id=SESSION_ID, agent_id=AGENT_ID,
+            parent_tool_call_id=PARENT, tool="write", args={},
+            status="completed", result_kind="diff",
+            acp_payload={"path": "new.txt", "old_text": "", "new_text": "hello", "created": True},
+            llm_images=[], emitted=0,
+        ))
+    engine.dispose()
+    await drain_subtool_calls(ctx, PARENT)
+    diff = conn.updates[-1]["content"][0]
+    assert diff["changes"][0]["operation"] == "add"
+    assert diff["patch"]["text"].startswith("--- /dev/null\n")
+
+
 def test_a_subject_is_displayed_never_claimed_as_a_location(drained):
     _, conn, _ = drained
     web, rlm = conn.updates[3], conn.updates[4]

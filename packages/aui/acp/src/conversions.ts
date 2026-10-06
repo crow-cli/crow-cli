@@ -199,7 +199,15 @@ export function toolCallContentToText(
         if (text) pieces.push(text);
       }
     } else if (item.type === "diff") {
-      pieces.push(`--- ${item.path}\n+++ ${item.path}\n${item.newText}`);
+      if ("changes" in item) {
+        pieces.push(
+          item.patch?.text || item.changes.map((change) =>
+            `${change.operation}: ${"path" in change ? change.path : ""}`,
+          ).join("\n"),
+        );
+      } else {
+        pieces.push(`--- ${item.path}\n+++ ${item.path}\n${item.newText}`);
+      }
     }
   }
   return pieces.length > 0 ? pieces.join("\n") : undefined;

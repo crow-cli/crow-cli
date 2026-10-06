@@ -50,7 +50,8 @@ async def write(file_path: str, content: str) -> EditResult:
         raise WriteError(f"Path is a directory: {path}")
 
     old_text = ""
-    if path.exists():
+    existed = path.exists()
+    if existed:
         try:
             # newline="": the preimage is the undo log, so it has to be the
             # bytes that were actually there. The default translation turns
@@ -89,5 +90,9 @@ async def write(file_path: str, content: str) -> EditResult:
         )
     )
     return EditResult(
-        path=str(path), old_text=old_text, new_text=content, diff=diff
+        path=str(path),
+        old_text=old_text,
+        new_text=content,
+        diff=diff,
+        created=not existed,
     )

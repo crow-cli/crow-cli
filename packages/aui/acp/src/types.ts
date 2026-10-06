@@ -99,6 +99,16 @@ export type AcpToolCallContent =
       readonly oldText?: string | null;
       readonly newText: string;
     }
+  | {
+      readonly type: "diff";
+      readonly changes: readonly {
+        readonly operation: string;
+        readonly path?: string;
+        readonly oldPath?: string;
+        readonly fileType?: string | null;
+      }[];
+      readonly patch?: { readonly format: string; readonly text: string } | null;
+    }
   | { readonly type: "terminal"; readonly terminalId: string };
 
 export type AcpToolCallLocation = {
