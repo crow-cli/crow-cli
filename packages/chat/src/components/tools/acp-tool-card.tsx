@@ -193,20 +193,16 @@ const DIFF_TOKENS = cn(
   "[--diff-del-text-dark:var(--destructive)]",
 );
 
-/** A write is a diff whose old side never existed; crow-cli marks that with
- * `oldText` null on the wire and an empty string in its kernel rows. */
-const isNewFile = (diff: { oldText?: string | null }) =>
-  diff.oldText == null || diff.oldText === "";
-
 function DiffBody({ part, path }: { part: AcpToolPartLike; path?: string }) {
   const diff = diffBlockOf(part);
   if (!diff) return null;
   const name = path ?? diff.path;
   return (
-    <div data-slot="acp-tool-diff" data-new-file={isNewFile(diff)}>
+    <div data-slot="acp-tool-diff" data-new-file={diff.isNewFile}>
       <DiffViewer
-        oldFile={{ content: diff.oldText ?? "", name }}
-        newFile={{ content: diff.newText, name }}
+        patch={diff.patch}
+        oldFile={diff.newText !== undefined ? { content: diff.oldText ?? "", name } : undefined}
+        newFile={diff.newText !== undefined ? { content: diff.newText, name } : undefined}
         viewMode="unified"
         maxCollapsedLines={16}
         className={cn("rounded-md", DIFF_TOKENS)}
@@ -358,7 +354,7 @@ const AcpToolCardImpl: ToolCallMessagePartComponent = (props) => {
     (isRequiresAction && offersInterruptAction(status, approval, interrupt)) ||
     isSettledApproval(approval);
 
-  const newFile = diff != null && isNewFile(diff);
+  const newFile = diff?.isNewFile ?? false;
   const detail = kind === "execute" ? executeDetailOf(props) : undefined;
   // The programmatic name the agent reports (PLAN 3.3): worth showing when it
   // says more than the kind — `write` vs `edit`, `terminal` vs a kernel cell.

@@ -68,12 +68,27 @@ export const toolTitleOf = (part: AcpToolPartLike): string => {
   return title.replace(TITLE_PREFIX, "").trim() || title;
 };
 
-export type AcpDiffBlock = Extract<AcpToolCallContent, { type: "diff" }>;
+export type AcpDiffBlock = {
+  readonly path?: string;
+  readonly patch?: string;
+  readonly oldText?: string | null;
+  readonly newText?: string;
+  readonly isNewFile: boolean;
+};
 
-export const diffBlockOf = (part: AcpToolPartLike): AcpDiffBlock | undefined =>
-  contentBlocksOf(part).find(
-    (block): block is AcpDiffBlock => block.type === "diff",
-  );
+export const diffBlockOf = (part: AcpToolPartLike): AcpDiffBlock | undefined => {
+  const block = contentBlocksOf(part).find((block) => block.type === "diff");
+  if (!block || block.type !== "diff") return undefined;
+  if ("changes" in block) {
+    const first = block.changes[0];
+    return {
+      path: first?.path,
+      patch: block.patch?.format === "git_patch" ? block.patch.text : undefined,
+      isNewFile: block.changes.length > 0 && block.changes.every((change) => change.operation === "add"),
+    };
+  }
+  return { ...block, isNewFile: block.oldText == null || block.oldText === "" };
+};
 
 export const terminalIdOf = (part: AcpToolPartLike): string | undefined => {
   for (const block of contentBlocksOf(part)) {

@@ -60,10 +60,10 @@ function useDelayed(flag: boolean, ms: number) {
  * or deleted: without it, every row's delete dialog and icon re-render fifty
  * times a second for nothing. Its own store subscriptions still update it.
  */
-export const AppSidebar = memo(function AppSidebar() {
+export const AppSidebar = memo(function AppSidebar({ defaultCollapsed = false }: { defaultCollapsed?: boolean }) {
   const isLoading = useAuiState((s) => s.threads.isLoading);
   const count = useAuiState((s) => s.threads.threadIds.length);
-  const [collapsed, setCollapsed] = useSidebarSetting();
+  const [collapsed, setCollapsed] = useSidebarSetting(defaultCollapsed);
   const showSkeleton = useDelayed(isLoading && count === 0, 400);
   // `session/delete` is optional and advertised by presence, so an agent that
   // never implemented it has no trash to offer: the button would only produce

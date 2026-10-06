@@ -54,6 +54,7 @@ class EditResult(ToolResult):
     old_text: str
     new_text: str
     diff: str = ""
+    created: bool = False
 
     result_kind = "diff"
 
@@ -65,6 +66,7 @@ class EditResult(ToolResult):
             "path": self.path,
             "old_text": self.old_text,
             "new_text": self.new_text,
+            **({"created": True} if self.created else {}),
         }
 
     @property

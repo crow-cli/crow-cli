@@ -18,6 +18,8 @@ up with no subtools at all — no ``fs``, no ``memory``, no ``task``.
 import importlib.util
 import json
 import logging
+import os
+import sys
 
 import pytest
 from fastmcp import Client
@@ -50,6 +52,16 @@ async def _call(code, session_id="mcp2-test", **meta):
     async with Client(mcp) as client:
         result = await client.call_tool(
             "execute", {"code": code}, meta={"session_id": session_id, **meta}
+        )
+    assert not result.is_error, result.content[0].text
+    return json.loads(result.content[0].text)
+
+
+async def _execute(code, session_id="mcp2-test", **args):
+    """Call execute with kernel options, returning its JSON result."""
+    async with Client(mcp) as client:
+        result = await client.call_tool(
+            "execute", {"code": code, **args}, meta={"session_id": session_id}
         )
     assert not result.is_error, result.content[0].text
     return json.loads(result.content[0].text)
@@ -92,6 +104,71 @@ class TestRegistration:
         # The docstring IS the product: it is what the model reads.
         (tool,) = await server.list_tools()
         assert "persistent IPython kernel" in tool.description
+
+    async def test_schema_exposes_reset_kernel_options(self, server):
+        async with Client(server) as client:
+            (tool,) = [t for t in await client.list_tools() if t.name == "execute"]
+        assert set(tool.inputSchema["properties"]) == {
+            "code", "reset", "timeout", "prelude_path", "python_path"
+        }
+
+
+class TestKernelReset:
+    async def test_reset_uses_requested_interpreter_and_prelude(
+        self, tmp_path, monkeypatch
+    ):
+        alternate_python = tmp_path / "python"
+        alternate_python.symlink_to(sys.executable)
+        monkeypatch.setenv(
+            "PYTHONPATH", os.pathsep.join(path for path in sys.path if path)
+        )
+        prelude = tmp_path / "prelude.py"
+        prelude.write_text("SENTINEL = 'loaded-from-custom-prelude'\n")
+
+        out = await _call("value = 'old-kernel'")
+        assert out["exit_code"] == 0
+        result = await _execute(
+            "",
+            reset=True,
+            python_path=str(alternate_python),
+            prelude_path=str(prelude),
+        )
+        assert result["exit_code"] == 0
+        assert "Prelude loaded from" in result["output"]
+        assert "Interpreter:" in result["output"]
+
+        out = await _call("import sys; print(sys.executable)")
+        assert out["exit_code"] == 0
+        assert str(alternate_python) in out["output"]
+        out = await _call("print(SENTINEL, 'fs' in globals())")
+        assert out["exit_code"] == 0
+        assert out["output"].strip() == "loaded-from-custom-prelude False"
+        out = await _call("print('old-kernel' in globals())")
+        assert out["output"].strip() == "False"
+
+    async def test_custom_options_require_reset(self):
+        result = await _execute("print('should-not-run')", python_path=sys.executable)
+        assert result["exit_code"] == 1
+        assert "reset=True" in result["output"]
+
+    async def test_plain_reset_restores_builtin_interpreter_and_prelude(self, tmp_path):
+        prelude = tmp_path / "custom_prelude.py"
+        prelude.write_text("SENTINEL = 'custom'\n")
+        await _execute(
+            "",
+            reset=True,
+            python_path=sys.executable,
+            prelude_path=str(prelude),
+        )
+        custom = await _execute("print(SENTINEL)")
+        assert custom["output"].strip() == "custom"
+
+        out = await _execute(
+            "import sys; print(sys.executable); print('fs' in globals())",
+            reset=True,
+        )
+        assert out["exit_code"] == 0
+        assert out["output"].strip().splitlines() == [sys.executable, "True"]
 
 
 class TestPreludeV2:
