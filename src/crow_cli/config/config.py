@@ -443,7 +443,11 @@ class Config:
                 "config.yaml references unset environment variables (expanded to empty): %s",
                 ", ".join(f"${{{v}}}" for v in sorted(missing_vars)),
             )
-
+        # Parse parallel_tool_calls
+        if "parallel_tool_calls" in raw:
+            parallel_tool_calls: bool = bool(raw["parallel_tool_calls"])
+        else:
+            parallel_tool_calls: bool = False
         # Parse providers
         llm = LLMConfig()
         for name, data in parsed.get("providers", {}).items():
@@ -496,7 +500,7 @@ class Config:
                 ),
                 modality=modality,
                 fallbacks=list(data.get("fallbacks") or []),
-                parallel_tool_calls=data.get("parallel_tool_calls" or False),
+                parallel_tool_calls=parallel_tool_calls,
             )
 
         # Parse overrides. db_uri is the canonical key; legacy memory_path
@@ -553,6 +557,7 @@ class Config:
             redis_url=redis_url,
             goal=goal,
             system_prompt_path=system_prompt_path,
+            parallel_tool_calls=parallel_tool_calls,
             **overrides,
         )
 
