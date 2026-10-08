@@ -53,7 +53,10 @@ class TestBuildSamplingParams:
         assert build_sampling_params("none", 0.6) == {"reasoning_effort": "none"}
 
     def test_unset_falls_back_to_temperature(self):
-        assert build_sampling_params(None, 0.4) == {"temperature": 0.4}
+        assert build_sampling_params(None, 0.4) == {
+            "temperature": 0.4,
+            "parallel_tool_calls": False,
+        }
 
     def test_optional_params_split_standard_vs_extra_body(self):
         # top_p / presence_penalty are OpenAI kwargs; top_k / min_p /
@@ -62,6 +65,7 @@ class TestBuildSamplingParams:
             "temperature": 0.7,
             "top_p": 0.80,
             "presence_penalty": 1.5,
+            "parallel_tool_calls": False,
             "extra_body": {
                 "top_k": 20,
                 "min_p": 0.0,
@@ -71,7 +75,11 @@ class TestBuildSamplingParams:
 
     def test_unset_optional_params_omitted_entirely(self):
         params = build_sampling_params(None, 0.7, top_p=0.95)
-        assert params == {"temperature": 0.7, "top_p": 0.95}
+        assert params == {
+            "temperature": 0.7,
+            "top_p": 0.95,
+            "parallel_tool_calls": False,
+        }
         assert "extra_body" not in params
 
     def test_explicit_zero_values_are_sent(self):
@@ -243,7 +251,10 @@ def test_sampling_params_for_temperature_model():
     cfg = _config_with(
         LLModel(name="t", provider_name="p", model_id="t-id", temperature=0.2)
     )
-    assert sampling_params_for(cfg, "t-id") == {"temperature": 0.2}
+    assert sampling_params_for(cfg, "t-id") == {
+        "temperature": 0.2,
+        "parallel_tool_calls": False,
+    }
 
 
 def test_sampling_params_for_unknown_model_gets_defaults():
@@ -265,6 +276,7 @@ def test_sampling_params_for_forwards_optional_params():
         "temperature": 0.7,
         "top_p": 0.80,
         "presence_penalty": 1.5,
+        "parallel_tool_calls": False,
         "extra_body": {"top_k": 20, "min_p": 0.0, "repetition_penalty": 1.0},
     }
 

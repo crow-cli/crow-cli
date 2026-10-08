@@ -274,7 +274,9 @@ async def test_request_carries_stream_and_usage_options():
     kw = llm.create_kwargs
     assert kw["stream"] is True
     assert kw["stream_options"] == {"include_usage": True}
-    assert kw["parallel_tool_calls"] is True
+    # False ON THE WIRE, not omitted: OpenAI's own default is true, so a
+    # disabled flag has to be sent explicitly or the provider enables it.
+    assert kw["parallel_tool_calls"] is False
     # config=None fallback: plain temperature, no reasoning_effort
     assert kw["temperature"] == 0.6
     assert "reasoning_effort" not in kw

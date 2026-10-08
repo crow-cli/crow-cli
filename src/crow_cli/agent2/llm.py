@@ -286,7 +286,6 @@ async def send_request(
             "tools": tools,
             **sampling,
             "max_tokens": max_tokens,
-            "parallel_tool_calls": True,
             "stream_options": {"include_usage": True},
         }
         Path(request_log_path).write_text(
@@ -302,7 +301,6 @@ async def send_request(
                 stream=True,
                 **sampling,
                 max_tokens=max_tokens,
-                parallel_tool_calls=True,
                 stream_options={"include_usage": True},
             )
         except (APITimeoutError, RateLimitError, APIConnectionError):

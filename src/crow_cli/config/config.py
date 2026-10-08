@@ -106,6 +106,8 @@ Modality = Literal["text", "image", "audio", "video"]
 MODALITY_VALUES = ("text", "image", "audio", "video")
 
 
+
+
 class ReasoningEffortModel(BaseModel):
     """Validate a reasoning_effort value against OpenAI's enumerable set."""
 
@@ -161,6 +163,7 @@ def build_sampling_params(
     min_p: float | None = None,
     presence_penalty: float | None = None,
     repetition_penalty: float | None = None,
+    parallel_tool_calls: bool | None = False,
 ) -> dict[str, Any]:
     """The one sampling rule for every LLM call (react loop AND compaction):
     reasoning_effort when set — ALL other sampling params omitted, reasoning
@@ -175,6 +178,10 @@ def build_sampling_params(
         params["top_p"] = top_p
     if presence_penalty is not None:
         params["presence_penalty"] = presence_penalty
+    if parallel_tool_calls:
+        params["parallel_tool_calls"] = True
+    else:
+        params["parallel_tool_calls"] = False
     extra_body = {
         name: value
         for name, value in (
@@ -207,6 +214,7 @@ def sampling_params_for(config: "Config", model_id: str) -> dict[str, Any]:
         min_p=model.min_p,
         presence_penalty=model.presence_penalty,
         repetition_penalty=model.repetition_penalty,
+        parallel_tool_calls=config.parallel_tool_calls,
     )
 
 
@@ -260,6 +268,7 @@ class LLModel:
     # Ordered fallback chain (model NAMES from this config) used when this
     # model cannot handle the modalities present in the conversation.
     fallbacks: list[str] = field(default_factory=list)
+    parallel_tool_calls: bool = False
 
     @property
     def option_value(self) -> str:
@@ -378,6 +387,7 @@ class Config:
     chunk_log: bool = False  # Write every raw chunk to JSONL for debugging
     system_prompt: str = SYSTEM_PROMPT
     system_prompt_path: Path | None = None
+    parallel_tool_calls: bool = False
     @property
     def log_path(self) -> str:
         return str(self.config_dir / "logs" / "crow-cli.log")
@@ -486,6 +496,7 @@ class Config:
                 ),
                 modality=modality,
                 fallbacks=list(data.get("fallbacks") or []),
+                parallel_tool_calls=data.get("parallel_tool_calls" or False),
             )
 
         # Parse overrides. db_uri is the canonical key; legacy memory_path
