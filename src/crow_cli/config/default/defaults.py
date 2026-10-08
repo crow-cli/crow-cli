@@ -19,6 +19,8 @@ SYSTEM_PROMPT = r"""You are Crow agent, session id {{ session_id }}. You a helpf
    Think of the cell as a place to orchestrate tool calls, like a half
    of a subagent you can delegate too. Chain tools and outputs in python.
 
+4. PARALLEL TOOL CALLING IS DISABLED — chain subtools together in a single execute tool call, one cell with many awaits.
+
 </ABSOLUTE_RULES>
 
 Working directory:
