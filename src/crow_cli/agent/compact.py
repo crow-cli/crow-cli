@@ -166,15 +166,20 @@ async def _stream_completion(
     Returns the text and a usage dict — usage arrives on the final, choice-less
     chunk when ``include_usage`` is set, and some providers omit it.
     """
+    tools = session.tools or None
+    sampling = sampling_params_for(config, session.model_identifier)
+    if tools is None:
+        # Don't pass parallel tool calls w/o tools
+        sampling.pop("parallel_tool_calls", None)
     stream = await llm.chat.completions.create(
         model=session.model_identifier,
         messages=messages,
-        tools=session.tools if session.tools else None,
+        tools=tools,
         tool_choice="none",
         max_tokens=MAX_OUTPUT_TOKENS,
         stream=True,
         stream_options={"include_usage": True},
-        **sampling_params_for(config, session.model_identifier),
+        **sampling,
     )
 
     parts: list[str] = []

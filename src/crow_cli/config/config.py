@@ -170,18 +170,20 @@ def build_sampling_params(
     models reject them — else temperature plus any optional params the model
     config set (None = omit, so explicit 0 / 0.0 values ARE sent). top_k,
     min_p and repetition_penalty are non-standard OpenAI fields and are
-    packed into extra_body for pass-through to compatible servers."""
+    packed into extra_body for pass-through to compatible servers.
+
+    parallel_tool_calls is the exception: it is not a sampling param, so it is
+    sent on BOTH branches and always as a literal bool. Omitting it is not the
+    same as false — the provider default is true."""
+    params: dict[str, Any] = {"parallel_tool_calls": bool(parallel_tool_calls)}
     if reasoning_effort:
-        return {"reasoning_effort": reasoning_effort}
-    params: dict[str, Any] = {"temperature": temperature}
+        params["reasoning_effort"] = reasoning_effort
+        return params
+    params["temperature"] = temperature
     if top_p is not None:
         params["top_p"] = top_p
     if presence_penalty is not None:
         params["presence_penalty"] = presence_penalty
-    if parallel_tool_calls:
-        params["parallel_tool_calls"] = True
-    else:
-        params["parallel_tool_calls"] = False
     extra_body = {
         name: value
         for name, value in (

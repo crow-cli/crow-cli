@@ -46,11 +46,17 @@ QWEN_INSTRUCT = dict(
 
 class TestBuildSamplingParams:
     def test_reasoning_effort_set_omits_temperature(self):
-        assert build_sampling_params("high", 0.6) == {"reasoning_effort": "high"}
+        assert build_sampling_params("high", 0.6) == {
+            "reasoning_effort": "high",
+            "parallel_tool_calls": False,
+        }
 
     def test_reasoning_effort_none_string_is_still_set(self):
         # "none" is a real OpenAI effort level, not "unset"
-        assert build_sampling_params("none", 0.6) == {"reasoning_effort": "none"}
+        assert build_sampling_params("none", 0.6) == {
+            "reasoning_effort": "none",
+            "parallel_tool_calls": False,
+        }
 
     def test_unset_falls_back_to_temperature(self):
         assert build_sampling_params(None, 0.4) == {
@@ -89,10 +95,12 @@ class TestBuildSamplingParams:
         assert params["extra_body"] == {"min_p": 0.0}
 
     def test_reasoning_effort_omits_all_other_sampling_params(self):
-        assert (
-            build_sampling_params("high", 0.6, **QWEN_INSTRUCT)
-            == {"reasoning_effort": "high"}
-        )
+        # parallel_tool_calls is not a sampling param — reasoning models accept
+        # it alongside reasoning_effort, so it survives this branch.
+        assert build_sampling_params("high", 0.6, **QWEN_INSTRUCT) == {
+            "reasoning_effort": "high",
+            "parallel_tool_calls": False,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -244,7 +252,10 @@ def test_sampling_params_for_reasoning_model():
     cfg = _config_with(
         LLModel(name="r", provider_name="p", model_id="r-id", reasoning_effort="xhigh")
     )
-    assert sampling_params_for(cfg, "r-id") == {"reasoning_effort": "xhigh"}
+    assert sampling_params_for(cfg, "r-id") == {
+        "reasoning_effort": "xhigh",
+        "parallel_tool_calls": False,
+    }
 
 
 def test_sampling_params_for_temperature_model():
@@ -291,7 +302,10 @@ def test_sampling_params_for_reasoning_model_drops_optional_params():
             **QWEN_INSTRUCT,
         )
     )
-    assert sampling_params_for(cfg, "r-id") == {"reasoning_effort": "high"}
+    assert sampling_params_for(cfg, "r-id") == {
+        "reasoning_effort": "high",
+        "parallel_tool_calls": False,
+    }
 
 
 # ---------------------------------------------------------------------------

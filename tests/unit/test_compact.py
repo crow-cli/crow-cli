@@ -31,7 +31,7 @@ from crow_cli.agent.compact import (
     default_compactor,
 )
 from crow_cli.agent.prompt import SystemPromptResponse
-from crow_cli.config import Config, LLModel
+from crow_cli.config import Config, LLModel, sampling_params_for
 from crow_cli.agent.session import AgentSession, lookup_or_create_prompt
 from crow_cli.memory import build_agent_id
 
@@ -175,6 +175,52 @@ class TestCompaction:
         kwargs = _summary_call(mock_llm).kwargs
         assert kwargs["tool_choice"] == "none"
         assert kwargs["model"] == "test-model"
+
+    @pytest.mark.asyncio
+    async def test_compact_drops_parallel_tool_calls_when_session_has_no_tools(
+        self, setup_session, mock_llm, compact_config
+    ):
+        """OpenAI rejects parallel_tool_calls unless tools are specified, so a
+        session that registered none must not send it — otherwise the summary
+        call 400s and compaction dies on a session that is too long to keep."""
+        # The model has to be configured, or sampling_params_for takes its
+        # unknown-model path and never emits the key — the pop would go untested.
+        compact_config.llm.models["test-model"] = LLModel(
+            name="test-model",
+            provider_name="test-provider",
+            model_id="test-model",
+            temperature=0.4,
+        )
+        assert "parallel_tool_calls" in sampling_params_for(
+            compact_config, "test-model"
+        )
+        assert setup_session.tools == []
+        await compact(setup_session, mock_llm, compact_config, logger=MagicMock())
+
+        kwargs = _summary_call(mock_llm).kwargs
+        assert kwargs["tools"] is None
+        assert "parallel_tool_calls" not in kwargs
+
+    @pytest.mark.asyncio
+    async def test_compact_keeps_parallel_tool_calls_when_tools_are_present(
+        self, setup_session, mock_llm, compact_config
+    ):
+        """With tools specified the flag is legal and stays, so compaction
+        samples the same shape the react loop does."""
+        compact_config.llm.models["test-model"] = LLModel(
+            name="test-model",
+            provider_name="test-provider",
+            model_id="test-model",
+            temperature=0.4,
+        )
+        setup_session.tools = [
+            {"type": "function", "function": {"name": "execute"}}
+        ]
+        await compact(setup_session, mock_llm, compact_config, logger=MagicMock())
+
+        kwargs = _summary_call(mock_llm).kwargs
+        assert kwargs["tools"] == setup_session.tools
+        assert kwargs["parallel_tool_calls"] is False
 
     @pytest.mark.asyncio
     async def test_compact_uses_model_temperature_not_session_params(
