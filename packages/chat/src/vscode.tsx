@@ -1,6 +1,6 @@
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { SettingsIcon, ChevronsDownUpIcon } from "lucide-react";
+import { SettingsIcon, ChevronsDownUpIcon, HistoryIcon } from "lucide-react";
 import { useAcpAgentCapabilities, useAcpConnectionState, useAcpSessionId } from "@assistant-ui/acp";
 import { useAui, useAuiState } from "@assistant-ui/react";
 import { ChatSession, ChatThread } from "@/components/chat-session";
@@ -27,11 +27,11 @@ const settings = JSON.parse(document.getElementById("crow-acp-settings")!.textCo
 const mcp = parseMcpConfig(settings.mcpConfig);
 
 /**
- * Session list, model and context live elsewhere now: the extension hosts the
- * sessions as a native tree view and the view title carries new-session,
- * collapse-all and settings, so the header keeps only what is about *this*
- * chat. An editor-tab webview has no view title of its own, so it keeps the
- * two buttons the sidebar gets from VS Code's menus.
+ * Session list, model and context live elsewhere now: the view title carries
+ * new-session, the session dropdown, collapse-all and settings, so the header
+ * keeps only what is about *this* chat. An editor-tab webview has no view title
+ * of its own, so it keeps the three buttons the sidebar gets from VS Code's
+ * menus — the session one asks the extension to open the same dropdown.
  */
 function Header({ error }: { error: string | null }) {
   const state = useAcpConnectionState();
@@ -41,6 +41,7 @@ function Header({ error }: { error: string | null }) {
       <SessionBadge className="min-w-0 flex-1" />
       <ChatAccessibility verbosity={settings.accessibilityVerbosity} />
       {settings.host === "editor" && <>
+        <Button variant="ghost" size="icon" aria-label="Switch session" title="Switch session" onClick={() => vscode.postMessage({ type: "pick-session" })}><HistoryIcon className="size-4" /></Button>
         <Button variant="ghost" size="icon" aria-label="Toggle all tool calls and thoughts" title="Toggle all · Ctrl+Shift+O" onClick={() => collapseAll.toggle()}><ChevronsDownUpIcon className="size-4" /></Button>
         <Button variant="ghost" size="icon" aria-label="ACP settings" title="ACP settings" onClick={() => vscode.postMessage({ type: "settings" })}><SettingsIcon className="size-4" /></Button>
       </>}
@@ -60,9 +61,9 @@ function Footer() {
 }
 
 /**
- * The native half of the sidebar. The tree view cannot ask the agent anything
+ * The native half of the sidebar. The extension cannot ask the agent anything
  * itself, so this publishes the runtime's thread list over postMessage and
- * answers the extension's open/new/delete/refresh commands with store calls —
+ * answers the extension's open/new/delete/refresh messages with store calls —
  * the same adapter the in-webview list used to drive.
  */
 function VscodeBridge() {

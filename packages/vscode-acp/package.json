@@ -19,8 +19,7 @@
   "activationEvents": [
     "onCommand:crowAcp.open",
     "onCommand:crowAcp.openSidebar",
-    "onView:crowAcp.sidebar",
-    "onView:crowAcp.sessions"
+    "onView:crowAcp.sidebar"
   ],
   "contributes": {
     "commands": [
@@ -33,23 +32,14 @@
         "title": "Crow ACP: Open Sidebar"
       },
       {
-        "command": "crowAcp.session.open",
-        "title": "Crow ACP: Open Session"
-      },
-      {
         "command": "crowAcp.session.new",
         "title": "New Session",
         "icon": "$(add)"
       },
       {
-        "command": "crowAcp.sessions.refresh",
-        "title": "Refresh Sessions",
-        "icon": "$(refresh)"
-      },
-      {
-        "command": "crowAcp.session.delete",
-        "title": "Delete Session",
-        "icon": "$(trash)"
+        "command": "crowAcp.session.switch",
+        "title": "Switch Session",
+        "icon": "$(history)"
       },
       {
         "command": "crowAcp.collapseAll",
@@ -63,57 +53,29 @@
       }
     ],
     "menus": {
-      "commandPalette": [
-        {
-          "command": "crowAcp.session.open",
-          "when": "false"
-        },
-        {
-          "command": "crowAcp.session.delete",
-          "when": "false"
-        }
-      ],
       "view/title": [
         {
           "command": "crowAcp.session.new",
-          "when": "view == crowAcp.sidebar || view == crowAcp.sessions",
+          "when": "view == crowAcp.sidebar",
           "group": "navigation@1"
         },
         {
-          "command": "crowAcp.sessions.refresh",
-          "when": "view == crowAcp.sessions",
+          "command": "crowAcp.session.switch",
+          "when": "view == crowAcp.sidebar",
           "group": "navigation@2"
         },
         {
           "command": "crowAcp.collapseAll",
           "when": "view == crowAcp.sidebar",
-          "group": "navigation@2"
+          "group": "navigation@3"
         },
         {
           "command": "crowAcp.settings",
           "when": "view == crowAcp.sidebar",
-          "group": "navigation@3"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "crowAcp.session.delete",
-          "when": "view == crowAcp.sessions && viewItem == session",
-          "group": "inline"
-        },
-        {
-          "command": "crowAcp.session.delete",
-          "when": "view == crowAcp.sessions && viewItem == session",
-          "group": "1_modification@1"
+          "group": "navigation@4"
         }
       ]
     },
-    "viewsWelcome": [
-      {
-        "view": "crowAcp.sessions",
-        "contents": "Sessions appear here once the Crow chat connects to an agent.\n[Open Crow Chat](command:crowAcp.openSidebar)"
-      }
-    ],
     "viewsContainers": {
       "activitybar": [
         { "id": "crowAcp", "title": "Crow", "icon": "media/crow.svg" }
@@ -123,12 +85,8 @@
       "crowAcp": [
         {
           "id": "crowAcp.sidebar",
-          "name": "Crow ACP Chat",
+          "name": "Crow",
           "type": "webview"
-        },
-        {
-          "id": "crowAcp.sessions",
-          "name": "Sessions"
         }
       ]
     },
