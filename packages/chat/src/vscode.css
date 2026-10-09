@@ -43,21 +43,3 @@ button:focus-visible, textarea:focus-visible, input:focus-visible {
   border: 1px solid var(--vscode-contrastBorder);
   box-shadow: none;
 }
-@media (max-width: 640px) {
-  [data-testid="thread-sidebar"][data-state="expanded"] { width: 10rem; }
-  .crow-chat-layout[data-host="sidebar"] { flex-direction: column; }
-  [data-host="sidebar"] [data-testid="thread-sidebar"] {
-    width: 100%;
-    border-right: 0;
-    border-bottom: 1px solid var(--border);
-  }
-  [data-host="sidebar"] [data-testid="thread-sidebar"][data-state="expanded"] {
-    flex-basis: 35%;
-    min-height: 9rem;
-    flex-shrink: 1;
-  }
-  [data-host="sidebar"] [data-testid="thread-sidebar"][data-state="collapsed"] {
-    flex-direction: row;
-    padding: 2px 4px;
-  }
-}
