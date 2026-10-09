@@ -1,6 +1,10 @@
-/* The same chat components, colored by the workbench rather than a Crow theme. */
+/* The same chat components, colored by the workbench rather than a Crow theme.
+   :root is in the selector list because Tailwind declares
+   --color-background: var(--background) there, and a custom property's var()
+   substitutes where it is declared. The webview never sets [data-theme=dark],
+   so without this the reasoning fades inherit white over a dark workbench. */
 body { padding: 0; }
-body, #root, #root .dark {
+:root, body, #root, #root .dark {
   --background: var(--vscode-editor-background);
   --foreground: var(--vscode-editor-foreground);
   --card: var(--vscode-editor-background);
