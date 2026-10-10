@@ -8,6 +8,7 @@
 #   ./build.sh --reh          also build the remote/ssh server (reh)
 #   ./build.sh --latest       track newest upstream VS Code instead of the pin
 #   ./build.sh --assets       also roll release tarballs into vscodium/assets/
+#   ./build.sh --deb          also build the .deb (needs fakeroot + dpkg-dev)
 #   ./build.sh --prepare-only fetch + patch + npm ci, stop before gulp
 #   ./build.sh --fresh        delete vscodium/vscode/ and start the checkout over
 #
@@ -16,6 +17,9 @@
 #   vscode-reh-web-linux-<arch>/    web server; bin/crow-server serves it
 #   vscode-reh-linux-<arch>/        remote server (--reh only)
 #   assets/*.tar.gz                 (--assets only)
+#   assets/*.deb                    (--deb only — the install that gets a
+#                                    root-owned chrome-sandbox, so the one that
+#                                    actually launches on Ubuntu 24.04+)
 #
 # First run needs network (npm ci, cargo, electron/reh deps) and takes a while;
 # a rebuild after a source change is mostly gulp. Requires: bash, git, jq, node
@@ -31,6 +35,7 @@ BUILD_OS="${OS_NAME:-linux}"
 REH="no"
 REH_WEB="yes"
 ASSETS="no"
+DEB="no"
 PREPARE_ONLY="no"
 FRESH="no"
 
@@ -42,9 +47,10 @@ while [[ $# -gt 0 ]]; do
     --no-web)       REH_WEB="no"; shift ;;
     --latest)       export VSCODE_LATEST=yes; shift ;;
     --assets)       ASSETS="yes"; shift ;;
+    --deb)          DEB="yes"; shift ;;
     --prepare-only) PREPARE_ONLY="yes"; shift ;;
     --fresh)        FRESH="yes"; shift ;;
-    -h|--help)      sed -n '2,23p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help)      sed -n '2,27p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *)              echo "crow-gui: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -137,6 +143,20 @@ fi
 # shellcheck disable=SC1091
 . ./build.sh
 
+if [[ "${DEB}" == "yes" ]]; then
+  # prepare-deb lays out .build/linux/deb/<debarch>/crow-<debarch>/ and computes
+  # Depends with the host dpkg-shlibdeps (patches/user/03-deb-host-shlibdeps.patch);
+  # build-deb chmods chrome-sandbox 4755 (patches/user/04) and runs fakeroot
+  # dpkg-deb, so the archive carries the root:root ownership Chromium demands.
+  mkdir -p assets
+  (
+    cd vscode
+    npm run gulp "vscode-linux-${VSCODE_ARCH}-prepare-deb"
+    npm run gulp "vscode-linux-${VSCODE_ARCH}-build-deb"
+  )
+  mv vscode/.build/linux/deb/*/deb/*.deb assets/
+fi
+
 if [[ "${ASSETS}" == "yes" ]]; then
   # CI_BUILD=yes keeps stores/snapcraft out of it; deb/rpm need packaging tools
   # crow does not require, the tarballs are what `crow-cli install crow` wants.
@@ -157,4 +177,8 @@ if [[ "${SHOULD_BUILD_REH}" != "no" ]]; then
   echo "  remote srv  : vscodium/vscode-reh-${VSCODE_PLATFORM:-linux}-${VSCODE_ARCH}/bin/${BINARY_NAME}-server"
 fi
 [[ "${ASSETS}" == "yes" ]] && echo "  assets      : vscodium/assets/"
+if [[ "${DEB}" == "yes" ]]; then
+  echo "  deb         : vscodium/assets/$(basename "$(ls -1 assets/*.deb | head -1)")"
+  echo "                install it with: sudo dpkg -i vscodium/assets/*.deb"
+fi
 exit 0

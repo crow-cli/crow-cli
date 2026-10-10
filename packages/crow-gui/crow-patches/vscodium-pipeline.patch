@@ -102,12 +102,12 @@ index 00000000..61025784
 + version = "0.1.0"
 diff --git a/patches/user/01-cli-crow-agent.patch b/patches/user/01-cli-crow-agent.patch
 new file mode 100644
-index 00000000..3cfafe87
+index 00000000..fd5c22e4
 --- /dev/null
 +++ b/patches/user/01-cli-crow-agent.patch
 @@ -0,0 +1,131 @@
 +diff --git a/cli/src/bin/code/main.rs b/cli/src/bin/code/main.rs
-+index e448fa86..8ca4035d 100644
++index e448fa86..7edf4935 100644
 +--- a/cli/src/bin/code/main.rs
 ++++ b/cli/src/bin/code/main.rs
 +@@ -10,7 +10,7 @@ use clap::Parser;
@@ -123,7 +123,7 @@ index 00000000..3cfafe87
 + 				None => agent_host::agent_host(context!(), agent_args.host_args).await,
 + 			},
 + 
-++			// crow: `crow agent` is the crow agent REPL, not the agent host.
+++			// crow: `crow agent` is the crow agent TUI, not the agent host.
 ++			Some(args::Commands::CrowAgent(crow_args)) => crow_agent::crow_agent(crow_args),
 ++
 + 			Some(args::Commands::Tunnel(mut tunnel_args)) => match tunnel_args.subcommand.take() {
@@ -142,7 +142,7 @@ index 00000000..3cfafe87
 + pub mod serve_web;
 + pub mod tunnels;
 +diff --git a/cli/src/commands/args.rs b/cli/src/commands/args.rs
-+index c3c1a264..af2a39f1 100644
++index c3c1a264..1d4ca89a 100644
 +--- a/cli/src/commands/args.rs
 ++++ b/cli/src/commands/args.rs
 +@@ -186,9 +186,15 @@ pub enum Commands {
@@ -152,7 +152,7 @@ index 00000000..3cfafe87
 +-	/// Manage agent host sessions.
 +-	#[clap(name = "agent")]
 ++	// crow: upstream names this `agent`. crow owns that word for the crow agent
-++	// REPL (below), so the agent-host manager moves to `agent-host`.
+++	// TUI (below), so the agent-host manager moves to `agent-host`.
 ++	/// Manage editor agent host sessions.
 ++	#[clap(name = "agent-host")]
 + 	Agent(Box<AgentArgs>),
@@ -167,12 +167,12 @@ index 00000000..3cfafe87
 + 	pub existing_tunnel: ExistingTunnelArgs,
 + }
 + 
-++/// crow: `crow agent` hands the terminal to the crow agent REPL, which lives in
-++/// the `crow-cli` package rather than in this repository. Everything after the
-++/// subcommand is passed through verbatim.
+++/// crow: `crow agent` hands the terminal to the crow agent TUI, the
+++/// `crow-agent` binary built from the crow-cli repo's crates/crow-client.
+++/// Everything after the subcommand is passed through verbatim.
 ++#[derive(Args, Debug, Clone)]
 ++pub struct CrowAgentArgs {
-++	/// Arguments for the crow agent (`crow-cli run -i`).
+++	/// Arguments for the crow agent TUI (see `crow-agent --help`).
 ++	#[clap(trailing_var_arg = true, allow_hyphen_values = true)]
 ++	pub passthrough: Vec<String>,
 ++}
@@ -182,7 +182,7 @@ index 00000000..3cfafe87
 + 	#[clap(subcommand)]
 +diff --git a/cli/src/commands/crow_agent.rs b/cli/src/commands/crow_agent.rs
 +new file mode 100644
-+index 00000000..469c1248
++index 00000000..4c879a0f
 +--- /dev/null
 ++++ b/cli/src/commands/crow_agent.rs
 +@@ -0,0 +1,36 @@
@@ -191,8 +191,10 @@ index 00000000..3cfafe87
 ++ *  Licensed under the MIT License. See License.txt in the project root for license information.
 ++ *--------------------------------------------------------------------------------------------*/
 ++
-++// crow: `crow agent` hands this terminal to the crow agent REPL. Not an upstream
-++// command; added by packages/crow-gui (vscodium/patches/user/01-cli-crow-agent.patch).
+++// crow: `crow agent` hands this terminal to the crow agent TUI — the
+++// `crow-agent` binary built from the crow-cli repo's crates/crow-client. Not an
+++// upstream command; added by packages/crow-gui
+++// (vscodium/patches/user/01-cli-crow-agent.patch).
 ++
 ++use std::process::Command;
 ++
@@ -201,22 +203,20 @@ index 00000000..3cfafe87
 ++	util::errors::{wrap, AnyError},
 ++};
 ++
-++/// The crow agent ships in the `crow-cli` package, not in this repository.
-++/// `CROW_CLI` overrides the binary that gets exec'd.
-++const DEFAULT_CROW_CLI: &str = "crow-cli";
+++/// `crow-cli install crow` builds the TUI and puts it on PATH.
+++/// `CROW_AGENT_BIN` overrides the binary that gets exec'd.
+++const DEFAULT_CROW_AGENT: &str = "crow-agent";
 ++
 ++pub fn crow_agent(args: CrowAgentArgs) -> Result<i32, AnyError> {
-++	let bin = std::env::var("CROW_CLI").unwrap_or_else(|_| DEFAULT_CROW_CLI.to_owned());
+++	let bin = std::env::var("CROW_AGENT_BIN").unwrap_or_else(|_| DEFAULT_CROW_AGENT.to_owned());
 ++
 ++	let status = Command::new(&bin)
-++		.arg("run")
-++		.arg("-i")
 ++		.args(args.passthrough)
 ++		.status()
 ++		.map_err(|e| {
 ++			wrap(
 ++				e,
-++				format!("error running `{bin} run -i` (is crow-cli installed and on PATH? set CROW_CLI to override)"),
+++				format!("error running `{bin}` (is the crow agent TUI installed? `crow-cli install crow` builds it; CROW_AGENT_BIN overrides)"),
 ++			)
 ++		})?;
 ++
@@ -256,6 +256,79 @@ index 00000000..6395d111
 + 		<link rel="apple-touch-icon" href="{{WORKBENCH_WEB_BASE_URL}}/resources/server/code-192.png" />
 + 
 + 		<!-- Disable pinch zooming -->
+diff --git a/patches/user/03-deb-host-shlibdeps.patch b/patches/user/03-deb-host-shlibdeps.patch
+new file mode 100644
+index 00000000..4accd4aa
+--- /dev/null
++++ b/patches/user/03-deb-host-shlibdeps.patch
+@@ -0,0 +1,47 @@
++--- a/build/linux/debian/calculate-deps.ts
+++++ b/build/linux/debian/calculate-deps.ts
++@@ -5,9 +5,7 @@
++ 
++ import { spawnSync } from 'child_process';
++ import { constants, statSync } from 'fs';
++-import { tmpdir } from 'os';
++ import path from 'path';
++-import manifests from '../../../cgmanifest.json' with { type: 'json' };
++ import { additionalDeps } from './dep-lists.ts';
++ import type { DebianArchString } from './types.ts';
++ 
++@@ -29,17 +27,11 @@
++ 		console.error('Tried to stat ' + binaryPath + ' but failed.');
++ 	}
++ 
++-	// Get the Chromium dpkg-shlibdeps file.
++-	const chromiumManifest = manifests.registrations.filter(registration => {
++-		return registration.component.type === 'git' && registration.component.git!.name === 'chromium';
++-	});
++-	const dpkgShlibdepsUrl = `https://raw.githubusercontent.com/chromium/chromium/${chromiumManifest[0].version}/third_party/dpkg-shlibdeps/dpkg-shlibdeps.pl`;
++-	const dpkgShlibdepsScriptLocation = `${tmpdir()}/dpkg-shlibdeps.pl`;
++-	const result = spawnSync('curl', [dpkgShlibdepsUrl, '-o', dpkgShlibdepsScriptLocation]);
++-	if (result.status !== 0) {
++-		throw new Error('Cannot retrieve dpkg-shlibdeps. Stderr:\n' + result.stderr);
++-	}
++-	const cmd = [dpkgShlibdepsScriptLocation, '--ignore-weak-undefined', '--ignore-missing-info'];
+++	// Use the host's dpkg-shlibdeps (from dpkg-dev). Upstream runs chromium's
+++	// vendored copy of the script, which predates dpkg 1.23's Dpkg::Shlibs and
+++	// dies with "Can't use an undefined value as a HASH reference at
+++	// Dpkg/Shlibs/SymbolFile.pm", so no .deb could be built on a modern host.
+++	const cmd = ['--ignore-missing-info'];
++ 	switch (arch) {
++ 		case 'amd64':
++ 			cmd.push(`-l${chromiumSysroot}/usr/lib/x86_64-linux-gnu`,
++@@ -84,9 +76,9 @@
++ 	cmd.push(`-L${vscodeSysroot}/debian/libxkbfile1/DEBIAN/shlibs`);
++ 	cmd.push('-O', '-e', path.resolve(binaryPath));
++ 
++-	const dpkgShlibdepsResult = spawnSync('perl', cmd, { cwd: chromiumSysroot });
+++	const dpkgShlibdepsResult = spawnSync('dpkg-shlibdeps', cmd, { cwd: chromiumSysroot });
++ 	if (dpkgShlibdepsResult.status !== 0) {
++-		throw new Error(`dpkg-shlibdeps failed with exit code ${dpkgShlibdepsResult.status}. stderr:\n${dpkgShlibdepsResult.stderr} `);
+++		throw new Error(`dpkg-shlibdeps failed with exit code ${dpkgShlibdepsResult.status} (is dpkg-dev installed?). stderr:\n${dpkgShlibdepsResult.stderr} `);
++ 	}
++ 
++ 	const shlibsDependsPrefix = 'shlibs:Depends=';
+diff --git a/patches/user/04-deb-chrome-sandbox-setuid.patch b/patches/user/04-deb-chrome-sandbox-setuid.patch
+new file mode 100644
+index 00000000..6a5d7de4
+--- /dev/null
++++ b/patches/user/04-deb-chrome-sandbox-setuid.patch
+@@ -0,0 +1,14 @@
++--- a/build/gulpfile.vscode.linux.ts
+++++ b/build/gulpfile.vscode.linux.ts
++@@ -129,6 +129,11 @@
++ 
++ 	return async () => {
++ 		await exec(`chmod 755 ${product.applicationName}-${debArch}/DEBIAN/postinst ${product.applicationName}-${debArch}/DEBIAN/prerm ${product.applicationName}-${debArch}/DEBIAN/postrm`, { cwd });
+++		// Chromium only honours a setuid sandbox helper that is root-owned 4755
+++		// (setuid_sandbox_host.cc), and unpacking electron's zip as a normal user
+++		// loses the mode. The rpm spec sets the same attr; fakeroot gives the
+++		// archive root ownership.
+++		await exec(`chmod 4755 ${product.applicationName}-${debArch}/usr/share/${product.applicationName}/chrome-sandbox`, { cwd });
++ 		await exec('mkdir -p deb', { cwd });
++ 		await exec(`fakeroot dpkg-deb -Zxz -b ${product.applicationName}-${debArch} deb`, { cwd });
++ 	};
 diff --git a/prepare_vscode.sh b/prepare_vscode.sh
 index 1ac30e05..78c8760f 100755
 --- a/prepare_vscode.sh

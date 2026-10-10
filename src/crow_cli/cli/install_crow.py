@@ -86,6 +86,12 @@ def launcher_text(web_port: int) -> str:
 set -e
 
 IDE_DIR="${{CROW_IDE_DIR:-$HOME/{SHARE_DIR}/{IDE_SUBDIR}}}"
+# A package install wins over the user-prefix copy: Chromium only accepts a
+# root-owned 4755 chrome-sandbox, and without it the IDE dies silently on
+# kernels that restrict unprivileged user namespaces (Ubuntu 24.04+).
+if [ -z "${{CROW_IDE_DIR:-}}" ] && [ -x /usr/share/crow/bin/crow ]; then
+  IDE_DIR=/usr/share/crow
+fi
 WEB_DIR="${{CROW_WEB_DIR:-$HOME/{SHARE_DIR}/{WEB_SUBDIR}}}"
 WEB_HOST="${{CROW_WEB_HOST:-127.0.0.1}}"
 WEB_PORT="${{CROW_WEB_PORT:-{web_port}}}"

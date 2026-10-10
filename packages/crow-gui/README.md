@@ -61,9 +61,10 @@ VSCODE_QUALITY=stable SHOULD_BUILD_REH_WEB=yes`), then sources
 
 Flags: `--arch arm64`, `--os osx|windows` (untested), `--no-web`, `--reh`,
 `--latest` (newest upstream instead of the pin), `--assets` (roll release
-tarballs), `--prepare-only` (fetch + patch + `npm ci`, stop before gulp — the
-fast way to check that every patch still applies), `--fresh` (delete
-`vscodium/vscode/` and start the checkout over).
+tarballs), `--deb` (build `vscodium/assets/crow_<version>_amd64.deb`),
+`--prepare-only` (fetch + patch + `npm ci`, stop before gulp — the fast way to
+check that every patch still applies), `--fresh` (delete `vscodium/vscode/` and
+start the checkout over).
 
 Re-running `./build.sh` **resumes**: `prepare_vscode.sh` patches `vscode/` in
 place and cannot run twice, so a prepared tree is detected by the
@@ -90,6 +91,28 @@ The pinned commit is a ~340 MB fetch from GitHub. `build.sh` seeds it from a
 local clone instead when one has the commit (`CROW_VSCODE_SRC=<path>` forces
 it; by default a sibling `vscode/` checkout in the workspace is used).
 
+### The .deb
+
+```bash
+./build.sh --deb         # → vscodium/assets/crow_<version>_amd64.deb
+sudo dpkg -i vscodium/assets/crow_*.deb
+```
+
+On Linux the .deb is the install that actually works. Chromium only accepts a
+setuid sandbox helper that is **root-owned mode 4755**; a build unpacked into
+`~/.local/share/crow/ide` has `chrome-sandbox` owned by the user, Electron
+FATALs in `setuid_sandbox_host.cc`, and because `cli.js` detaches the main
+process with stdio ignored the app exits 0 and nothing appears. The userns
+fallback is closed too on Ubuntu 24.04+ (`kernel.apparmor_restrict_unprivileged_userns=1`).
+`dpkg-deb` runs under `fakeroot`, so the archive carries root:root ownership
+and `build-deb` chmods the helper 4755 (`patches/user/04`). `--deb` needs
+`fakeroot` and `dpkg-dev` (`dpkg-shlibdeps` computes `Depends` —
+`patches/user/03`).
+
+`crow-cli install crow`'s shim prefers `/usr/share/crow` over
+`~/.local/share/crow/ide` when the package is installed, so `crow` keeps
+meaning the working one.
+
 Requirements: bash, git, jq, node + npm matching `vscode/.nvmrc`, python3,
 libx11 + libxkbfile dev headers, and rustup + cargo for the CLI. (`libsecret`
 is *not* needed at this pin — the Rust CLI's keyring uses the pure-Rust
@@ -99,7 +122,9 @@ First run is long (npm ci + gulp minify); expect tens of GB of scratch inside
 
 ## What crow changes in the vendored pipeline
 
-`crow-patches/vscodium-pipeline.patch` touches six files:
+`crow-patches/vscodium-pipeline.patch` carries crow's changes to the vendored
+pipeline — the scripts below, the icons under `src/stable/resources/`, and the
+user patches that reach `vscode/` itself:
 
 - **`prepare_vscode.sh`** — the rebrand itself. Upstream VSCodium hardcodes
   `VSCodium`/`codium`/`vscodium.com` literals in the `product.json` `setpath`
@@ -143,6 +168,18 @@ First run is long (npm ci + gulp minify); expect tens of GB of scratch inside
   as `bin/crow-tunnel agent-host …`.
 - **`patches/user/02-web-workbench-title.patch`** (new) — the web workbench's
   `apple-mobile-web-app-title` meta tag says `Code`; see *Icons* below.
+- **`patches/user/03-deb-host-shlibdeps.patch`** (new) — `build-deb` computes
+  `Depends` with the host's `dpkg-shlibdeps` instead of downloading chromium's
+  vendored copy of the script. That copy (fetched at the `cgmanifest.json`
+  chromium pin, and even at chromium `main`) predates dpkg 1.23's
+  `Dpkg::Shlibs` and dies with `Can't use an undefined value as a HASH
+  reference at Dpkg/Shlibs/SymbolFile.pm`, so no .deb could be built on a
+  modern host. The host tool needs `dpkg-dev` and drops chromium's
+  `--ignore-weak-undefined` flag, which upstream's `dpkg-shlibdeps` does not
+  have.
+- **`patches/user/04-deb-chrome-sandbox-setuid.patch`** (new) — `build-deb`
+  chmods `chrome-sandbox` 4755 before `fakeroot dpkg-deb`, mirroring the rpm
+  spec's `%attr(4755, root, root)`. See *The .deb* above.
 
 Resulting `product.json` identity (stable channel):
 
@@ -199,7 +236,8 @@ which `apply_patch` substitutes from `crow.env` at apply time.
   the web build until it grows one.
 - The VS Code pin is 1.135.0; bumping it means re-running `vendor.sh` and
   fixing patch hunks.
-- Windows/macOS packaging is untested; `--assets` skips deb/rpm/snap.
+- Windows/macOS packaging is untested. The deb builds (`--deb`); rpm and snap
+  do not — `--assets` still skips all three.
 
 ## Naming
 

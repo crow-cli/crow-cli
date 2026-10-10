@@ -1,0 +1,14 @@
+--- a/build/gulpfile.vscode.linux.ts
++++ b/build/gulpfile.vscode.linux.ts
+@@ -129,6 +129,11 @@
+ 
+ 	return async () => {
+ 		await exec(`chmod 755 ${product.applicationName}-${debArch}/DEBIAN/postinst ${product.applicationName}-${debArch}/DEBIAN/prerm ${product.applicationName}-${debArch}/DEBIAN/postrm`, { cwd });
++		// Chromium only honours a setuid sandbox helper that is root-owned 4755
++		// (setuid_sandbox_host.cc), and unpacking electron's zip as a normal user
++		// loses the mode. The rpm spec sets the same attr; fakeroot gives the
++		// archive root ownership.
++		await exec(`chmod 4755 ${product.applicationName}-${debArch}/usr/share/${product.applicationName}/chrome-sandbox`, { cwd });
+ 		await exec('mkdir -p deb', { cwd });
+ 		await exec(`fakeroot dpkg-deb -Zxz -b ${product.applicationName}-${debArch} deb`, { cwd });
+ 	};
