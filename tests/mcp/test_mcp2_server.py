@@ -216,6 +216,52 @@ class TestPreludeV2:
         assert out["output"].strip() == "True"
 
 
+class TestIdentityRail:
+    """The caller-injected ``_meta`` has to survive the trip into the kernel.
+
+    The regression: the MCP SDK moved ``_meta`` from a pydantic model
+    (``RequestParams.Meta``, mcp 1.x) to a TypedDict (``RequestParamsMeta``,
+    mcp 2.x), so on fastmcp 4 ``getattr(meta, "session_id", None)`` returned
+    None for every key. Nothing raised. ``execute`` kept running cells — with
+    no session id, so kernels were keyed by cwd and every session in a
+    directory shared one, and with no db_uri or images_dir, so memory, rlm,
+    vision, task and goal all refused at call time.
+    """
+
+    async def test_the_whole_rail_lands_in_begin_cell(self, server, tmp_path):
+        db = tmp_path / "crow.db"
+        out = await _call(
+            "from crow_cli.tools import register\n"
+            "c = register.current_cell()\n"
+            "print(c.session_id, c.parent_tool_call_id, c.rlm_depth,"
+            " register.db_uri(), register.redis_url(),"
+            " register.image_store() is not None)",
+            session_id="rail-test",
+            tool_call_id="turn-1/call_rail",
+            db_uri=f"sqlite:///{db}",
+            images_dir=str(tmp_path / "images"),
+            redis_url="redis://127.0.0.1:6379/0",
+            rlm_depth=2,
+        )
+        assert out["exit_code"] == 0
+        assert out["output"].split() == [
+            "rail-test",
+            "turn-1/call_rail",
+            "2",
+            f"sqlite:///{db}",
+            "redis://127.0.0.1:6379/0",
+            "True",
+        ]
+
+    async def test_the_rail_keys_one_kernel_per_session(self, server):
+        # cwd keying is the quiet half of the regression: with no session id to
+        # key on, two sessions in one directory landed in ONE kernel and shared
+        # its variables.
+        await _call("SHARED = 'leaked'", session_id="rail-a")
+        out = await _call("print('SHARED' in dir())", session_id="rail-b")
+        assert out["output"].strip() == "False"
+
+
 class TestServe:
     """``mcp.run`` blocks forever, so it is recorded rather than run — there is
     no other way to observe which transport ``serve`` picked. Everything else

@@ -578,7 +578,7 @@ requires-dist = [
     { name = "coolname", specifier = ">=2.2.0" },
     { name = "directory-tree", specifier = ">=1.0.0" },
     { name = "docker", specifier = ">=7.2.0" },
-    { name = "fastmcp", specifier = ">=3.4.2" },
+    { name = "fastmcp", specifier = ">=3.4.2,<5" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "hypercorn", specifier = ">=0.17" },
     { name = "ipykernel", specifier = ">=6.29.0" },

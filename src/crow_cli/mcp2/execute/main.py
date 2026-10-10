@@ -49,6 +49,7 @@ from typing import Optional
 from fastmcp import Context
 
 from crow_cli.mcp2.server import mcp
+from crow_cli.mcp_meta import meta_get, rail_unread
 from crow_cli.tools import PRELUDE_V2
 
 from .kernel import CrowKernel
@@ -86,13 +87,19 @@ def _kernel_context(
     in-cell rlm can enforce its budget.
     """
     meta = ctx.request_context.meta if ctx.request_context else None
-    cwd = getattr(meta, "cwd", None) or os.getcwd()
-    session_id = getattr(meta, "session_id", None)
-    parent_tcid = getattr(meta, "tool_call_id", None)
-    db_uri = getattr(meta, "db_uri", None)
-    images_dir = getattr(meta, "images_dir", None)
-    bus = getattr(meta, "redis_url", None)
-    depth = getattr(meta, "rlm_depth", None)
+    cwd = meta_get(meta, "cwd") or os.getcwd()
+    session_id = meta_get(meta, "session_id")
+    parent_tcid = meta_get(meta, "tool_call_id")
+    db_uri = meta_get(meta, "db_uri")
+    images_dir = meta_get(meta, "images_dir")
+    bus = meta_get(meta, "redis_url")
+    depth = meta_get(meta, "rlm_depth")
+    if rail_unread(meta, session_id):
+        logger.warning(
+            "execute got a _meta it could not read (%s) — kernels fall back to "
+            "cwd keying and the in-cell tools lose their identity",
+            type(meta).__name__,
+        )
     return (
         session_id or cwd,
         cwd,
@@ -112,7 +119,7 @@ def _progress_token(ctx: Context) -> Optional[object]:
     chunks nobody will receive — the snapshot in the result covers that caller.
     """
     meta = ctx.request_context.meta if ctx.request_context else None
-    return getattr(meta, "progressToken", None) if meta is not None else None
+    return meta_get(meta, "progressToken") if meta is not None else None
 
 
 def _prologue(

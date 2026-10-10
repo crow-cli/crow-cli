@@ -6,6 +6,7 @@ from logging import getLogger
 from fastmcp import Context
 
 from crow_cli.mcp.server.app import mcp
+from crow_cli.mcp_meta import meta_get
 
 from .session import TerminalSession
 
@@ -41,8 +42,8 @@ def _work_dir_from_context(ctx: Context) -> tuple[str, str | None]:
     """
     meta = ctx.request_context.meta if ctx.request_context else None
     return (
-        getattr(meta, "cwd", None) or os.getcwd(),
-        getattr(meta, "session_id", None),
+        meta_get(meta, "cwd") or os.getcwd(),
+        meta_get(meta, "session_id"),
     )
 
 

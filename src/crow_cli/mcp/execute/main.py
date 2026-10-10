@@ -16,6 +16,7 @@ from pathlib import Path
 from fastmcp import Context
 
 from crow_cli.mcp.server.app import mcp
+from crow_cli.mcp_meta import meta_get, rail_unread
 
 from .kernel import CrowKernel
 
@@ -48,12 +49,18 @@ def _kernel_context(
     can enforce its budget; a bare caller is depth 0.
     """
     meta = ctx.request_context.meta if ctx.request_context else None
-    cwd = getattr(meta, "cwd", None) or os.getcwd()
-    session_id = getattr(meta, "session_id", None)
-    parent_tcid = getattr(meta, "tool_call_id", None)
-    db_uri = getattr(meta, "db_uri", None)
-    images_dir = getattr(meta, "images_dir", None)
-    depth = getattr(meta, "rlm_depth", None)
+    cwd = meta_get(meta, "cwd") or os.getcwd()
+    session_id = meta_get(meta, "session_id")
+    parent_tcid = meta_get(meta, "tool_call_id")
+    db_uri = meta_get(meta, "db_uri")
+    images_dir = meta_get(meta, "images_dir")
+    depth = meta_get(meta, "rlm_depth")
+    if rail_unread(meta, session_id):
+        logger.warning(
+            "execute got a _meta it could not read (%s) — kernels fall back to "
+            "cwd keying and the in-cell tools lose their identity",
+            type(meta).__name__,
+        )
     return (
         session_id or cwd,
         cwd,

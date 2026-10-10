@@ -25,6 +25,7 @@ import crow_cli.memory as cm
 from crow_cli.client.subagent import SubagentDriver, child_config
 from crow_cli.mcp.memory import store
 from crow_cli.mcp.server.app import mcp
+from crow_cli.mcp_meta import meta_get
 from crow_cli.memory.messages import last_assistant_text
 from crow_cli.memory.reads import (
     count_tasks,
@@ -285,7 +286,7 @@ async def task(updates: list[TaskUpdate], ctx: Context) -> str:
     # agent (execute_acp_task) — the Context param is filtered out of the
     # LLM schema, so the model can neither see nor forge it.
     meta = ctx.request_context.meta if ctx.request_context else None
-    owner = getattr(meta, "session_id", None) if meta else None
+    owner = meta_get(meta, "session_id")
     if not owner:
         return "error: no session_id in call meta — cannot attribute tasks"
     engine = _engine()
