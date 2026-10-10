@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC1091
+
+set -ex
+
+. version.sh
+
+if [[ "${SHOULD_BUILD}" == "yes" ]]; then
+  echo "MS_COMMIT=\"${MS_COMMIT}\""
+
+  export MAX_OLD_SPACE_SIZE="${MAX_OLD_SPACE_SIZE:-8192}"
+
+  # crow: prepare_vscode.sh patches a pristine vscode/ checkout IN PLACE, so it
+  # cannot run twice (every patch would fail as already-applied). Skip it when
+  # this tree was already prepared for the same release; delete vscode/ (or run
+  # packages/crow-gui/build.sh --fresh) to force a full re-prepare.
+  if [[ "$( cat vscode/.crow-prepared 2>/dev/null )" == "${RELEASE_VERSION}" ]]; then
+    echo "crow: vscode/ already prepared for ${RELEASE_VERSION}, skipping prepare_vscode.sh"
+  else
+    . prepare_vscode.sh
+    echo "${RELEASE_VERSION}" > vscode/.crow-prepared
+  fi
+
+  cd vscode || { echo "'vscode' dir not found"; exit 1; }
+
+  export NODE_OPTIONS="--max-old-space-size=${MAX_OLD_SPACE_SIZE}"
+  export VSCODE_PUBLISH_COUNTER=1
+
+  npm run gulp vscode-min-prepack
+
+  if [[ "${OS_NAME}" == "osx" ]]; then
+    # remove win32 node modules
+    rm -f .build/extensions/ms-vscode.js-debug/src/win32-app-container-tokens.*.node
+
+    # generate Group Policy definitions
+    npm run copy-policy-dto --prefix build
+    node build/lib/policies/policyGenerator.ts build/lib/policies/policyData.jsonc darwin
+
+    npm run gulp "vscode-darwin-${VSCODE_ARCH}-min-packing"
+
+    find "../VSCode-darwin-${VSCODE_ARCH}" -print0 | xargs -0 touch -c
+
+    . ../build_cli.sh
+
+    VSCODE_PLATFORM="darwin"
+  elif [[ "${OS_NAME}" == "windows" ]]; then
+    # in CI, packaging will be done by a different job
+    if [[ "${CI_BUILD}" == "no" ]]; then
+      . ../build/windows/rtf/make.sh
+
+      # generate Group Policy definitions
+      npm run copy-policy-dto --prefix build
+      node build/lib/policies/policyGenerator.ts build/lib/policies/policyData.jsonc win32
+
+      npm run gulp "vscode-win32-${VSCODE_ARCH}-min-packing"
+
+      if [[ "${VSCODE_ARCH}" != "x64" ]]; then
+        SHOULD_BUILD_REH="no"
+        SHOULD_BUILD_REH_WEB="no"
+      fi
+
+      . ../build_cli.sh
+    fi
+
+    VSCODE_PLATFORM="win32"
+  else # linux
+    # remove win32 node modules
+    rm -f .build/extensions/ms-vscode.js-debug/src/win32-app-container-tokens.*.node
+
+    # in CI, packaging will be done by a different job
+    if [[ "${CI_BUILD}" == "no" ]]; then
+      # generate Group Policy definitions
+      npm run copy-policy-dto --prefix build
+      node build/lib/policies/policyGenerator.ts build/lib/policies/policyData.jsonc linux
+
+      npm run gulp "vscode-linux-${VSCODE_ARCH}-min-packing"
+
+      find "../VSCode-linux-${VSCODE_ARCH}" -print0 | xargs -0 touch -c
+
+      . ../build_cli.sh
+    fi
+
+    VSCODE_PLATFORM="linux"
+  fi
+
+  if [[ "${SHOULD_BUILD_REH}" != "no" ]]; then
+    npm run gulp minify-vscode-reh
+    npm run gulp "vscode-reh-${VSCODE_PLATFORM}-${VSCODE_ARCH}-min-ci"
+  fi
+
+  if [[ "${SHOULD_BUILD_REH_WEB}" != "no" ]]; then
+    npm run gulp minify-vscode-reh-web
+    npm run gulp "vscode-reh-web-${VSCODE_PLATFORM}-${VSCODE_ARCH}-min-ci"
+  fi
+
+  cd ..
+fi

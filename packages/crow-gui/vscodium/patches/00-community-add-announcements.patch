@@ -1,0 +1,102 @@
+diff --git a/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.contribution.ts b/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.contribution.ts
+index 067580a4..2ad8759f 100644
+--- a/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.contribution.ts
++++ b/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.contribution.ts
+@@ -316,2 +316,9 @@ configurationRegistry.registerConfiguration({
+ 		},
++		'workbench.welcomePage.extraAnnouncements': {
++			scope: ConfigurationScope.MACHINE,
++			type: 'boolean',
++			default: true,
++			description: localize('workbench.welcomePage.extraAnnouncements', "When enabled, the get started page loads additional announcements from !!APP_NAME!!'s repository."),
++			tags: ['usesOnlineServices']
++		},
+ 		'workbench.startupEditor': {
+diff --git a/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.ts b/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.ts
+index 0cb22b9c..1dfea59f 100644
+--- a/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.ts
++++ b/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.ts
+@@ -119,4 +119,8 @@ type GettingStartedActionEvent = {
+ type RecentEntry = (IRecentFolder | IRecentWorkspace) & { id: string };
++type AnnouncementEntry = { id: string, title: string, url: string };
+ 
+ const REDUCED_MOTION_KEY = 'workbench.welcomePage.preferReducedMotion';
++
++const BUILTIN_ANNOUNCEMENTS: AnnouncementEntry[] = [/* BUILTIN_ANNOUNCEMENTS */];
++
+ export class GettingStartedPage extends EditorPane {
+@@ -154,2 +158,4 @@ export class GettingStartedPage extends EditorPane {
+ 	private readonly gettingStartedList = this._register(new MutableDisposable<GettingStartedIndexList<IResolvedWalkthrough>>());
++	private announcementList?: GettingStartedIndexList<AnnouncementEntry>;
++	private announcementData?: AnnouncementEntry[];
+ 
+@@ -936,2 +942,3 @@ export class GettingStartedPage extends EditorPane {
+ 		const gettingStartedList = this.buildGettingStartedWalkthroughsList();
++		const announcementList = await this.buildAnnouncementList();
+ 
+@@ -960,3 +967,3 @@ export class GettingStartedPage extends EditorPane {
+ 				this.container.classList.remove('noWalkthroughs');
+-				reset(rightColumn, gettingStartedList.getDomElement());
++				reset(rightColumn, gettingStartedList.getDomElement(), announcementList.getDomElement());
+ 			}
+@@ -964,3 +971,3 @@ export class GettingStartedPage extends EditorPane {
+ 				this.container.classList.add('noWalkthroughs');
+-				reset(rightColumn);
++				reset(rightColumn, announcementList.getDomElement());
+ 			}
+@@ -1151,2 +1158,55 @@ export class GettingStartedPage extends EditorPane {
+ 
++	private async buildAnnouncementList(): Promise<GettingStartedIndexList<AnnouncementEntry>> {
++		const renderAnnouncement = (announcement: AnnouncementEntry) => {
++			const { title, url } = announcement;
++			const li = $('li');
++
++			const anchor: HTMLLinkElement = $('a');
++			anchor.href = url;
++			anchor.innerText = title;
++			anchor.target = '_blank';
++			li.appendChild(anchor);
++
++			return li;
++		};
++
++		if (this.announcementList) { this.announcementList.dispose(); }
++
++		const announcementList = this.announcementList = new GettingStartedIndexList({
++			title: localize('announcements', "!!APP_NAME!! Announcements"),
++			klass: 'announcements',
++			limit: 5,
++			empty: $('.empty-recent', {}, localize('noAnnouncements', "There are no current announcements.")),
++			renderElement: renderAnnouncement,
++			contextService: this.contextService
++		});
++
++		if (!this.announcementData) {
++			const showExtras = this.configurationService.getValue<boolean>('workbench.welcomePage.extraAnnouncements');
++
++			if (showExtras) {
++				const branch = this.productService.quality === 'insider' ? 'insider' : 'master';
++				await fetch(`https://raw.githubusercontent.com/!!GH_REPO_PATH!!/${branch}/announcements-extra.json`)
++					.then(async res => {
++						if (res.ok) {
++							var extraAnnouncements = await res.json() as AnnouncementEntry[];
++
++							this.announcementData = [...extraAnnouncements, ...BUILTIN_ANNOUNCEMENTS];
++						} else {
++							this.announcementData = BUILTIN_ANNOUNCEMENTS;
++						}
++					})
++					.catch(err => {
++						this.announcementData = BUILTIN_ANNOUNCEMENTS;
++					});
++			} else {
++				this.announcementData = BUILTIN_ANNOUNCEMENTS;
++			}
++		}
++
++		announcementList.setEntries(this.announcementData);
++
++		return announcementList;
++	}
++
+ 	private buildStartList(): GettingStartedIndexList<IWelcomePageStartEntry> {

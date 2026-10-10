@@ -1,0 +1,335 @@
+diff --git a/build/.moduleignore b/build/.moduleignore
+index 0a5b4fe1..02d1139d 100644
+--- a/build/.moduleignore
++++ b/build/.moduleignore
+@@ -157,9 +157,11 @@ vsda/**
+ 
+-@vscode/policy-watcher/build/**
+-@vscode/policy-watcher/.husky/**
+-@vscode/policy-watcher/src/**
+-@vscode/policy-watcher/binding.gyp
+-@vscode/policy-watcher/README.md
+-@vscode/policy-watcher/index.d.ts
+-!@vscode/policy-watcher/build/Release/vscode-policy-watcher.node
++@vscodium/policy-watcher/.github/**
++@vscodium/policy-watcher/.husky/**
++@vscodium/policy-watcher/build/**
++@vscodium/policy-watcher/src/**
++@vscodium/policy-watcher/.release-it.yml
++@vscodium/policy-watcher/binding.gyp
++@vscodium/policy-watcher/README.md
++@vscodium/policy-watcher/index.d.ts
++!@vscodium/policy-watcher/build/Release/vscodium-policy-watcher.node
+ 
+diff --git a/build/lib/policies/basePolicy.ts b/build/lib/policies/basePolicy.ts
+index 7f650ba7..db927cb4 100644
+--- a/build/lib/policies/basePolicy.ts
++++ b/build/lib/policies/basePolicy.ts
+@@ -38,3 +38,3 @@ export abstract class BasePolicy implements Policy {
+ 		return [
+-			`<policy name="${this.name}" class="Both" displayName="$(string.${this.name})" explainText="$(string.${this.name}_${this.description.nlsKey.replace(/\./g, '_')})" key="Software\\Policies\\Microsoft\\${regKey}" presentation="$(presentation.${this.name})">`,
++			`<policy name="${this.name}" class="Both" displayName="$(string.${this.name})" explainText="$(string.${this.name}_${this.description.nlsKey.replace(/\./g, '_')})" key="Software\\Policies\\!!ORG_NAME!!\\${regKey}" presentation="$(presentation.${this.name})">`,
+ 			`	<parentCategory ref="${this.category.name.nlsKey}" />`,
+diff --git a/build/lib/policies/render.ts b/build/lib/policies/render.ts
+index bd5958cb..1dfe4407 100644
+--- a/build/lib/policies/render.ts
++++ b/build/lib/policies/render.ts
+@@ -56,3 +56,3 @@ export function renderADMX(regKey: string, versions: string[], categories: Categ
+ 	<policyNamespaces>
+-		<target prefix="${regKey}" namespace="Microsoft.Policies.${regKey}" />
++		<target prefix="${regKey}" namespace="!!ORG_NAME!!.Policies.${regKey}" />
+ 	</policyNamespaces>
+@@ -174,3 +174,3 @@ export function renderProfileManifest(appName: string, bundleIdentifier: string,
+ 			<key>pfm_default</key>
+-			<string>Microsoft</string>
++			<string>!!ORG_NAME!!</string>
+ 			<key>pfm_name</key>
+@@ -192,3 +192,3 @@ export function renderProfileManifest(appName: string, bundleIdentifier: string,
+     <key>pfm_app_url</key>
+-    <string>https://code.visualstudio.com/</string>
++    <string>https://github.com/!!GH_REPO_PATH!!</string>
+     <key>pfm_description</key>
+@@ -196,3 +196,3 @@ export function renderProfileManifest(appName: string, bundleIdentifier: string,
+     <key>pfm_documentation_url</key>
+-    <string>https://code.visualstudio.com/docs/setup/enterprise</string>
++    <string>https://github.com/!!GH_REPO_PATH!!</string>
+     <key>pfm_domain</key>
+@@ -262,3 +262,3 @@ ${policyEntries}
+ 		<key>PayloadDescription</key>
+-		<string>This profile manages ${appName}. For more information see https://code.visualstudio.com/docs/setup/enterprise</string>
++		<string>This profile manages ${appName}. For more information see https://github.com/!!GH_REPO_PATH!!</string>
+ 		<key>PayloadDisplayName</key>
+@@ -268,3 +268,3 @@ ${policyEntries}
+ 		<key>PayloadOrganization</key>
+-		<string>Microsoft</string>
++		<string>!!ORG_NAME!!</string>
+ 		<key>PayloadType</key>
+diff --git a/eslint.config.js b/eslint.config.js
+index 1a14c1b2..100a343e 100644
+--- a/eslint.config.js
++++ b/eslint.config.js
+@@ -1546,3 +1546,3 @@ export default defineConfig(
+ 						'@vscode/native-watchdog',
+-						'@vscode/policy-watcher',
++						'@vscodium/policy-watcher',
+ 						'@vscode/proxy-agent',
+diff --git a/package-lock.json b/package-lock.json
+index 97c914fc..5110f98c 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -33,3 +33,2 @@
+         "@vscode/os-proxy-resolver": "^0.3.0",
+-        "@vscode/policy-watcher": "^1.4.0",
+         "@vscode/proxy-agent": "^0.44.0",
+@@ -46,2 +45,3 @@
+         "@vscodium/native-keymap": "3.3.9-260952",
++        "@vscodium/policy-watcher": "1.4.0-265896",
+         "@xterm/addon-clipboard": "^0.3.0-beta.301",
+@@ -4786,22 +4786,2 @@
+     },
+-    "node_modules/@vscode/policy-watcher": {
+-      "version": "1.4.0",
+-      "resolved": "https://registry.npmjs.org/@vscode/policy-watcher/-/policy-watcher-1.4.0.tgz",
+-      "integrity": "sha512-QKTLV/UtV0HH5AJELfN5D3Jcxj2hB9CYT9GtG334I8bU5TdusaSGYSpDjumZBGWO2YxwVYpBNytA7mq/I3ZtzA==",
+-      "hasInstallScript": true,
+-      "license": "MIT",
+-      "dependencies": {
+-        "bindings": "^1.5.0",
+-        "node-addon-api": "^8.2.0"
+-      }
+-    },
+-    "node_modules/@vscode/policy-watcher/node_modules/node-addon-api": {
+-      "version": "8.2.0",
+-      "resolved": "https://registry.npmjs.org/node-addon-api/-/node-addon-api-8.2.0.tgz",
+-      "integrity": "sha512-qnyuI2ROiCkye42n9Tj5aX1ns7rzj6n7zW1XReSnLSL9v/vbLeR6fJq6PU27YU/ICfYw6W7Ouk/N7cysWu/hlw==",
+-      "license": "MIT",
+-      "engines": {
+-        "node": "^18 || ^20 || >= 21"
+-      }
+-    },
+     "node_modules/@vscode/proxy-agent": {
+@@ -5218,2 +5198,22 @@
+     },
++    "node_modules/@vscodium/policy-watcher": {
++      "version": "1.4.0-265896",
++      "resolved": "https://registry.npmjs.org/@vscodium/policy-watcher/-/policy-watcher-1.4.0-265896.tgz",
++      "integrity": "sha512-zbMusW4ZzhjKuh0uId2eb/0ihC3cZudqXBI4vEQpalvu0EjOgNxczY1G2lF2arwqSCgnj+TiLJ98WTt1zxH8bQ==",
++      "hasInstallScript": true,
++      "license": "MIT",
++      "dependencies": {
++        "bindings": "^1.5.0",
++        "node-addon-api": "^8.2.0"
++      }
++    },
++    "node_modules/@vscodium/policy-watcher/node_modules/node-addon-api": {
++      "version": "8.7.0",
++      "resolved": "https://registry.npmjs.org/node-addon-api/-/node-addon-api-8.7.0.tgz",
++      "integrity": "sha512-9MdFxmkKaOYVTV+XVRG8ArDwwQ77XIgIPyKASB1k3JPq3M8fGQQQE3YpMOrKm6g//Ktx8ivZr8xo1Qmtqub+GA==",
++      "license": "MIT",
++      "engines": {
++        "node": "^18 || ^20 || >= 21"
++      }
++    },
+     "node_modules/@webgpu/types": {
+diff --git a/package.json b/package.json
+index 3a832605..8c961419 100644
+--- a/package.json
++++ b/package.json
+@@ -122,3 +122,3 @@
+     "@vscode/os-proxy-resolver": "^0.3.0",
+-    "@vscode/policy-watcher": "^1.4.0",
++    "@vscodium/policy-watcher": "1.4.0-265896",
+     "@vscode/proxy-agent": "^0.44.0",
+@@ -315,3 +315,3 @@
+     "@vscode/deviceid@0.1.5": true,
+-    "@vscode/policy-watcher@1.4.0": true,
++    "@vscodium/policy-watcher@1.4.0-265896": true,
+     "@vscode/spdlog@0.15.8": true,
+diff --git a/src/vs/base/test/node/uri.perf.data.txt b/src/vs/base/test/node/uri.perf.data.txt
+index ee0a24b5..881ce36a 100644
+--- a/src/vs/base/test/node/uri.perf.data.txt
++++ b/src/vs/base/test/node/uri.perf.data.txt
+@@ -14698,48 +14698,48 @@
+ /Users/example/node_modules/@vscode/node-addon-api/node_addon_api.Makefile
+-/Users/example/node_modules/@vscode/policy-watcher/LICENSE
+-/Users/example/node_modules/@vscode/policy-watcher/binding.gyp
+-/Users/example/node_modules/@vscode/policy-watcher/node_modules/node-addon-api/LICENSE.md
+-/Users/example/node_modules/@vscode/policy-watcher/node_modules/node-addon-api/tools/conversion.js
+-/Users/example/node_modules/@vscode/policy-watcher/node_modules/node-addon-api/tools/eslint-format.js
+-/Users/example/node_modules/@vscode/policy-watcher/node_modules/node-addon-api/tools/clang-format.js
+-/Users/example/node_modules/@vscode/policy-watcher/node_modules/node-addon-api/tools/README.md
+-/Users/example/node_modules/@vscode/policy-watcher/node_modules/node-addon-api/tools/check-napi.js
+-/Users/example/node_modules/@vscode/policy-watcher/node_modules/node-addon-api/except.gypi
+-/Users/example/node_modules/@vscode/policy-watcher/node_modules/node-addon-api/napi-inl.deprecated.h
+-/Users/example/node_modules/@vscode/policy-watcher/node_modules/node-addon-api/index.js
+-/Users/example/node_modules/@vscode/policy-watcher/node_modules/node-addon-api/README.md
+-/Users/example/node_modules/@vscode/policy-watcher/node_modules/node-addon-api/napi-inl.h
+-/Users/example/node_modules/@vscode/policy-watcher/node_modules/node-addon-api/node_api.gyp
+-/Users/example/node_modules/@vscode/policy-watcher/node_modules/node-addon-api/napi.h
+-/Users/example/node_modules/@vscode/policy-watcher/node_modules/node-addon-api/package.json
+-/Users/example/node_modules/@vscode/policy-watcher/node_modules/node-addon-api/noexcept.gypi
+-/Users/example/node_modules/@vscode/policy-watcher/node_modules/node-addon-api/common.gypi
+-/Users/example/node_modules/@vscode/policy-watcher/node_modules/node-addon-api/nothing.c
+-/Users/example/node_modules/@vscode/policy-watcher/node_modules/node-addon-api/package-support.json
+-/Users/example/node_modules/@vscode/policy-watcher/index.js
+-/Users/example/node_modules/@vscode/policy-watcher/README.md
+-/Users/example/node_modules/@vscode/policy-watcher/package.json
+-/Users/example/node_modules/@vscode/policy-watcher/build/vscode-policy-watcher.target.mk
+-/Users/example/node_modules/@vscode/policy-watcher/build/gyp-mac-tool
+-/Users/example/node_modules/@vscode/policy-watcher/build/Makefile
+-/Users/example/node_modules/@vscode/policy-watcher/build/Release/obj.target/vscode-policy-watcher/src/main.o
+-/Users/example/node_modules/@vscode/policy-watcher/build/Release/obj.target/vscode-policy-watcher/src/macos/PolicyWatcher.o
+-/Users/example/node_modules/@vscode/policy-watcher/build/Release/vscode-policy-watcher.node
+-/Users/example/node_modules/@vscode/policy-watcher/build/Release/.deps/Release/vscode-policy-watcher.node.d
+-/Users/example/node_modules/@vscode/policy-watcher/build/Release/.deps/Release/obj.target/vscode-policy-watcher/src/macos/PolicyWatcher.o.d
+-/Users/example/node_modules/@vscode/policy-watcher/build/Release/.deps/Release/obj.target/vscode-policy-watcher/src/main.o.d
+-/Users/example/node_modules/@vscode/policy-watcher/build/config.gypi
+-/Users/example/node_modules/@vscode/policy-watcher/build/binding.Makefile
+-/Users/example/node_modules/@vscode/policy-watcher/index.d.ts
+-/Users/example/node_modules/@vscode/policy-watcher/src/main.cc
+-/Users/example/node_modules/@vscode/policy-watcher/src/macos/PolicyWatcher.cc
+-/Users/example/node_modules/@vscode/policy-watcher/src/PolicyWatcher.hh
+-/Users/example/node_modules/@vscode/policy-watcher/src/linux/PolicyWatcher.cc
+-/Users/example/node_modules/@vscode/policy-watcher/src/Policy.hh
+-/Users/example/node_modules/@vscode/policy-watcher/src/windows/RegistryPolicy.hh
+-/Users/example/node_modules/@vscode/policy-watcher/src/windows/PolicyWatcher.cc
+-/Users/example/node_modules/@vscode/policy-watcher/src/windows/NumberPolicy.cc
+-/Users/example/node_modules/@vscode/policy-watcher/src/windows/StringPolicy.hh
+-/Users/example/node_modules/@vscode/policy-watcher/src/windows/StringPolicy.cc
+-/Users/example/node_modules/@vscode/policy-watcher/src/windows/NumberPolicy.hh
++/Users/example/node_modules/@vscodium/policy-watcher/LICENSE
++/Users/example/node_modules/@vscodium/policy-watcher/binding.gyp
++/Users/example/node_modules/@vscodium/policy-watcher/node_modules/node-addon-api/LICENSE.md
++/Users/example/node_modules/@vscodium/policy-watcher/node_modules/node-addon-api/tools/conversion.js
++/Users/example/node_modules/@vscodium/policy-watcher/node_modules/node-addon-api/tools/eslint-format.js
++/Users/example/node_modules/@vscodium/policy-watcher/node_modules/node-addon-api/tools/clang-format.js
++/Users/example/node_modules/@vscodium/policy-watcher/node_modules/node-addon-api/tools/README.md
++/Users/example/node_modules/@vscodium/policy-watcher/node_modules/node-addon-api/tools/check-napi.js
++/Users/example/node_modules/@vscodium/policy-watcher/node_modules/node-addon-api/except.gypi
++/Users/example/node_modules/@vscodium/policy-watcher/node_modules/node-addon-api/napi-inl.deprecated.h
++/Users/example/node_modules/@vscodium/policy-watcher/node_modules/node-addon-api/index.js
++/Users/example/node_modules/@vscodium/policy-watcher/node_modules/node-addon-api/README.md
++/Users/example/node_modules/@vscodium/policy-watcher/node_modules/node-addon-api/napi-inl.h
++/Users/example/node_modules/@vscodium/policy-watcher/node_modules/node-addon-api/node_api.gyp
++/Users/example/node_modules/@vscodium/policy-watcher/node_modules/node-addon-api/napi.h
++/Users/example/node_modules/@vscodium/policy-watcher/node_modules/node-addon-api/package.json
++/Users/example/node_modules/@vscodium/policy-watcher/node_modules/node-addon-api/noexcept.gypi
++/Users/example/node_modules/@vscodium/policy-watcher/node_modules/node-addon-api/common.gypi
++/Users/example/node_modules/@vscodium/policy-watcher/node_modules/node-addon-api/nothing.c
++/Users/example/node_modules/@vscodium/policy-watcher/node_modules/node-addon-api/package-support.json
++/Users/example/node_modules/@vscodium/policy-watcher/index.js
++/Users/example/node_modules/@vscodium/policy-watcher/README.md
++/Users/example/node_modules/@vscodium/policy-watcher/package.json
++/Users/example/node_modules/@vscodium/policy-watcher/build/vscode-policy-watcher.target.mk
++/Users/example/node_modules/@vscodium/policy-watcher/build/gyp-mac-tool
++/Users/example/node_modules/@vscodium/policy-watcher/build/Makefile
++/Users/example/node_modules/@vscodium/policy-watcher/build/Release/obj.target/vscode-policy-watcher/src/main.o
++/Users/example/node_modules/@vscodium/policy-watcher/build/Release/obj.target/vscode-policy-watcher/src/macos/PolicyWatcher.o
++/Users/example/node_modules/@vscodium/policy-watcher/build/Release/vscode-policy-watcher.node
++/Users/example/node_modules/@vscodium/policy-watcher/build/Release/.deps/Release/vscode-policy-watcher.node.d
++/Users/example/node_modules/@vscodium/policy-watcher/build/Release/.deps/Release/obj.target/vscode-policy-watcher/src/macos/PolicyWatcher.o.d
++/Users/example/node_modules/@vscodium/policy-watcher/build/Release/.deps/Release/obj.target/vscode-policy-watcher/src/main.o.d
++/Users/example/node_modules/@vscodium/policy-watcher/build/config.gypi
++/Users/example/node_modules/@vscodium/policy-watcher/build/binding.Makefile
++/Users/example/node_modules/@vscodium/policy-watcher/index.d.ts
++/Users/example/node_modules/@vscodium/policy-watcher/src/main.cc
++/Users/example/node_modules/@vscodium/policy-watcher/src/macos/PolicyWatcher.cc
++/Users/example/node_modules/@vscodium/policy-watcher/src/PolicyWatcher.hh
++/Users/example/node_modules/@vscodium/policy-watcher/src/linux/PolicyWatcher.cc
++/Users/example/node_modules/@vscodium/policy-watcher/src/Policy.hh
++/Users/example/node_modules/@vscodium/policy-watcher/src/windows/RegistryPolicy.hh
++/Users/example/node_modules/@vscodium/policy-watcher/src/windows/PolicyWatcher.cc
++/Users/example/node_modules/@vscodium/policy-watcher/src/windows/NumberPolicy.cc
++/Users/example/node_modules/@vscodium/policy-watcher/src/windows/StringPolicy.hh
++/Users/example/node_modules/@vscodium/policy-watcher/src/windows/StringPolicy.cc
++/Users/example/node_modules/@vscodium/policy-watcher/src/windows/NumberPolicy.hh
+ /Users/example/node_modules/@vscode/vscode-languagedetection/CODE_OF_CONDUCT.md
+diff --git a/src/vs/platform/environment/test/node/nativeModules.integrationTest.ts b/src/vs/platform/environment/test/node/nativeModules.integrationTest.ts
+index 90667682..de250c8d 100644
+--- a/src/vs/platform/environment/test/node/nativeModules.integrationTest.ts
++++ b/src/vs/platform/environment/test/node/nativeModules.integrationTest.ts
+@@ -62,5 +62,5 @@ flakySuite('Native Modules (all platforms)', () => {
+ 
+-	test('@vscode/policy-watcher', async () => {
+-		const watcher = await import('@vscode/policy-watcher');
+-		assert.ok(typeof watcher.createWatcher === 'function', testErrorMessage('@vscode/policy-watcher'));
++	test('@vscodium/policy-watcher', async () => {
++		const watcher = await import('@vscodium/policy-watcher');
++		assert.ok(typeof watcher.createWatcher === 'function', testErrorMessage('@vscodium/policy-watcher'));
+ 	});
+diff --git a/src/vs/platform/policy/node/nativeManagedSettingsService.ts b/src/vs/platform/policy/node/nativeManagedSettingsService.ts
+index 305cc0bd..22358864 100644
+--- a/src/vs/platform/policy/node/nativeManagedSettingsService.ts
++++ b/src/vs/platform/policy/node/nativeManagedSettingsService.ts
+@@ -14,3 +14,3 @@ import { collectManagedSettingsDefinitions, INativeManagedSettingsService, MANAG
+ import { PolicyDefinition, PolicyValue } from '../common/policy.js';
+-import type { Watcher } from '@vscode/policy-watcher';
++import type { Watcher } from '@vscodium/policy-watcher';
+ 
+@@ -21,2 +21,3 @@ export interface INativePolicyWatcherOptions {
+ export type NativePolicyWatcherFactory = (
++	vendorName: string,
+ 	productName: string,
+@@ -122,3 +123,3 @@ export class NativeManagedSettingsService extends Disposable implements INativeM
+ 
+-		const { createWatcher } = this.watcherFactory ? { createWatcher: this.watcherFactory } : (await import('@vscode/policy-watcher') as { createWatcher: NativePolicyWatcherFactory });
++		const { createWatcher } = this.watcherFactory ? { createWatcher: this.watcherFactory } : (await import('@vscodium/policy-watcher') as { createWatcher: NativePolicyWatcherFactory });
+ 		await this.throttler.queue(() => new Promise<void>((c, e) => {
+@@ -126,3 +127,3 @@ export class NativeManagedSettingsService extends Disposable implements INativeM
+ 				this.logService.trace(`Creating native managed-settings watcher for productName ${this.productName}`);
+-				this.watcher.value = createWatcher(this.productName, managedSettingDefinitions, update => {
++				this.watcher.value = createWatcher('!!ORG_NAME!!', this.productName, managedSettingDefinitions, update => {
+ 					this._onDidManagedSettingsChange(update as Record<string, PolicyValue | undefined>);
+diff --git a/src/vs/platform/policy/node/nativePolicyService.ts b/src/vs/platform/policy/node/nativePolicyService.ts
+index 6039dbb7..978be1b4 100644
+--- a/src/vs/platform/policy/node/nativePolicyService.ts
++++ b/src/vs/platform/policy/node/nativePolicyService.ts
+@@ -8,3 +8,3 @@ import { IStringDictionary } from '../../../base/common/collections.js';
+ import { Throttler } from '../../../base/common/async.js';
+-import type { PolicyUpdate, Watcher } from '@vscode/policy-watcher';
++import type { PolicyUpdate, Watcher } from '@vscodium/policy-watcher';
+ import { MutableDisposable } from '../../../base/common/lifecycle.js';
+@@ -27,3 +27,3 @@ export class NativePolicyService extends AbstractPolicyService implements IPolic
+ 
+-		const { createWatcher } = await import('@vscode/policy-watcher');
++		const { createWatcher } = await import('@vscodium/policy-watcher');
+ 
+@@ -32,3 +32,3 @@ export class NativePolicyService extends AbstractPolicyService implements IPolic
+ 				this.logService.trace(`Creating watcher for productName ${this.productName}`);
+-				this.watcher.value = createWatcher(this.productName, policyDefinitions, update => {
++				this.watcher.value = createWatcher('!!ORG_NAME!!', this.productName, policyDefinitions, update => {
+ 					this._onDidPolicyChange(update);
+diff --git a/src/vs/platform/policy/test/node/nativeManagedSettingsService.test.ts b/src/vs/platform/policy/test/node/nativeManagedSettingsService.test.ts
+index 9d98995a..0ec817bb 100644
+--- a/src/vs/platform/policy/test/node/nativeManagedSettingsService.test.ts
++++ b/src/vs/platform/policy/test/node/nativeManagedSettingsService.test.ts
+@@ -24,3 +24,3 @@ suite('NativeManagedSettingsService', () => {
+ 		let onDidChange: ((update: Record<string, PolicyValue | undefined>) => void) | undefined;
+-		const watcherFactory: NativePolicyWatcherFactory = (_productName, policies, callback) => {
++		const watcherFactory: NativePolicyWatcherFactory = (_venderName, _productName, policies, callback) => {
+ 			assert.deepStrictEqual(policies, {
+@@ -54,3 +54,3 @@ suite('NativeManagedSettingsService', () => {
+ 		let watchedSettings: Record<string, { type: 'string' | 'number' | 'boolean' }> = {};
+-		const watcherFactory: NativePolicyWatcherFactory = (_productName, policies, callback) => {
++		const watcherFactory: NativePolicyWatcherFactory = (_venderName, _productName, policies, callback) => {
+ 			watchedSettings = policies;
+@@ -78,3 +78,3 @@ suite('NativeManagedSettingsService', () => {
+ 		let disposeCount = 0;
+-		const watcherFactory: NativePolicyWatcherFactory = (_productName, _policies, callback) => {
++		const watcherFactory: NativePolicyWatcherFactory = (_venderName, _productName, _policies, callback) => {
+ 			onDidChange = callback;
+@@ -103,3 +103,3 @@ suite('NativeManagedSettingsService', () => {
+ 		let watcherCreateCount = 0;
+-		const watcherFactory: NativePolicyWatcherFactory = (_productName, _policies, callback) => {
++		const watcherFactory: NativePolicyWatcherFactory = (_venderName, _productName, _policies, callback) => {
+ 			watcherCreateCount++;
+@@ -141,3 +141,3 @@ suite('NativeManagedSettingsService', () => {
+ 		let watcherCreateCount = 0;
+-		const watcherFactory: NativePolicyWatcherFactory = (_productName, _policies, callback) => {
++		const watcherFactory: NativePolicyWatcherFactory = (_venderName, _productName, _policies, callback) => {
+ 			watcherCreateCount++;
+@@ -165,3 +165,3 @@ suite('NativeManagedSettingsService', () => {
+ 		const otherManagedSettingKey = 'permissions.otherManagedSetting';
+-		const watcherFactory: NativePolicyWatcherFactory = (_productName, _policies, callback) => {
++		const watcherFactory: NativePolicyWatcherFactory = (_venderName, _productName, _policies, callback) => {
+ 			onDidChange = callback;

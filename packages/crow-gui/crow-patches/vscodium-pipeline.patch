@@ -1,0 +1,294 @@
+diff --git a/build.sh b/build.sh
+index ccec4361..169ab66c 100755
+--- a/build.sh
++++ b/build.sh
+@@ -10,7 +10,16 @@ if [[ "${SHOULD_BUILD}" == "yes" ]]; then
+ 
+   export MAX_OLD_SPACE_SIZE="${MAX_OLD_SPACE_SIZE:-8192}"
+ 
+-  . prepare_vscode.sh
++  # crow: prepare_vscode.sh patches a pristine vscode/ checkout IN PLACE, so it
++  # cannot run twice (every patch would fail as already-applied). Skip it when
++  # this tree was already prepared for the same release; delete vscode/ (or run
++  # packages/crow-gui/build.sh --fresh) to force a full re-prepare.
++  if [[ "$( cat vscode/.crow-prepared 2>/dev/null )" == "${RELEASE_VERSION}" ]]; then
++    echo "crow: vscode/ already prepared for ${RELEASE_VERSION}, skipping prepare_vscode.sh"
++  else
++    . prepare_vscode.sh
++    echo "${RELEASE_VERSION}" > vscode/.crow-prepared
++  fi
+ 
+   cd vscode || { echo "'vscode' dir not found"; exit 1; }
+ 
+diff --git a/build_cli.sh b/build_cli.sh
+index 1d84559b..2eb5b05f 100755
+--- a/build_cli.sh
++++ b/build_cli.sh
+@@ -12,13 +12,10 @@ cd cli
+ export CARGO_NET_GIT_FETCH_WITH_CLI="true"
+ export VSCODE_CLI_APP_NAME="$( echo "${APP_NAME}" | awk '{print tolower($0)}' )"
+ export VSCODE_CLI_BINARY_NAME="$( node -p "require(\"../product.json\").serverApplicationName" )"
+-export VSCODE_CLI_UPDATE_ENDPOINT="https://raw.githubusercontent.com/VSCodium/versions/refs/heads/master"
+-
+-if [[ "${VSCODE_QUALITY}" == "insider" ]]; then
+-  export VSCODE_CLI_DOWNLOAD_ENDPOINT="https://github.com/VSCodium/vscodium-insiders/releases"
+-else
+-  export VSCODE_CLI_DOWNLOAD_ENDPOINT="https://github.com/VSCodium/vscodium/releases"
+-fi
++# crow: endpoints are overridable so a downstream brand points its CLI at its
++# own release/update feeds instead of VSCodium's.
++export VSCODE_CLI_UPDATE_ENDPOINT="${VSCODE_CLI_UPDATE_ENDPOINT:-${UPDATE_URL}}"
++export VSCODE_CLI_DOWNLOAD_ENDPOINT="${VSCODE_CLI_DOWNLOAD_ENDPOINT:-${REPO_URL}/releases}"
+ 
+ TUNNEL_APPLICATION_NAME="$( node -p "require(\"../product.json\").tunnelApplicationName" )"
+ NAME_SHORT="$( node -p "require(\"../product.json\").nameShort" )"
+diff --git a/get_repo.sh b/get_repo.sh
+index 4ebd9a75..6c079cc5 100755
+--- a/get_repo.sh
++++ b/get_repo.sh
+@@ -67,7 +67,9 @@ mkdir -p vscode
+ cd vscode || { echo "'vscode' dir not found"; exit 1; }
+ 
+ git init -q
+-git remote add origin https://github.com/Microsoft/vscode.git
++# crow: VSCODE_ORIGIN lets a local vscode clone seed the checkout instead of
++# fetching ~340MB from GitHub (get_repo.sh accepts any git URL or path).
++git remote add origin "${VSCODE_ORIGIN:-https://github.com/Microsoft/vscode.git}"
+ 
+ # figure out latest tag by calling MS update API
+ if [[ -z "${MS_TAG}" ]]; then
+diff --git a/prepare_vscode.sh b/prepare_vscode.sh
+index 1ac30e05..78c8760f 100755
+--- a/prepare_vscode.sh
++++ b/prepare_vscode.sh
+@@ -15,6 +15,10 @@ cd vscode || { echo "'vscode' dir not found"; exit 1; }
+ 
+ { set +x; } 2>/dev/null
+ 
++# crow: the branding vars (APP_NAME, BINARY_NAME, *_URL…) are needed by the
++# product.json block below, so utils.sh is sourced here instead of further down.
++. ../utils.sh
++
+ # {{{ product.json
+ cp product.json{,.bak}
+ 
+@@ -42,28 +46,26 @@ setpath "product" "introductoryVideosUrl" "https://go.microsoft.com/fwlink/?link
+ setpath "product" "keyboardShortcutsUrlLinux" "https://go.microsoft.com/fwlink/?linkid=832144"
+ setpath "product" "keyboardShortcutsUrlMac" "https://go.microsoft.com/fwlink/?linkid=832143"
+ setpath "product" "keyboardShortcutsUrlWin" "https://go.microsoft.com/fwlink/?linkid=832145"
+-setpath "product" "licenseUrl" "https://github.com/VSCodium/vscodium/blob/master/LICENSE"
++setpath "product" "licenseUrl" "${LICENSE_URL}"
+ setpath_json "product" "linkProtectionTrustedDomains" '["https://open-vsx.org"]'
+ setpath "product" "releaseNotesUrl" "https://go.microsoft.com/fwlink/?LinkID=533483#vscode"
+-setpath "product" "reportIssueUrl" "https://github.com/VSCodium/vscodium/issues/new"
++setpath "product" "reportIssueUrl" "${REPORT_ISSUE_URL}"
+ setpath "product" "requestFeatureUrl" "https://go.microsoft.com/fwlink/?LinkID=533482"
+ setpath "product" "tipsAndTricksUrl" "https://go.microsoft.com/fwlink/?linkid=852118"
+ setpath "product" "twitterUrl" "https://go.microsoft.com/fwlink/?LinkID=533687"
+ 
+ if [[ "${DISABLE_UPDATE}" != "yes" ]]; then
+-  setpath "product" "updateUrl" "https://raw.githubusercontent.com/VSCodium/versions/refs/heads/master"
+-
+-  if [[ "${VSCODE_QUALITY}" == "insider" ]]; then
+-    setpath "product" "downloadUrl" "https://github.com/VSCodium/vscodium-insiders/releases"
+-  else
+-    setpath "product" "downloadUrl" "https://github.com/VSCodium/vscodium/releases"
+-  fi
++  setpath "product" "updateUrl" "${UPDATE_URL}"
++  setpath "product" "downloadUrl" "${DOWNLOAD_URL:-${REPO_URL}/releases}"
+ 
+   # if [[ "${OS_NAME}" == "windows" ]]; then
+   #   setpath_json "product" "win32VersionedUpdate" "true"
+   # fi
+ fi
+ 
++# crow: the insider channel is NOT vendored (src/insider is absent from
++# packages/crow-gui/vscodium), so this branch is unreachable dead code kept for
++# upstream diffability. crow builds VSCODE_QUALITY=stable only.
+ if [[ "${VSCODE_QUALITY}" == "insider" ]]; then
+   setpath "product" "nameShort" "VSCodium - Insiders"
+   setpath "product" "nameLong" "VSCodium - Insiders"
+@@ -93,32 +95,39 @@ if [[ "${VSCODE_QUALITY}" == "insider" ]]; then
+   setpath "product" "win32ContextMenu.x64.clsid" "90AAD229-85FD-43A3-B82D-8598A88829CF"
+   setpath "product" "win32ContextMenu.arm64.clsid" "7544C31C-BDBF-4DDF-B15E-F73A46D6723D"
+ else
+-  setpath "product" "nameShort" "VSCodium"
+-  setpath "product" "nameLong" "VSCodium"
+-  setpath "product" "applicationName" "codium"
+-  setpath "product" "linuxIconName" "vscodium"
++  setpath "product" "nameShort" "${APP_NAME}"
++  setpath "product" "nameLong" "${APP_NAME}"
++  setpath "product" "applicationName" "${BINARY_NAME}"
++  setpath "product" "dataFolderName" ".${GLOBAL_DIRNAME}"
++  setpath "product" "linuxIconName" "${GLOBAL_DIRNAME}"
+   setpath "product" "quality" "stable"
+-  setpath "product" "urlProtocol" "vscodium"
+-  setpath "product" "serverApplicationName" "codium-server"
+-  setpath "product" "serverDataFolderName" ".vscodium-server"
+-  setpath "product" "darwinBundleIdentifier" "com.vscodium"
+-  setpath "product" "win32AppUserModelId" "VSCodium.VSCodium"
+-  setpath "product" "win32DirName" "VSCodium"
+-  setpath "product" "win32MutexName" "vscodium"
+-  setpath "product" "win32NameVersion" "VSCodium"
+-  setpath "product" "win32RegValueName" "VSCodium"
+-  setpath "product" "win32ShellNameShort" "VSCodium"
+-  setpath "product" "win32AppId" "{{763CBF88-25C6-4B10-952F-326AE657F16B}"
+-  setpath "product" "win32x64AppId" "{{88DA3577-054F-4CA1-8122-7D820494CFFB}"
+-  setpath "product" "win32arm64AppId" "{{67DEE444-3D04-4258-B92A-BC1F0FF2CAE4}"
+-  setpath "product" "win32UserAppId" "{{0FD05EB4-651E-4E78-A062-515204B47A3A}"
+-  setpath "product" "win32x64UserAppId" "{{2E1F05D1-C245-4562-81EE-28188DB6FD17}"
+-  setpath "product" "win32arm64UserAppId" "{{57FD70A5-1B8D-4875-9F40-C5553F094828}"
+-  setpath "product" "tunnelApplicationName" "codium-tunnel"
+-  setpath "product" "win32TunnelServiceMutex" "vscodium-tunnelservice"
+-  setpath "product" "win32TunnelMutex" "vscodium-tunnel"
+-  setpath "product" "win32ContextMenu.x64.clsid" "D910D5E6-B277-4F4A-BDC5-759A34EEE25D"
+-  setpath "product" "win32ContextMenu.arm64.clsid" "4852FC55-4A84-4EA1-9C86-D53BE3DF83C0"
++  setpath "product" "urlProtocol" "${GLOBAL_DIRNAME}"
++  setpath "product" "serverApplicationName" "${BINARY_NAME}-server"
++  setpath "product" "serverDataFolderName" ".${GLOBAL_DIRNAME}-server"
++  # crow: the Rust CLI resolves the server launcher (bin/<serverApplicationName>)
++  # through tunnelServerQualities; without it, it falls back to "code-server-oss"
++  # and `serve-web` cannot find the server inside our own reh-web archive.
++  setpath_json "product" "tunnelServerQualities" "{\"stable\":{\"serverApplicationName\":\"${BINARY_NAME}-server\"}}"
++  setpath "product" "darwinBundleIdentifier" "${DARWIN_BUNDLE_IDENTIFIER}"
++  setpath "product" "win32AppUserModelId" "${ORG_NAME}.${APP_NAME}"
++  setpath "product" "win32DirName" "${APP_NAME}"
++  setpath "product" "win32MutexName" "${APP_NAME_LC}"
++  setpath "product" "win32NameVersion" "${APP_NAME}"
++  setpath "product" "win32RegValueName" "${APP_NAME}"
++  setpath "product" "win32ShellNameShort" "${APP_NAME}"
++  # crow: fresh AppIds/CLSIDs — VSCodium's belong to VSCodium installs and would
++  # make a Windows crow installer collide with them.
++  setpath "product" "win32AppId" "{{6BAB6AFD-0983-4BFE-A614-0675AE08ADA6}"
++  setpath "product" "win32x64AppId" "{{7A552D8C-FB4F-4656-A5EB-F0F2BC6CC0A5}"
++  setpath "product" "win32arm64AppId" "{{CE92087B-7BCB-40CE-87A5-3B64A1F38A6F}"
++  setpath "product" "win32UserAppId" "{{18800242-530B-47E9-8738-18540721AB07}"
++  setpath "product" "win32x64UserAppId" "{{BAF20EBD-5223-41F2-B234-96F0DD1B8791}"
++  setpath "product" "win32arm64UserAppId" "{{D4FCBF7D-9824-4D36-88C4-9212AF300BFE}"
++  setpath "product" "tunnelApplicationName" "${TUNNEL_APP_NAME}"
++  setpath "product" "win32TunnelServiceMutex" "${APP_NAME_LC}-tunnelservice"
++  setpath "product" "win32TunnelMutex" "${APP_NAME_LC}-tunnel"
++  setpath "product" "win32ContextMenu.x64.clsid" "7C94F930-FDC6-4DA3-81B9-7708CA026300"
++  setpath "product" "win32ContextMenu.arm64.clsid" "C6C48041-3734-427A-889A-34FFE730BD96"
+ fi
+ 
+ setpath_json "product" "tunnelApplicationConfig" '{}'
+@@ -129,9 +138,6 @@ echo "${jsonTmp}" > product.json && unset jsonTmp
+ cat product.json
+ # }}}
+ 
+-# include common functions
+-. ../utils.sh
+-
+ # {{{ apply patches
+ 
+ echo "APP_NAME=\"${APP_NAME}\""
+@@ -233,17 +239,17 @@ cp package.json{,.bak}
+ 
+ setpath "package" "version" "${RELEASE_VERSION%-insider}"
+ 
+-replace 's|Microsoft Corporation|VSCodium|' package.json
++replace "s|Microsoft Corporation|${ORG_NAME}|" package.json
+ replace "s|--max-old-space-size=8192|--max-old-space-size=${MAX_OLD_SPACE_SIZE}|" package.json
+ 
+ cp resources/server/manifest.json{,.bak}
+ 
+ if [[ "${VSCODE_QUALITY}" == "insider" ]]; then
+-  setpath "resources/server/manifest" "name" "VSCodium - Insiders"
+-  setpath "resources/server/manifest" "short_name" "VSCodium - Insiders"
++  setpath "resources/server/manifest" "name" "${APP_NAME} - Insiders"
++  setpath "resources/server/manifest" "short_name" "${APP_NAME} - Insiders"
+ else
+-  setpath "resources/server/manifest" "name" "VSCodium"
+-  setpath "resources/server/manifest" "short_name" "VSCodium"
++  setpath "resources/server/manifest" "name" "${APP_NAME}"
++  setpath "resources/server/manifest" "short_name" "${APP_NAME}"
+ fi
+ 
+ # announcements
+@@ -251,46 +257,39 @@ replace "s|\\[\\/\\* BUILTIN_ANNOUNCEMENTS \\*\\/\\]|$( tr -d '\n' < ../announce
+ 
+ ../undo_telemetry.sh
+ 
+-replace 's|Microsoft Corporation|VSCodium|' build/lib/electron.ts
+-replace 's|([0-9]) Microsoft|\1 VSCodium|' build/lib/electron.ts
++replace "s|Microsoft Corporation|${ORG_NAME}|" build/lib/electron.ts
++replace "s|([0-9]) Microsoft|\1 ${ORG_NAME}|" build/lib/electron.ts
+ 
+ if [[ "${OS_NAME}" == "linux" ]]; then
+   # microsoft adds their apt repo to sources
+   # unless the app name is code-oss
+-  # as we are renaming the application to vscodium
++  # as we are renaming the application to ${BINARY_NAME}
+   # we need to edit a line in the post install template
+-  if [[ "${VSCODE_QUALITY}" == "insider" ]]; then
+-    sed -i "s/code-oss/codium-insiders/" resources/linux/debian/postinst.template
+-  else
+-    sed -i "s/code-oss/codium/" resources/linux/debian/postinst.template
+-  fi
++  sed -i "s/code-oss/${BINARY_NAME}/" resources/linux/debian/postinst.template
+ 
+   # fix the packages metadata
+   # code.appdata.xml
+-  sed -i 's|Visual Studio Code|VSCodium|g' resources/linux/code.appdata.xml
+-  sed -i 's|https://code.visualstudio.com/docs/setup/linux|https://github.com/VSCodium/vscodium#download-install|' resources/linux/code.appdata.xml
+-  sed -i 's|https://code.visualstudio.com/home/home-screenshot-linux-lg.png|https://vscodium.com/img/vscodium.png|' resources/linux/code.appdata.xml
+-  sed -i 's|https://code.visualstudio.com|https://vscodium.com|' resources/linux/code.appdata.xml
++  sed -i "s|Visual Studio Code|${APP_NAME}|g" resources/linux/code.appdata.xml
++  sed -i "s|https://code.visualstudio.com/docs/setup/linux|${REPO_URL}#download-install|" resources/linux/code.appdata.xml
++  sed -i "s|https://code.visualstudio.com/home/home-screenshot-linux-lg.png|${SITE_URL}/img/screenshot.png|" resources/linux/code.appdata.xml
++  sed -i "s|https://code.visualstudio.com|${SITE_URL}|" resources/linux/code.appdata.xml
+ 
+   # control.template
+-  sed -i 's|Microsoft Corporation <vscode-linux@microsoft.com>|VSCodium Team https://github.com/VSCodium/vscodium/graphs/contributors|'  resources/linux/debian/control.template
+-  sed -i 's|Visual Studio Code|VSCodium|g' resources/linux/debian/control.template
+-  sed -i 's|https://code.visualstudio.com/docs/setup/linux|https://github.com/VSCodium/vscodium#download-install|' resources/linux/debian/control.template
+-  sed -i 's|https://code.visualstudio.com|https://vscodium.com|' resources/linux/debian/control.template
++  sed -i "s|Microsoft Corporation <vscode-linux@microsoft.com>|${ORG_NAME} ${REPO_URL}/graphs/contributors|" resources/linux/debian/control.template
++  sed -i "s|Visual Studio Code|${APP_NAME}|g" resources/linux/debian/control.template
++  sed -i "s|https://code.visualstudio.com/docs/setup/linux|${REPO_URL}#download-install|" resources/linux/debian/control.template
++  sed -i "s|https://code.visualstudio.com|${SITE_URL}|" resources/linux/debian/control.template
+ 
+   # code.spec.template
+-  sed -i 's|Microsoft Corporation|VSCodium Team|' resources/linux/rpm/code.spec.template
+-  sed -i 's|Visual Studio Code Team <vscode-linux@microsoft.com>|VSCodium Team https://github.com/VSCodium/vscodium/graphs/contributors|' resources/linux/rpm/code.spec.template
+-  sed -i 's|Visual Studio Code|VSCodium|' resources/linux/rpm/code.spec.template
+-  sed -i 's|https://code.visualstudio.com/docs/setup/linux|https://github.com/VSCodium/vscodium#download-install|' resources/linux/rpm/code.spec.template
+-  sed -i 's|https://code.visualstudio.com|https://vscodium.com|' resources/linux/rpm/code.spec.template
+-
+-  # snapcraft.yaml
+-  sed -i 's|Visual Studio Code|VSCodium|' resources/linux/rpm/code.spec.template
++  sed -i "s|Microsoft Corporation|${ORG_NAME}|" resources/linux/rpm/code.spec.template
++  sed -i "s|Visual Studio Code Team <vscode-linux@microsoft.com>|${ORG_NAME} ${REPO_URL}/graphs/contributors|" resources/linux/rpm/code.spec.template
++  sed -i "s|Visual Studio Code|${APP_NAME}|" resources/linux/rpm/code.spec.template
++  sed -i "s|https://code.visualstudio.com/docs/setup/linux|${REPO_URL}#download-install|" resources/linux/rpm/code.spec.template
++  sed -i "s|https://code.visualstudio.com|${SITE_URL}|" resources/linux/rpm/code.spec.template
+ elif [[ "${OS_NAME}" == "windows" ]]; then
+   # code.iss
+-  sed -i 's|https://code.visualstudio.com|https://vscodium.com|' build/win32/code.iss
+-  sed -i 's|Microsoft Corporation|VSCodium|' build/win32/code.iss
++  sed -i "s|https://code.visualstudio.com|${SITE_URL}|" build/win32/code.iss
++  sed -i "s|Microsoft Corporation|${ORG_NAME}|" build/win32/code.iss
+ fi
+ 
+ cd ..
+diff --git a/utils.sh b/utils.sh
+index 132812c1..5e20c242 100755
+--- a/utils.sh
++++ b/utils.sh
+@@ -8,6 +8,15 @@ GH_REPO_PATH="${GH_REPO_PATH:-VSCodium/vscodium}"
+ ORG_NAME="${ORG_NAME:-VSCodium}"
+ TUNNEL_APP_NAME="${TUNNEL_APP_NAME:-"${BINARY_NAME}-tunnel"}"
+ 
++# crow: branding-derived URLs/identifiers. Defaults keep VSCodium behaviour;
++# a downstream brand (see packages/crow-gui/crow.env) exports its own.
++SITE_URL="${SITE_URL:-https://vscodium.com}"
++REPO_URL="${REPO_URL:-https://github.com/${GH_REPO_PATH}}"
++LICENSE_URL="${LICENSE_URL:-${REPO_URL}/blob/master/LICENSE}"
++REPORT_ISSUE_URL="${REPORT_ISSUE_URL:-${REPO_URL}/issues/new}"
++UPDATE_URL="${UPDATE_URL:-https://raw.githubusercontent.com/VSCodium/versions/refs/heads/master}"
++DARWIN_BUNDLE_IDENTIFIER="${DARWIN_BUNDLE_IDENTIFIER:-com.${APP_NAME_LC}}"
++
+ if [[ "${VSCODE_QUALITY}" == "insider" ]]; then
+   GLOBAL_DIRNAME="${GLOBAL_DIRNAME:-"${APP_NAME_LC}"}-insiders"
+ else

@@ -1,0 +1,100 @@
+name: Publish - Stable - macOS
+
+on:
+  workflow_dispatch: {}
+  repository_dispatch:
+    types:
+      - publish-stable
+
+env:
+  APP_NAME: VSCodium
+  ASSETS_REPOSITORY: ${{ github.repository }}
+  BINARY_NAME: codium
+  GH_REPO_PATH: ${{ github.repository }}
+  GITHUB_BRANCH: master
+  MAX_OLD_SPACE_SIZE: 12288
+  ORG_NAME: ${{ github.repository_owner }}
+  OS_NAME: osx
+  VERSIONS_REPOSITORY: ${{ github.repository_owner }}/versions
+  VSCODE_QUALITY: stable
+
+jobs:
+  build:
+    runs-on: ${{ matrix.runner }}
+    environment: publish-osx
+    permissions:
+      contents: write
+    env:
+      VSCODE_ARCH: ${{ matrix.vscode_arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            vscode_arch: x64
+          - runner: macos-14
+            vscode_arch: arm64
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.GITHUB_BRANCH }}
+          persist-credentials: false
+
+      - name: Setup Node.js environment
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Setup Python 3
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+        if: env.VSCODE_ARCH == 'x64'
+
+      - name: Clone VSCode repo
+        run: . get_repo.sh
+
+      - name: Check existing VSCodium tags/releases
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: . check_tags.sh
+
+      - name: Build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./build.sh
+        if: env.SHOULD_BUILD == 'yes'
+
+      - name: Prepare assets
+        env:
+          CERTIFICATE_OSX_APP_PASSWORD: ${{ secrets.CERTIFICATE_OSX_APP_PASSWORD }}
+          CERTIFICATE_OSX_APPLE_ID: ${{ secrets.CERTIFICATE_OSX_APPLE_ID }}
+          CERTIFICATE_OSX_P12_DATA: ${{ secrets.CERTIFICATE_OSX_P12_DATA }}
+          CERTIFICATE_OSX_P12_PASSWORD: ${{ secrets.CERTIFICATE_OSX_P12_PASSWORD }}
+          CERTIFICATE_OSX_TEAM_ID: ${{ secrets.CERTIFICATE_OSX_TEAM_ID }}
+        run: ./prepare_assets.sh
+        if: env.SHOULD_BUILD == 'yes'
+
+      - name: Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./release.sh
+        if: env.SHOULD_BUILD == 'yes'
+
+      - name: Update versions repo
+        env:
+          GITHUB_TOKEN: ${{ secrets.STRONGER_GITHUB_TOKEN }}
+          GITHUB_USERNAME: ${{ github.repository_owner }}
+        run: ./update_version.sh
+        if: env.SHOULD_BUILD == 'yes'
+
+      - name: Clean up keychain
+        if: always()
+        run: |
+          KEYCHAIN=$RUNNER_TEMP/build.keychain
+
+          if [ -f "$KEYCHAIN" ];
+          then
+            security delete-keychain $KEYCHAIN
+          fi

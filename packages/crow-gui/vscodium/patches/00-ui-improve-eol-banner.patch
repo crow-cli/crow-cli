@@ -1,0 +1,61 @@
+diff --git a/src/vs/workbench/browser/parts/banner/bannerPart.ts b/src/vs/workbench/browser/parts/banner/bannerPart.ts
+index 1f329c4..3e36bff 100644
+--- a/src/vs/workbench/browser/parts/banner/bannerPart.ts
++++ b/src/vs/workbench/browser/parts/banner/bannerPart.ts
+@@ -11,3 +11,3 @@ import { InstantiationType, registerSingleton } from '../../../../platform/insta
+ import { IInstantiationService, ServicesAccessor } from '../../../../platform/instantiation/common/instantiation.js';
+-import { IStorageService } from '../../../../platform/storage/common/storage.js';
++import { IStorageService, StorageScope } from '../../../../platform/storage/common/storage.js';
+ import { IThemeService } from '../../../../platform/theme/common/themeService.js';
+@@ -30,2 +30,3 @@ import { widgetClose } from '../../../../platform/theme/common/iconRegistry.js';
+ import { BannerFocused } from '../../../common/contextkeys.js';
++import { INeverShowAgainOptions, NeverShowAgainScope } from '../../../../platform/notification/common/notification.js';
+ 
+@@ -67,3 +68,3 @@ export class BannerPart extends Part implements IBannerService {
+ 		@IWorkbenchLayoutService layoutService: IWorkbenchLayoutService,
+-		@IStorageService storageService: IStorageService,
++		@IStorageService private readonly storageService: IStorageService,
+ 		@IContextKeyService private readonly contextKeyService: IContextKeyService,
+@@ -187,2 +188,14 @@ export class BannerPart extends Part implements IBannerService {
+ 
++		if (item.neverShowAgain) {
++			const scope = this.toStorageScope(item.neverShowAgain);
++			const id = item.neverShowAgain.id;
++
++			// If the user already picked to not show the notification
++			// again, we return with a no-op notification here
++			if (this.storageService.getBoolean(id, scope)) {
++				this.close(item);
++				return;
++			}
++		}
++
+ 		// Clear previous item
+@@ -235,2 +248,15 @@ export class BannerPart extends Part implements IBannerService {
+ 
++	private toStorageScope(options: INeverShowAgainOptions): StorageScope {
++		switch (options.scope) {
++			case NeverShowAgainScope.APPLICATION:
++				return StorageScope.APPLICATION;
++			case NeverShowAgainScope.PROFILE:
++				return StorageScope.PROFILE;
++			case NeverShowAgainScope.WORKSPACE:
++				return StorageScope.WORKSPACE;
++			default:
++				return StorageScope.APPLICATION;
++		}
++	}
++
+ 	toJSON(): object {
+diff --git a/src/vs/workbench/services/banner/browser/bannerService.ts b/src/vs/workbench/services/banner/browser/bannerService.ts
+index 2db0fa4..d179055 100644
+--- a/src/vs/workbench/services/banner/browser/bannerService.ts
++++ b/src/vs/workbench/services/banner/browser/bannerService.ts
+@@ -10,2 +10,3 @@ import { ILinkDescriptor } from '../../../../platform/opener/browser/link.js';
+ import { ThemeIcon } from '../../../../base/common/themables.js';
++import { INeverShowAgainOptions } from '../../../../platform/notification/common/notification.js';
+ 
+@@ -18,2 +19,3 @@ export interface IBannerItem {
+ 	readonly onClose?: () => void;
++	readonly neverShowAgain?: INeverShowAgainOptions;
+ 	readonly closeLabel?: string;

@@ -1,0 +1,59 @@
+diff --git a/build/gulpfile.vscode.ts b/build/gulpfile.vscode.ts
+index 53987f88..b897c6c6 100644
+--- a/build/gulpfile.vscode.ts
++++ b/build/gulpfile.vscode.ts
+@@ -27,3 +27,3 @@ import { createAsar } from './lib/asar.ts';
+ import minimist from 'minimist';
+-import { compileBuildWithoutManglingTask, compileBuildWithManglingTask } from './gulpfile.compile.ts';
++import { compileBuildWithoutManglingTask } from './gulpfile.compile.ts';
+ import { compileNonNativeExtensionsBuildTask, compileNativeExtensionsBuildTask, compileAllExtensionsBuildTask, compileExtensionMediaBuildTask, cleanExtensionsBuildTask, compileCopilotExtensionBuildTask } from './gulpfile.extensions.ts';
+@@ -667,3 +667,4 @@ BUILD_TARGETS.forEach(buildTarget => {
+ 			);
+-			vscodeTask = task.define(`vscode${dashed(platform)}${dashed(arch)}${dashed(minified)}`, task.series(
++
++			const prepackTask = task.define(`vscode${dashed(minified)}-prepack`, task.series(
+ 				copyCodiconsTask,
+@@ -673,2 +674,6 @@ BUILD_TARGETS.forEach(buildTarget => {
+ 				compileExtensionMediaBuildTask,
++			));
++			task.task(prepackTask);
++
++			const packingTask = task.define(`vscode${dashed(platform)}${dashed(arch)}${dashed(minified)}-packing`, task.series(
+ 				writeISODate('out-build'),
+@@ -677,5 +682,11 @@ BUILD_TARGETS.forEach(buildTarget => {
+ 			));
+-		} else {
++			task.task(packingTask);
++
+ 			vscodeTask = task.define(`vscode${dashed(platform)}${dashed(arch)}${dashed(minified)}`, task.series(
+-				minified ? compileBuildWithManglingTask : compileBuildWithoutManglingTask,
++				prepackTask,
++				packingTask,
++			));
++		} else {
++			const prepackTask = task.define(`vscode${dashed(minified)}-prepack`, task.series(
++				compileBuildWithoutManglingTask,
+ 				cleanExtensionsBuildTask,
+@@ -685,4 +696,14 @@ BUILD_TARGETS.forEach(buildTarget => {
+ 				minified ? minifyVSCodeTask : bundleVSCodeTask,
++			));
++			task.task(prepackTask);
++
++			const packingTask = task.define(`vscode${dashed(platform)}${dashed(arch)}${dashed(minified)}-packing`, task.series(
+ 				vscodeTaskCI
+ 			));
++			task.task(packingTask);
++
++			vscodeTask = task.define(`vscode${dashed(platform)}${dashed(arch)}${dashed(minified)}`, task.series(
++				prepackTask,
++				packingTask,
++			));
+ 		}
+diff --git a/build/lib/esbuild.ts b/build/lib/esbuild.ts
+index d066767b..0d09e32a 100644
+--- a/build/lib/esbuild.ts
++++ b/build/lib/esbuild.ts
+@@ -42,3 +42,2 @@ export function runEsbuildBundle(outDir: string, minify: boolean, nls: boolean,
+ 			args.push('--minify');
+-			args.push('--mangle-privates');
+ 		}

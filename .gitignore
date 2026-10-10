@@ -43,3 +43,8 @@ node_modules/
 
 # playwright-cli scratch state
 .playwright-cli/
+
+# vendored VSCodium build pipeline (packages/crow-gui): its build/ directory is
+# packaging SOURCE (linux/osx/windows/alpine package scripts), not an artifact,
+# so the generic build/ rule above must not swallow it.
+!packages/crow-gui/vscodium/build/

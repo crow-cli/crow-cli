@@ -1,0 +1,16 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: insider
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+  - package-ecosystem: npm
+    directory: /font-size
+    target-branch: insider
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
