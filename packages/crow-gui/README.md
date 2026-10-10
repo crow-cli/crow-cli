@@ -37,6 +37,7 @@ vscodium/                             the vendored pipeline (see its own README/
   patches/                            43 patches + 2 action files applied to vscode/
   patches/user/                       <- crow's OWN vscode patches go here (applied last)
     00-cli-standalone-cargo-workspace.patch
+    01-cli-crow-agent.patch
   src/stable/                         branding resources copied over vscode/ (icons, .desktop…)
   product.json                        deep-merged over vscode/product.json last (wins)
 ```
@@ -115,6 +116,15 @@ First run is long (npm ci + gulp minify); expect tens of GB of scratch inside
   a cargo workspace at its root; without it `cargo build` in `cli/` dies with
   "current package believes it's in a workspace when it's not". A standalone
   VSCodium checkout gets that implicitly.
+- **`patches/user/01-cli-crow-agent.patch`** (new) — `crow agent` starts the
+  crow agent REPL. Upstream's Rust CLI already owns the word `agent` (Copilot
+  agent-host management), so that moves to `agent-host` and a new
+  `Commands::CrowAgent` execs `crow-cli run -i` with everything after
+  `agent` passed through verbatim (`CROW_CLI` overrides the binary). The
+  desktop CLI already forwards `agent` to the Rust binary — `agent` is in
+  `NATIVE_CLI_COMMANDS` — so `bin/crow agent` works with no JavaScript
+  changes beyond the `--help` description. Upstream's manager stays reachable
+  as `bin/crow-tunnel agent-host …`.
 
 Resulting `product.json` identity (stable channel):
 
@@ -134,11 +144,12 @@ user data and extensions live in `~/.crow`.
 
 - **Icons are still VSCodium's.** `vscodium/src/stable/resources/**`,
   `vscodium/icons/**` and `vscodium/resources`-derived web PWA icons
-  (`favicon.ico`, `code-192.png`, `code-512.png`) need crow art.
-- **`crow agent`** — the subcommand that shells out to the crow-agent TUI.
-  Upstream's Rust CLI already owns `agent` (Copilot agent-host management:
-  `cli/src/commands/args.rs` `Commands::Agent`), so the patch has to rename
-  that to `agent-host` and give `agent` to crow. Goes in `vscodium/patches/user/`.
+  (`favicon.ico`, `code-192.png`, `code-512.png`) need crow art
+  (`docs/crow-logo.svg` in this repo is the source). One more leak to fix in
+  the same pass: `src/vs/code/browser/workbench/workbench.html` hardcodes
+  `<meta name="apple-mobile-web-app-title" content="Code">`, which is what an
+  iOS/Android home-screen install of `crow web` is named. A `patches/user/`
+  patch with `content="!!APP_NAME!!"` gets substituted by `apply_patch`.
 - **`vscode-acp` has no browser entry point**, so the crow ACP pane is blank in
   the web build until it grows one.
 - The VS Code pin is 1.135.0; bumping it means re-running `vendor.sh` and

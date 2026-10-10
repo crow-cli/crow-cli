@@ -10,9 +10,11 @@ a single `crow` binary on PATH:
     crow agent       the crow agent REPL (`crow-cli run -i`)
     crow tunnel …    the built-in tunnel/remote CLI
 
-`crow agent` is dispatched by the launcher shim for now; the plan is to move it
-into the vendored Rust CLI (which upstream already uses `agent` for, to manage
-Copilot agent-host sessions) via a patch in `packages/crow-gui/vscodium/patches/user/`.
+`crow agent` is handled in two places that agree: the shim below (fast path, no
+Electron/node hop) and the IDE's own Rust CLI, where
+`vscodium/patches/user/01-cli-crow-agent.patch` moves upstream's agent-host
+manager to `agent-host` and gives `agent` to crow. So `bin/crow agent` works
+too, for anything that bypasses the shim.
 """
 
 from __future__ import annotations
@@ -124,7 +126,8 @@ def copy_tree(src: Path, dst: Path) -> None:
     if dst.exists():
         shutil.rmtree(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
-    install_web.run(["cp", "-a", str(src), str(dst)], src.parent)
+    # relative src keeps the echoed command inside one terminal line
+    install_web.run(["cp", "-a", src.name, str(dst)], src.parent)
 
 
 def install_crow(
@@ -155,8 +158,7 @@ def install_crow(
     console.print(f"pipeline: [cyan]{short(pipeline)}[/cyan]")
     for label, built, dest in wanted:
         state = "[green]built[/green]" if built.is_dir() else "[yellow]missing[/yellow]"
-        console.print(f"{label:>4}: [cyan]{short(built)}[/cyan] {state}")
-        console.print(f"{'':>4}  → [cyan]{short(dest)}[/cyan]")
+        console.print(f"{label:>4}: [cyan]{built.relative_to(pipeline)}[/cyan] {state} → [cyan]{short(dest)}[/cyan]")
     console.print(f"launcher: [cyan]{short(launcher)}[/cyan]")
 
     missing = [built for _, built, _ in wanted if not built.is_dir()]
@@ -170,7 +172,7 @@ def install_crow(
         else:
             console.print("would skip the build (artifacts present, no --rebuild)")
         for label, built, dest in wanted:
-            console.print(f"would cp -a {label:<4} → [cyan]{short(dest)}[/cyan]")
+            console.print(f"would cp -a {built.relative_to(pipeline)} → [cyan]{short(dest)}[/cyan]")
         console.print(f"would write launcher  → [cyan]{short(launcher)}[/cyan]")
         if not no_desktop:
             console.print(f"would write .desktop  → [cyan]{short(desktop)}[/cyan]")
