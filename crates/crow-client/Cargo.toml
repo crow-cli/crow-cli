@@ -27,7 +27,7 @@ include = [
 # member, so a bare `cargo build`/`cargo test` in this directory keeps building
 # exactly the TUI binary it always did — the shipped TUI must not pay for wgpu.
 [[bin]]
-name = "crow"
+name = "crow-agent"
 path = "src/main.rs"
 
 [dependencies]

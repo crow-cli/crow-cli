@@ -131,10 +131,12 @@ First run is long (npm ci + gulp minify); expect tens of GB of scratch inside
   "current package believes it's in a workspace when it's not". A standalone
   VSCodium checkout gets that implicitly.
 - **`patches/user/01-cli-crow-agent.patch`** (new) — `crow agent` starts the
-  crow agent REPL. Upstream's Rust CLI already owns the word `agent` (Copilot
+  crow agent TUI: the `crow-agent` binary this repo builds from
+  `crates/crow-client` (`crow-cli install crow` builds and installs it to
+  `~/.local/bin`). Upstream's Rust CLI already owns the word `agent` (Copilot
   agent-host management), so that moves to `agent-host` and a new
-  `Commands::CrowAgent` execs `crow-cli run -i` with everything after
-  `agent` passed through verbatim (`CROW_CLI` overrides the binary). The
+  `Commands::CrowAgent` execs `crow-agent` with everything after `agent`
+  passed through verbatim (`CROW_AGENT_BIN` overrides the binary). The
   desktop CLI already forwards `agent` to the Rust binary — `agent` is in
   `NATIVE_CLI_COMMANDS` — so `bin/crow agent` works with no JavaScript
   changes beyond the `--help` description. Upstream's manager stays reachable

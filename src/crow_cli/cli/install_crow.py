@@ -7,11 +7,14 @@ a single `crow` binary on PATH:
 
     crow [args]      the desktop IDE (args go to it: `crow .`, `crow --diff a b`)
     crow web         the same IDE in a browser, served locally
-    crow agent       the crow agent REPL (`crow-cli run -i`)
+    crow agent       the crow agent TUI (crates/crow-client's `crow-agent`)
     crow tunnel …    the built-in tunnel/remote CLI
 
-`crow agent` is handled in two places that agree: the shim below (fast path, no
-Electron/node hop) and the IDE's own Rust CLI, where
+The TUI is a Rust binary built from this repo's `crates/crow-client`, and this
+command builds it (`cargo build --release --bin crow-agent`) and installs it
+beside the launcher — `crow agent` is only as good as the binary it execs. Two
+front doors agree on that binary: the shim below (fast path, no Electron/node
+hop) and the IDE's own Rust CLI, where
 `vscodium/patches/user/01-cli-crow-agent.patch` moves upstream's agent-host
 manager to `agent-host` and gives `agent` to crow. So `bin/crow agent` works
 too, for anything that bypasses the shim.
@@ -62,17 +65,17 @@ def launcher_text(web_port: int) -> str:
 #
 #   crow [args]        the desktop IDE; args go straight to it
 #   crow web [args]    the same IDE in a browser (extra args go to the server)
-#   crow agent [args]  the crow agent REPL
+#   crow agent [args]  the crow agent TUI
 #   crow tunnel [args] the built-in tunnel/remote CLI
 #
-# Env: CROW_IDE_DIR, CROW_WEB_DIR, CROW_WEB_HOST, CROW_WEB_PORT, CROW_CLI
+# Env: CROW_IDE_DIR, CROW_WEB_DIR, CROW_WEB_HOST, CROW_WEB_PORT, CROW_AGENT_BIN
 set -e
 
 IDE_DIR="${{CROW_IDE_DIR:-$HOME/{SHARE_DIR}/{IDE_SUBDIR}}}"
 WEB_DIR="${{CROW_WEB_DIR:-$HOME/{SHARE_DIR}/{WEB_SUBDIR}}}"
 WEB_HOST="${{CROW_WEB_HOST:-127.0.0.1}}"
 WEB_PORT="${{CROW_WEB_PORT:-{web_port}}}"
-CROW_CLI="${{CROW_CLI:-crow-cli}}"
+CROW_AGENT_BIN="${{CROW_AGENT_BIN:-crow-agent}}"
 
 sub=""
 if [ $# -gt 0 ]; then
@@ -82,7 +85,7 @@ fi
 
 case "$sub" in
   agent)
-    exec "$CROW_CLI" run -i "$@"
+    exec "$CROW_AGENT_BIN" "$@"
     ;;
   web|serve-web)
     if [ ! -x "$WEB_DIR/bin/crow-server" ]; then
@@ -140,7 +143,7 @@ def install_crow(
     no_desktop: bool = typer.Option(False, "--no-desktop", help="Write the launcher but no .desktop entry"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the install plan without writing anything"),
 ) -> None:
-    """Build crow's IDE (desktop + web) and install the `crow` binary."""
+    """Build crow's IDE (desktop + web) and the crow agent TUI, install all."""
     repo = install_web.repo_root()
     pipeline = pipeline_dir(repo)
     home = Path.home()
@@ -159,6 +162,7 @@ def install_crow(
     for label, built, dest in wanted:
         state = "[green]built[/green]" if built.is_dir() else "[yellow]missing[/yellow]"
         console.print(f"{label:>4}: [cyan]{built.relative_to(pipeline)}[/cyan] {state} → [cyan]{short(dest)}[/cyan]")
+    console.print(f"tui: [cyan]crates/crow-client[/cyan] → [cyan]{short(root / 'bin' / 'crow-agent')}[/cyan]")
     console.print(f"launcher: [cyan]{short(launcher)}[/cyan]")
 
     missing = [built for _, built, _ in wanted if not built.is_dir()]
@@ -173,6 +177,8 @@ def install_crow(
             console.print("would skip the build (artifacts present, no --rebuild)")
         for label, built, dest in wanted:
             console.print(f"would cp -a {built.relative_to(pipeline)} → [cyan]{short(dest)}[/cyan]")
+        console.print("would cargo build --release --bin crow-agent")
+        console.print(f"would copy TUI        → [cyan]{short(root / 'bin' / 'crow-agent')}[/cyan]")
         console.print(f"would write launcher  → [cyan]{short(launcher)}[/cyan]")
         if not no_desktop:
             console.print(f"would write .desktop  → [cyan]{short(desktop)}[/cyan]")
@@ -203,6 +209,23 @@ def install_crow(
         copy_tree(built, dest)
         console.print(f"[green]✓[/green] {label} at [cyan]{short(dest)}[/cyan]")
 
+    if shutil.which("cargo") is None:
+        console.print("[red]cargo is not on PATH — the crow agent TUI is a Rust binary (crates/crow-client)[/red]")
+        raise typer.Exit(1)
+    tui = root / "bin" / "crow-agent"
+    console.print(f"\n[bold]building the crow agent TUI[/bold] [dim](cargo release; incremental after the first run)[/dim]")
+    started = time.monotonic()
+    install_web.run(["cargo", "build", "--release", "--bin", "crow-agent"], repo)
+    console.print(f"[green]✓[/green] built in {(time.monotonic() - started) / 60:.1f} min")
+    built_tui = repo / "target" / "release" / "crow-agent"
+    if not built_tui.is_file():
+        console.print(f"[red]cargo produced no {built_tui}[/red]")
+        raise typer.Exit(1)
+    tui.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(built_tui, tui)
+    tui.chmod(0o755)
+    console.print(f"[green]✓[/green] TUI at [cyan]{short(tui)}[/cyan]")
+
     launcher.parent.mkdir(parents=True, exist_ok=True)
     launcher.write_text(launcher_text(web_port))
     launcher.chmod(0o755)
@@ -218,6 +241,6 @@ def install_crow(
     console.print("  [cyan]crow[/cyan]           the desktop IDE")
     if not no_web:
         console.print(f"  [cyan]crow web[/cyan]       the IDE in a browser on port {web_port}")
-    console.print("  [cyan]crow agent[/cyan]     the crow agent REPL")
+    console.print("  [cyan]crow agent[/cyan]     the crow agent TUI")
     if shutil.which("crow") != str(launcher):
         console.print(f"[yellow]note:[/yellow] {launcher.parent} is not first on PATH — `crow` may resolve elsewhere")

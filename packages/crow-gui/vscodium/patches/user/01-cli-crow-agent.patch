@@ -1,5 +1,5 @@
 diff --git a/cli/src/bin/code/main.rs b/cli/src/bin/code/main.rs
-index e448fa86..8ca4035d 100644
+index e448fa86..7edf4935 100644
 --- a/cli/src/bin/code/main.rs
 +++ b/cli/src/bin/code/main.rs
 @@ -10,7 +10,7 @@ use clap::Parser;
@@ -15,7 +15,7 @@ index e448fa86..8ca4035d 100644
  				None => agent_host::agent_host(context!(), agent_args.host_args).await,
  			},
  
-+			// crow: `crow agent` is the crow agent REPL, not the agent host.
++			// crow: `crow agent` is the crow agent TUI, not the agent host.
 +			Some(args::Commands::CrowAgent(crow_args)) => crow_agent::crow_agent(crow_args),
 +
  			Some(args::Commands::Tunnel(mut tunnel_args)) => match tunnel_args.subcommand.take() {
@@ -34,7 +34,7 @@ index 5a4e90d7..cabcac14 100644
  pub mod serve_web;
  pub mod tunnels;
 diff --git a/cli/src/commands/args.rs b/cli/src/commands/args.rs
-index c3c1a264..af2a39f1 100644
+index c3c1a264..1d4ca89a 100644
 --- a/cli/src/commands/args.rs
 +++ b/cli/src/commands/args.rs
 @@ -186,9 +186,15 @@ pub enum Commands {
@@ -44,7 +44,7 @@ index c3c1a264..af2a39f1 100644
 -	/// Manage agent host sessions.
 -	#[clap(name = "agent")]
 +	// crow: upstream names this `agent`. crow owns that word for the crow agent
-+	// REPL (below), so the agent-host manager moves to `agent-host`.
++	// TUI (below), so the agent-host manager moves to `agent-host`.
 +	/// Manage editor agent host sessions.
 +	#[clap(name = "agent-host")]
  	Agent(Box<AgentArgs>),
@@ -59,12 +59,12 @@ index c3c1a264..af2a39f1 100644
  	pub existing_tunnel: ExistingTunnelArgs,
  }
  
-+/// crow: `crow agent` hands the terminal to the crow agent REPL, which lives in
-+/// the `crow-cli` package rather than in this repository. Everything after the
-+/// subcommand is passed through verbatim.
++/// crow: `crow agent` hands the terminal to the crow agent TUI, the
++/// `crow-agent` binary built from the crow-cli repo's crates/crow-client.
++/// Everything after the subcommand is passed through verbatim.
 +#[derive(Args, Debug, Clone)]
 +pub struct CrowAgentArgs {
-+	/// Arguments for the crow agent (`crow-cli run -i`).
++	/// Arguments for the crow agent TUI (see `crow-agent --help`).
 +	#[clap(trailing_var_arg = true, allow_hyphen_values = true)]
 +	pub passthrough: Vec<String>,
 +}
@@ -74,7 +74,7 @@ index c3c1a264..af2a39f1 100644
  	#[clap(subcommand)]
 diff --git a/cli/src/commands/crow_agent.rs b/cli/src/commands/crow_agent.rs
 new file mode 100644
-index 00000000..469c1248
+index 00000000..4c879a0f
 --- /dev/null
 +++ b/cli/src/commands/crow_agent.rs
 @@ -0,0 +1,36 @@
@@ -83,8 +83,10 @@ index 00000000..469c1248
 + *  Licensed under the MIT License. See License.txt in the project root for license information.
 + *--------------------------------------------------------------------------------------------*/
 +
-+// crow: `crow agent` hands this terminal to the crow agent REPL. Not an upstream
-+// command; added by packages/crow-gui (vscodium/patches/user/01-cli-crow-agent.patch).
++// crow: `crow agent` hands this terminal to the crow agent TUI — the
++// `crow-agent` binary built from the crow-cli repo's crates/crow-client. Not an
++// upstream command; added by packages/crow-gui
++// (vscodium/patches/user/01-cli-crow-agent.patch).
 +
 +use std::process::Command;
 +
@@ -93,22 +95,20 @@ index 00000000..469c1248
 +	util::errors::{wrap, AnyError},
 +};
 +
-+/// The crow agent ships in the `crow-cli` package, not in this repository.
-+/// `CROW_CLI` overrides the binary that gets exec'd.
-+const DEFAULT_CROW_CLI: &str = "crow-cli";
++/// `crow-cli install crow` builds the TUI and puts it on PATH.
++/// `CROW_AGENT_BIN` overrides the binary that gets exec'd.
++const DEFAULT_CROW_AGENT: &str = "crow-agent";
 +
 +pub fn crow_agent(args: CrowAgentArgs) -> Result<i32, AnyError> {
-+	let bin = std::env::var("CROW_CLI").unwrap_or_else(|_| DEFAULT_CROW_CLI.to_owned());
++	let bin = std::env::var("CROW_AGENT_BIN").unwrap_or_else(|_| DEFAULT_CROW_AGENT.to_owned());
 +
 +	let status = Command::new(&bin)
-+		.arg("run")
-+		.arg("-i")
 +		.args(args.passthrough)
 +		.status()
 +		.map_err(|e| {
 +			wrap(
 +				e,
-+				format!("error running `{bin} run -i` (is crow-cli installed and on PATH? set CROW_CLI to override)"),
++				format!("error running `{bin}` (is the crow agent TUI installed? `crow-cli install crow` builds it; CROW_AGENT_BIN overrides)"),
 +			)
 +		})?;
 +
