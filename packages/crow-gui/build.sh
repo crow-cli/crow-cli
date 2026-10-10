@@ -98,6 +98,13 @@ elif [[ -z "${VSCODE_ORIGIN:-}" && "${VSCODE_LATEST:-no}" != "yes" ]]; then
   done
 fi
 
+# The vendored pipeline reads many optional variables (RELEASE_VERSION,
+# SHOULD_BUILD_CLI, npm_config_arch, …) and uses grep-in-pipeline, so it is not
+# written for `set -u`/pipefail. Everything above keeps them; the sourced stages
+# below do not.
+set +u
+set +o pipefail
+
 cd vscodium
 
 if [[ "${FRESH}" == "yes" && -d vscode ]]; then
@@ -122,6 +129,7 @@ fi
 if [[ "${PREPARE_ONLY}" == "yes" ]]; then
   # shellcheck disable=SC1091
   . ./prepare_vscode.sh
+  echo "${RELEASE_VERSION}" > vscode/.crow-prepared   # so a later run resumes
   echo "crow-gui: prepared vscodium/vscode (patched, npm ci done) — stopping before gulp"
   exit 0
 fi

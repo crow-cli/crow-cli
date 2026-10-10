@@ -22,7 +22,8 @@ produces them.
 - crow's edits to the vendored scripts live in
   `crow-patches/vscodium-pipeline.patch` and are marked `# crow:` in the files
   themselves. `./vendor.sh <clone> --diff` shows them; `--make-patch`
-  regenerates them after you edit `vscodium/` directly.
+  regenerates them after you edit `vscodium/` directly (it captures modified,
+  added and deleted files, binaries included).
 
 ## Layout
 
@@ -35,6 +36,7 @@ vscodium/                             the vendored pipeline (see its own README/
   prepare_vscode.sh                   product.json rewrite + patch application + npm ci
   patches/                            43 patches + 2 action files applied to vscode/
   patches/user/                       <- crow's OWN vscode patches go here (applied last)
+    00-cli-standalone-cargo-workspace.patch
   src/stable/                         branding resources copied over vscode/ (icons, .desktop…)
   product.json                        deep-merged over vscode/product.json last (wins)
 ```
@@ -64,18 +66,25 @@ place and cannot run twice, so a prepared tree is detected by the
 `vscode/.crow-prepared` marker and the run goes straight to gulp. `--fresh` is
 the escape hatch when the checkout itself is suspect.
 
+The resume path skips patch application, so a patch added under
+`vscodium/patches/` only reaches an already-prepared tree by hand
+(`cd vscodium/vscode && git apply ../patches/user/<name>.patch`) or via
+`--fresh`.
+
 The pinned commit is a ~340 MB fetch from GitHub. `build.sh` seeds it from a
 local clone instead when one has the commit (`CROW_VSCODE_SRC=<path>` forces
 it; by default a sibling `vscode/` checkout in the workspace is used).
 
 Requirements: bash, git, jq, node + npm matching `vscode/.nvmrc`, python3,
-libx11/libxkbfile/libsecret dev headers, and rustup + cargo for the CLI.
+libx11 + libxkbfile dev headers, and rustup + cargo for the CLI. (`libsecret`
+is *not* needed at this pin — the Rust CLI's keyring uses the pure-Rust
+secret-service backend, and openssl comes from `@vscode/openssl-prebuilt`.)
 First run is long (npm ci + gulp minify); expect tens of GB of scratch inside
 `vscodium/vscode/`.
 
 ## What crow changes in the vendored pipeline
 
-`crow-patches/vscodium-pipeline.patch` touches five files:
+`crow-patches/vscodium-pipeline.patch` touches six files:
 
 - **`prepare_vscode.sh`** — the rebrand itself. Upstream VSCodium hardcodes
   `VSCodium`/`codium`/`vscodium.com` literals in the `product.json` `setpath`
@@ -98,6 +107,12 @@ First run is long (npm ci + gulp minify); expect tens of GB of scratch inside
 - **`build_cli.sh`** — the CLI's update/download endpoints are overridable
   instead of pinned to VSCodium's feeds. (At this VS Code pin they are inert:
   `cli/build.rs` derives every `VSCODE_CLI_*` constant from `product.json`.)
+- **`patches/user/00-cli-standalone-cargo-workspace.patch`** (new) — gives
+  `vscode/cli/Cargo.toml` and `vscode/build/win32/Cargo.toml` an empty
+  `[workspace]` table. This pipeline lives *inside* the crow-cli repo, which has
+  a cargo workspace at its root; without it `cargo build` in `cli/` dies with
+  "current package believes it's in a workspace when it's not". A standalone
+  VSCodium checkout gets that implicitly.
 
 Resulting `product.json` identity (stable channel):
 
@@ -122,8 +137,6 @@ user data and extensions live in `~/.crow`.
   Upstream's Rust CLI already owns `agent` (Copilot agent-host management:
   `cli/src/commands/args.rs` `Commands::Agent`), so the patch has to rename
   that to `agent-host` and give `agent` to crow. Goes in `vscodium/patches/user/`.
-- **`crow-cli install crow`** — the typer command that installs the built app +
-  web server and puts `crow` on PATH (replacing `install gui`/`install web`).
 - **`vscode-acp` has no browser entry point**, so the crow ACP pane is blank in
   the web build until it grows one.
 - The VS Code pin is 1.135.0; bumping it means re-running `vendor.sh` and

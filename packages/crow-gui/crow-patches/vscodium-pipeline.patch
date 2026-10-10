@@ -57,6 +57,40 @@ index 4ebd9a75..6c079cc5 100755
  
  # figure out latest tag by calling MS update API
  if [[ -z "${MS_TAG}" ]]; then
+diff --git a/patches/user/00-cli-standalone-cargo-workspace.patch b/patches/user/00-cli-standalone-cargo-workspace.patch
+new file mode 100644
+index 00000000..61025784
+--- /dev/null
++++ b/patches/user/00-cli-standalone-cargo-workspace.patch
+@@ -0,0 +1,28 @@
++diff --git a/build/win32/Cargo.toml b/build/win32/Cargo.toml
++index 486809f8..f2e5f972 100644
++--- a/build/win32/Cargo.toml
+++++ b/build/win32/Cargo.toml
++@@ -1,3 +1,9 @@
+++# crow: this checkout can live inside another cargo workspace (crow-cli
+++# vendors this pipeline under packages/crow-gui). An empty [workspace] table
+++# makes this package its own workspace root, which a standalone VSCodium
+++# build gets implicitly.
+++[workspace]
+++
++ [package]
++ name = "inno_updater"
++ version = "0.23.0"
++diff --git a/cli/Cargo.toml b/cli/Cargo.toml
++index 7fe5f280..bf568956 100644
++--- a/cli/Cargo.toml
+++++ b/cli/Cargo.toml
++@@ -1,3 +1,9 @@
+++# crow: this checkout can live inside another cargo workspace (crow-cli
+++# vendors this pipeline under packages/crow-gui). An empty [workspace] table
+++# makes this package its own workspace root, which a standalone VSCodium
+++# build gets implicitly.
+++[workspace]
+++
++ [package]
++ name = "code-cli"
++ version = "0.1.0"
 diff --git a/prepare_vscode.sh b/prepare_vscode.sh
 index 1ac30e05..78c8760f 100755
 --- a/prepare_vscode.sh

@@ -57,32 +57,61 @@ fi
 rm -rf "${TMP}/tree/src/insider"
 TREE="${TMP}/tree"
 
+# The vendored tree is compared file by file, using git's own view of which
+# files belong to it (tracked + untracked-but-not-ignored). find/diff -r would
+# walk the build outputs that live INSIDE vscodium/ — vscode/ (~5 GB),
+# VSCode-linux-*/, assets/ — all of which vscodium/.gitignore excludes.
+list_current() {
+  ( cd "${HERE}" && git ls-files --cached --others --exclude-standard -- vscodium ) \
+    | sed 's|^vscodium/||' | sort
+}
+
+list_pristine() {
+  ( cd "${TREE}" && find . -type f | sed 's|^\./||' ) | sort
+}
+
+# capture <rel> <from> <to> <kind> — append one file's diff to the patch with
+# the a/ b/ prefixes rewritten to the vendored-relative path. `--- /dev/null`
+# (add) and `+++ /dev/null` (delete) must survive, so only the other side is
+# rewritten.
+capture() {
+  local rel="$1" from="$2" to="$3" sides
+  case "$4" in
+    add)    sides=(-e "s|^+++ .*|+++ b/${rel}|") ;;
+    delete) sides=(-e "s|^--- .*|--- a/${rel}|") ;;
+    *)      sides=(-e "s|^--- .*|--- a/${rel}|" -e "s|^+++ .*|+++ b/${rel}|") ;;
+  esac
+  # git diff exits 1 when it FINDS differences, which set -e + pipefail would
+  # treat as failure; wrapped so only real errors abort. --binary keeps icon
+  # blobs applyable instead of degenerating to "Binary files differ".
+  { git --no-pager diff --no-index --binary "${from}" "${to}" || true; } \
+    | sed -e "s|^diff --git .*|diff --git a/${rel} b/${rel}|" "${sides[@]}" \
+    >> "${PATCH_FILE}"
+  echo "vendor.sh: captured ($4) ${rel}"
+}
+
 case "${MODE}" in
   diff)
-    diff -ruN "${TREE}" "${HERE}/vscodium" || true
+    sort -u <(list_current) <(list_pristine) | while IFS= read -r rel; do
+      { diff -uN "${TREE}/${rel}" "${HERE}/vscodium/${rel}" || true; }
+    done
     exit 0
     ;;
   make-patch)
     : > "${PATCH_FILE}"
-    # diff/git-diff exit 1 when they FIND differences, which set -e + pipefail
-    # would treat as failure; both are wrapped so only real errors abort.
-    { diff -rq "${TREE}" "${HERE}/vscodium" || true; } | while IFS= read -r line; do
-      case "${line}" in
-        'Files '*' and '*' differ')
-          rel="${line#Files }"; rel="${rel%% and *}"
-          rel="${rel#"${TREE}/"}"
-          { git --no-pager diff --no-index "${TREE}/${rel}" "${HERE}/vscodium/${rel}" || true; } \
-            | sed -e "s|^diff --git .*|diff --git a/${rel} b/${rel}|" \
-                  -e "s|^--- .*|--- a/${rel}|" \
-                  -e "s|^+++ .*|+++ b/${rel}|" \
-            >> "${PATCH_FILE}"
-          echo "vendor.sh: captured ${rel}"
-          ;;
-        *)
-          echo "vendor.sh: NOT captured (add/remove by hand): ${line}" >&2
-          ;;
-      esac
-    done
+    list_current  > "${TMP}/current"
+    list_pristine > "${TMP}/pristine"
+    while IFS= read -r rel; do
+      if [[ -f "${TREE}/${rel}" ]]; then
+        cmp -s "${TREE}/${rel}" "${HERE}/vscodium/${rel}" \
+          || capture "${rel}" "${TREE}/${rel}" "${HERE}/vscodium/${rel}" modify
+      else
+        capture "${rel}" /dev/null "${HERE}/vscodium/${rel}" add
+      fi
+    done < "${TMP}/current"
+    while IFS= read -r rel; do
+      [[ -e "${HERE}/vscodium/${rel}" ]] || capture "${rel}" "${TREE}/${rel}" /dev/null delete
+    done < "${TMP}/pristine"
     echo "vendor.sh: wrote ${PATCH_FILE} ($(wc -l < "${PATCH_FILE}") lines)"
     exit 0
     ;;
