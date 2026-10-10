@@ -67,6 +67,11 @@ place and cannot run twice, so a prepared tree is detected by the
 `vscode/.crow-prepared` marker and the run goes straight to gulp. `--fresh` is
 the escape hatch when the checkout itself is suspect.
 
+The marker stores `RELEASE_VERSION`, and the resumed run takes the version from
+it rather than recomputing — VSCodium derives it as
+`<vscode version><day-of-year * 24 + hour>` (`get_repo.sh`), so it changes
+every hour and a recomputed one would never match the tree that was prepared.
+
 The resume path skips patch application, so a patch added under
 `vscodium/patches/` only reaches an already-prepared tree by hand
 (`cd vscodium/vscode && git apply ../patches/user/<name>.patch`) or via
