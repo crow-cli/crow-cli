@@ -23,15 +23,29 @@ too, for anything that bypasses the shim.
 from __future__ import annotations
 
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
 import typer
 from rich.console import Console
 
-from crow_cli.cli import install_web
-
 console = Console()
+
+
+def repo_root() -> Path:
+    """The checkout that owns the rust crates and the crow-gui pipeline."""
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "Cargo.toml").is_file() and (parent / "packages" / "crow-gui").is_dir():
+            return parent
+    console.print("[red]not inside a crow-cli checkout (no Cargo.toml + packages/crow-gui)[/red]")
+    raise typer.Exit(1)
+
+
+def run(argv: list[str], cwd: Path) -> None:
+    console.print(f"[dim]$ {' '.join(argv)}[/dim]")
+    subprocess.run(argv, cwd=cwd, check=True)
 
 # Everything crow installs lives under ~/.local/share/crow, beside the
 # crow-web tier's own state; the build tree in packages/crow-gui/vscodium is
@@ -130,7 +144,7 @@ def copy_tree(src: Path, dst: Path) -> None:
         shutil.rmtree(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
     # relative src keeps the echoed command inside one terminal line
-    install_web.run(["cp", "-a", src.name, str(dst)], src.parent)
+    run(["cp", "-a", src.name, str(dst)], src.parent)
 
 
 def install_crow(
@@ -144,7 +158,7 @@ def install_crow(
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the install plan without writing anything"),
 ) -> None:
     """Build crow's IDE (desktop + web) and the crow agent TUI, install all."""
-    repo = install_web.repo_root()
+    repo = repo_root()
     pipeline = pipeline_dir(repo)
     home = Path.home()
     root = prefix or home / ".local"
@@ -198,7 +212,7 @@ def install_crow(
             flags.append("--no-web")
         console.print(f"\n[bold]building[/bold] [dim](this is the long part: gulp minify + package + cargo CLI)[/dim]")
         started = time.monotonic()
-        install_web.run(flags, pipeline)
+        run(flags, pipeline)
         console.print(f"[green]✓[/green] built in {(time.monotonic() - started) / 60:.1f} min")
         for label, built, _ in wanted:
             if not built.is_dir():
@@ -215,7 +229,7 @@ def install_crow(
     tui = root / "bin" / "crow-agent"
     console.print(f"\n[bold]building the crow agent TUI[/bold] [dim](cargo release; incremental after the first run)[/dim]")
     started = time.monotonic()
-    install_web.run(["cargo", "build", "--release", "--bin", "crow-agent"], repo)
+    run(["cargo", "build", "--release", "--bin", "crow-agent"], repo)
     console.print(f"[green]✓[/green] built in {(time.monotonic() - started) / 60:.1f} min")
     built_tui = repo / "target" / "release" / "crow-agent"
     if not built_tui.is_file():
