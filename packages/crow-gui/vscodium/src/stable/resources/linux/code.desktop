@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=@@NAME_LONG@@
-Comment=Code Editing. Redefined.
+Comment=Crow's IDE — code editing with an agent built in
 GenericName=Text Editor
 GenericName[ar]=محرر نصوص
 Exec=@@EXEC@@ %F
@@ -11,7 +11,7 @@ StartupWMClass=@@NAME_SHORT@@
 Categories=TextEditor;Development;IDE;
 MimeType=text/plain;inode/directory;application/x-@@NAME@@-workspace;
 Actions=new-empty-window;
-Keywords=vscodium;codium;vscode;
+Keywords=crow;crowdium;ide;editor;
 
 [Desktop Action new-empty-window]
 Name=New Empty Window

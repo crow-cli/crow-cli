@@ -1,0 +1,13 @@
+diff --git a/src/vs/code/browser/workbench/workbench.html b/src/vs/code/browser/workbench/workbench.html
+index 77881982..78008d1a 100644
+--- a/src/vs/code/browser/workbench/workbench.html
++++ b/src/vs/code/browser/workbench/workbench.html
+@@ -10,7 +10,7 @@
+ 		<!-- Mobile tweaks -->
+ 		<meta name="mobile-web-app-capable" content="yes" />
+ 		<meta name="apple-mobile-web-app-capable" content="yes" />
+-		<meta name="apple-mobile-web-app-title" content="Code">
++		<meta name="apple-mobile-web-app-title" content="!!APP_NAME!!">
+ 		<link rel="apple-touch-icon" href="{{WORKBENCH_WEB_BASE_URL}}/resources/server/code-192.png" />
+ 
+ 		<!-- Disable pinch zooming -->
