@@ -68,7 +68,6 @@ export function activate(context: vscode.ExtensionContext) {
       cwd,
       protocol: config.get<string>("protocol"),
       mcpConfig: config.get<string>("mcpConfig"),
-      accessibilityVerbosity: config.get<boolean>("accessibilityVerbosity"),
     }).replace(/</g, "\\u003c");
     const nonce = Array.from({ length: 24 }, () => Math.floor(Math.random() * 36).toString(36)).join("");
     webview.html = `<!DOCTYPE html>
@@ -89,8 +88,6 @@ export function activate(context: vscode.ExtensionContext) {
       const payload = message as { type: unknown; threads?: unknown; activeId?: unknown; canDelete?: unknown };
       if (payload.type === "settings") {
         void vscode.commands.executeCommand("workbench.action.openSettings", "@ext:crow-ai.crow-acp");
-      } else if (payload.type === "pick-session") {
-        pickSession(webview);
       } else if (payload.type === "threads" && Array.isArray(payload.threads)) {
         entry.sessions = {
           rows: payload.threads as SessionRow[],

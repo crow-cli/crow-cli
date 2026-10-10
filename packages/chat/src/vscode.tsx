@@ -1,14 +1,10 @@
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { SettingsIcon, ChevronsDownUpIcon, HistoryIcon } from "lucide-react";
-import { useAcpAgentCapabilities, useAcpConnectionState, useAcpSessionId } from "@assistant-ui/acp";
+import { useAcpAgentCapabilities, useAcpSessionId } from "@assistant-ui/acp";
 import { useAui, useAuiState } from "@assistant-ui/react";
 import { ChatSession, ChatThread } from "@/components/chat-session";
-import { ChatAccessibility } from "@/components/vscode-accessibility";
 import { ModelSelector } from "@/components/model-selector";
-import { SessionBadge } from "@/components/session-badge";
 import { ContextGauge } from "@/components/context-meter";
-import { Button } from "@/components/ui/button";
 import { collapseAll } from "@/lib/collapse-all";
 import { parseMcpConfig } from "@/lib/mcp-config";
 import "./index.css";
@@ -22,41 +18,20 @@ const settings = JSON.parse(document.getElementById("crow-acp-settings")!.textCo
   cwd: string;
   protocol: "auto" | "1" | "2";
   mcpConfig: string;
-  accessibilityVerbosity: boolean;
 };
 const mcp = parseMcpConfig(settings.mcpConfig);
 
 /**
- * Session list, model and context live elsewhere now: the view title carries
- * new-session, the session dropdown, collapse-all and settings, so the header
- * keeps only what is about *this* chat. An editor-tab webview has no view title
- * of its own, so it keeps the three buttons the sidebar gets from VS Code's
- * menus — the session one asks the extension to open the same dropdown.
+ * Model and context ride the composer's action row instead of a footer, so the
+ * thread gets every vertical pixel. Narrower than the standalone app's copy:
+ * a sidebar has no room for the full-width selector.
  */
-function Header({ error }: { error: string | null }) {
-  const state = useAcpConnectionState();
+function ComposerStatus() {
   return (
-    <header className="flex flex-wrap items-center gap-2 border-b px-3 py-2">
-      <span role="status" aria-live="polite" className="text-muted-foreground text-xs" title={settings.endpoint}>{state}</span>
-      <SessionBadge className="min-w-0 flex-1" />
-      <ChatAccessibility verbosity={settings.accessibilityVerbosity} />
-      {settings.host === "editor" && <>
-        <Button variant="ghost" size="icon" aria-label="Switch session" title="Switch session" onClick={() => vscode.postMessage({ type: "pick-session" })}><HistoryIcon className="size-4" /></Button>
-        <Button variant="ghost" size="icon" aria-label="Toggle all tool calls and thoughts" title="Toggle all · Ctrl+Shift+O" onClick={() => collapseAll.toggle()}><ChevronsDownUpIcon className="size-4" /></Button>
-        <Button variant="ghost" size="icon" aria-label="ACP settings" title="ACP settings" onClick={() => vscode.postMessage({ type: "settings" })}><SettingsIcon className="size-4" /></Button>
-      </>}
-      {error && <p role="alert" className="text-destructive w-full text-xs">{error}</p>}
-    </header>
-  );
-}
-
-/** Model and context sit under the composer, out of the thread's way. */
-function Footer() {
-  return (
-    <footer className="flex items-center justify-between gap-2 border-t px-2 py-1">
-      <ModelSelector />
+    <>
+      <ModelSelector className="max-w-40" />
       <ContextGauge />
-    </footer>
+    </>
   );
 }
 
@@ -124,9 +99,8 @@ function App() {
         {(error) => (
           <>
             <main aria-label="Crow ACP Chat" data-host={settings.host} className="crow-chat-layout flex h-full min-h-0 min-w-0 flex-col">
-              <Header error={error} />
-              <div className="min-h-0 flex-1"><ChatThread /></div>
-              <Footer />
+              {error && <p role="alert" className="text-destructive border-b px-3 py-1.5 text-xs">{error}</p>}
+              <div className="min-h-0 flex-1"><ChatThread composerStatus={ComposerStatus} /></div>
             </main>
             <VscodeBridge />
           </>

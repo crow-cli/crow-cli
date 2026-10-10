@@ -74,9 +74,9 @@ export function ContextMeter({ className }: { className?: string }) {
 const RING = 2 * Math.PI * 8;
 
 /**
- * The meter as a pie gauge for the webview's footer, where the TUI-style
- * `ctx a/b c%` string would compete with the composer for width. The ring
- * fills clockwise from twelve o'clock; the tooltip carries the counts.
+ * The meter as a pie gauge for the webview's composer row, where the TUI-style
+ * `ctx a/b c%` string would compete with the input for width. The ring fills
+ * clockwise from twelve o'clock; the tooltip carries the counts.
  */
 export function ContextGauge({ className }: { className?: string }) {
   const usage = useUsage();

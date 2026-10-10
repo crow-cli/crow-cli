@@ -92,6 +92,12 @@ export type ThreadGroupPart = MessagePrimitive.GroupedParts.GroupPart;
 export type ThreadComponents = {
   AssistantMessage?: ComponentType | undefined;
   Welcome?: ComponentType | undefined;
+  /**
+   * Readouts that ride the composer's action row, between the attachment
+   * button and the working indicator — the vscode webview puts the model
+   * picker and the context gauge there instead of chrome above the thread.
+   */
+  ComposerStatus?: ComponentType | undefined;
   ToolFallback?: ToolCallMessagePartComponent | undefined;
   ToolGroup?:
     | ComponentType<PropsWithChildren<{ group: ThreadGroupPart }>>
@@ -505,6 +511,7 @@ const showsSend = (s: AssistantState) =>
   (s.thread.voice !== undefined && s.composer.submission === undefined);
 
 const ComposerAction: FC<{ editor: QueueEditorApi }> = ({ editor }) => {
+  const { ComposerStatus } = useContext(ThreadComponentsContext);
   // While the composer holds a queued row, the action row saves or deletes
   // that row: a send would queue a second copy of it instead.
   const editing = editor.editor?.mode === "edit";
@@ -524,6 +531,7 @@ const ComposerAction: FC<{ editor: QueueEditorApi }> = ({ editor }) => {
     <div className="aui-composer-action-wrapper relative flex items-center justify-between gap-2">
       <div className="flex min-w-0 items-center gap-2">
         <ComposerAddAttachment />
+        {ComposerStatus && <ComposerStatus />}
         <WorkingIndicator className="min-w-0" />
       </div>
       <div className="flex shrink-0 items-center gap-1.5">

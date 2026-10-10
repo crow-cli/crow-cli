@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ComponentType, type ReactNode } from "react";
 import { useAcpRuntime, useAcpSessionId, type AcpMcpServer, type UseAcpRuntimeOptions } from "@assistant-ui/acp";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { Thread, type ThreadComponents } from "@/components/assistant-ui/elements/thread.aui";
@@ -13,10 +13,14 @@ const THREAD_COMPONENTS = {
   ReasoningGroup: CollapseAwareReasoningGroup,
 } satisfies ThreadComponents;
 
-export function ChatThread() {
+export function ChatThread({ composerStatus }: { composerStatus?: ComponentType | undefined }) {
   const sessionId = useAcpSessionId();
+  const components = useMemo<ThreadComponents>(
+    () => (composerStatus ? { ...THREAD_COMPONENTS, ComposerStatus: composerStatus } : THREAD_COMPONENTS),
+    [composerStatus],
+  );
   if (!sessionId) return <p role="status" className="text-muted-foreground p-4 text-sm">Opening chat session…</p>;
-  return <Thread components={THREAD_COMPONENTS} />;
+  return <Thread components={components} />;
 }
 
 export function ChatSession({

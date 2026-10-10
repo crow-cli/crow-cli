@@ -93,12 +93,6 @@
     "configuration": {
       "title": "Crow ACP",
       "properties": {
-        "crowAcp.accessibilityVerbosity": {
-          "type": "boolean",
-          "default": true,
-          "tags": ["accessibility"],
-          "description": "Announce how to open chat accessibility help when the chat gains focus."
-        },
         "crowAcp.endpoint": {
           "type": "string",
           "default": "ws://127.0.0.1:2771/acp",
