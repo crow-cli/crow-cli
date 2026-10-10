@@ -1,4 +1,4 @@
-"""Install commands: the crow-web tier, and the Electron GUI that wraps it."""
+"""Install commands: crow's IDE, the crow-web tier, and the Electron GUI."""
 
 import shutil
 from pathlib import Path
@@ -6,11 +6,16 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from crow_cli.cli import install_web
+from crow_cli.cli import install_crow, install_web
 
-app = typer.Typer(help="Install the crow-web tier and the crow desktop GUI")
+app = typer.Typer(help="Install crow's IDE, the crow-web tier, or the Electron GUI")
 console = Console()
 
+# `install crow` is the one to reach for: it builds and installs crowdium (VS
+# Code via packages/crow-gui) as a single `crow` binary covering the desktop IDE,
+# the local web server and the agent REPL. `web` and `gui` install the separate
+# crow-web tier and its Electron shell.
+app.command(name="crow")(install_crow.install_crow)
 app.command(name="web")(install_web.install_web)
 
 # The Electron app lives under ~/.local/share/crow/gui, out of the way of both
