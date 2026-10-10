@@ -46,10 +46,13 @@ exec "$APP_DIR/node_modules/.bin/electron" "$APP_DIR"
 
 
 def desktop_text(launcher: Path) -> str:
+    # Not crow.desktop: that one belongs to `install crow` (the IDE). Two entries
+    # both named "Crow" would be indistinguishable in a launcher, so this one
+    # says what it is.
     return f"""[Desktop Entry]
 Type=Application
-Name=Crow
-Comment=Crow desktop GUI
+Name=Crow web GUI
+Comment=The Electron shell around crow-web
 Exec={launcher}
 Terminal=false
 Categories=Development;IDE;
@@ -82,7 +85,7 @@ def gui(
     home = Path.home()
     app = app_dir(home)
     launcher = home / ".local" / "bin" / "crow-gui"
-    desktop = home / ".local" / "share" / "applications" / "crow.desktop"
+    desktop = home / ".local" / "share" / "applications" / "crow-gui.desktop"
     electron_src = repo / "packages" / "electron"
 
     console.print("[bold magenta]🪶 crow GUI installer[/bold magenta]")
