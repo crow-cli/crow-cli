@@ -21,7 +21,9 @@ TUNNEL_APPLICATION_NAME="$( node -p "require(\"../product.json\").tunnelApplicat
 NAME_SHORT="$( node -p "require(\"../product.json\").nameShort" )"
 
 npm pack @vscode/openssl-prebuilt@0.0.11
-mkdir openssl
+# crow: -p so a resumed build (this script runs again over an already unpacked
+# openssl/) does not die under `set -e`.
+mkdir -p openssl
 tar -xvzf vscode-openssl-prebuilt-0.0.11.tgz --strip-components=1 --directory=openssl
 
 if [[ "${OS_NAME}" == "osx" ]]; then

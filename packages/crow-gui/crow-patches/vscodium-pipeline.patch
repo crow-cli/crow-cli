@@ -21,10 +21,10 @@ index ccec4361..169ab66c 100755
    cd vscode || { echo "'vscode' dir not found"; exit 1; }
  
 diff --git a/build_cli.sh b/build_cli.sh
-index 1d84559b..2eb5b05f 100755
+index 1d84559b..db40ea18 100755
 --- a/build_cli.sh
 +++ b/build_cli.sh
-@@ -12,13 +12,10 @@ cd cli
+@@ -12,19 +12,18 @@ cd cli
  export CARGO_NET_GIT_FETCH_WITH_CLI="true"
  export VSCODE_CLI_APP_NAME="$( echo "${APP_NAME}" | awk '{print tolower($0)}' )"
  export VSCODE_CLI_BINARY_NAME="$( node -p "require(\"../product.json\").serverApplicationName" )"
@@ -42,6 +42,15 @@ index 1d84559b..2eb5b05f 100755
  
  TUNNEL_APPLICATION_NAME="$( node -p "require(\"../product.json\").tunnelApplicationName" )"
  NAME_SHORT="$( node -p "require(\"../product.json\").nameShort" )"
+ 
+ npm pack @vscode/openssl-prebuilt@0.0.11
+-mkdir openssl
++# crow: -p so a resumed build (this script runs again over an already unpacked
++# openssl/) does not die under `set -e`.
++mkdir -p openssl
+ tar -xvzf vscode-openssl-prebuilt-0.0.11.tgz --strip-components=1 --directory=openssl
+ 
+ if [[ "${OS_NAME}" == "osx" ]]; then
 diff --git a/get_repo.sh b/get_repo.sh
 index 4ebd9a75..6c079cc5 100755
 --- a/get_repo.sh

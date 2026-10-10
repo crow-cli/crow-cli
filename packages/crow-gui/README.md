@@ -107,6 +107,8 @@ First run is long (npm ci + gulp minify); expect tens of GB of scratch inside
 - **`build_cli.sh`** — the CLI's update/download endpoints are overridable
   instead of pinned to VSCodium's feeds. (At this VS Code pin they are inert:
   `cli/build.rs` derives every `VSCODE_CLI_*` constant from `product.json`.)
+  `mkdir openssl` became `mkdir -p`: the script re-runs on a resumed build and
+  `set -e` made the existing directory fatal.
 - **`patches/user/00-cli-standalone-cargo-workspace.patch`** (new) — gives
   `vscode/cli/Cargo.toml` and `vscode/build/win32/Cargo.toml` an empty
   `[workspace]` table. This pipeline lives *inside* the crow-cli repo, which has
