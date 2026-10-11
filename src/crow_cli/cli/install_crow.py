@@ -2,8 +2,15 @@
 
 crow's IDE is VS Code, built by `packages/crow-gui` (a vendored VSCodium
 pipeline) into two artifacts: the Electron desktop app and the `reh-web`
-browser server. This command installs both under `~/.local/share/crow` and puts
-a single `crow` binary on PATH:
+browser server. This command INSTALLS them, and on Linux the install is the
+`.deb`: `./build.sh --deb` plus `sudo dpkg -i`, which is the only route that
+gets a root-owned 4755 `chrome-sandbox` (Chromium refuses to launch without it
+on kernels that restrict unprivileged user namespaces — Ubuntu 24.04+) and the
+one that puts `crow.desktop`, `/usr/bin/crow` and `/usr/share/crow/web` where
+the rest of the system expects them. `--no-deb` keeps the old rootless copy
+under `~/.local/share/crow`, which is a build you can run, not an install.
+
+Either way a single `crow` binary lands on PATH:
 
     crow [args]      the desktop IDE (args go to it: `crow .`, `crow --diff a b`)
     crow web         the same IDE in a browser, served locally on a fixed port
@@ -28,8 +35,10 @@ download (crow publishes none). The deb ships it at `/usr/share/crow/web`.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -171,17 +180,72 @@ def copy_tree(src: Path, dst: Path) -> None:
     run(["cp", "-a", src.name, str(dst)], src.parent)
 
 
+# ---------------------------------------------------------------------------
+# The .deb route — the one that is actually an install
+# ---------------------------------------------------------------------------
+
+#: What building a .deb needs on top of the pipeline's own prerequisites
+#: (dpkg-dev provides dpkg-deb; fakeroot gives the archive root:root ownership).
+DEB_TOOLS = ("dpkg-deb", "fakeroot")
+
+
+def is_root() -> bool:
+    return hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+def deb_preflight() -> list[str]:
+    """The tools the .deb route is missing, empty when it can run.
+
+    Checked before a 40-minute build, not after: there is nothing worse than a
+    pipeline that succeeds and then cannot be installed.
+    """
+    missing = [tool for tool in DEB_TOOLS if shutil.which(tool) is None]
+    if not is_root() and shutil.which("sudo") is None:
+        missing.append("sudo")
+    return missing
+
+
+def built_deb(pipeline: Path) -> Path | None:
+    """The newest `crow_*.deb` under `vscodium/assets/`, if the pipeline made one."""
+    debs = sorted(
+        (pipeline / "vscodium" / "assets").glob("crow_*.deb"),
+        key=lambda p: p.stat().st_mtime,
+    )
+    return debs[-1] if debs else None
+
+
+def dpkg_install(deb: Path) -> None:
+    """`dpkg -i` — the step that turns a build into an install."""
+    argv = ["dpkg", "-i", str(deb)] if is_root() else ["sudo", "dpkg", "-i", str(deb)]
+    console.print(f"[dim]$ {' '.join(argv)}[/dim]")
+    if subprocess.run(argv, cwd=str(deb.parent)).returncode != 0:
+        console.print("[red]dpkg -i failed — unsatisfied dependencies are the usual cause:[/red]")
+        console.print("[cyan]  sudo apt-get install -f[/cyan]")
+        raise typer.Exit(1)
+
+
 def install_crow(
     arch: str = typer.Option("x64", "--arch", help="VS Code arch the pipeline built (x64, arm64)"),
     prefix: Path = typer.Option(None, "--prefix", help="Install prefix (default: ~/.local)"),
     web_port: int = typer.Option(DEFAULT_WEB_PORT, "--web-port", help="Default port for `crow web`"),
     no_web: bool = typer.Option(False, "--no-web", help="Install the desktop IDE only"),
+    deb: bool = typer.Option(
+        True,
+        "--deb/--no-deb",
+        help="Linux: build the .deb and install it with dpkg -i (system-wide, root-owned "
+        "chrome-sandbox). --no-deb copies the built trees under the prefix instead — no root, no sandbox.",
+    ),
     no_build: bool = typer.Option(False, "--no-build", help="Fail instead of building when artifacts are missing"),
     rebuild: bool = typer.Option(False, "--rebuild", help="Run the pipeline even if artifacts already exist"),
-    no_desktop: bool = typer.Option(False, "--no-desktop", help="Write the launcher but no .desktop entry"),
+    no_desktop: bool = typer.Option(False, "--no-desktop", help="Rootless route only: write the launcher but no .desktop entry (the deb ships its own)"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the install plan without writing anything"),
 ) -> None:
-    """Build crow's IDE (desktop + web) and the crow agent TUI, install all."""
+    """Build crow's IDE and the crow agent TUI, and install both.
+
+    On Linux the IDE install is the `.deb` (`--deb`, the default): the pipeline
+    builds it and `dpkg -i` installs it system-wide. `--no-deb` copies the built
+    trees under the prefix instead — no root, and no setuid chrome-sandbox.
+    """
     repo = repo_root()
     pipeline = pipeline_dir(repo)
     home = Path.home()
@@ -189,6 +253,16 @@ def install_crow(
     share = root / "share" / "crow"
     launcher = root / "bin" / "crow"
     desktop = root / "share" / "applications" / "crow.desktop"
+
+    # The .deb IS the install on Linux. The prefix copy is a build you can run:
+    # no root, so no setuid chrome-sandbox, and a user-level .desktop entry that
+    # shadows the package's.
+    use_deb = deb and sys.platform == "linux"
+    if deb and not use_deb:
+        console.print("[yellow]the .deb route is Linux-only — copying the built trees under the prefix instead[/yellow]")
+    if use_deb and no_web:
+        console.print("[yellow]--no-web: the .deb will carry no web server, so `crow web` and `crow serve-web` will not work[/yellow]")
+
     wanted = [
         ("ide", pipeline / "vscodium" / f"VSCode-linux-{arch}", share / IDE_SUBDIR),
     ]
@@ -197,55 +271,86 @@ def install_crow(
 
     console.print("[bold magenta]🪶 crow IDE installer[/bold magenta]")
     console.print(f"pipeline: [cyan]{short(pipeline)}[/cyan]")
-    for label, built, dest in wanted:
-        state = "[green]built[/green]" if built.is_dir() else "[yellow]missing[/yellow]"
-        console.print(f"{label:>4}: [cyan]{built.relative_to(pipeline)}[/cyan] {state} → [cyan]{short(dest)}[/cyan]")
+    have_deb = built_deb(pipeline) if use_deb else None
+    if use_deb:
+        state = "[green]built[/green]" if have_deb else "[yellow]missing[/yellow]"
+        name = have_deb.name if have_deb else "crow_*.deb"
+        console.print(f" deb: [cyan]vscodium/assets/{name}[/cyan] {state} → [cyan]dpkg -i[/cyan] (system-wide)")
+        missing_tools = deb_preflight()
+        if missing_tools:
+            console.print(f"[red]the .deb route needs: {', '.join(missing_tools)}[/red]")
+            console.print("[dim]  debian/ubuntu: sudo apt-get install dpkg-dev fakeroot — or pass --no-deb[/dim]")
+            raise typer.Exit(1)
+    else:
+        for label, built, dest in wanted:
+            state = "[green]built[/green]" if built.is_dir() else "[yellow]missing[/yellow]"
+            console.print(f"{label:>4}: [cyan]{built.relative_to(pipeline)}[/cyan] {state} → [cyan]{short(dest)}[/cyan]")
     console.print(f"tui: [cyan]crates/crow-client[/cyan] → [cyan]{short(root / 'bin' / 'crow-agent')}[/cyan]")
     console.print(f"launcher: [cyan]{short(launcher)}[/cyan]")
 
     missing = [built for _, built, _ in wanted if not built.is_dir()]
-    need_build = rebuild or bool(missing)
+    need_build = rebuild or (have_deb is None if use_deb else bool(missing))
+    flags = ["./build.sh", "--arch", arch]
+    if no_web:
+        flags.append("--no-web")
+    if use_deb:
+        flags.append("--deb")
 
     if dry_run:
         console.print("\n[yellow]Dry run — writing nothing, building nothing[/yellow]")
         if need_build:
-            flags = ["./build.sh", "--arch", arch] + (["--no-web"] if no_web else [])
             console.print(f"would run [cyan]{' '.join(flags)}[/cyan] in {short(pipeline)}")
         else:
             console.print("would skip the build (artifacts present, no --rebuild)")
-        for label, built, dest in wanted:
-            console.print(f"would cp -a {built.relative_to(pipeline)} → [cyan]{short(dest)}[/cyan]")
+        if use_deb:
+            target = short(have_deb) if have_deb else "vscodium/assets/crow_*.deb"
+            console.print(f"would {'sudo ' if not is_root() else ''}dpkg -i [cyan]{target}[/cyan]")
+            if desktop.exists():
+                console.print(f"would remove the user-level entry shadowing the package's → [cyan]{short(desktop)}[/cyan]")
+        else:
+            for label, built, dest in wanted:
+                console.print(f"would cp -a {built.relative_to(pipeline)} → [cyan]{short(dest)}[/cyan]")
         console.print("would cargo build --release --bin crow-agent")
         console.print(f"would copy TUI        → [cyan]{short(root / 'bin' / 'crow-agent')}[/cyan]")
         console.print(f"would write launcher  → [cyan]{short(launcher)}[/cyan]")
-        if not no_desktop:
+        if not no_desktop and not use_deb:
             console.print(f"would write .desktop  → [cyan]{short(desktop)}[/cyan]")
         return
 
-    if missing and no_build:
-        for built in missing:
-            console.print(f"[red]--no-build but there is no {built}[/red]")
+    if no_build and rebuild:
+        console.print("[red]--rebuild with --no-build makes no sense[/red]")
+        raise typer.Exit(1)
+
+    if no_build and need_build:
+        what = "no .deb under vscodium/assets" if use_deb else ", ".join(f"no {b}" for b in missing)
+        console.print(f"[red]--no-build but there is {what}[/red]")
         raise typer.Exit(1)
 
     if need_build:
-        if no_build:
-            console.print("[red]--rebuild with --no-build makes no sense[/red]")
-            raise typer.Exit(1)
-        flags = ["./build.sh", "--arch", arch]
-        if no_web:
-            flags.append("--no-web")
         console.print(f"\n[bold]building[/bold] [dim](this is the long part: gulp minify + package + cargo CLI)[/dim]")
         started = time.monotonic()
         run(flags, pipeline)
         console.print(f"[green]✓[/green] built in {(time.monotonic() - started) / 60:.1f} min")
-        for label, built, _ in wanted:
-            if not built.is_dir():
-                console.print(f"[red]the build produced no {label} at {built}[/red]")
+        if use_deb:
+            have_deb = built_deb(pipeline)
+            if have_deb is None:
+                console.print("[red]the build produced no .deb under vscodium/assets/[/red]")
                 raise typer.Exit(1)
+        else:
+            for label, built, _ in wanted:
+                if not built.is_dir():
+                    console.print(f"[red]the build produced no {label} at {built}[/red]")
+                    raise typer.Exit(1)
 
-    for label, built, dest in wanted:
-        copy_tree(built, dest)
-        console.print(f"[green]✓[/green] {label} at [cyan]{short(dest)}[/cyan]")
+    if use_deb:
+        how = "as root" if is_root() else "via sudo"
+        console.print(f"\n[bold]installing the .deb[/bold] [dim](dpkg -i {how})[/dim]")
+        dpkg_install(have_deb)
+        console.print(f"[green]✓[/green] {have_deb.name} installed — /usr/share/crow, /usr/bin/crow, /usr/bin/crow-web")
+    else:
+        for label, built, dest in wanted:
+            copy_tree(built, dest)
+            console.print(f"[green]✓[/green] {label} at [cyan]{short(dest)}[/cyan]")
 
     if shutil.which("cargo") is None:
         console.print("[red]cargo is not on PATH — the crow agent TUI is a Rust binary (crates/crow-client)[/red]")
@@ -269,13 +374,22 @@ def install_crow(
     launcher.chmod(0o755)
     console.print(f"[green]✓[/green] launcher at [cyan]{short(launcher)}[/cyan]")
 
-    if not no_desktop:
+    if use_deb:
+        # The package ships /usr/share/applications/crow.desktop. A user-level
+        # entry of the same name WINS in the menu and points at the prefix copy,
+        # so the right move here is to delete the stale one, not write a new one.
+        if desktop.exists():
+            desktop.unlink()
+            console.print(f"[green]✓[/green] removed the user-level entry that shadowed the package's: [cyan]{short(desktop)}[/cyan]")
+    elif not no_desktop:
         icon = share / IDE_SUBDIR / "resources" / "app" / "resources" / "linux" / "code.png"
         desktop.parent.mkdir(parents=True, exist_ok=True)
         desktop.write_text(desktop_text(launcher, icon if icon.is_file() else None))
         console.print(f"[green]✓[/green] desktop entry at [cyan]{short(desktop)}[/cyan]")
 
     console.print("\n[bold green]crow is installed[/bold green]")
+    if use_deb:
+        console.print("  [dim]system-wide: /usr/share/crow (+ web), /usr/bin/crow, /usr/bin/crow-web[/dim]")
     console.print("  [cyan]crow[/cyan]           the desktop IDE")
     if not no_web:
         console.print(f"  [cyan]crow web[/cyan]       the IDE in a browser on port {web_port}")
