@@ -6,7 +6,8 @@ browser server. This command installs both under `~/.local/share/crow` and puts
 a single `crow` binary on PATH:
 
     crow [args]      the desktop IDE (args go to it: `crow .`, `crow --diff a b`)
-    crow web         the same IDE in a browser, served locally
+    crow web         the same IDE in a browser, served locally on a fixed port
+    crow serve-web   the same, through the IDE's own CLI (tokenised URL)
     crow agent       the crow agent TUI (crates/crow-client's `crow-agent`)
     crow tunnel …    the built-in tunnel/remote CLI
 
@@ -18,6 +19,11 @@ hop) and the IDE's own Rust CLI, where
 `vscodium/patches/user/01-cli-crow-agent.patch` moves upstream's agent-host
 manager to `agent-host` and gives `agent` to crow. So `bin/crow agent` works
 too, for anything that bypasses the shim.
+
+The web server is the same shape: it is installed beside the IDE, and
+`vscodium/patches/user/06-serveweb-local-server.patch` makes the IDE's
+`serve-web` start that one instead of asking an update service for a release to
+download (crow publishes none). The deb ships it at `/usr/share/crow/web`.
 """
 
 from __future__ import annotations
@@ -79,6 +85,8 @@ def launcher_text(web_port: int) -> str:
 #
 #   crow [args]        the desktop IDE; args go straight to it
 #   crow web [args]    the same IDE in a browser (extra args go to the server)
+#   crow serve-web     the same, via the IDE's CLI: it starts the web server
+#                      bundled beside it and prints a tokenised URL
 #   crow agent [args]  the crow agent TUI
 #   crow tunnel [args] the built-in tunnel/remote CLI
 #
@@ -93,6 +101,10 @@ if [ -z "${{CROW_IDE_DIR:-}}" ] && [ -x /usr/share/crow/bin/crow ]; then
   IDE_DIR=/usr/share/crow
 fi
 WEB_DIR="${{CROW_WEB_DIR:-$HOME/{SHARE_DIR}/{WEB_SUBDIR}}}"
+# The package's server goes with the package's IDE, for the same reason.
+if [ -z "${{CROW_WEB_DIR:-}}" ] && [ -x /usr/share/crow/{WEB_SUBDIR}/bin/crow-server ]; then
+  WEB_DIR=/usr/share/crow/{WEB_SUBDIR}
+fi
 WEB_HOST="${{CROW_WEB_HOST:-127.0.0.1}}"
 WEB_PORT="${{CROW_WEB_PORT:-{web_port}}}"
 CROW_AGENT_BIN="${{CROW_AGENT_BIN:-crow-agent}}"
@@ -107,7 +119,13 @@ case "$sub" in
   agent)
     exec "$CROW_AGENT_BIN" "$@"
     ;;
-  web|serve-web)
+  serve-web)
+    # The IDE's own CLI: it finds the web server installed beside it (the deb
+    # puts it at /usr/share/crow/web, this installer at ~/.local/share/crow/web)
+    # and serves it — crow publishes no release tarballs for it to download.
+    exec "$IDE_DIR/bin/crow" serve-web "$@"
+    ;;
+  web)
     if [ ! -x "$WEB_DIR/bin/crow-server" ]; then
       echo "crow: no web server at $WEB_DIR — run `crow-cli install crow`" >&2
       exit 1
@@ -139,7 +157,7 @@ Exec={launcher} %F
 {icon_line}Terminal=false
 Categories=Development;IDE;
 MimeType=text/plain;inode/directory;
-StartupWMClass=Crow
+StartupWMClass=crow
 """
 
 

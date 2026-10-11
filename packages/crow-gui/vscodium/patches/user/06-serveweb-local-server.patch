@@ -1,0 +1,739 @@
+diff --git a/build/gulpfile.vscode.linux.ts b/build/gulpfile.vscode.linux.ts
+index 23dc323..7d85f24 100644
+--- a/build/gulpfile.vscode.linux.ts
++++ b/build/gulpfile.vscode.linux.ts
+@@ -24,6 +24,11 @@ const commit = getVersion(root);
+ 
+ const linuxPackageRevision = Math.floor(new Date().getTime() / 1000);
+ 
++// crow: where the `reh-web` server is installed inside the package, relative to
++// the app root. `serve-web` looks for it there (cli/src/commands/serve_web.rs)
++// instead of downloading a release, which crow does not publish.
++const webDirName = 'web';
++
+ function getDebPackageArch(arch: string): string {
+ 	switch (arch) {
+ 		case 'x64': return 'amd64';
+@@ -84,8 +89,14 @@ function prepareDebPackage(arch: string) {
+ 		const code = gulp.src(binaryDir + '/**/*', { base: binaryDir })
+ 			.pipe(rename(function (p) { p.dirname = 'usr/share/' + product.applicationName + '/' + p.dirname; }));
+ 
++		// crow: the web server ships in the package too, so `crow serve-web`
++		// starts a local server instead of downloading one. Empty for --no-web.
++		const webBinaryDir = '../vscode-reh-web-linux-' + arch;
++		const web = gulp.src(webBinaryDir + '/**/*', { base: webBinaryDir, allowEmpty: true })
++			.pipe(rename(function (p) { p.dirname = 'usr/share/' + product.applicationName + '/' + webDirName + '/' + p.dirname; }));
++
+ 		let size = 0;
+-		const control = code.pipe(es.through(
++		const control = es.merge(code, web).pipe(es.through(
+ 			function (f) { size += f.isDirectory() ? 4096 : f.contents.length; },
+ 			function () {
+ 				const that = this;
+@@ -117,7 +128,9 @@ function prepareDebPackage(arch: string) {
+ 			.pipe(replace('@@NAME@@', product.applicationName))
+ 			.pipe(rename('DEBIAN/templates'));
+ 
+-		const all = es.merge(control, templates, postinst, postrm, prerm, desktops, appdata, workspaceMime, icon, bash_completion, zsh_completion, code);
++		// `control` swallows the files it counts, so the payload streams are merged
++		// again here to actually be written (upstream does the same with `code`).
++		const all = es.merge(control, templates, postinst, postrm, prerm, desktops, appdata, workspaceMime, icon, bash_completion, zsh_completion, code, web);
+ 
+ 		return all.pipe(vfs.dest(destination));
+ 	};
+@@ -134,6 +147,11 @@ function buildDebPackage(arch: string) {
+ 		// loses the mode. The rpm spec sets the same attr; fakeroot gives the
+ 		// archive root ownership.
+ 		await exec(`chmod 4755 ${product.applicationName}-${debArch}/usr/share/${product.applicationName}/chrome-sandbox`, { cwd });
++		// crow: `<app>-web` on PATH -> the bundled web server's entrypoint, so it
++		// can be run directly as well as through `<app> serve-web`.
++		const staged = `${product.applicationName}-${debArch}`;
++		const webEntry = `usr/share/${product.applicationName}/${webDirName}/bin/${product.serverApplicationName}`;
++		await exec(`if [ -e "${staged}/${webEntry}" ]; then mkdir -p "${staged}/usr/bin" && ln -sfn "../share/${product.applicationName}/${webDirName}/bin/${product.serverApplicationName}" "${staged}/usr/bin/${product.applicationName}-${webDirName}"; fi`, { cwd });
+ 		await exec('mkdir -p deb', { cwd });
+ 		await exec(`fakeroot dpkg-deb -Zxz -b ${product.applicationName}-${debArch} deb`, { cwd });
+ 	};
+diff --git a/cli/src/commands/serve_web.rs b/cli/src/commands/serve_web.rs
+index 1095c8e..8a34a16 100644
+--- a/cli/src/commands/serve_web.rs
++++ b/cli/src/commands/serve_web.rs
+@@ -10,7 +10,7 @@ use std::io::{Read, Write};
+ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+ use std::path::{Path, PathBuf};
+ use std::sync::{Arc, Mutex};
+-use std::time::{Duration, Instant};
++use std::time::Duration;
+ 
+ use crate::util::http::{empty_body, full_body, HyperBody};
+ use ::http::{Request, Response};
+@@ -21,24 +21,21 @@ use hyper::service::service_fn;
+ use hyper_util::rt::TokioIo;
+ use tokio::io::{AsyncBufReadExt, BufReader};
+ use tokio::net::TcpListener;
+-use tokio::{pin, time};
++use tokio::pin;
+ 
+ use crate::async_pipe::{
+ 	get_socket_name, get_socket_rw_stream, listen_socket_rw_stream, AsyncPipe,
+ };
+-use crate::constants::VSCODE_CLI_QUALITY;
+-use crate::download_cache::DownloadCache;
++use crate::constants::{
++	APPLICATION_NAME, QUALITYLESS_PRODUCT_NAME, VSCODE_CLI_COMMIT, VSCODE_CLI_QUALITY,
++};
+ use crate::log;
+ use crate::options::Quality;
+ use crate::state::{LauncherPaths, PersistedState};
+ use crate::tunnels::shutdown_signal::ShutdownRequest;
+-use crate::update_service::{
+-	unzip_downloaded_release, Platform, Release, TargetKind, UpdateService,
+-};
++use crate::update_service::{Platform, Release, TargetKind};
+ use crate::util::command::new_script_command;
+ use crate::util::errors::AnyError;
+-use crate::util::http::{self, ReqwestSimpleHttp};
+-use crate::util::io::SilentCopyProgress;
+ use crate::util::sync::{new_barrier, Barrier, BarrierOpener};
+ use crate::{
+ 	tunnels::legal,
+@@ -47,16 +44,21 @@ use crate::{
+ 
+ use super::{args::ServeWebArgs, CommandContext};
+ 
+-/// Length of a commit hash, for validation
+-const COMMIT_HASH_LEN: usize = 40;
+ /// Number of seconds where, if there's no connections to a VS Code server,
+ /// the server is shut down.
+ const SERVER_IDLE_TIMEOUT_SECS: u64 = 60 * 60;
+ /// Number of seconds in which the server times out when there is a connection
+ /// (should be large enough to basically never happen)
+ const SERVER_ACTIVE_TIMEOUT_SECS: u64 = SERVER_IDLE_TIMEOUT_SECS * 24 * 30 * 12;
+-/// How long to cache the "latest" version we get from the update service.
+-const RELEASE_CHECK_INTERVAL: u64 = 60 * 60;
++
++/// crow: where to find the web server that ships with the IDE, overriding the
++/// search relative to this executable. A server root (holding
++/// `bin/<entrypoint>`) or the entrypoint itself.
++const WEB_DIR_ENV: &str = "CROW_WEB_DIR";
++/// Name of the directory the web server is installed in, relative to the IDE.
++const WEB_DIR_NAME: &str = "web";
++/// Commit the bundled server stands in for when its `product.json` has none.
++const UNKNOWN_COMMIT: &str = "0000000000000000000000000000000000000000";
+ 
+ /// Number of bytes for the secret keys. See workbench.ts for their usage.
+ const SECRET_KEY_BYTES: usize = 32;
+@@ -67,11 +69,13 @@ const PATH_COOKIE_NAME: &str = "vscode-secret-key-path";
+ /// HTTP-only cookie where the client's secret half is stored.
+ const SECRET_KEY_COOKIE_NAME: &str = "vscode-cli-secret-half";
+ 
+-/// Implements the vscode "server of servers". Clients who go to the URI get
+-/// served the latest version of the VS Code server whenever they load the
+-/// page. The VS Code server prefixes all assets and connections it loads with
+-/// its version string, so existing clients can continue to get served even
+-/// while new clients get new VS Code Server versions.
++/// Implements the vscode "server of servers": clients who go to the URI get the
++/// web UI, proxied to a server the CLI starts and keeps alive for them.
++///
++/// crow: upstream picks the latest release from an update service and downloads
++/// it on demand. crow publishes no release tarballs — the web server is built
++/// from source and installed beside the IDE — so this serves the one bundled
++/// server (`BundledServer`) and never asks the network for a version.
+ pub async fn serve_web(ctx: CommandContext, mut args: ServeWebArgs) -> Result<i32, AnyError> {
+ 	legal::require_consent(&ctx.paths, args.accept_server_license_terms)?;
+ 
+@@ -92,18 +96,13 @@ pub async fn serve_web(ctx: CommandContext, mut args: ServeWebArgs) -> Result<i3
+ 		}
+ 	}
+ 
+-	let cm: Arc<ConnectionManager> = ConnectionManager::new(&ctx, platform, args.clone());
+-	let update_check_interval = 3600;
+-	if args.commit_id.is_none() {
+-		cm.clone()
+-			.start_update_checker(Duration::from_secs(update_check_interval));
+-	} else {
+-		// If a commit was provided, invoke get_latest_release() once to ensure we're using that exact version;
+-		// get_latest_release() will short-circuit to args.commit_id.
+-		if let Err(e) = cm.get_latest_release().await {
+-			warning!(cm.log, "error getting latest version: {}", e);
+-		}
+-	}
++	let cm: Arc<ConnectionManager> = ConnectionManager::new(&ctx, platform, args.clone())?;
++	info!(
++		cm.log,
++		"serving {} from {}",
++		cm.server.release,
++		cm.server.executable.display()
++	);
+ 
+ 	let key = get_server_key_half(&ctx.paths);
+ 
+@@ -213,19 +212,9 @@ async fn handle(
+ }
+ 
+ async fn handle_proxied(ctx: &HandleContext, req: Request<Incoming>) -> Response<HyperBody> {
+-	let release = if let Some((r, _)) = get_release_from_path(req.uri().path(), ctx.cm.platform) {
+-		r
+-	} else {
+-		match ctx.cm.get_release_from_cache().await {
+-			Ok(r) => r,
+-			Err(e) => {
+-				error!(ctx.log, "error getting latest version: {}", e);
+-				return response::code_err(e);
+-			}
+-		}
+-	};
+-
+-	match ctx.cm.get_connection(release).await {
++	// crow: every request goes to the one bundled server, whatever version
++	// prefix the workbench put in the URL — the server strips its own prefix.
++	match ctx.cm.get_connection().await {
+ 		Ok(rw) => {
+ 			if req.headers().contains_key(::http::header::UPGRADE) {
+ 				forward_ws_req_to_server(ctx.log.clone(), rw, req).await
+@@ -233,7 +222,7 @@ async fn handle_proxied(ctx: &HandleContext, req: Request<Incoming>) -> Response
+ 				forward_http_req_to_server(rw, req).await
+ 			}
+ 		}
+-		Err(CodeError::ServerNotYetDownloaded) => response::wait_for_download(),
++		Err(CodeError::ServerNotYetDownloaded) => response::wait_for_start(),
+ 		Err(e) => response::code_err(e),
+ 	}
+ }
+@@ -276,38 +265,6 @@ fn append_secret_headers(
+ 	);
+ }
+ 
+-/// Gets the release info from the VS Code path prefix, which is in the
+-/// format `/<quality>-<commit>/...`
+-fn get_release_from_path(path: &str, platform: Platform) -> Option<(Release, String)> {
+-	if !path.starts_with('/') {
+-		return None; // paths must start with '/'
+-	}
+-
+-	let path = &path[1..];
+-	let i = path.find('/').unwrap_or(path.len());
+-	let quality_commit_sep = path.get(..i).and_then(|p| p.find('-'))?;
+-
+-	let (quality_commit, remaining) = path.split_at(i);
+-	let (quality, commit) = quality_commit.split_at(quality_commit_sep);
+-	let commit = &commit[1..];
+-
+-	if !is_commit_hash(commit) {
+-		return None;
+-	}
+-
+-	Some((
+-		Release {
+-			// remember to trim off the leading '/' which is now part of th quality
+-			quality: Quality::try_from(quality).ok()?,
+-			commit: commit.to_string(),
+-			platform,
+-			target: TargetKind::Web,
+-			name: "".to_string(),
+-		},
+-		remaining.to_string(),
+-	))
+-}
+-
+ /// Proxies the standard HTTP request to the async pipe, returning the piped response
+ async fn forward_http_req_to_server(
+ 	(rw, handle): (AsyncPipe, ConnectionHandle),
+@@ -404,11 +361,6 @@ async fn forward_ws_req_to_server(
+ 	proxied_res
+ }
+ 
+-/// Returns whether the string looks like a commit hash.
+-fn is_commit_hash(s: &str) -> bool {
+-	s.len() == COMMIT_HASH_LEN && s.chars().all(|c| c.is_ascii_hexdigit())
+-}
+-
+ /// Gets a cookie from the request by name.
+ fn extract_cookie(req: &Request<Incoming>, name: &str) -> Option<String> {
+ 	for h in req.headers().get_all(::http::header::COOKIE) {
+@@ -502,11 +454,12 @@ mod response {
+ 			.unwrap()
+ 	}
+ 
+-	pub fn wait_for_download() -> Response<HyperBody> {
++	// crow: nothing is ever downloaded, this is the server booting
++	pub fn wait_for_start() -> Response<HyperBody> {
+ 		Response::builder()
+ 			.status(202)
+-			.header("Content-Type", "text/html") // todo: get latest
+-			.body(full_body(concatcp!("The latest version of the ", QUALITYLESS_SERVER_NAME, " is downloading, please wait a moment...<script>setTimeout(()=>location.reload(),1500)</script>", )))
++			.header("Content-Type", "text/html")
++			.body(full_body(concatcp!("The ", QUALITYLESS_SERVER_NAME, " is starting, please wait a moment...<script>setTimeout(()=>location.reload(),1500)</script>", )))
+ 			.unwrap()
+ 	}
+ 
+@@ -544,18 +497,18 @@ impl Drop for ConnectionHandle {
+ 
+ type StartData = (PathBuf, Arc<tokio::sync::watch::Sender<usize>>);
+ 
+-/// State stored in the ConnectionManager for each server version.
++/// State stored in the ConnectionManager for the server.
+ struct VersionState {
+-	downloaded: bool,
++	/// Whether the server process has been spawned. Callers wait on the barrier
++	/// below, which opens once the server has bound its socket.
++	started: bool,
+ 	socket_path: Barrier<Result<StartData, String>>,
+ }
+ 
+ type ConnectionStateMap = Arc<Mutex<HashMap<(Quality, String), VersionState>>>;
+ 
+-/// Manages the connections to running web UI instances. Multiple web servers
+-/// can run concurrently, with routing based on the URL path.
++/// Manages the connection to the running web UI instance.
+ struct ConnectionManager {
+-	pub platform: Platform,
+ 	pub log: log::Logger,
+ 	args: ServeWebArgs,
+ 	/// Extension IDs for which to enable proposed API, forwarded from the
+@@ -563,14 +516,126 @@ struct ConnectionManager {
+ 	enable_proposed_api: Vec<String>,
+ 	/// Server base path, ending in `/`
+ 	base_path: String,
+-	/// Cache where servers are stored
+-	cache: DownloadCache,
+-	/// Mapping of (Quality, Commit) to the state each server is in
++	/// Mapping of (Quality, Commit) to the state the server is in
+ 	state: ConnectionStateMap,
+-	/// Update service instance
+-	update_service: UpdateService,
+-	/// Cache of the latest released version, storing the time we checked as well
+-	latest_version: tokio::sync::Mutex<Option<(Instant, Release)>>,
++	/// crow: the web server that ships with the IDE
++	server: BundledServer,
++}
++
++/// crow: the web server that ships with the IDE.
++///
++/// Upstream `serve-web` asks an update service which release is latest and
++/// downloads it into a cache on the first request. crow publishes no release
++/// tarballs to ask for: the `reh-web` server is built from source and installed
++/// beside the IDE — `/usr/share/crow/web` in the deb, `~/.local/share/crow/web`
++/// for `crow-cli install crow` — so that one server is the only version served,
++/// and finding it is a filesystem walk rather than a request.
++struct BundledServer {
++	/// The server's entrypoint script, `<root>/bin/crow-server`.
++	executable: PathBuf,
++	/// The release this server stands in for, read from the `product.json` beside
++	/// it so the version prefix the workbench asks for is the one it serves.
++	release: Release,
++}
++
++impl BundledServer {
++	/// Looks for the bundled server: `$CROW_WEB_DIR`, then the `web` directory
++	/// beside the IDE this CLI came from, then `<app>-web` in `/usr/bin`. Each
++	/// candidate may be a server root (holding `bin/<entrypoint>`) or the
++	/// entrypoint itself.
++	fn find(log: &log::Logger, platform: Platform, quality: Quality) -> Result<Self, CodeError> {
++		let entrypoint = quality.server_entrypoint()?;
++		let mut candidates = Vec::new();
++
++		if let Some(dir) = std::env::var_os(WEB_DIR_ENV) {
++			candidates.push(PathBuf::from(dir));
++		}
++		if let Some(dir) = std::env::current_exe()
++			.ok()
++			.and_then(|e| e.parent().map(|p| p.to_path_buf()))
++		{
++			// packaged IDE: <root>/bin/<cli>, server at <root>/web
++			candidates.push(dir.join("..").join(WEB_DIR_NAME));
++			// `crow-cli install crow`: <share>/ide/bin/<cli>, server at <share>/web
++			candidates.push(dir.join("..").join("..").join(WEB_DIR_NAME));
++		}
++		candidates.push(Path::new("/usr/bin").join(format!("{APPLICATION_NAME}-{WEB_DIR_NAME}")));
++
++		for candidate in &candidates {
++			let Some((root, executable)) = Self::resolve(candidate, &entrypoint) else {
++				continue;
++			};
++
++			let release = Self::read_release(&root, platform, quality);
++			info!(
++				log,
++				"found the bundled web server at {}",
++				executable.display()
++			);
++			return Ok(Self {
++				executable,
++				release,
++			});
++		}
++
++		let looked = candidates
++			.iter()
++			.map(|c| c.display().to_string())
++			.collect::<Vec<_>>()
++			.join(", ");
++		Err(CodeError::NoWebServerFound(
++			QUALITYLESS_PRODUCT_NAME.to_string(),
++			looked,
++		))
++	}
++
++	/// Turns a candidate into `(server root, entrypoint)`, if it is one.
++	fn resolve(candidate: &Path, entrypoint: &str) -> Option<(PathBuf, PathBuf)> {
++		if candidate.is_dir() {
++			let root = fs::canonicalize(candidate).unwrap_or_else(|_| candidate.to_path_buf());
++			let executable = root.join("bin").join(entrypoint);
++			executable.is_file().then_some((root, executable))
++		} else if candidate.is_file() {
++			// an entrypoint, or a symlink to one (e.g. /usr/bin/crow-web): the root
++			// is two levels up from the script it resolves to
++			let executable =
++				fs::canonicalize(candidate).unwrap_or_else(|_| candidate.to_path_buf());
++			let root = executable
++				.parent()
++				.and_then(Path::parent)
++				.map(|p| p.to_path_buf())
++				.unwrap_or_else(|| executable.clone());
++			Some((root, executable))
++		} else {
++			None
++		}
++	}
++
++	/// Reads the server's own `product.json` for the version and commit it serves
++	/// under. Both fall back: they only have to be stable, since the server
++	/// strips its own version prefix from the URLs it is asked for.
++	fn read_release(root: &Path, platform: Platform, quality: Quality) -> Release {
++		let product = fs::read_to_string(root.join("product.json"))
++			.ok()
++			.and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok());
++		let field = |key: &str| {
++			product
++				.as_ref()
++				.and_then(|p| p.get(key))
++				.and_then(|v| v.as_str())
++				.map(String::from)
++		};
++
++		Release {
++			name: field("version").unwrap_or_else(|| String::from("0.0.0")),
++			commit: field("commit")
++				.or_else(|| VSCODE_CLI_COMMIT.map(String::from))
++				.unwrap_or_else(|| String::from(UNKNOWN_COMMIT)),
++			platform,
++			target: TargetKind::Web,
++			quality,
++		}
++	}
+ }
+ 
+ fn key_for_release(release: &Release) -> (Quality, String) {
+@@ -588,156 +653,68 @@ fn normalize_base_path(p: &str) -> String {
+ }
+ 
+ impl ConnectionManager {
+-	pub fn new(ctx: &CommandContext, platform: Platform, args: ServeWebArgs) -> Arc<Self> {
++	pub fn new(
++		ctx: &CommandContext,
++		platform: Platform,
++		args: ServeWebArgs,
++	) -> Result<Arc<Self>, CodeError> {
+ 		let base_path = normalize_base_path(args.server_base_path.as_deref().unwrap_or_default());
+ 
+-		let cache = DownloadCache::new(ctx.paths.web_server_storage());
+-		let target_kind = TargetKind::Web;
+-
+ 		let quality = VSCODE_CLI_QUALITY.map_or(Quality::Stable, |q| match Quality::try_from(q) {
+ 			Ok(q) => q,
+ 			Err(_) => Quality::Stable,
+ 		});
+ 
+-		let now = Instant::now();
+-		let latest_version = tokio::sync::Mutex::new(cache.get().first().map(|latest_commit| {
+-			(
+-				now.checked_sub(Duration::from_secs(RELEASE_CHECK_INTERVAL))
+-					.unwrap_or(now), // handle 0-ish instants, #233155
+-				Release {
+-					name: String::from("0.0.0"), // Version information not stored on cache
+-					commit: latest_commit.clone(),
+-					platform,
+-					target: target_kind,
+-					quality,
+-				},
+-			)
+-		}));
++		let server = BundledServer::find(&ctx.log, platform, quality)?;
++		if let Some(commit) = &args.commit_id {
++			if *commit != server.release.commit {
++				warning!(
++					ctx.log,
++					"--commit-id {} ignored: the bundled web server is {}",
++					commit,
++					server.release.commit
++				);
++			}
++		}
+ 
+-		Arc::new(Self {
+-			platform,
++		Ok(Arc::new(Self {
+ 			args,
+ 			enable_proposed_api: ctx.args.editor_options.enable_proposed_api.clone(),
+ 			base_path,
+ 			log: ctx.log.clone(),
+-			cache,
+-			update_service: UpdateService::new(
+-				ctx.log.clone(),
+-				Arc::new(ReqwestSimpleHttp::with_client(ctx.http.clone())),
+-			),
+ 			state: ConnectionStateMap::default(),
+-			latest_version,
+-		})
+-	}
+-
+-	// spawns a task that checks for updates every n seconds duration
+-	pub fn start_update_checker(self: Arc<Self>, duration: Duration) {
+-		tokio::spawn(async move {
+-			let mut interval = time::interval(duration);
+-			loop {
+-				interval.tick().await;
+-
+-				if let Err(e) = self.get_latest_release().await {
+-					warning!(self.log, "error getting latest version: {}", e);
+-				}
+-			}
+-		});
++			server,
++		}))
+ 	}
+ 
+-	// Returns the latest release from the cache, if one exists.
+-	pub async fn get_release_from_cache(&self) -> Result<Release, CodeError> {
+-		let latest = self.latest_version.lock().await;
+-		if let Some((_, release)) = &*latest {
+-			return Ok(release.clone());
+-		}
+-
+-		drop(latest);
+-		self.get_latest_release().await
+-	}
+-
+-	/// Gets a connection to a server version
+-	pub async fn get_connection(
+-		&self,
+-		release: Release,
+-	) -> Result<(AsyncPipe, ConnectionHandle), CodeError> {
++	/// Gets a connection to the bundled server, starting it if it isn't running.
++	pub async fn get_connection(&self) -> Result<(AsyncPipe, ConnectionHandle), CodeError> {
+ 		// todo@connor4312: there is likely some performance benefit to
+ 		// implementing a 'keepalive' for these connections.
+-		let (path, counter) = self.get_version_data(release).await?;
++		let (path, counter) = self.get_version_data().await?;
+ 		let handle = ConnectionHandle::new(counter);
+ 		let rw = get_socket_rw_stream(&path).await?;
+ 		Ok((rw, handle))
+ 	}
+ 
+-	/// Gets the latest release for the CLI quality, caching its result for some
+-	/// time to allow for fast loads.
+-	pub async fn get_latest_release(&self) -> Result<Release, CodeError> {
+-		let mut latest = self.latest_version.lock().await;
+-		let now = Instant::now();
+-		let target_kind = TargetKind::Web;
+-
+-		let quality = VSCODE_CLI_QUALITY
+-			.ok_or(CodeError::UpdatesNotConfigured("no configured quality"))
+-			.and_then(|q| {
+-				Quality::try_from(q).map_err(|_| CodeError::UpdatesNotConfigured("unknown quality"))
+-			})?;
+-
+-		if let Some(commit) = &self.args.commit_id {
+-			let release = Release {
+-				name: commit.to_string(),
+-				commit: commit.to_string(),
+-				platform: self.platform,
+-				target: target_kind,
+-				quality,
+-			};
+-			debug!(
+-				self.log,
+-				"using provided commit instead of latest release: {}", release
+-			);
+-			*latest = Some((now, release.clone()));
+-			return Ok(release);
+-		}
+-
+-		let release = self
+-			.update_service
+-			.get_latest_commit(self.platform, target_kind, quality)
+-			.await
+-			.map_err(|e| CodeError::UpdateCheckFailed(e.to_string()));
+-
+-		// If the update service is unavailable and we have stale data, use that
+-		if let (Err(e), Some((_, previous))) = (&release, latest.clone()) {
+-			warning!(self.log, "error getting latest release, using stale: {}", e);
+-			*latest = Some((now, previous.clone()));
+-			return Ok(previous.clone());
+-		}
+-
+-		let release = release?;
+-		debug!(self.log, "refreshed latest release: {}", release);
+-		*latest = Some((now, release.clone()));
+-
+-		Ok(release)
+-	}
+-
+-	/// Gets the StartData for the a version of the VS Code server, triggering
+-	/// download/start if necessary. It returns `CodeError::ServerNotYetDownloaded`
+-	/// while the server is downloading, which is used to have a refresh loop on the page.
+-	async fn get_version_data(&self, release: Release) -> Result<StartData, CodeError> {
+-		self.get_version_data_inner(release)?
++	/// Gets the StartData for the bundled server, starting it if necessary. It
++	/// returns `CodeError::ServerNotYetDownloaded` while the server is coming up,
++	/// which is used to have a refresh loop on the page.
++	async fn get_version_data(&self) -> Result<StartData, CodeError> {
++		self.get_version_data_inner()?
+ 			.wait()
+ 			.await
+ 			.unwrap()
+ 			.map_err(CodeError::ServerDownloadError)
+ 	}
+ 
+-	fn get_version_data_inner(
+-		&self,
+-		release: Release,
+-	) -> Result<Barrier<Result<StartData, String>>, CodeError> {
++	fn get_version_data_inner(&self) -> Result<Barrier<Result<StartData, String>>, CodeError> {
+ 		let mut state = self.state.lock().unwrap();
+-		let key = key_for_release(&release);
++		let key = key_for_release(&self.server.release);
+ 		if let Some(s) = state.get_mut(&key) {
+-			if !s.downloaded {
++			if !s.started {
+ 				if s.socket_path.is_open() {
+-					s.downloaded = true;
++					s.started = true;
+ 				} else {
+ 					return Err(CodeError::ServerNotYetDownloaded);
+ 				}
+@@ -753,83 +730,34 @@ impl ConnectionManager {
+ 			enable_proposed_api: self.enable_proposed_api.clone(),
+ 			log: self.log.clone(),
+ 			opener,
+-			release,
++			release: self.server.release.clone(),
++			executable: self.server.executable.clone(),
+ 		};
+ 
+-		if let Some(p) = self.cache.exists(&args.release.commit) {
+-			state.insert(
+-				key.clone(),
+-				VersionState {
+-					socket_path: socket_path.clone(),
+-					downloaded: true,
+-				},
+-			);
+-
+-			tokio::spawn(async move {
+-				Self::start_version(args, p).await;
+-				state_map_dup.lock().unwrap().remove(&key);
+-			});
+-			Ok(socket_path)
+-		} else {
+-			state.insert(
+-				key.clone(),
+-				VersionState {
+-					socket_path,
+-					downloaded: false,
+-				},
+-			);
+-			let update_service = self.update_service.clone();
+-			let cache = self.cache.clone();
+-			tokio::spawn(async move {
+-				Self::download_version(args, update_service.clone(), cache.clone()).await;
+-				state_map_dup.lock().unwrap().remove(&key);
+-			});
+-			Err(CodeError::ServerNotYetDownloaded)
+-		}
+-	}
++		state.insert(
++			key.clone(),
++			VersionState {
++				socket_path: socket_path.clone(),
++				started: true,
++			},
++		);
+ 
+-	/// Downloads a server version into the cache and starts it.
+-	async fn download_version(
+-		args: StartArgs,
+-		update_service: UpdateService,
+-		cache: DownloadCache,
+-	) {
+-		let release_for_fut = args.release.clone();
+-		let log_for_fut = args.log.clone();
+-		let dir_fut = cache.create(&args.release.commit, |target_dir| async move {
+-			info!(log_for_fut, "Downloading server {}/{}", release_for_fut.commit, release_for_fut.name);
+-			let tmpdir = tempfile::tempdir().unwrap();
+-			let response = update_service.get_download_stream(&release_for_fut).await?;
+-
+-			let name = response.url_path_basename().unwrap();
+-			let archive_path = tmpdir.path().join(name);
+-			http::download_into_file(
+-				&archive_path,
+-				log_for_fut.get_download_logger("Downloading server:"),
+-				response,
+-			)
+-			.await?;
+-			unzip_downloaded_release(&archive_path, &target_dir, SilentCopyProgress())?;
+-			Ok(())
++		// the first caller waits on the barrier rather than being told to reload
++		tokio::spawn(async move {
++			Self::start_version(args).await;
++			state_map_dup.lock().unwrap().remove(&key);
+ 		});
+ 
+-		match dir_fut.await {
+-			Err(e) => args.opener.open(Err(e.to_string())),
+-			Ok(dir) => Self::start_version(args, dir).await,
+-		}
++		Ok(socket_path)
+ 	}
+ 
+-	/// Starts a downloaded server that can be found in the given `path`.
+-	async fn start_version(args: StartArgs, path: PathBuf) {
++	/// Starts the bundled server, whose entrypoint is `args.executable`.
++	async fn start_version(args: StartArgs) {
+ 		info!(args.log, "Starting server {}", args.release.commit);
+ 
+-		let executable = path
+-			.join("bin")
+-			.join(args.release.quality.server_entrypoint().unwrap());
+-
+ 		let socket_path = get_socket_name();
+ 
+-		let mut cmd = new_script_command(&executable);
++		let mut cmd = new_script_command(&args.executable);
+ 		cmd.stdin(std::process::Stdio::null());
+ 		cmd.stderr(std::process::Stdio::piped());
+ 		cmd.stdout(std::process::Stdio::piped());
+@@ -940,6 +868,8 @@ struct StartArgs {
+ 	args: ServeWebArgs,
+ 	enable_proposed_api: Vec<String>,
+ 	release: Release,
++	/// crow: the bundled server's entrypoint script
++	executable: PathBuf,
+ 	opener: BarrierOpener<Result<StartData, String>>,
+ }
+ 
+diff --git a/cli/src/util/errors.rs b/cli/src/util/errors.rs
+index bccdef0..4fc5b59 100644
+--- a/cli/src/util/errors.rs
++++ b/cli/src/util/errors.rs
+@@ -537,6 +537,10 @@ pub enum CodeError {
+ 	UnknownAgentHostRelayTarget(String),
+ 	#[error("multiple live agent host endpoints are registered with instance id \"{0}\"; this indicates registry corruption")]
+ 	AmbiguousAgentHostRelayTarget(String),
++	// crow: the web server ships with the IDE and is never downloaded, so not
++	// finding it is a broken install rather than a missing update.
++	#[error("could not find the {0} web server (looked in: {1}). It ships with the IDE; set CROW_WEB_DIR to point at it.")]
++	NoWebServerFound(String, String),
+ }
+ 
+ makeAnyError!(
