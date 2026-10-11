@@ -103,10 +103,12 @@ crow-cli run -i
 crow-cli run -j "refactor the parser" > run.jsonl
 
 # Run as an ACP agent server (for editors and other clients)
-crow-cli acp          # ACP v1, stdio
-crow-cli acp2         # ACP v2, stdio
-crow-cli acp2 --http  # …or over Streamable HTTP + WebSocket for browser clients
+crow-cli acp          # ACP v1, stdio — spawned by a client
+crow-cli acp2         # ACP v2, stdio — spawned by a client
+crow-cli acp2 --http  # …or one server for every dialling client: ws://127.0.0.1:2771/acp
 ```
+
+`--http` is the one you leave running in a terminal of its own: a single instance serves the IDE, the browser client and anything else that dials it. See [Clients](#clients) for who starts what.
 
 Which agent runs is config, not code: `crow-cli agents` lists the `agent_servers` entries, `-a NAME` drives one, and a bare `run` drives the top entry (crow's own v2 agent when nothing is configured).
 
@@ -121,34 +123,45 @@ The rest of the CLI is observability into the same store:
 | `crow-cli models` / `agents` | what config.yaml offers |
 | `crow-cli mcp` / `mcp2` | serve crow's tools to any MCP client |
 | `crow-cli timers` | the worker that fires scheduled wakes |
-| `crow-cli install crow` | build and install the IDE, its web server and the agent TUI — from a clone, since that is where the build lives |
+| `crow-cli install crow` | build the IDE `.deb`, `dpkg -i` it, install the agent TUI — from a clone, since that is where the build lives |
 
 ## Clients
 
 One agent, several front doors. Every one of them is an ACP client; they differ in where the pixels come from — and in who starts the agent.
 
+Two shapes, and only two:
+
+- **Diallers** — the IDE's chat panel and the browser client. They spawn nothing. In another terminal, run a single instance of the agent and leave it running:
+
+  ```bash
+  crow-cli acp2 --http        # one server for every client on this machine: ws://127.0.0.1:2771/acp
+  ```
+
+- **Spawners** — `crow-cli run` and `crow-agent`. They start their own agent over stdio (the top `agent_servers` entry, or `--agent`), so they need no server.
+
 | Client | What it is | The agent | Run it |
 |--------|-----------|-----------|--------|
-| `crow-cli run` | the reference client: one-shot, REPL, JSONL, session forks | spawns it — the top `agent_servers` entry | `crow-cli run "…"` |
-| `crow-agent` | Rust ratatui TUI (`crates/crow-client`); `--gui` paints the same UI over wgpu in a native window | spawns it — `--agent`, default `crow-cli acp2` | `crow-agent` |
-| crow IDE | VS Code built from source by `packages/crow-gui`, with the crow chat extension bundled as a built-in — desktop app and browser server | **you start it** — the chat panel dials `crowAcp.endpoint` | `crow-cli acp2 --http`, then `crow` |
-| `crow-web` | browser client: one Rust binary embedding the SPA, owning fs buffers, ptys and an `/acp` proxy | **you start it** — it proxies `/acp` to `--acp-url` | `crow-cli acp --http`, then `crow-web` |
+| `crow-cli run` | the reference client: one-shot, REPL, JSONL, session forks | spawns its own over stdio | `crow-cli run "…"` |
+| `crow-agent` | Rust ratatui TUI (`crates/crow-client`) | spawns its own over stdio — `--agent`, default `crow-cli acp2` | `crow-agent` |
+| crow IDE | VS Code built from source by `packages/crow-gui`, with the crow chat extension bundled as a built-in — desktop app and browser server | dials `crowAcp.endpoint`, default `ws://127.0.0.1:2771/acp` | `crow` |
+| `crow-web` | browser client: one Rust binary embedding the SPA, owning fs buffers, ptys and an `/acp` proxy | the SPA dials `ws://127.0.0.1:2771/acp`; the proxy upstream is `--acp-url` | `crow-web --port 2770` |
 | any ACP client | Zed and friends, over stdio or WebSocket | the client spawns the command you give it | `crow-cli acp` / `acp2` |
+
+**The args, exactly.** `acp --http` serves protocol v1 on **2769**; `acp2 --http` serves v2 on **2771**; `--host` (default `127.0.0.1`) and `--port` move either. One v2 instance is enough for both diallers — the IDE panel's `crowAcp.endpoint` and the browser client's endpoint field both default to `ws://127.0.0.1:2771/acp`. `crow-web`'s own `/acp` proxy is the one default that still points at v1, so give it `--acp-url ws://127.0.0.1:2771/acp` when you want the proxy on the same server. A client that only speaks v1 needs `crow-cli acp --http` instead, on 2769.
 
 ### `crow-agent` — the terminal client
 
 A ratatui ACP client in `crates/crow-client`. It spawns the agent itself (`--agent`, default `crow-cli acp2`) so there is nothing to start first, and it is a real terminal citizen: markdown rendering, syntax-highlighted diffs, drag-to-select copy, tool calls that expand in place, `!` for a shell line and `/` for commands.
 
 ```bash
-cargo build --release --bin crow-agent                 # the TUI
-cargo build --release --bin crow-agent --features gui  # …plus the native window
+cargo build --release --bin crow-agent
 crow-agent                              # in the current workspace
 crow-agent -w ~/src/project --session-id <id>   # resume a durable session
-crow-agent --gui                        # GPU window instead of the terminal (needs that feature)
+crow-agent --model <name>               # ask the agent for a model (default: $CROW_MODEL)
 crow-agent --demo                       # scripted turns, no agent needed
 ```
 
-`crates/crow-gui` is the ratatui-over-wgpu service behind `--gui` — one rendering core, two runtimes. Compiled to wasm (its own `crow-web` bin, `--features web`, staged by `crates/crow-client/scripts/build-web.sh` into `crates/crow-client/web/`) it paints the identical frames on a browser canvas. That bin shares its name with the `crow-web` server binary from `crates/crow-web`, so build it with `-p crow-gui`.
+`crates/crow-gui` is the ratatui-over-wgpu rendering service; the same crate also compiles to wasm as its own `crow-web` bin (`--features web`, staged by `crates/crow-client/scripts/build-web.sh`). That bin shares its name with the `crow-web` server binary from `crates/crow-web`, so build it with `-p crow-gui`.
 
 ### crow — the IDE
 
@@ -162,35 +175,51 @@ crow-agent --demo                       # scripted turns, no agent needed
 The chat panel is `packages/vscode-acp` (`crow-acp`), built with bun and copied into every packaged tree as a **built-in** extension alongside the Jupyter + Python stack pinned in `packages/crow-gui/bundled-exts.json` — so notebooks get a kernel picker with no marketplace install.
 
 ```bash
-uv run crow-cli install crow   # from the clone: builds both trees + the TUI, installs under ~/.local (no root)
-crow-cli acp2 --http &         # the agent — the IDE does not start it for you
+uv run crow-cli install crow   # from the clone: builds the .deb, installs it with dpkg, builds the TUI
+```
+
+The IDE is a dialler — it does not start the agent. In another terminal, run a single instance and leave it running:
+
+```bash
+crow-cli acp2 --http           # ws://127.0.0.1:2771/acp, which is what crowAcp.endpoint already points at
+```
+
+Then open whichever front door you want:
+
+```bash
 crow                           # the desktop IDE
 crow web                       # the same IDE in a browser on a fixed port
 crow serve-web                 # …or through the IDE's own CLI, which prints a tokenised URL
-crow agent                     # the crow-agent TUI
+crow agent                     # the crow-agent TUI — the one front door that spawns its own agent
 ```
 
 The chat panel is a webview that dials the agent directly and spawns nothing: `crowAcp.endpoint` (default `ws://127.0.0.1:2771/acp`, i.e. `acp2 --http`), `crowAcp.protocol` (`1`, `2` or `auto`), `crowAcp.cwd`, and `crowAcp.mcpConfig` — the tool supply it hands over at `session/new`, by default `crow-cli mcp2`. Nothing listening at that endpoint, nothing to chat with.
 
-`serve-web` starts the `reh-web` server that ships **beside** the IDE (`/usr/share/crow/web` in the deb, `~/.local/share/crow/web` for `install crow`, or `$CROW_WEB_DIR`): crow publishes no release tarballs, so there is nothing to download and no update check to fail.
+`serve-web` starts the `reh-web` server that ships **beside** the IDE (`/usr/share/crow/web`, or `$CROW_WEB_DIR`): crow publishes no release tarballs, so there is nothing to download and no update check to fail.
 
-For a system-wide install — the one that gets a root-owned `4755 chrome-sandbox`, which Chromium requires and which is why the desktop app can die silently on kernels that restrict unprivileged user namespaces (Ubuntu 24.04+):
+The install **is** the `.deb`, and that is not pedantry: `dpkg -i` is the only route that gets a root-owned `4755 chrome-sandbox`, which Chromium requires — without it the desktop app can die silently on kernels that restrict unprivileged user namespaces (Ubuntu 24.04+). So `install crow` runs the pipeline with `--deb` (it wants `fakeroot` + `dpkg-dev`, and says so *before* a 40-minute build rather than after) and then installs it:
 
 ```bash
-cd packages/crow-gui && ./build.sh --deb     # needs fakeroot + dpkg-dev; ~40 min the first time
-sudo dpkg -i vscodium/assets/crow_*.deb
+cd packages/crow-gui && ./build.sh --deb     # what `install crow` runs; ~40 min the first time
+sudo dpkg -i vscodium/assets/crow_*.deb      # …and what it runs next
 ```
+
+A deb that is already built is installed without rebuilding (`--rebuild` forces the pipeline). `--no-deb` is the rootless fallback: it copies the trees to `~/.local/share/crow/{ide,web}` and writes a user-level `.desktop` entry — a build you can run, not an install, with no setuid sandbox. The deb route deletes that user-level entry instead of letting it shadow the package's.
 
 ### `crow-web` — the browser client
 
 `crates/crow-web` is the state server behind the web client: the browser is a view, this process owns what it views — the fs tree, open buffers (content, dirty, mtime), ptys, and a proxy to the agent. Ctrl+S in the editor is a commit to this server, not a browser-side write. The SPA (`packages/chat`, `packages/editor`, vendored `packages/aui`) is embedded in the binary with `rust-embed`, so it is one executable and one origin; `packages/electron` wraps that same binary in a window.
 
 ```bash
-crow-cli acp --http &                     # the agent over WebSocket, on :2769 (crow-web's default upstream)
-cargo run -p crow-web -- --port 2770      # then open http://127.0.0.1:2770
+# terminal 1 — the agent: one instance, left running
+crow-cli acp2 --http                                        # ws://127.0.0.1:2771/acp
+
+# terminal 2 — the client
+cargo run -p crow-web -- --port 2770 --acp-url ws://127.0.0.1:2771/acp
+# open http://127.0.0.1:2770 — the SPA's own endpoint field defaults to :2771 too
 ```
 
-`--root` sets the workspace it owns, `--shell` the pty's shell, and `--acp-url` the agent it proxies to — it spawns ptys, never agents, so point that at `ws://127.0.0.1:2771/acp` for the v2 agent (`crow-cli acp2 --http`). It serves loopback clients only.
+`--root` sets the workspace it owns, `--shell` the pty's shell, and `--acp-url` the upstream of its `/acp` proxy — default `ws://127.0.0.1:2769/acp`, the v1 port, which is why the example above passes it explicitly. It spawns ptys, never agents, and it serves loopback clients only.
 
 ### Any other ACP client
 
@@ -318,7 +347,7 @@ uv run pytest tests/integration   # real sqlite, agent spawn
 uv run pytest tests/e2e           # live LLM calls (costs $)
 ```
 
-The Rust clients build with cargo (`cargo build --release --bin crow-agent`, add `--features gui` for the native window; the workspace's default member is `crates/crow-client`, so `crow-web` and `crow-gui` want `-p <crate>`), the web client's frontend with bun/npm in `packages/chat`, and the IDE with `packages/crow-gui/build.sh` (`--help` lists its flags; `--prepare-only` stops after fetch + patch + `npm ci`).
+The Rust clients build with cargo (`cargo build --release --bin crow-agent`; the workspace's default member is `crates/crow-client`, so `crow-web` and `crow-gui` want `-p <crate>`), the web client's frontend with bun/npm in `packages/chat`, and the IDE with `packages/crow-gui/build.sh` (`--help` lists its flags; `--prepare-only` stops after fetch + patch + `npm ci`).
 
 ## Project layout
 
