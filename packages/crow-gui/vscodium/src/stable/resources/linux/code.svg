@@ -9,7 +9,7 @@
    xmlns:svg="http://www.w3.org/2000/svg">
   <defs
      id="defs1" />
-  <rect width="1024" height="1024" fill="#6175ea" />
+  <circle cx="512" cy="512" r="512" fill="#6553ff" />
 
   
   <path

@@ -1,0 +1,33 @@
+{
+  "$comment": [
+    "Extensions crow ships as BUILT-INS in every packaged tree, so the notebook",
+    "kernel picker and the Python interpreter/environment pickers work out of the",
+    "box -- in the desktop app AND in `crow web`. No marketplace install, no",
+    "first-run network, nothing for the user to discover.",
+    "",
+    "bundle-exts.sh downloads each pinned vsix from `gallery` (cached under",
+    ".build/exts/) and copies its `extension/` payload to",
+    "<tree>/extensions/<publisher>.<name>, which is where VS Code scans",
+    "built-ins from. Bump a version here and re-run ./build.sh (or",
+    "./bundle-exts.sh on its own) to pick it up.",
+    "",
+    "targetPlatform 'auto' resolves to <os>-<arch> at build time (linux-x64 for",
+    "the default build); omit the key for universal vsix builds. Open VSX's",
+    "platform-specific path form is /api/<ns>/<name>/<platform>/<version>.",
+    "",
+    "ms-python.vscode-pylance is deliberately absent: it is Microsoft-licensed and",
+    "not published to Open VSX. Everything else the ms-python / ms-toolsai",
+    "extension packs pull in is here."
+  ],
+  "gallery": "https://open-vsx.org/api",
+  "extensions": [
+    { "id": "ms-toolsai.jupyter",                  "version": "2025.9.1" },
+    { "id": "ms-toolsai.jupyter-renderers",        "version": "1.3.0" },
+    { "id": "ms-toolsai.jupyter-keymap",           "version": "1.1.2" },
+    { "id": "ms-toolsai.vscode-jupyter-slideshow", "version": "0.1.6" },
+    { "id": "ms-toolsai.vscode-jupyter-cell-tags", "version": "0.1.9" },
+    { "id": "ms-python.python",                    "version": "2026.4.0" },
+    { "id": "ms-python.vscode-python-envs",        "version": "1.38.0" },
+    { "id": "ms-python.debugpy",                   "version": "2026.6.0", "targetPlatform": "auto" }
+  ]
+}

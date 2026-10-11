@@ -21,10 +21,15 @@
 #                                    root-owned chrome-sandbox, so the one that
 #                                    actually launches on Ubuntu 24.04+)
 #
-# First run needs network (npm ci, cargo, electron/reh deps) and takes a while;
-# a rebuild after a source change is mostly gulp. Requires: bash, git, jq, node
-# + npm matching vscode/.nvmrc, python3, libx11/libxkbfile/libsecret headers,
-# rustup + cargo for the CLI, and bun for the bundled crow-acp extension.
+# Every packaged tree also carries crow's bundled extensions as BUILT-INS: the
+# chat extension (built from ../vscode-acp with bun) and the Jupyter + Python
+# stack pinned in ./bundled-exts.json, fetched from Open VSX by
+# ./bundle-exts.sh and cached in .build/exts/.
+#
+# First run needs network (npm ci, cargo, electron/reh deps, the vsix fetches)
+# and takes a while; a rebuild after a source change is mostly gulp. Requires:
+# bash, git, jq, curl, unzip, node + npm matching vscode/.nvmrc, python3,
+# libx11/libxkbfile/libsecret headers, rustup + cargo for the CLI, and bun.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -50,7 +55,7 @@ while [[ $# -gt 0 ]]; do
     --deb)          DEB="yes"; shift ;;
     --prepare-only) PREPARE_ONLY="yes"; shift ;;
     --fresh)        FRESH="yes"; shift ;;
-    -h|--help)      sed -n '2,27p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help)      sed -n '2,32p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *)              echo "crow-gui: unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -132,6 +137,18 @@ else
   echo "crow-gui: RELEASE_VERSION=${RELEASE_VERSION} MS_TAG=${MS_TAG} MS_COMMIT=${MS_COMMIT:0:9}"
 fi
 
+# prepare_vscode.sh copies the branding resources (src/stable/*: icons,
+# .desktop, appdata) into the checkout only when it PREPARES it, so a resumed
+# build would package stale art. The copy is idempotent; redo it every run.
+( cp -rp src/stable/* vscode/ )
+
+# Upstream compiles the extensions' BROWSER bundles (gulp compile-web) only for
+# the static vscode-web product; the reh/reh-web servers ship node entries
+# only, so a serve-web workbench fails to activate e.g. vscode.ipynb
+# ("Not Found") and notebooks cannot open at all. Compile them here, before the
+# packaging tasks snapshot extensions/ into .build/extensions.
+( cd vscode && npm run gulp compile-web )
+
 if [[ "${PREPARE_ONLY}" == "yes" ]]; then
   # shellcheck disable=SC1091
   . ./prepare_vscode.sh
@@ -143,11 +160,18 @@ fi
 # shellcheck disable=SC1091
 . ./build.sh
 
-# crow's own ACP chat extension (packages/vscode-acp), built and dropped into
-# every packaged tree as a BUILT-IN: built-ins are scanned from the extensions
-# dir at startup, so there is no marketplace install and `install crow` picks
-# the extension up together with the tree. Runs before --deb so the package
-# carries it too.
+# crow's bundled extensions, dropped into every packaged tree as BUILT-INS:
+# built-ins are scanned from the extensions dir at startup, so there is no
+# marketplace install and `install crow` picks them up together with the tree.
+# Both steps run before --deb so the .deb carries them too.
+#
+# The Jupyter + Python stack (./bundled-exts.json, fetched from Open VSX) is
+# what gives a notebook its kernel picker and the status bar its interpreter
+# picker; without it crow opens .ipynb with the bare built-in ipynb editor and
+# no way to run a cell.
+"${HERE}/bundle-exts.sh" "${BUILD_OS}" "${ARCH}"
+
+# crow's own ACP chat extension, built from packages/vscode-acp with bun.
 ACP_SRC="${HERE}/../vscode-acp"
 if [[ -d "${ACP_SRC}" ]]; then
   command -v bun >/dev/null 2>&1 || {

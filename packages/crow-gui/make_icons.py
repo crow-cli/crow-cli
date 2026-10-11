@@ -16,7 +16,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent
 ART = ROOT / "art"
 RES = ROOT / "vscodium" / "src" / "stable" / "resources"
-BG = "#6175ea"  # the brand tile background, matching art/crow-logo.png
+BG = "#6553ff"  # the brand disc colour, matching art/crow-logo.png
 
 
 def tile() -> Image.Image:
@@ -36,28 +36,43 @@ def write_favicon(dest: Path) -> None:
 
 def write_svg(dest: Path) -> None:
     # The vector art is a white glyph on nothing; the shipped icon must carry
-    # its own background or it vanishes on light desktop themes.
+    # its own background or it vanishes on light desktop themes. crow's mark
+    # sits on a disc (art/crow-logo.png), not a square tile, so the vector gets
+    # the same inscribed circle.
     src = (ART / "crow-logo.svg").read_text()
-    rect = f'  <rect width="1024" height="1024" fill="{BG}" />\n'
+    disc = f'  <circle cx="512" cy="512" r="512" fill="{BG}" />\n'
     marker = '<defs\n     id="defs1" />'
     assert marker in src, "unexpected art/crow-logo.svg shape"
-    dest.write_text(src.replace(marker, marker + "\n" + rect, 1))
-    print(f"  {dest.relative_to(ROOT)}  vector + {BG} background")
+    dest.write_text(src.replace(marker, marker + "\n" + disc, 1))
+    print(f"  {dest.relative_to(ROOT)}  vector + {BG} disc")
 
 
-def write_xpm(dest: Path, size: int = 64, ncolors: int = 64) -> None:
-    q = tile().resize((size, size), Image.LANCZOS).convert("RGB").quantize(colors=ncolors)
-    used = sorted(idx for _, idx in q.getcolors(256))
-    pal = q.getpalette()
-    chars = [c for c in (chr(n) for n in range(32, 127)) if c not in '"\\']
-    assert len(used) <= len(chars), f"{len(used)} colors do not fit one XPM char"
-    ch = {idx: chars[k] for k, idx in enumerate(used)}
-    px = q.load()
-    lines = [f"{size} {size} {len(used)} 1"]
-    lines += [f"{ch[i]} c #{pal[i * 3]:02x}{pal[i * 3 + 1]:02x}{pal[i * 3 + 2]:02x}" for i in used]
-    lines += ["".join(ch[px[x, y]] for x in range(size)) for y in range(size)]
+def write_xpm(dest: Path, size: int = 64) -> None:
+    # Hand-rolled so the disc keeps its silhouette: XPM has a transparent
+    # colour, and quantizing a flattened tile would square the logo off.
+    img = tile().resize((size, size), Image.LANCZOS)
+    px = img.load()
+    colors: dict[tuple[int, int, int], str] = {}
+    chars = [c for c in (chr(n) for n in range(33, 127)) if c not in '"\\']
+    grid = []
+    for y in range(size):
+        row = []
+        for x in range(size):
+            r, g, b, a = px[x, y]
+            if a < 128:
+                row.append(None)
+                continue
+            key = (r // 16 * 16, g // 16 * 16, b // 16 * 16)
+            if key not in colors:
+                colors[key] = chars[len(colors)]
+            row.append(colors[key])
+        grid.append(row)
+    assert len(colors) <= len(chars), f"{len(colors)} colors do not fit one XPM char"
+    lines = [f"{size} {size} {len(colors) + 1} 1", f"{chars[len(colors)]} c None"]
+    lines += [f"{c} c #{r:02x}{g:02x}{b:02x}" for (r, g, b), c in colors.items()]
+    lines += ["".join(c if c else chars[len(colors)] for c in row) for row in grid]
     dest.write_text("/* XPM */\nstatic char *code_xpm[] = {\n" + ",\n".join(f'"{l}"' for l in lines) + "\n};\n")
-    print(f"  {dest.relative_to(ROOT)}  {size}x{size}, {len(used)} colors")
+    print(f"  {dest.relative_to(ROOT)}  {size}x{size}, {len(colors)} colors + transparent")
 
 
 def main() -> int:

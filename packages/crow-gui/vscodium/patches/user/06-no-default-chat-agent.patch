@@ -1,0 +1,109 @@
+--- a/src/vs/workbench/services/accounts/browser/defaultAccount.ts
++++ b/src/vs/workbench/services/accounts/browser/defaultAccount.ts
+@@ -88,29 +88,32 @@
+ 	readonly mcp_registries: ReadonlyArray<IMcpRegistryProvider>;
+ }
+ 
+-function toDefaultAccountConfig(defaultChatAgent: IDefaultChatAgent): IDefaultAccountConfig {
++// crow (like VSCodium) ships no defaultChatAgent in product.json: every field
++// below is only read behind a truthiness or empty-string check, so an absent
++// agent must degrade to an inert config instead of crashing the workbench.
++function toDefaultAccountConfig(defaultChatAgent: IDefaultChatAgent | undefined): IDefaultAccountConfig {
+ 	return {
+-		preferredExtensions: [
++		preferredExtensions: defaultChatAgent ? [
+ 			defaultChatAgent.chatExtensionId,
+ 			defaultChatAgent.extensionId,
+-		],
++		] : [],
+ 		authenticationProvider: {
+ 			default: {
+-				id: defaultChatAgent.provider.default.id,
+-				name: defaultChatAgent.provider.default.name,
++				id: defaultChatAgent?.provider.default.id ?? '',
++				name: defaultChatAgent?.provider.default.name ?? '',
+ 			},
+ 			enterprise: {
+-				id: defaultChatAgent.provider.enterprise.id,
+-				name: defaultChatAgent.provider.enterprise.name,
++				id: defaultChatAgent?.provider.enterprise.id ?? '',
++				name: defaultChatAgent?.provider.enterprise.name ?? '',
+ 			},
+-			enterpriseProviderConfig: `${defaultChatAgent.completionsAdvancedSetting}.authProvider`,
+-			enterpriseProviderUriSetting: defaultChatAgent.providerUriSetting,
+-			scopes: defaultChatAgent.providerScopes,
++			enterpriseProviderConfig: defaultChatAgent ? `${defaultChatAgent.completionsAdvancedSetting}.authProvider` : '',
++			enterpriseProviderUriSetting: defaultChatAgent?.providerUriSetting ?? '',
++			scopes: defaultChatAgent?.providerScopes ?? [],
+ 		},
+-		entitlementUrl: defaultChatAgent.entitlementUrl,
+-		tokenEntitlementUrl: defaultChatAgent.tokenEntitlementUrl,
+-		mcpRegistryDataUrl: defaultChatAgent.mcpRegistryDataUrl,
+-		managedSettingsUrl: defaultChatAgent.managedSettingsUrl,
++		entitlementUrl: defaultChatAgent?.entitlementUrl ?? '',
++		tokenEntitlementUrl: defaultChatAgent?.tokenEntitlementUrl ?? '',
++		mcpRegistryDataUrl: defaultChatAgent?.mcpRegistryDataUrl ?? '',
++		managedSettingsUrl: defaultChatAgent?.managedSettingsUrl ?? '',
+ 	};
+ }
+ 
+--- a/src/vs/platform/extensionManagement/common/extensionGalleryService.ts
++++ b/src/vs/platform/extensionManagement/common/extensionGalleryService.ts
+@@ -1161,7 +1161,7 @@
+ 			for (let index = 0; index < extensions.length; index++) {
+ 				const extension = extensions[index];
+ 				setTelemetry(extension, ((query.pageNumber - 1) * query.pageSize) + index, options.source);
+-				if (areSameExtensions(extension.identifier, { id: this.productService.defaultChatAgent.extensionId, })) {
++				if (this.productService.defaultChatAgent && areSameExtensions(extension.identifier, { id: this.productService.defaultChatAgent.extensionId, })) {
+ 					defaultChatAgentExtension = extension;
+ 				} else {
+ 					result.push(extension);
+@@ -1989,15 +1989,17 @@
+ 			}
+ 		}
+ 
+-		deprecated[this.productService.defaultChatAgent.extensionId.toLowerCase()] = {
+-			disallowInstall: true,
+-			extension: {
+-				id: this.productService.defaultChatAgent.chatExtensionId,
+-				displayName: 'GitHub Copilot Chat',
+-				autoMigrate: { storage: false, donotDisable: true },
+-				preRelease: this.productService.quality !== 'stable'
+-			}
+-		};
++		if (this.productService.defaultChatAgent) {
++			deprecated[this.productService.defaultChatAgent.extensionId.toLowerCase()] = {
++				disallowInstall: true,
++				extension: {
++					id: this.productService.defaultChatAgent.chatExtensionId,
++					displayName: 'GitHub Copilot Chat',
++					autoMigrate: { storage: false, donotDisable: true },
++					preRelease: this.productService.quality !== 'stable'
++				}
++			};
++		}
+ 
+ 		return { malicious, deprecated, search, autoUpdate };
+ 	}
+--- a/src/vs/platform/extensionManagement/common/abstractExtensionManagementService.ts
++++ b/src/vs/platform/extensionManagement/common/abstractExtensionManagementService.ts
+@@ -984,7 +984,7 @@
+ 		if (checked.indexOf(extension) !== -1) {
+ 			return [];
+ 		}
+-		if (areSameExtensions(extension.identifier, { id: this.productService.defaultChatAgent.extensionId })) {
++		if (this.productService.defaultChatAgent && areSameExtensions(extension.identifier, { id: this.productService.defaultChatAgent.extensionId })) {
+ 			return [];
+ 		}
+ 		checked.push(extension);
+--- a/src/vs/workbench/contrib/extensions/browser/extensionsWorkbenchService.ts
++++ b/src/vs/workbench/contrib/extensions/browser/extensionsWorkbenchService.ts
+@@ -2873,7 +2873,7 @@
+ 		}
+ 
+ 		const extensionsToUninstall: UninstallExtensionInfo[] = [{ extension: extension.local }];
+-		if (!areSameExtensions(extension.identifier, { id: this.productService.defaultChatAgent.extensionId })) {
++		if (!this.productService.defaultChatAgent || !areSameExtensions(extension.identifier, { id: this.productService.defaultChatAgent.extensionId })) {
+ 			for (const packExtension of this.getAllPackedExtensions(extension, this.local)) {
+ 				if (packExtension.local && !extensionsToUninstall.some(e => areSameExtensions(e.extension.identifier, packExtension.identifier))) {
+ 					extensionsToUninstall.push({ extension: packExtension.local });

@@ -50,3 +50,5 @@ node_modules/
 !packages/crow-gui/vscodium/build/
 # ...but gulp's scratch dir inside the vendored tree (sysroot caches) is an artifact.
 packages/crow-gui/vscodium/.build/
+# vsix download cache for the bundled extensions (bundle-exts.sh).
+packages/crow-gui/.build/

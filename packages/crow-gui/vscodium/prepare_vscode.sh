@@ -140,7 +140,11 @@ setpath "product" "documentationUrl" "${SITE_URL}"
 setpath "product" "releaseNotesUrl" "${REPO_URL}/releases"
 setpath "product" "requestFeatureUrl" "${REPORT_ISSUE_URL}"
 setpath "product" "sharedDataFolderName" ".${GLOBAL_DIRNAME}-shared"
-jsonTmp=$( jq 'del(.tipsAndTricksUrl, .introductoryVideosUrl, .twitterUrl, .keyboardShortcutsUrlMac, .keyboardShortcutsUrlLinux, .keyboardShortcutsUrlWin, .checksumFailMoreInfoUrl, .voiceWsUrl, .defaultChatAgent)' product.json )
+# VSCodium's Getting Started page fetches announcements-extra.json from the
+# assets repository on every open; crow publishes no such feed, so default the
+# setting off instead of logging a 404 per startup.
+jsonTmp=$( jq 'del(.tipsAndTricksUrl, .introductoryVideosUrl, .twitterUrl, .keyboardShortcutsUrlMac, .keyboardShortcutsUrlLinux, .keyboardShortcutsUrlWin, .checksumFailMoreInfoUrl, .voiceWsUrl, .defaultChatAgent, .webviewContentExternalBaseUrlTemplate)
+  | .configurationDefaults."workbench.welcomePage.extraAnnouncements" = false' product.json )
 echo "${jsonTmp}" > product.json && unset jsonTmp
 
 jsonTmp=$( jq -s '.[0] * .[1]' product.json ../product.json )

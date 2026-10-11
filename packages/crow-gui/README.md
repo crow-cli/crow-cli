@@ -30,8 +30,10 @@ produces them.
 ```
 crow.env                              crow's product identity (the only place it is defined)
 build.sh                              build entry point — wraps the vendored pipeline
+bundle-exts.sh                        sync ./bundled-exts.json into the packaged trees
+bundled-exts.json                     the Jupyter + Python stack crow ships as built-ins
 vendor.sh                             re-create vscodium/ from upstream + crow's patch
-art/                                  crow brand art (the logo tile + vector)
+art/                                  crow brand art (the crow disc + vector)
 make_icons.py                         regenerate every shipped icon from art/
 crow-patches/vscodium-pipeline.patch  crow's modifications to the vendored scripts
 vscodium/                             the vendored pipeline (see its own README/docs)
@@ -41,6 +43,11 @@ vscodium/                             the vendored pipeline (see its own README/
     00-cli-standalone-cargo-workspace.patch
     01-cli-crow-agent.patch
     02-web-workbench-title.patch
+    03-deb-host-shlibdeps.patch
+    04-deb-chrome-sandbox-setuid.patch
+    05-getting-started-tagline.patch
+    06-no-default-chat-agent.patch
+    07-self-hosted-webview.patch
   src/stable/                         branding resources copied over vscode/ (icons, .desktop…)
   product.json                        deep-merged over vscode/product.json last (wins)
 ```
@@ -113,17 +120,28 @@ and `build-deb` chmods the helper 4755 (`patches/user/04`). `--deb` needs
 `~/.local/share/crow/ide` when the package is installed, so `crow` keeps
 meaning the working one.
 
-### The bundled crow-acp extension
+### Bundled extensions
 
-`build.sh` builds `packages/vscode-acp` (bun + vite) and copies `dist/`,
-`media/`, `package.json` and `LICENSE.md` into every packaged tree's extension
-dir — `VSCode-linux-<arch>/resources/app/extensions/crow-acp`, and
-`extensions/crow-acp` in the reh-web/reh trees. Built-in extensions are scanned
-from there at startup, so the Crow chat sidebar exists with no marketplace
-install, and `crow-cli install crow` carries it along with the tree (and the
-deb, since the sync runs before `--deb`). Needs `bun`.
+Built-in extensions are scanned from a tree's extension dir at startup
+(`VSCode-linux-<arch>/resources/app/extensions/`, `extensions/` in the reh-web
+and reh trees), so anything copied there ships with `install crow` and with the
+deb — no marketplace install, no first-run network. `build.sh` fills them in
+after gulp and before `--deb`:
 
-Requirements: bash, git, jq, node + npm matching `vscode/.nvmrc`, python3,
+- **crow-acp** — crow's own chat extension, built from `packages/vscode-acp`
+  (bun + vite) and copied in as `crow-acp`. Needs `bun`.
+- **the Jupyter + Python stack** — `./bundle-exts.sh` reads
+  `./bundled-exts.json` (pinned versions of `ms-toolsai.jupyter`,
+  `ms-python.python`, `ms-python.debugpy` and the rest of their extension
+  packs), downloads each vsix from Open VSX into `.build/exts/` (cached, so only
+  a version bump needs the network), unpacks the vsix's `extension/` payload and
+  syncs it into every packaged tree. This is what gives a notebook its kernel
+  picker and the status bar its interpreter picker, in the desktop app and in
+  `crow web` alike. `ms-python.vscode-pylance` stays out: Microsoft-licensed and
+  not on Open VSX. `./bundle-exts.sh [os] [arch]` re-syncs without a rebuild.
+  Needs `curl` + `unzip`.
+
+Requirements: bash, git, jq, curl, unzip, node + npm matching `vscode/.nvmrc`, python3,
 libx11 + libxkbfile dev headers, and rustup + cargo for the CLI. (`libsecret`
 is *not* needed at this pin — the Rust CLI's keyring uses the pure-Rust
 secret-service backend, and openssl comes from `@vscode/openssl-prebuilt`.)
@@ -199,6 +217,25 @@ user patches that reach `vscode/` itself:
 - **`patches/user/05-getting-started-tagline.patch`** (new) — the Welcome
   page's subtitle is VS Code's hardcoded "Editing evolved"; crow's is
   "Code editing. Redefined." (the tagline the deb/appdata descriptions use).
+- **`patches/user/06-no-default-chat-agent.patch`** (new) — VS Code 1.135's
+  `DefaultAccountService` and the extension gallery dereference
+  `productService.defaultChatAgent` without a guard, so a product.json *without*
+  it — crow deletes it in the branding sweep, and VSCodium-style products never
+  had it — crashes the workbench during startup with `Cannot read properties of
+  undefined (reading 'chatExtensionId')`: a blank page in `crow web`, a dead
+  window on the desktop. The patch makes the five unguarded reads tolerate an
+  absent agent; every other read site already uses `?.` or a truthiness check.
+- **`patches/user/07-self-hosted-webview.patch`** (new) — upstream serves the
+  webview bootstrap page from `{{uuid}}.vscode-cdn.net` (an https Microsoft CDN
+  origin baked into the compiled workbench product blob), so on a self-hosted
+  plain-http server every webview fetch — notebook output renderers included —
+  dies as mixed content (`net::ERR_FAILED`, "error loading dynamically imported
+  module"). Port of code-server's `webview.diff`: the web client server hands the
+  workbench a same-origin `webviewEndpoint`, the browser environment service
+  resolves it against `window.location`, and the webview pre page skips the
+  uuid-subdomain `parentOriginHash` check when parent and webview share a host
+  (inline-script CSP sha256 in the meta tag refreshed to match). This is what
+  makes Jupyter cell outputs render in `crow web`.
 
 Resulting `product.json` identity (stable channel):
 
@@ -216,15 +253,16 @@ user data and extensions live in `~/.crow`.
 
 ## Icons
 
-`art/` holds the brand art: `crow-logo.png` (the white crow on the `#6175ea`
-tile) and `crow-logo.svg` (the same glyph as a transparent vector).
+`art/` holds the brand art: `crow-logo.png` (the white crow on the `#6553ff`
+disc, transparent corners) and `crow-logo.svg` (the same glyph as a transparent
+vector).
 `make_icons.py` derives every icon the Linux build and the web server consume
 and writes them into `vscodium/src/stable/resources/`:
 
 | output | used by |
 | --- | --- |
 | `linux/code.png` (1024²) | the app's window/taskbar icon, deb/rpm/snap packaging, `crow.desktop` |
-| `linux/code.svg` | shipped alongside; the vector plus its own background rect |
+| `linux/code.svg` | shipped alongside; the vector on its own background disc |
 | `linux/rpm/code.xpm` | the rpm spec's icon |
 | `server/code-192.png`, `server/code-512.png` | the web workbench's PWA manifest + apple-touch-icon |
 | `server/favicon.ico` (16–256) | the browser tab |
@@ -248,9 +286,6 @@ which `apply_patch` substitutes from `crow.env` at apply time.
 - **Darwin/Windows icons are still VSCodium's** (`resources/darwin/*.icns`,
   `resources/win32/*.ico`). crow builds Linux only; regenerating them needs
   the icns/ico toolchain VSCodium's `icons/build_icons.sh` uses.
-- `product.json` still carries upstream's `voiceWsUrl`
-  (`wss://falcon-caas.mai.microsoft.com/…`), the endpoint VS Code's voice
-  dictation dials. Inherited from the pin; only used if voice chat is enabled.
 - **`vscode-acp` has no browser entry point**, so the crow ACP pane is blank in
   the web build until it grows one.
 - The VS Code pin is 1.135.0; bumping it means re-running `vendor.sh` and
