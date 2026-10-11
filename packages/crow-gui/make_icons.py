@@ -8,6 +8,8 @@ from the committed brand art in art/. Run it after changing the art, then
 commit both art/ and the generated files.
 """
 
+import base64
+import io
 import sys
 from pathlib import Path
 
@@ -47,6 +49,23 @@ def write_svg(dest: Path) -> None:
     print(f"  {dest.relative_to(ROOT)}  vector + {BG} disc")
 
 
+def write_embedded_svg(dest: Path, px: int) -> None:
+    # art/crow-logo.svg is a stroke-only outline that vanishes against the disc,
+    # so the "vector" assets ship the brand raster inside an svg container: same
+    # file shape the build expects, pixels that actually look like crow.
+    img = tile().resize((px, px), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    dest.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" '
+        'viewBox="0 0 1024 1024">\n'
+        f'  <image width="1024" height="1024" href="data:image/png;base64,{b64}" />\n'
+        '</svg>\n')
+    print(f"  {dest.relative_to(ROOT)}  svg wrapping a {px}px png ({len(b64)//1024}KiB b64)")
+
+
 def write_xpm(dest: Path, size: int = 64) -> None:
     # Hand-rolled so the disc keeps its silhouette: XPM has a transparent
     # colour, and quantizing a flattened tile would square the logo off.
@@ -80,7 +99,13 @@ def main() -> int:
         print(f"missing {ART / 'crow-logo.png'}", file=sys.stderr)
         return 1
     write_png(1024, RES / "linux/code.png")
-    write_svg(RES / "linux/code.svg")
+    write_embedded_svg(RES / "linux/code.svg", 256)
+    write_embedded_svg(ROOT / "vscodium/src/stable/src/vs/workbench/browser/media/code-icon.svg", 64)
+    for quality in ("stable", "insider"):
+        for name in ("codium_clt.svg", "codium_cnl.svg", "codium_cnl_w80_b8.svg"):
+            target = ROOT / "vscodium" / "icons" / quality / name
+            if target.parent.exists():
+                write_embedded_svg(target, 256)
     write_xpm(RES / "linux/rpm/code.xpm")
     write_png(192, RES / "server/code-192.png")
     write_png(512, RES / "server/code-512.png")

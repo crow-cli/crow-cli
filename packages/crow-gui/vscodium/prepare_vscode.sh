@@ -135,7 +135,10 @@ setpath_json "product" "tunnelApplicationConfig" '{}'
 # crow: VSCodium leaves Microsoft's help/telemetry endpoints in product.json,
 # and the Help menu renders one entry per URL that is present. Point the useful
 # ones at crow, drop the rest — a missing URL hides its menu item.
-# defaultChatAgent would make the chat view onboard towards GitHub Copilot.
+# NOTE: defaultChatAgent is deliberately KEPT (VSCodium keeps it too): without
+# it chatEntitlementService returns early and never sets chatSetupHidden, which
+# leaves the Copilot "Open in Agents Window" titlebar button visible.
+# VSCodium's 00-copilot-* patches + chat.disableAIFeatures default true hide it.
 setpath "product" "documentationUrl" "${SITE_URL}"
 setpath "product" "releaseNotesUrl" "${REPO_URL}/releases"
 setpath "product" "requestFeatureUrl" "${REPORT_ISSUE_URL}"
@@ -143,7 +146,7 @@ setpath "product" "sharedDataFolderName" ".${GLOBAL_DIRNAME}-shared"
 # VSCodium's Getting Started page fetches announcements-extra.json from the
 # assets repository on every open; crow publishes no such feed, so default the
 # setting off instead of logging a 404 per startup.
-jsonTmp=$( jq 'del(.tipsAndTricksUrl, .introductoryVideosUrl, .twitterUrl, .keyboardShortcutsUrlMac, .keyboardShortcutsUrlLinux, .keyboardShortcutsUrlWin, .checksumFailMoreInfoUrl, .voiceWsUrl, .defaultChatAgent, .webviewContentExternalBaseUrlTemplate)
+jsonTmp=$( jq 'del(.tipsAndTricksUrl, .introductoryVideosUrl, .twitterUrl, .keyboardShortcutsUrlMac, .keyboardShortcutsUrlLinux, .keyboardShortcutsUrlWin, .checksumFailMoreInfoUrl, .voiceWsUrl, .webviewContentExternalBaseUrlTemplate)
   | .configurationDefaults."workbench.welcomePage.extraAnnouncements" = false' product.json )
 echo "${jsonTmp}" > product.json && unset jsonTmp
 
