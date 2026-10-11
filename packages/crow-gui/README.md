@@ -113,6 +113,16 @@ and `build-deb` chmods the helper 4755 (`patches/user/04`). `--deb` needs
 `~/.local/share/crow/ide` when the package is installed, so `crow` keeps
 meaning the working one.
 
+### The bundled crow-acp extension
+
+`build.sh` builds `packages/vscode-acp` (bun + vite) and copies `dist/`,
+`media/`, `package.json` and `LICENSE.md` into every packaged tree's extension
+dir — `VSCode-linux-<arch>/resources/app/extensions/crow-acp`, and
+`extensions/crow-acp` in the reh-web/reh trees. Built-in extensions are scanned
+from there at startup, so the Crow chat sidebar exists with no marketplace
+install, and `crow-cli install crow` carries it along with the tree (and the
+deb, since the sync runs before `--deb`). Needs `bun`.
+
 Requirements: bash, git, jq, node + npm matching `vscode/.nvmrc`, python3,
 libx11 + libxkbfile dev headers, and rustup + cargo for the CLI. (`libsecret`
 is *not* needed at this pin — the Rust CLI's keyring uses the pure-Rust
@@ -133,7 +143,13 @@ user patches that reach `vscode/` itself:
   `BINARY_NAME`, `GLOBAL_DIRNAME`, `ORG_NAME`, `TUNNEL_APP_NAME`, `SITE_URL`,
   `REPO_URL`, `LICENSE_URL`, `REPORT_ISSUE_URL`, `UPDATE_URL` and
   `DARWIN_BUNDLE_IDENTIFIER`. `utils.sh` is sourced before the product.json
-  block so those exist. Also: fresh win32 AppIds/CLSIDs (VSCodium's would make
+  block so those exist. It also strips the Microsoft help/telemetry endpoints
+  VSCodium leaves in `product.json`: `documentationUrl`, `releaseNotesUrl` and
+  `requestFeatureUrl` point at crow, while `tipsAndTricksUrl`,
+  `introductoryVideosUrl`, `twitterUrl`, the three `keyboardShortcutsUrl*` PDF
+  links, `checksumFailMoreInfoUrl`, `voiceWsUrl` and `defaultChatAgent` (the
+  Copilot chat onboarding) are deleted — the Help menu hides an entry whose URL
+  is absent. Also: fresh win32 AppIds/CLSIDs (VSCodium's would make
   a Windows crow installer collide with a VSCodium install), and
   `tunnelServerQualities` is set so the Rust CLI resolves `bin/crow-server`
   instead of falling back to `code-server-oss`.
@@ -180,6 +196,9 @@ user patches that reach `vscode/` itself:
 - **`patches/user/04-deb-chrome-sandbox-setuid.patch`** (new) — `build-deb`
   chmods `chrome-sandbox` 4755 before `fakeroot dpkg-deb`, mirroring the rpm
   spec's `%attr(4755, root, root)`. See *The .deb* above.
+- **`patches/user/05-getting-started-tagline.patch`** (new) — the Welcome
+  page's subtitle is VS Code's hardcoded "Editing evolved"; crow's is
+  "Code editing. Redefined." (the tagline the deb/appdata descriptions use).
 
 Resulting `product.json` identity (stable channel):
 

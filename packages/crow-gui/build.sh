@@ -24,7 +24,7 @@
 # First run needs network (npm ci, cargo, electron/reh deps) and takes a while;
 # a rebuild after a source change is mostly gulp. Requires: bash, git, jq, node
 # + npm matching vscode/.nvmrc, python3, libx11/libxkbfile/libsecret headers,
-# and rustup + cargo for the CLI.
+# rustup + cargo for the CLI, and bun for the bundled crow-acp extension.
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -142,6 +142,29 @@ fi
 
 # shellcheck disable=SC1091
 . ./build.sh
+
+# crow's own ACP chat extension (packages/vscode-acp), built and dropped into
+# every packaged tree as a BUILT-IN: built-ins are scanned from the extensions
+# dir at startup, so there is no marketplace install and `install crow` picks
+# the extension up together with the tree. Runs before --deb so the package
+# carries it too.
+ACP_SRC="${HERE}/../vscode-acp"
+if [[ -d "${ACP_SRC}" ]]; then
+  command -v bun >/dev/null 2>&1 || {
+    echo "crow-gui: packages/vscode-acp needs bun on PATH to build" >&2; exit 1; }
+  ( cd "${HERE}/../.." && bun install >/dev/null )
+  ( cd "${ACP_SRC}" && bun install >/dev/null && bun run build )
+  for extdir in "VSCode-linux-${ARCH}/resources/app/extensions" \
+                "vscode-reh-web-linux-${ARCH}/extensions" \
+                "vscode-reh-linux-${ARCH}/extensions"; do
+    [[ -d "${extdir}" ]] || continue
+    rm -rf "${extdir}/crow-acp"
+    mkdir -p "${extdir}/crow-acp"
+    cp -r "${ACP_SRC}/dist" "${ACP_SRC}/media" "${ACP_SRC}/package.json" \
+          "${ACP_SRC}/LICENSE.md" "${extdir}/crow-acp/"
+    echo "crow-gui: built-in extension crow-acp → vscodium/${extdir}/crow-acp"
+  done
+fi
 
 if [[ "${DEB}" == "yes" ]]; then
   # prepare-deb lays out .build/linux/deb/<debarch>/crow-<debarch>/ and computes

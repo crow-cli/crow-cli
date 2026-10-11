@@ -48,3 +48,5 @@ node_modules/
 # packaging SOURCE (linux/osx/windows/alpine package scripts), not an artifact,
 # so the generic build/ rule above must not swallow it.
 !packages/crow-gui/vscodium/build/
+# ...but gulp's scratch dir inside the vendored tree (sysroot caches) is an artifact.
+packages/crow-gui/vscodium/.build/

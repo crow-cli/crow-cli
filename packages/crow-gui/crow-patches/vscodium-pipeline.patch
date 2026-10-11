@@ -329,8 +329,25 @@ index 00000000..6a5d7de4
 + 		await exec('mkdir -p deb', { cwd });
 + 		await exec(`fakeroot dpkg-deb -Zxz -b ${product.applicationName}-${debArch} deb`, { cwd });
 + 	};
+diff --git a/patches/user/05-getting-started-tagline.patch b/patches/user/05-getting-started-tagline.patch
+new file mode 100644
+index 00000000..01b72c3d
+--- /dev/null
++++ b/patches/user/05-getting-started-tagline.patch
+@@ -0,0 +1,11 @@
++--- a/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.ts
+++++ b/src/vs/workbench/contrib/welcomeGettingStarted/browser/gettingStarted.ts
++@@ -931,7 +931,7 @@
++ 
++ 		const header = $('.header', {},
++ 			$('h1.product-name.caption', {}, this.productService.nameLong),
++-			$('p.subtitle.description', {}, localize({ key: 'gettingStarted.editingEvolved', comment: ['Shown as subtitle on the Welcome page.'] }, "Editing evolved"))
+++			$('p.subtitle.description', {}, localize({ key: 'gettingStarted.editingEvolved', comment: ['Shown as subtitle on the Welcome page.'] }, "Code editing. Redefined."))
++ 		);
++ 
++ 		const leftColumn = $('.categories-column.categories-column-left', {},);
 diff --git a/prepare_vscode.sh b/prepare_vscode.sh
-index 1ac30e05..78c8760f 100755
+index 1ac30e05..35a07681 100755
 --- a/prepare_vscode.sh
 +++ b/prepare_vscode.sh
 @@ -15,6 +15,10 @@ cd vscode || { echo "'vscode' dir not found"; exit 1; }
@@ -380,7 +397,7 @@ index 1ac30e05..78c8760f 100755
  if [[ "${VSCODE_QUALITY}" == "insider" ]]; then
    setpath "product" "nameShort" "VSCodium - Insiders"
    setpath "product" "nameLong" "VSCodium - Insiders"
-@@ -93,32 +95,39 @@ if [[ "${VSCODE_QUALITY}" == "insider" ]]; then
+@@ -93,45 +95,60 @@ if [[ "${VSCODE_QUALITY}" == "insider" ]]; then
    setpath "product" "win32ContextMenu.x64.clsid" "90AAD229-85FD-43A3-B82D-8598A88829CF"
    setpath "product" "win32ContextMenu.arm64.clsid" "7544C31C-BDBF-4DDF-B15E-F73A46D6723D"
  else
@@ -445,7 +462,21 @@ index 1ac30e05..78c8760f 100755
  fi
  
  setpath_json "product" "tunnelApplicationConfig" '{}'
-@@ -129,9 +138,6 @@ echo "${jsonTmp}" > product.json && unset jsonTmp
+ 
++# crow: VSCodium leaves Microsoft's help/telemetry endpoints in product.json,
++# and the Help menu renders one entry per URL that is present. Point the useful
++# ones at crow, drop the rest — a missing URL hides its menu item.
++# defaultChatAgent would make the chat view onboard towards GitHub Copilot.
++setpath "product" "documentationUrl" "${SITE_URL}"
++setpath "product" "releaseNotesUrl" "${REPO_URL}/releases"
++setpath "product" "requestFeatureUrl" "${REPORT_ISSUE_URL}"
++setpath "product" "sharedDataFolderName" ".${GLOBAL_DIRNAME}-shared"
++jsonTmp=$( jq 'del(.tipsAndTricksUrl, .introductoryVideosUrl, .twitterUrl, .keyboardShortcutsUrlMac, .keyboardShortcutsUrlLinux, .keyboardShortcutsUrlWin, .checksumFailMoreInfoUrl, .voiceWsUrl, .defaultChatAgent)' product.json )
++echo "${jsonTmp}" > product.json && unset jsonTmp
++
+ jsonTmp=$( jq -s '.[0] * .[1]' product.json ../product.json )
+ echo "${jsonTmp}" > product.json && unset jsonTmp
+ 
  cat product.json
  # }}}
  
@@ -455,7 +486,7 @@ index 1ac30e05..78c8760f 100755
  # {{{ apply patches
  
  echo "APP_NAME=\"${APP_NAME}\""
-@@ -233,17 +239,17 @@ cp package.json{,.bak}
+@@ -233,17 +250,17 @@ cp package.json{,.bak}
  
  setpath "package" "version" "${RELEASE_VERSION%-insider}"
  
@@ -478,7 +509,7 @@ index 1ac30e05..78c8760f 100755
  fi
  
  # announcements
-@@ -251,46 +257,39 @@ replace "s|\\[\\/\\* BUILTIN_ANNOUNCEMENTS \\*\\/\\]|$( tr -d '\n' < ../announce
+@@ -251,46 +268,39 @@ replace "s|\\[\\/\\* BUILTIN_ANNOUNCEMENTS \\*\\/\\]|$( tr -d '\n' < ../announce
  
  ../undo_telemetry.sh
  
