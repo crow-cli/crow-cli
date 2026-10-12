@@ -4,11 +4,15 @@ requires-python = ">=3.13"
 
 [[package]]
 name = "agent-client-protocol"
-version = "0.12.1"
-source = { editable = "/home/thomas/src/agentclientprotocol/python-sdk" }
+version = "1.0.0rc3"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "pydantic-core" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/66/ad/2c00ce0a2d1381cec36f2841c74ab67a4436d490d7c432b36b76b901f49c/agent_client_protocol-1.0.0rc3.tar.gz", hash = "sha256:a5bdaab0a0bc7e5a0a660c82f5acf7804d60aa8c65a373acc743dd88c7a72cf5", size = 182759, upload-time = "2026-10-12T09:38:46.409Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9c/40/f1f64b3a439ac8fe0e66208d3d5cd8c87db3c8ceac8d06864143fb2414c9/agent_client_protocol-1.0.0rc3-py3-none-any.whl", hash = "sha256:003c087eae1b03f2410f2e06bcfbaaa26ae99abbdd011c7a2183e5a699a3426f", size = 127192, upload-time = "2026-10-12T09:38:45.252Z" },
 ]
 
 [package.optional-dependencies]
@@ -16,38 +20,6 @@ http = [
     { name = "httpx2", extra = ["http2"] },
     { name = "starlette" },
     { name = "websockets" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "httpx2", extras = ["http2"], marker = "extra == 'http'", specifier = ">=2.12" },
-    { name = "logfire", marker = "extra == 'logfire'", specifier = ">=0.14" },
-    { name = "opentelemetry-sdk", marker = "extra == 'logfire'", specifier = ">=1.28.0" },
-    { name = "pydantic", specifier = ">=2.7" },
-    { name = "pydantic-core", specifier = ">=2.18.1" },
-    { name = "starlette", marker = "extra == 'http'", specifier = ">=0.49.3" },
-    { name = "websockets", marker = "extra == 'http'", specifier = ">=12.0" },
-]
-provides-extras = ["logfire", "http"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "datamodel-code-generator", specifier = "==0.71.0" },
-    { name = "deptry", specifier = ">=0.23.0" },
-    { name = "httpx2", extras = ["http2"], specifier = ">=2.12" },
-    { name = "mkdocs", specifier = ">=1.4.2" },
-    { name = "mkdocs-material", specifier = ">=8.5.10" },
-    { name = "mkdocstrings", extras = ["python"], specifier = ">=0.26.1" },
-    { name = "prek", specifier = ">=0.2.17" },
-    { name = "pytest", specifier = ">=7.2.0" },
-    { name = "pytest-asyncio", specifier = ">=0.21.0" },
-    { name = "python-dotenv", specifier = ">=1.1.1" },
-    { name = "ruff", specifier = ">=0.11.5" },
-    { name = "starlette", specifier = ">=0.49.3" },
-    { name = "tox-uv", specifier = ">=1.11.3" },
-    { name = "ty", specifier = ">=0.0.1a16" },
-    { name = "uvicorn", specifier = ">=0.30" },
-    { name = "websockets", specifier = ">=12.0" },
 ]
 
 [[package]]
@@ -569,7 +541,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-client-protocol", extras = ["http"], editable = "/home/thomas/src/agentclientprotocol/python-sdk" },
+    { name = "agent-client-protocol", extras = ["http"], specifier = ">=1.0.0rc3" },
     { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "ast-grep-py", specifier = ">=0.45.3" },
     { name = "boto3", specifier = ">=1.40.0" },
