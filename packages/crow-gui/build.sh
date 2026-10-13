@@ -135,6 +135,19 @@ else
   # shellcheck disable=SC1091
   . ./get_repo.sh
   echo "crow-gui: RELEASE_VERSION=${RELEASE_VERSION} MS_TAG=${MS_TAG} MS_COMMIT=${MS_COMMIT:0:9}"
+  # prepare_vscode.sh patches the pristine checkout IN PLACE and runs npm ci, so
+  # it has to happen here: everything below — compile-web included — needs
+  # vscode/node_modules. Writing .crow-prepared is both what lets a later run
+  # resume and what makes the vendored build.sh skip its own prepare, which
+  # cannot run twice (every patch would fail as already applied).
+  # shellcheck disable=SC1091
+  . ./prepare_vscode.sh
+  echo "${RELEASE_VERSION}" > vscode/.crow-prepared
+fi
+
+if [[ "${PREPARE_ONLY}" == "yes" ]]; then
+  echo "crow-gui: prepared vscodium/vscode (patched, npm ci done) — stopping before gulp"
+  exit 0
 fi
 
 # prepare_vscode.sh copies the branding resources (src/stable/*: icons,
@@ -148,14 +161,6 @@ fi
 # ("Not Found") and notebooks cannot open at all. Compile them here, before the
 # packaging tasks snapshot extensions/ into .build/extensions.
 ( cd vscode && npm run gulp compile-web )
-
-if [[ "${PREPARE_ONLY}" == "yes" ]]; then
-  # shellcheck disable=SC1091
-  . ./prepare_vscode.sh
-  echo "${RELEASE_VERSION}" > vscode/.crow-prepared   # so a later run resumes
-  echo "crow-gui: prepared vscodium/vscode (patched, npm ci done) — stopping before gulp"
-  exit 0
-fi
 
 # shellcheck disable=SC1091
 . ./build.sh
