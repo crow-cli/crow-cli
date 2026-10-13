@@ -52,6 +52,53 @@ def make_deb(pipeline: Path, name: str, mtime: float) -> Path:
     return deb
 
 
+# ---- where the build happens ----------------------------------------------
+
+
+def fake_checkout(root: Path) -> Path:
+    (root / "packages" / "crow-gui").mkdir(parents=True)
+    (root / "Cargo.toml").write_text("[workspace]\n")
+    return root
+
+
+def test_repo_root_prefers_the_checkout_the_command_runs_from(monkeypatch, tmp_path):
+    root = fake_checkout(tmp_path / "wt")
+    monkeypatch.setattr(ic, "__file__", str(root / "src" / "crow_cli" / "cli" / "install_crow.py"))
+    assert ic.repo_root() == root
+
+
+def test_repo_root_falls_back_to_the_default_checkout(monkeypatch, tmp_path):
+    root = fake_checkout(tmp_path / "crow-cli")
+    monkeypatch.setattr(ic, "__file__", str(tmp_path / "elsewhere" / "site-packages" / "install_crow.py"))
+    monkeypatch.setattr(ic, "DEFAULT_CHECKOUT", root)
+    assert ic.repo_root() == root
+
+
+def test_repo_root_clones_when_there_is_no_checkout_at_all(monkeypatch, tmp_path):
+    root = tmp_path / "crow-cli"
+    monkeypatch.setattr(ic, "__file__", str(tmp_path / "elsewhere" / "install_crow.py"))
+    monkeypatch.setattr(ic, "DEFAULT_CHECKOUT", root)
+    calls = []
+
+    def fake_clone(argv, **kw):
+        calls.append(argv)
+        fake_checkout(root)
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(ic.subprocess, "run", fake_clone)
+    assert ic.repo_root() == root
+    assert calls[0][:2] == ["git", "clone"] and calls[0][-1] == str(root)
+
+
+def test_repo_root_says_how_to_clone_when_the_clone_fails(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(ic, "__file__", str(tmp_path / "elsewhere" / "install_crow.py"))
+    monkeypatch.setattr(ic, "DEFAULT_CHECKOUT", tmp_path / "crow-cli")
+    monkeypatch.setattr(ic.subprocess, "run", lambda argv, **kw: subprocess.CompletedProcess(argv, 128))
+    with pytest.raises(typer.Exit):
+        ic.repo_root()
+    assert "git clone" in capsys.readouterr().out
+
+
 # ---- which artifact -------------------------------------------------------
 
 
@@ -93,7 +140,7 @@ def test_dpkg_install_goes_through_sudo_when_not_root(monkeypatch, pipeline, tmp
     monkeypatch.setattr(ic, "is_root", lambda: False)
     calls = []
 
-    def fake_run(argv, cwd=None):
+    def fake_run(argv, cwd=None, **kw):
         calls.append((argv, cwd))
         return subprocess.CompletedProcess(argv, 0)
 
@@ -110,21 +157,43 @@ def test_dpkg_install_as_root_needs_no_sudo(monkeypatch, pipeline):
     calls = []
     monkeypatch.setattr(
         ic.subprocess, "run",
-        lambda argv, cwd=None: calls.append(argv) or subprocess.CompletedProcess(argv, 0),
+        lambda argv, cwd=None, **kw: calls.append(argv) or subprocess.CompletedProcess(argv, 0),
     )
     ic.dpkg_install(make_deb(pipeline, "crow_1.0_amd64.deb", time.time()))
     assert calls[0][0] == "dpkg"
 
 
-def test_dpkg_failure_points_at_apt(monkeypatch, pipeline):
+def test_dpkg_failure_points_at_apt(monkeypatch, pipeline, capsys):
     monkeypatch.setattr(ic, "is_root", lambda: True)
     monkeypatch.setattr(
         ic.subprocess, "run",
-        lambda argv, cwd=None: subprocess.CompletedProcess(argv, 1),
+        lambda argv, cwd=None, **kw: subprocess.CompletedProcess(argv, 1, stderr="dependency job failed"),
     )
     with pytest.raises(typer.Exit) as exc:
         ic.dpkg_install(make_deb(pipeline, "crow_1.0_amd64.deb", time.time()))
     assert exc.value.exit_code == 1
+    out = capsys.readouterr().out
+    assert "sudo apt-get install -f" in out
+    assert "sudo could not authenticate" not in out
+
+
+def test_dpkg_failure_blames_sudo_when_sudo_never_ran(monkeypatch, pipeline, capsys):
+    """The failure this session actually hit: no tty, so sudo dies before dpkg
+    ever starts. Blaming apt for that sends the user down the wrong hole."""
+    monkeypatch.setattr(ic, "is_root", lambda: False)
+    monkeypatch.setattr(
+        ic.subprocess, "run",
+        lambda argv, cwd=None, **kw: subprocess.CompletedProcess(
+            argv, 1, stderr="sudo: A terminal is required to authenticate"
+        ),
+    )
+    with pytest.raises(typer.Exit) as exc:
+        ic.dpkg_install(make_deb(pipeline, "crow_1.0_amd64.deb", time.time()))
+    assert exc.value.exit_code == 1
+    out = capsys.readouterr().out
+    assert "sudo could not authenticate" in out
+    assert "--no-build" in out
+    assert "apt-get" not in out
 
 
 # ---- the plan -------------------------------------------------------------
@@ -166,8 +235,22 @@ def test_dry_run_no_deb_falls_back_to_the_prefix_copy(pipeline, tools):
     assert "./build.sh --arch x64" in result.output
     assert "--deb" not in result.output.split("./build.sh --arch x64")[1].split("\n")[0]
     assert "would cp -a" in result.output
-    assert "dpkg" not in result.output
+    assert "dpkg" not in result.output.split("Dry run")[1]  # the plan, not the sandbox warning
     assert ".desktop" in result.output
+
+
+def test_no_deb_says_what_the_copied_trees_cannot_do(pipeline, tools):
+    """A rootless copy has no 4755 chrome-sandbox; on Ubuntu 24.04+ that is the
+    difference between an IDE and a directory. The plan must say so."""
+    result = runner.invoke(app(), ["--dry-run", "--no-deb"])
+    assert result.exit_code == 0, result.output
+    assert "chrome-sandbox" in result.output
+
+
+def test_the_deb_route_does_not_cry_sandbox(pipeline, tools):
+    result = runner.invoke(app(), ["--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "chrome-sandbox" not in result.output
 
 
 # ---- the launcher shim ----------------------------------------------------

@@ -1,4 +1,4 @@
-"""`crow-cli install crow` — build and install crowdium, crow's IDE.
+"""`crow-cli install crow` — build and install crow's IDE.
 
 crow's IDE is VS Code, built by `packages/crow-gui` (a vendored VSCodium
 pipeline) into two artifacts: the Electron desktop app and the `reh-web`
@@ -36,6 +36,7 @@ download (crow publishes none). The deb ships it at `/usr/share/crow/web`.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -48,14 +49,43 @@ from rich.console import Console
 console = Console()
 
 
+#: where `crow-cli init` clones the source checkout — the fallback when this
+#: command is not running from one (a pip / uv-tool install has nothing but its
+#: own site-packages beside it, and `install crow` builds from source).
+DEFAULT_CHECKOUT = Path.home() / ".agents" / "crow" / "src" / "crow-cli"
+REPO_URL = "https://github.com/crow-cli/crow-cli.git"
+
+
+def _is_checkout(path: Path) -> bool:
+    return (path / "Cargo.toml").is_file() and (path / "packages" / "crow-gui").is_dir()
+
+
 def repo_root() -> Path:
-    """The checkout that owns the rust crates and the crow-gui pipeline."""
+    """The checkout that owns the rust crates and the crow-gui pipeline.
+
+    Works from anywhere: the checkout this command runs from wins, then the
+    default source checkout, then a fresh clone of it. A packaged install has
+    no repo of its own, and telling the user to cd somewhere before running an
+    installer is making them do the installer's job.
+    """
     here = Path(__file__).resolve()
     for parent in here.parents:
-        if (parent / "Cargo.toml").is_file() and (parent / "packages" / "crow-gui").is_dir():
+        if _is_checkout(parent):
             return parent
-    console.print("[red]not inside a crow-cli checkout (no Cargo.toml + packages/crow-gui)[/red]")
-    raise typer.Exit(1)
+    if _is_checkout(DEFAULT_CHECKOUT):
+        console.print(f"[dim]building from {short(DEFAULT_CHECKOUT)}[/dim]")
+        return DEFAULT_CHECKOUT
+    if shutil.which("git") is None:
+        console.print(f"[red]no crow-cli checkout and no git to clone one — "
+                      f"git clone {REPO_URL} {short(DEFAULT_CHECKOUT)}[/red]")
+        raise typer.Exit(1)
+    console.print(f"[bold]no crow-cli checkout — cloning {REPO_URL} into {short(DEFAULT_CHECKOUT)}[/bold]")
+    DEFAULT_CHECKOUT.parent.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run(["git", "clone", REPO_URL, str(DEFAULT_CHECKOUT)])
+    if proc.returncode != 0:
+        console.print(f"[red]the clone failed — do it by hand: git clone {REPO_URL} {short(DEFAULT_CHECKOUT)}[/red]")
+        raise typer.Exit(1)
+    return DEFAULT_CHECKOUT
 
 
 def run(argv: list[str], cwd: Path) -> None:
@@ -201,10 +231,21 @@ def dpkg_install(deb: Path) -> None:
     """`dpkg -i` — the step that turns a build into an install."""
     argv = ["dpkg", "-i", str(deb)] if is_root() else ["sudo", "dpkg", "-i", str(deb)]
     console.print(f"[dim]$ {' '.join(argv)}[/dim]")
-    if subprocess.run(argv, cwd=str(deb.parent)).returncode != 0:
+    proc = subprocess.run(argv, cwd=str(deb.parent), capture_output=True, text=True)
+    if proc.returncode == 0:
+        return
+    err = (proc.stderr or "").strip()
+    if err:
+        console.print(f"[red]{err}[/red]")
+    if re.search(r"terminal is required|askpass|authenticat", err, re.IGNORECASE):
+        # sudo never reached dpkg: no tty to type a password into, or no cached
+        # credentials. The deb is built; only the privilege is missing.
+        console.print("[red]dpkg -i never ran — sudo could not authenticate.[/red]")
+        console.print("[cyan]  sudo -v in a terminal, then re-run: crow-cli install crow --no-build[/cyan]")
+    else:
         console.print("[red]dpkg -i failed — unsatisfied dependencies are the usual cause:[/red]")
         console.print("[cyan]  sudo apt-get install -f[/cyan]")
-        raise typer.Exit(1)
+    raise typer.Exit(1)
 
 
 def install_crow(
@@ -242,6 +283,12 @@ def install_crow(
     use_deb = deb and sys.platform == "linux"
     if deb and not use_deb:
         console.print("[yellow]the .deb route is Linux-only — copying the built trees under the prefix instead[/yellow]")
+    if not use_deb and sys.platform == "linux":
+        console.print(
+            "[yellow]--no-deb: the copied trees carry no root-owned 4755 chrome-sandbox, so on kernels "
+            "that restrict unprivileged user namespaces (Ubuntu 24.04+) the IDE will not launch from "
+            "them. `sudo dpkg -i` of the built .deb is the route that works.[/yellow]"
+        )
     if use_deb and no_web:
         console.print("[yellow]--no-web: the .deb will carry no web server, so `crow serve-web` will not work[/yellow]")
 

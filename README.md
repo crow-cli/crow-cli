@@ -162,7 +162,7 @@ crow-agent --demo                       # scripted turns, no agent needed
 
 ### crow — the IDE
 
-`packages/crow-gui` builds crow's IDE ("crowdium") from Microsoft's open-source VS Code using a **vendored copy of VSCodium's build pipeline**, rebranded, with crow's patches in `packages/crow-gui/vscodium/patches/user/`. Two artifacts come out and both are first-class:
+`packages/crow-gui` builds crow's IDE from Microsoft's open-source VS Code using a **vendored copy of VSCodium's build pipeline**, rebranded, with crow's patches in `packages/crow-gui/vscodium/patches/user/`. Two artifacts come out and both are first-class:
 
 | Artifact | What it is | Entry point |
 |----------|-----------|-------------|
@@ -193,14 +193,22 @@ The chat panel is a webview that dials the agent directly and spawns nothing: `c
 
 `serve-web` starts the `reh-web` server that ships **beside** the IDE (`/usr/share/crow/web`, or `$CROW_WEB_DIR`): crow publishes no release tarballs, so there is nothing to download and no update check to fail.
 
-The install **is** the `.deb`, and that is not pedantry: `dpkg -i` is the only route that gets a root-owned `4755 chrome-sandbox`, which Chromium requires — without it the desktop app can die silently on kernels that restrict unprivileged user namespaces (Ubuntu 24.04+). So `install crow` runs the pipeline with `--deb` (it wants `fakeroot` + `dpkg-dev`, and says so *before* a 40-minute build rather than after) and then installs it:
+The install **is** the `.deb`, and that is not pedantry: `dpkg -i` is the only route that gets a root-owned `4755 chrome-sandbox`, which Chromium requires — without it the desktop app can die silently on kernels that restrict unprivileged user namespaces (Ubuntu 24.04+). So `install crow` runs the pipeline with `--deb` (it wants `fakeroot` + `dpkg-dev`, and says so *before* a 40-minute build rather than after) and then installs it.
+
+`install crow` works from anywhere: it builds from the checkout it is running in, and a packaged install (pip / uv tool) with no checkout beside it falls back to `~/.agents/crow/src/crow-cli`, cloning it first if that is missing. The whole install, by hand, is:
 
 ```bash
-cd packages/crow-gui && ./build.sh --deb     # what `install crow` runs; ~40 min the first time
-sudo dpkg -i vscodium/assets/crow_*.deb      # …and what it runs next
+cd ~/.agents/crow/src/crow-cli                          # if it exists; otherwise git clone https://github.com/crow-cli/crow-cli.git there
+cd packages/crow-gui && ./build.sh --arch x64 --deb     # IDE + web server + the .deb; ~40 min the first time
+sudo dpkg -i vscodium/assets/crow_*.deb                 # system-wide: /usr/share/crow, /usr/bin/crow, /usr/bin/crow-web
+cd ../.. && cargo build --release --bin crow-agent      # the agent TUI
+mkdir -p ~/.local/bin && install -m 755 target/release/crow-agent ~/.local/bin/
+crow-cli install crow --no-build                        # writes the ~/.local/bin/crow shim; the deb is already built
 ```
 
-A deb that is already built is installed without rebuilding (`--rebuild` forces the pipeline). `--no-deb` is the rootless fallback: it copies the trees to `~/.local/share/crow/{ide,web}` and writes a user-level `.desktop` entry — a build you can run, not an install, with no setuid sandbox. The deb route deletes that user-level entry instead of letting it shadow the package's.
+There is no separate `bun install` / `bun run build` step: `build.sh` builds `packages/vscode-acp` (the `crow-acp` chat extension) and drops it into every packaged tree as a built-in, together with the Jupyter + Python stack. The last line is the only one with no shell equivalent — the `crow` shim is forty lines of POSIX sh (`launcher_text()` in `src/crow_cli/cli/install_crow.py`), and `--no-build` writes it without touching the pipeline.
+
+A deb that is already built is installed without rebuilding (`--rebuild` forces the pipeline). `--no-deb` is the rootless fallback: it copies the trees to `~/.local/share/crow/{ide,web}` and writes a user-level `.desktop` entry — a build you can run, not an install, with no setuid sandbox, and it says so up front. The deb route deletes that user-level entry instead of letting it shadow the package's.
 
 ### Any other ACP client
 
