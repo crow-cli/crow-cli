@@ -1,17 +1,17 @@
 {
   "name": "crow-cli-web",
   "private": true,
-  "description": "bun workspace for the crow web client embedded in the crow-web binary",
+  "description": "bun workspace for crow's chat webview and the vscode extension that ships it",
   "workspaces": [
     "packages/chat",
     "packages/editor",
     "packages/aui/*"
   ],
   "scripts": {
-    "web:build": "bun run --filter @crow/chat build",
-    "web:dev": "bun run --filter @crow/chat dev",
-    "web:typecheck": "bun run --filter @crow/chat typecheck",
-    "web:test": "bun run --filter @crow/chat test",
-    "web:watch": "bun run --filter @crow/chat build:watch"
+    "ext:build": "bun run --cwd packages/vscode-acp build",
+    "ext:typecheck": "bun run --cwd packages/vscode-acp typecheck",
+    "ext:package": "bun run --cwd packages/vscode-acp package",
+    "chat:typecheck": "bun run --filter @crow/chat typecheck",
+    "chat:test": "bun run --filter @crow/chat test"
   }
 }
