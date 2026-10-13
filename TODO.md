@@ -100,19 +100,7 @@ Worktree: `~/.agents/crow/src/worktrees/crow-cli-cleanup` (branch
       is the user's to run — see the Phase 7 log. It also surfaced a first-run
       bug in `build.sh`, fixed on its own commit (`04d689ce`).
 
-- [ ] **K. Found, NOT done — the .deb ships no `/usr/bin/crow`.** Its data
-      archive symlinks only `usr/bin/crow-web → ../share/crow/web/bin/crow-server`;
-      the desktop binary is `usr/share/crow/bin/crow` with no `/usr/bin` link, so
-      a bare `sudo dpkg -i crow_*.deb` leaves `crow` off PATH (the menu entry
-      works — `Exec=/usr/share/crow/crow %F`). The `/usr/bin/crow` on this
-      machine is a hand-made symlink, not dpkg-owned (`dpkg -S` says so).
-      `crow-cli install crow` covers it by writing the `~/.local/bin/crow`
-      three-door shim, which is why nobody noticed. Either the deb wants the
-      symlink (one line in the deb packaging, next to `crow-web`) or the docs
-      want to say "install with `crow-cli install crow`, not `dpkg -i`".
-      Product call, like J; not touched here.
-
-- [ ] **L. Found, NOT done — a second watermark surface crow does not brand.**
+- [ ] **K. Found, NOT done — a second watermark surface crow does not brand.**
       The packaged trees also carry upstream's
       `out/vs/sessions/contrib/chat/browser/media/letterpress-sessions-{dark,light}.svg`
       (128×128, `fill="none"`, 1607 bytes) — the empty-state glyph of VS Code's

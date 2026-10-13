@@ -398,11 +398,15 @@ The gate that matters. Long (~40 min the first time) and needs network for
   crow's letterpress and the 1,510,984-byte `chat.js`. Prefix deleted (1.8G).
   To finish: close the IDE, then
   `sudo -v && uv --project <W> run crow-cli install crow --no-build`.
-  Found and written down rather than patched: TODO **K** (the deb ships no
-  `/usr/bin/crow` — the one on this machine is a hand-made symlink; only
-  `install crow`'s `~/.local/bin/crow` shim covers it) and **L** (upstream's
+  Found and written down rather than patched: TODO **K** (upstream's
   `letterpress-sessions-{dark,light}.svg`, the `vs/sessions` chat empty-state
-  glyph, is a second unbranded watermark surface). The *visual* confirmation of
+  glyph, is a second unbranded watermark surface). One claim made here was
+  **wrong and is retracted**: the deb *does* provide `/usr/bin/crow` — its
+  `postinst` runs `rm -f /usr/bin/crow; ln -s /usr/share/crow/bin/crow
+  /usr/bin/crow` and `update-alternatives --install /usr/bin/editor editor
+  /usr/bin/crow 0`, and `postrm` removes it again. `dpkg -L`/`dpkg -S` do not
+  show it because a maintainer script creates it rather than the data archive
+  shipping it; reading only `dpkg-deb -c` is what produced the false finding. The *visual* confirmation of
   item A needs the new deb installed, so it is deferred with the dpkg step.
 
 - **Final sweep** ✅ every floor gate re-run after Phases 6-7: chat typecheck 0,
