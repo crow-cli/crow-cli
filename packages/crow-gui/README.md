@@ -1,4 +1,4 @@
-# crow-gui — the crow IDE build pipeline ("crowdium")
+# crow-gui — the crow IDE build pipeline
 
 Builds crow's IDE from Microsoft's open-source VS Code using a **vendored copy
 of VSCodium's build pipeline**, rebranded to crow. Two artifacts come out, and

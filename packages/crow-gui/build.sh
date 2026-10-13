@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build crow's IDE ("crowdium"): the desktop app and the web server, from the
+# Build crow's IDE: the desktop app and the web server, from the
 # vendored VSCodium pipeline in ./vscodium with crow's branding from ./crow.env.
 #
 #   ./build.sh                desktop app + web server (linux x64, stable pin)

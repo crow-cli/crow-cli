@@ -1,12 +1,12 @@
 """Install command: `crow-cli install crow` — one install, three front doors.
 
 crow's desktop IDE, its browser server and the agent TUI are one product
-(crowdium, built by `packages/crow-gui`, plus `crates/crow-client` for the
+(built by `packages/crow-gui`, plus `crates/crow-client` for the
 TUI), so they are one install: `install crow` builds whatever is missing and
 writes the `crow` launcher that fronts all three — `crow` (IDE),
 `crow serve-web` (browser), `crow agent` (TUI). The old `install web`
 (crow-web systemd tier) and `install gui` (Electron shell around crow-web)
-are gone: crowdium serves the web tier itself and is the GUI.
+are gone: the IDE serves the web tier itself and is the GUI.
 """
 
 import typer

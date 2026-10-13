@@ -11,7 +11,7 @@ StartupWMClass=crow
 Categories=TextEditor;Development;IDE;
 MimeType=text/plain;inode/directory;application/x-@@NAME@@-workspace;
 Actions=new-empty-window;
-Keywords=crow;crowdium;ide;editor;
+Keywords=crow;ide;editor;
 
 [Desktop Action new-empty-window]
 Name=New Empty Window

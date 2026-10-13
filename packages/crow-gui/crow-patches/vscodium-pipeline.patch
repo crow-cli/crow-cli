@@ -1523,7 +1523,7 @@ index 65b64eb0..eeb0fc52 100644
  Categories=Utility;TextEditor;Development;IDE;
  MimeType=x-scheme-handler/@@URLPROTOCOL@@;
 -Keywords=vscodium;codium;vscode;
-+Keywords=crow;crowdium;ide;editor;
++Keywords=crow;ide;editor;
 diff --git a/src/stable/resources/linux/code.appdata.xml b/src/stable/resources/linux/code.appdata.xml
 index ba75e65e..5a1052f7 100644
 --- a/src/stable/resources/linux/code.appdata.xml
@@ -1568,7 +1568,7 @@ index 3f3068e1..0cb901c0 100755
  MimeType=text/plain;inode/directory;application/x-@@NAME@@-workspace;
  Actions=new-empty-window;
 -Keywords=vscodium;codium;vscode;
-+Keywords=crow;crowdium;ide;editor;
++Keywords=crow;ide;editor;
  
  [Desktop Action new-empty-window]
  Name=New Empty Window
