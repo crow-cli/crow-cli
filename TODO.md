@@ -89,11 +89,36 @@ Worktree: `~/.agents/crow/src/worktrees/crow-cli-cleanup` (branch
       rows), `crates/crow-client/README.md` (the `crow-gui.desktop` /
       `Exec=crow --gui` paragraph).
 
-- [ ] **H. Reproduce `crow-cli install crow` from this worktree.** The gate that
+- [x] **H. Reproduce `crow-cli install crow` from this worktree.** The gate that
       matters: `./build.sh --arch x64 --deb` (seeds the VS Code checkout from
       `~/src/crow-gui/vscode`, which has the pinned `08d4889` / 1.135.0), the
       bun build of `packages/vscode-acp` **with chat as its webview root**, the
       bundled built-ins, `cargo build --release --bin crow-agent`, `dpkg -i`.
+      *Done except the one step that needs root:* the pipeline reproduced end to
+      end (`crow_1.135.06864_amd64.deb`, 368,289,144 bytes, built in 13.3 min)
+      and the rootless route was verified into a throwaway prefix; `sudo dpkg -i`
+      is the user's to run — see the Phase 7 log. It also surfaced a first-run
+      bug in `build.sh`, fixed on its own commit (`04d689ce`).
+
+- [ ] **K. Found, NOT done — the .deb ships no `/usr/bin/crow`.** Its data
+      archive symlinks only `usr/bin/crow-web → ../share/crow/web/bin/crow-server`;
+      the desktop binary is `usr/share/crow/bin/crow` with no `/usr/bin` link, so
+      a bare `sudo dpkg -i crow_*.deb` leaves `crow` off PATH (the menu entry
+      works — `Exec=/usr/share/crow/crow %F`). The `/usr/bin/crow` on this
+      machine is a hand-made symlink, not dpkg-owned (`dpkg -S` says so).
+      `crow-cli install crow` covers it by writing the `~/.local/bin/crow`
+      three-door shim, which is why nobody noticed. Either the deb wants the
+      symlink (one line in the deb packaging, next to `crow-web`) or the docs
+      want to say "install with `crow-cli install crow`, not `dpkg -i`".
+      Product call, like J; not touched here.
+
+- [ ] **L. Found, NOT done — a second watermark surface crow does not brand.**
+      The packaged trees also carry upstream's
+      `out/vs/sessions/contrib/chat/browser/media/letterpress-sessions-{dark,light}.svg`
+      (128×128, `fill="none"`, 1607 bytes) — the empty-state glyph of VS Code's
+      `vs/sessions` chat view, not the codium mark and not the editor-group
+      watermark item A covered. Whether crow wants its own art there is a design
+      call; `make_icons.py`'s new `write_letterpress()` is the place if so.
 
 - [ ] **J. Found, NOT done — needs a decision, so it is written down instead of
       patched.** `crates/crow-client/Cargo.toml`'s `[package.metadata.deb]` is

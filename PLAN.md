@@ -222,7 +222,7 @@ becomes the `Terminal=true` one.
 5. The end-to-end proof is Phase 7's build: an empty editor group in the
    installed IDE shows the crow glyph.
 
-## Phase 7 — reproduce `crow-cli install crow` from the worktree (TODO H)
+## Phase 7 — reproduce `crow-cli install crow` from the worktree (TODO H) ✅ done (minus `sudo dpkg -i`)
 
 The gate that matters. Long (~40 min the first time) and needs network for
 `npm ci` and the Open VSX vsix fetches.
@@ -231,6 +231,10 @@ The gate that matters. Long (~40 min the first time) and needs network for
    `~/src/crow-gui/vscode` has the pinned commit `08d4889f9ec4a1685d257b9b95de036c8e1ce1e5`
    (tag 1.135.0) ✓ so `build.sh` seeds from the local clone instead of fetching
    340MB; `dpkg-dev` + `fakeroot` present (`deb_preflight`); 758G free ✓.
+   One more: `bun` was a global npm package under fnm's **v22** only, and
+   `build.sh` switches to v24.18.0 — so `fnm exec --using 24.18.0 npm i -g bun`
+   first (bun 1.4.3), otherwise the extension step survives only as long as a
+   stale fnm multishell dir stays on PATH.
 2. Dry run first, and check it resolves the **worktree**, not main:
    `uv --project <W> run crow-cli install crow --dry-run`.
    `repo_root()` walks up from `crow_cli/cli/install_crow.py`'s `__file__`, so it
@@ -238,8 +242,8 @@ The gate that matters. Long (~40 min the first time) and needs network for
    If it prints main, stop — the venv is wrong.
 3. The real run: `uv --project <W> run crow-cli install crow`. Expect, in order:
    `./build.sh --arch x64 --deb` in `packages/crow-gui` (get_repo from the local
-   clone → `cp -rp src/stable/* vscode/` → `gulp compile-web` → prepare →
-   package → `bundle-exts.sh` → **`bun install` + `bun run build` in
+   clone → prepare (patches + `npm ci`) → `cp -rp src/stable/* vscode/` →
+   `gulp compile-web` → package → `bundle-exts.sh` → **`bun install` + `bun run build` in
    `packages/vscode-acp`** → deb), then `cargo build --release --bin crow-agent`,
    then `sudo dpkg -i vscodium/assets/crow_*.deb`.
    Run it with a generous timeout / in the background and poll; do not kill it.
@@ -338,6 +342,78 @@ The gate that matters. Long (~40 min the first time) and needs network for
   Max alpha / colour: dark `76` @ `(178,178,178)` (= 0.3 × 255), light `25`
   (≈ 0.1), hcDark `255` @ `(60,60,60)`, hcLight `255` @ `(178,178,178)`.
   Not white in any variant. End-to-end proof is Phase 7's installed IDE.
+
+- **Phase 7** ✅ (build reproduced; `sudo dpkg -i` is the user's) The dry run
+  resolved the worktree (`pipeline: ~/…/worktrees/crow-cli-cleanup/packages/crow-gui`).
+  The **first real run died in ~90 s**: `Error: Cannot find module
+  '…/vscodium/vscode/node_modules/gulp/bin/gulp.js'` from `gulp compile-web`.
+  Cause, pre-existing on `main` (`git diff main -- packages/crow-gui/build.sh`
+  empty): `prepare_vscode.sh` — the step that patches the checkout and runs
+  `npm ci` — was sourced **only** from the `--prepare-only` branch, and *after*
+  the `compile-web` line it exists to enable; the vendored `vscodium/build.sh`
+  sources it later still. So the pipeline could only ever build a tree a
+  previous `--prepare-only` had prepared — a fresh clone, a fresh worktree or
+  `--fresh` never could. Fixed in `04d689ce`: source it in the fresh-checkout
+  branch right after `get_repo.sh` and write `.crow-prepared` there (the same
+  marker the vendored script checks, so its prepare is skipped instead of
+  double-applying every patch); `--prepare-only` now exits before gulp, which is
+  what its help text always claimed. Deleted the half-made `vscodium/vscode`
+  (359M) and re-ran.
+  **Measured, second run:** `crow-gui: build complete` + `✓ built in 13.3 min`;
+  `vscodium/assets/crow_1.135.06864_amd64.deb` = **368,289,144 bytes**;
+  `git status` clean throughout (`vscode/`, `assets/`, `.build/` all gitignored);
+  gulp `vscode-min-prepack` 5.53 min, `vscode-linux-x64-min-packing` 25 s; trees
+  `VSCode-linux-x64` 1.3G and `vscode-reh-web-linux-x64` 562M.
+  **Deb contents (`dpkg-deb -I/-c`):** `Package: crow`, `Version:
+  1.135.06864`, Installed-Size 1,839,289 KB; `chrome-sandbox` is
+  **-rwsr-xr-x root/root** (4755 — the whole reason the deb route exists);
+  `/usr/bin/crow-web → ../share/crow/web/bin/crow-server`;
+  `/usr/share/applications/crow.desktop` with `Exec=/usr/share/crow/crow %F`;
+  the bundled built-ins include `ms-python.{python,debugpy,vscode-python-envs}`
+  and all five `ms-toolsai.jupyter*`; and **`crow-acp` is a built-in in both
+  trees** — 918 files, `dist/extension.cjs` 10,436 B,
+  `dist/webview/chat.js` **1,510,984 B** (byte-for-byte the bundle the
+  subtracted chat produced in Phase 1), `chat.css` 140,026 B, `media/crow.svg`.
+  **Watermark, end to end (static):** `out/media/letterpress-{dark,light,hcDark,hcLight}.svg`
+  in the desktop tree *and* `web/out/media/…` in the reh-web tree, 7530/7512 B —
+  gulp's svgo pass minified them (XML decl, DOCTYPE, `viewBox` and the `<g id>`
+  are gone; `fill="#B2B2B2" fill-opacity=".3"` and the path survive, now
+  `d="M349 213c3.55-6.61…"`), so the group-id rename is moot in the artifact.
+  Both CSS files that reference them shipped: `workbench.desktop.main.css` →
+  `url(../../media/letterpress-dark.svg)`, and the web workbench
+  `out/vs/code/browser/workbench/workbench.css` →
+  `url(../../../../media/letterpress-dark.svg)`.
+  **Not run:** `sudo dpkg -i` — no tty (`sudo: A terminal is required to
+  authenticate`), and the IDE running *right now* is `/usr/share/crow/crow` from
+  the installed `1.135.06805` deb, so replacing it mid-session is the user's
+  call, not mine. `install_crow` raises there, so the cargo/TUI/launcher tail
+  did not run either.
+  **Tail verified rootlessly instead:** `install crow --no-build --no-deb
+  --prefix /tmp/crow-install-verify` → rc 0, both trees copied, `cargo build
+  --release --bin crow-agent` 0.33 s incremental (one pre-existing warning),
+  TUI + launcher + desktop entry written. `sh -n` on the launcher OK;
+  `CROW_IDE_DIR=<prefix>/share/crow/ide crow tunnel --version` →
+  **`crow 1.135.06864 (commit unknown)`**; `<prefix>/bin/crow-agent --version` →
+  `crow-client 0.1.0` with **0** `gui` hits in `--help`; the copied tree carries
+  crow's letterpress and the 1,510,984-byte `chat.js`. Prefix deleted (1.8G).
+  To finish: close the IDE, then
+  `sudo -v && uv --project <W> run crow-cli install crow --no-build`.
+  Found and written down rather than patched: TODO **K** (the deb ships no
+  `/usr/bin/crow` — the one on this machine is a hand-made symlink; only
+  `install crow`'s `~/.local/bin/crow` shim covers it) and **L** (upstream's
+  `letterpress-sessions-{dark,light}.svg`, the `vs/sessions` chat empty-state
+  glyph, is a second unbranded watermark surface). The *visual* confirmation of
+  item A needs the new deb installed, so it is deferred with the dpkg step.
+
+- **Final sweep** ✅ every floor gate re-run after Phases 6-7: chat typecheck 0,
+  chat test **35 pass / 0 fail** (3 files), extension build 0 with `chat.js`
+  still **1,510.98 kB** (140.02 kB css), extension typecheck 0, `cargo test -p
+  crow-client` **978 passed / 0 failed** (960+3+1+13+1) with one warning fewer
+  than before (`1f821399`), `pytest tests/unit tests/integration` **1091 passed
+  / 4 failed** — the same four, all ⊂ the six-failure environmental baseline
+  (child-agent spawns → `ConnectionError`, plus the v2 prompt-lifecycle ordering
+  assert); the browser and foreign-session baseline flakes flipped green.
+  `git status` clean in the worktree. Branch stays local — nothing pushed.
 
 ## Done when
 
