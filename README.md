@@ -188,8 +188,7 @@ Then open whichever front door you want:
 
 ```bash
 crow                           # the desktop IDE
-crow web                       # the same IDE in a browser on a fixed port
-crow serve-web                 # …or through the IDE's own CLI, which prints a tokenised URL
+crow serve-web                 # the same IDE in a browser, through the IDE's own CLI, which prints a tokenised URL
 crow agent                     # the crow-agent TUI — the one front door that spawns its own agent
 ```
 

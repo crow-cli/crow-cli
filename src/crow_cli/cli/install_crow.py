@@ -13,8 +13,8 @@ under `~/.local/share/crow`, which is a build you can run, not an install.
 Either way a single `crow` binary lands on PATH:
 
     crow [args]      the desktop IDE (args go to it: `crow .`, `crow --diff a b`)
-    crow web         the same IDE in a browser, served locally on a fixed port
-    crow serve-web   the same, through the IDE's own CLI (tokenised URL)
+    crow serve-web   the same IDE in a browser, through the IDE's own CLI
+                     (it starts the bundled server and prints a tokenised URL)
     crow agent       the crow agent TUI (crates/crow-client's `crow-agent`)
     crow tunnel …    the built-in tunnel/remote CLI
 
@@ -68,7 +68,6 @@ def run(argv: list[str], cwd: Path) -> None:
 SHARE_DIR = ".local/share/crow"
 IDE_SUBDIR = "ide"
 WEB_SUBDIR = "web"
-DEFAULT_WEB_PORT = 8769
 
 
 def short(path: Path) -> str:
@@ -86,20 +85,20 @@ def pipeline_dir(repo: Path) -> Path:
     return pipeline
 
 
-def launcher_text(web_port: int) -> str:
+def launcher_text() -> str:
     """The `crow` shim: one binary, three front doors. Kept POSIX sh so it runs
     before anything else on a machine is set up."""
     return f"""#!/usr/bin/env sh
 # crow — crow's IDE. Built by packages/crow-gui, installed by `crow-cli install crow`.
 #
 #   crow [args]        the desktop IDE; args go straight to it
-#   crow web [args]    the same IDE in a browser (extra args go to the server)
-#   crow serve-web     the same, via the IDE's CLI: it starts the web server
-#                      bundled beside it and prints a tokenised URL
+#   crow serve-web     the same IDE in a browser, via the IDE's CLI: it finds the
+#                      server bundled beside it and prints a tokenised URL
 #   crow agent [args]  the crow agent TUI
 #   crow tunnel [args] the built-in tunnel/remote CLI
 #
-# Env: CROW_IDE_DIR, CROW_WEB_DIR, CROW_WEB_HOST, CROW_WEB_PORT, CROW_AGENT_BIN
+# Env: CROW_IDE_DIR, CROW_AGENT_BIN. serve-web resolves the web server itself
+# ($CROW_WEB_DIR, then the `web` dir beside the IDE, then /usr/bin/crow-web).
 set -e
 
 IDE_DIR="${{CROW_IDE_DIR:-$HOME/{SHARE_DIR}/{IDE_SUBDIR}}}"
@@ -109,13 +108,6 @@ IDE_DIR="${{CROW_IDE_DIR:-$HOME/{SHARE_DIR}/{IDE_SUBDIR}}}"
 if [ -z "${{CROW_IDE_DIR:-}}" ] && [ -x /usr/share/crow/bin/crow ]; then
   IDE_DIR=/usr/share/crow
 fi
-WEB_DIR="${{CROW_WEB_DIR:-$HOME/{SHARE_DIR}/{WEB_SUBDIR}}}"
-# The package's server goes with the package's IDE, for the same reason.
-if [ -z "${{CROW_WEB_DIR:-}}" ] && [ -x /usr/share/crow/{WEB_SUBDIR}/bin/crow-server ]; then
-  WEB_DIR=/usr/share/crow/{WEB_SUBDIR}
-fi
-WEB_HOST="${{CROW_WEB_HOST:-127.0.0.1}}"
-WEB_PORT="${{CROW_WEB_PORT:-{web_port}}}"
 CROW_AGENT_BIN="${{CROW_AGENT_BIN:-crow-agent}}"
 
 sub=""
@@ -133,14 +125,6 @@ case "$sub" in
     # puts it at /usr/share/crow/web, this installer at ~/.local/share/crow/web)
     # and serves it — crow publishes no release tarballs for it to download.
     exec "$IDE_DIR/bin/crow" serve-web "$@"
-    ;;
-  web)
-    if [ ! -x "$WEB_DIR/bin/crow-server" ]; then
-      echo "crow: no web server at $WEB_DIR — run `crow-cli install crow`" >&2
-      exit 1
-    fi
-    echo "crow: serving on http://$WEB_HOST:$WEB_PORT (the server prints the tokenised URL)" >&2
-    exec "$WEB_DIR/bin/crow-server" --host "$WEB_HOST" --port "$WEB_PORT" "$@"
     ;;
   tunnel)
     exec "$IDE_DIR/bin/crow-tunnel" "$@"
@@ -227,7 +211,6 @@ def dpkg_install(deb: Path) -> None:
 def install_crow(
     arch: str = typer.Option("x64", "--arch", help="VS Code arch the pipeline built (x64, arm64)"),
     prefix: Path = typer.Option(None, "--prefix", help="Install prefix (default: ~/.local)"),
-    web_port: int = typer.Option(DEFAULT_WEB_PORT, "--web-port", help="Default port for `crow web`"),
     no_web: bool = typer.Option(False, "--no-web", help="Install the desktop IDE only"),
     deb: bool = typer.Option(
         True,
@@ -261,7 +244,7 @@ def install_crow(
     if deb and not use_deb:
         console.print("[yellow]the .deb route is Linux-only — copying the built trees under the prefix instead[/yellow]")
     if use_deb and no_web:
-        console.print("[yellow]--no-web: the .deb will carry no web server, so `crow web` and `crow serve-web` will not work[/yellow]")
+        console.print("[yellow]--no-web: the .deb will carry no web server, so `crow serve-web` will not work[/yellow]")
 
     wanted = [
         ("ide", pipeline / "vscodium" / f"VSCode-linux-{arch}", share / IDE_SUBDIR),
@@ -370,7 +353,7 @@ def install_crow(
     console.print(f"[green]✓[/green] TUI at [cyan]{short(tui)}[/cyan]")
 
     launcher.parent.mkdir(parents=True, exist_ok=True)
-    launcher.write_text(launcher_text(web_port))
+    launcher.write_text(launcher_text())
     launcher.chmod(0o755)
     console.print(f"[green]✓[/green] launcher at [cyan]{short(launcher)}[/cyan]")
 
@@ -392,7 +375,7 @@ def install_crow(
         console.print("  [dim]system-wide: /usr/share/crow (+ web), /usr/bin/crow, /usr/bin/crow-web[/dim]")
     console.print("  [cyan]crow[/cyan]           the desktop IDE")
     if not no_web:
-        console.print(f"  [cyan]crow web[/cyan]       the IDE in a browser on port {web_port}")
+        console.print("  [cyan]crow serve-web[/cyan] the IDE in a browser, via the IDE's own CLI")
     console.print("  [cyan]crow agent[/cyan]     the crow agent TUI")
     if shutil.which("crow") != str(launcher):
         console.print(f"[yellow]note:[/yellow] {launcher.parent} is not first on PATH — `crow` may resolve elsewhere")

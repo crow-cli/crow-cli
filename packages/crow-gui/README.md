@@ -137,7 +137,7 @@ after gulp and before `--deb`:
   a version bump needs the network), unpacks the vsix's `extension/` payload and
   syncs it into every packaged tree. This is what gives a notebook its kernel
   picker and the status bar its interpreter picker, in the desktop app and in
-  `crow web` alike. `ms-python.vscode-pylance` stays out: Microsoft-licensed and
+  `crow serve-web` alike. `ms-python.vscode-pylance` stays out: Microsoft-licensed and
   not on Open VSX. `./bundle-exts.sh [os] [arch]` re-syncs without a rebuild.
   Needs `curl` + `unzip`.
 
@@ -222,7 +222,7 @@ user patches that reach `vscode/` itself:
   `productService.defaultChatAgent` without a guard, so a product.json *without*
   it — crow deletes it in the branding sweep, and VSCodium-style products never
   had it — crashes the workbench during startup with `Cannot read properties of
-  undefined (reading 'chatExtensionId')`: a blank page in `crow web`, a dead
+  undefined (reading 'chatExtensionId')`: a blank page in `crow serve-web`, a dead
   window on the desktop. The patch makes the five unguarded reads tolerate an
   absent agent; every other read site already uses `?.` or a truthiness check.
 - **`patches/user/07-self-hosted-webview.patch`** (new) — upstream serves the
@@ -235,7 +235,7 @@ user patches that reach `vscode/` itself:
   resolves it against `window.location`, and the webview pre page skips the
   uuid-subdomain `parentOriginHash` check when parent and webview share a host
   (inline-script CSP sha256 in the meta tag refreshed to match). This is what
-  makes Jupyter cell outputs render in `crow web`.
+  makes Jupyter cell outputs render in `crow serve-web`.
 
 Resulting `product.json` identity (stable channel):
 
@@ -277,7 +277,7 @@ copy) to pick them up.
 
 The last hardcoded brand string in the web UI —
 `workbench.html`'s `<meta name="apple-mobile-web-app-title" content="Code">`,
-the name an iOS/Android home-screen install of `crow web` gets — is replaced by
+the name an iOS/Android home-screen install of `crow serve-web` gets — is replaced by
 `patches/user/02-web-workbench-title.patch` with `content="!!APP_NAME!!"`,
 which `apply_patch` substitutes from `crow.env` at apply time.
 

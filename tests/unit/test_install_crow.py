@@ -6,6 +6,8 @@ and which plan `--dry-run` prints for each route.
 """
 
 import os
+import re
+import shutil
 import subprocess
 import sys
 import time
@@ -166,6 +168,34 @@ def test_dry_run_no_deb_falls_back_to_the_prefix_copy(pipeline, tools):
     assert "would cp -a" in result.output
     assert "dpkg" not in result.output
     assert ".desktop" in result.output
+
+
+# ---- the launcher shim ----------------------------------------------------
+
+
+def test_the_shim_fronts_the_ide_the_web_server_and_the_tui(tmp_path):
+    """The shim's whole job: dispatch the three front doors, pass everything
+    else through to the IDE."""
+    shim = ic.launcher_text()
+    assert 'exec "$IDE_DIR/bin/crow" serve-web "$@"' in shim
+    assert 'exec "$CROW_AGENT_BIN" "$@"' in shim
+    assert 'exec "$IDE_DIR/bin/crow-tunnel" "$@"' in shim
+    assert 'exec "$IDE_DIR/bin/crow" "$sub" "$@"' in shim  # the passthrough
+    if shutil.which("sh"):
+        script = tmp_path / "crow"
+        script.write_text(shim)
+        assert subprocess.run(["sh", "-n", str(script)], capture_output=True).returncode == 0
+
+
+def test_the_shim_leaves_the_web_server_to_the_ide_cli():
+    """`crow serve-web` is the browser front door. The IDE's own CLI resolves the
+    bundled server ($CROW_WEB_DIR, then `web` beside it, then /usr/bin/crow-web)
+    and prints the tokenised URL, so a shim-level `web` case only duplicated it.
+    """
+    shim = ic.launcher_text()
+    assert not re.search(r"^\s*web\)", shim, re.MULTILINE)
+    assert "crow-server" not in shim
+    assert "WEB_PORT" not in shim and "WEB_HOST" not in shim
 
 
 def test_missing_deb_tools_fail_before_the_build(pipeline, monkeypatch):

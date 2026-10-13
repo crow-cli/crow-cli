@@ -2,7 +2,7 @@
   "$comment": [
     "Extensions crow ships as BUILT-INS in every packaged tree, so the notebook",
     "kernel picker and the Python interpreter/environment pickers work out of the",
-    "box -- in the desktop app AND in `crow web`. No marketplace install, no",
+    "box -- in the desktop app AND in `crow serve-web`. No marketplace install, no",
     "first-run network, nothing for the user to discover.",
     "",
     "bundle-exts.sh downloads each pinned vsix from `gallery` (cached under",
