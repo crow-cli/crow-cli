@@ -4,7 +4,6 @@
   "description": "bun workspace for crow's chat webview and the vscode extension that ships it",
   "workspaces": [
     "packages/chat",
-    "packages/editor",
     "packages/aui/*"
   ],
   "scripts": {

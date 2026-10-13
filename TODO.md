@@ -48,14 +48,14 @@ Worktree: `~/.agents/crow/src/worktrees/crow-cli-cleanup` (branch
       `packages/crow-gui/art/crow-logo.svg` (same path data as
       `~/src/crow-gui/crow-logo.svg` minus the Inkscape/Sodipodi cruft).
 
-- [ ] **B. Refactor `packages/chat` down to what the extension imports.**
+- [x] **B. Refactor `packages/chat` down to what the extension imports.**
       Delete the 35 files unreachable from `src/vscode.tsx` (SPA entry, work
       pane, explorer, bottom terminal, their stores and clients, the SPA-only
       ui primitives), prune the 7 dependencies nothing left imports, and drop
       the SPA build scaffolding. Keep every reachable file **byte-identical** —
       this is a subtraction, not a redesign.
 
-- [ ] **C. Delete `packages/editor`** (`@crow/editor`). One consumer ever:
+- [x] **C. Delete `packages/editor`** (`@crow/editor`). One consumer ever:
       `chat/src/components/work/work-pane.tsx`. Orphaned by B.
 
 - [ ] **D. Delete `crates/crow-web`** — the Rust state server (fs buffers, ptys,
@@ -73,7 +73,7 @@ Worktree: `~/.agents/crow/src/worktrees/crow-cli-cleanup` (branch
       `scripts/test-web.sh`, `web/index.html`, and
       `tests/e2e/test_web_paint_live.py`.
 
-- [ ] **I. Un-orphan `crates/crow-client`'s integration tests.** Five test files
+- [x] **I. Un-orphan `crates/crow-client`'s integration tests.** Five test files
       (`cli_help.rs`, `tcp_attach.rs`, `sigterm_cleanup.rs`,
       `startup_session_e2e.rs`) still say `env!("CARGO_BIN_EXE_crow")`, but
       `bc03c5c7` renamed the bin to `crow-agent`, so `cargo test -p crow-client`

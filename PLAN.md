@@ -22,7 +22,7 @@ Never push.
 
 ---
 
-## Phase 0 — worktree environment + baseline (no repo change)
+## Phase 0 — worktree environment + baseline (no repo change) ✅ done
 
 1. Share main's cargo target so the worktree does not rebuild 20G of deps:
    `ln -s ~/.agents/crow/src/crow-cli/target <W>/target` (`target/` is gitignored,
@@ -52,7 +52,7 @@ Never push.
    `dependencies` only, never `devDependencies`.
 5. No commit.
 
-## Phase 1 — `packages/chat` becomes the extension's webview source (TODO B)
+## Phase 1 — `packages/chat` becomes the extension's webview source (TODO B) ✅ done
 
 Subtraction only. Every file the extension reaches stays **byte-identical**.
 
@@ -110,7 +110,7 @@ Subtraction only. Every file the extension reaches stays **byte-identical**.
    reachable was deleted. `git status` shows only deletions + the 3 manifests.
 8. Commit: `refactor(chat): chat is the extension's webview — drop the SPA, the work pane and the terminal`.
 
-## Phase 2 — delete `packages/editor` (TODO C)
+## Phase 2 — delete `packages/editor` (TODO C) ✅ done
 
 1. `git rm -r packages/editor`; remove `"packages/editor"` from the root
    `package.json` workspaces list; `bun install`.
@@ -252,6 +252,25 @@ The gate that matters. Long (~40 min the first time) and needs network for
    in Phase 1 was wrong — fix chat, do not re-add `packages/editor`.
 6. Commit anything the build proved needed (nothing should be): the phase is a
    gate, not a change.
+
+## Log (measured results, newest last)
+
+- **Phase 0** ✅ `<W>/target` → main's target (gitignored; `/target` added to
+  `.git/info/exclude` because `target/` does not match a symlink). bun install:
+  773 packages at the root, 316 in vscode-acp. Baselines recorded in TODO.md.
+  Item I fixed and committed on its own (`5328c9b7`): `cargo test -p
+  crow-client` went from rc 101 / 5 compile errors to **982 passed, 0 failed**.
+- **Phase 1** ✅ (`5a17fdd4`, 42 files, −4784) 35 files deleted; chat/src 87 → 52;
+  the unreachable set is now exactly the 4 intentional keeps (3 lib tests +
+  `vite-env.d.ts`); **all 48 reachable files byte-identical to main**; chat
+  typecheck 0, chat test 35/0, extension build 0 with `chat.js` still
+  **1,510.98 kB** (byte-size unchanged — the deleted code was never in the
+  bundle), extension typecheck 0. bun.lock −7 packages.
+- **Phase 2** ✅ `packages/editor` gone, workspace entry gone, bun.lock −120
+  lines (every `@codemirror/*` and `@lezer/highlight` with it). chat typecheck 0,
+  chat test 35/0, extension build 0 (`chat.js` still 1,510.98 kB), extension
+  typecheck 0. `git grep @crow/editor` → only README's repo map (Phase 5) and
+  plan prose.
 
 ## Done when
 
