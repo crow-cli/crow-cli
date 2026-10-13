@@ -1,5 +1,5 @@
 use super::*;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[test]
 fn agent_flag_and_args() {
