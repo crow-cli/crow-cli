@@ -168,7 +168,7 @@ becomes the `Terminal=true` one.
    pipeline — a different thing) and prose.
 8. Commit: `chore: delete crates/crow-gui and the --gui window runtime`.
 
-## Phase 5 — docs and manifests (TODO G)
+## Phase 5 — docs and manifests (TODO G) ✅ done
 
 1. `README.md`: drop the `crow-web` row from the front-door table and the
    `### crow-web — the browser client` section; drop the `crates/crow-gui`
@@ -266,6 +266,26 @@ The gate that matters. Long (~40 min the first time) and needs network for
   typecheck 0, chat test 35/0, extension build 0 with `chat.js` still
   **1,510.98 kB** (byte-size unchanged — the deleted code was never in the
   bundle), extension typecheck 0. bun.lock −7 packages.
+- **Phase 5** ✅ README (prereqs, the client table's `crow-web` row, the args
+  paragraph, the `crates/crow-gui` paragraph, the whole
+  `### crow-web — the browser client` section, the cargo note, the project
+  map), AGENTS.md (the launch block is now `crow` + `crow serve-web`; the
+  browser-SPA endpoint row and both `crow-web` arg rows are gone; "dials a
+  running server" is the IDE panel, desktop and serve-web alike),
+  `crates/crow-client/README.md` (the `cargo deb` section: no `--features gui`,
+  `packaging/crow.desktop`, `Terminal=true`, plus the item-J caveat),
+  `packages/crow-gui/README.md` (the Naming section: this is the only crow-gui
+  left), and one stale comment in `install_crow.py` (the "crow-web tier's own
+  state" it described no longer exists — comment only, no behaviour).
+  **Measured:** every floor gate re-run green — chat typecheck 0, chat test
+  35/0, extension build 0 (`chat.js` still 1,510.98 kB), extension typecheck 0,
+  `cargo build --release --bin crow-agent` 0, `cargo test -p crow-client`
+  **978/0**, `pytest tests/unit tests/integration` **1091 passed / 4 failed**
+  (all 4 ⊂ the 6-failure baseline; two baseline flakes flipped green — no new
+  failures). Item **J** written into TODO.md: `cargo deb`'s asset list is
+  orphaned (`target/release/crow` predates the `crow-agent` rename, and
+  `/usr/bin/crow` now belongs to the IDE deb) — a product call, deliberately
+  not patched.
 - **Phase 4** ✅ `crates/crow-gui` (9 files, fonts included) gone, and with it
   crow-client's `gui` feature + optional dep, `src/gui/{mod,app}.rs`, the `--gui`
   flag (help line, field, parse arm, both cfg branches, the pet-pixels comment

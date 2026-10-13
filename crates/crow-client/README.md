@@ -66,23 +66,25 @@ cargo test --locked             # the only gate
 
 ### Packaging: the `cargo deb` route
 
-The .deb is how crow reaches the app grid — the desktop-integration bug this
-branch exists to fix. It needs `cargo-deb` (`cargo install cargo-deb`):
+The .deb is how the TUI reaches the app grid. It needs `cargo-deb`
+(`cargo install cargo-deb`):
 
 ```
-cargo deb -p crow-client --features gui      # from the repo root
+cargo deb -p crow-client                     # from the repo root
 # -> target/debian/crow-client_<version>-1_amd64.deb
 dpkg-deb -c target/debian/crow-client_*.deb  # inspect before installing
 sudo dpkg -i target/debian/crow-client_*.deb # then click it in the app drawer
 ```
 
-The `gui` feature is the point: `[package.metadata.deb]` installs
-`packaging/crow-gui.desktop` as `/usr/share/applications/crow.desktop`
-(`Terminal=false`, `Exec=crow --gui`, `StartupWMClass=crow` — the window opens,
-no terminal), plus the hicolor icon ladder `Icon=crow` resolves through and
-`/usr/bin/crow`. A non-GUI package route swaps the desktop source to
-`packaging/crow.desktop` (`Terminal=true`); the comment on the assets list in
-`crates/crow-client/Cargo.toml` says which line to change.
+`[package.metadata.deb]` installs `packaging/crow.desktop` as
+`/usr/share/applications/crow.desktop` (`Terminal=true` — a TUI needs a
+terminal), plus the hicolor icon ladder `Icon=crow` resolves through.
+
+This route predates `crow-cli install crow`, which installs the **IDE's** .deb
+and puts a `crow` shim (IDE / `serve-web` / `agent`) at `/usr/bin/crow`. The two
+packages both claim `/usr/bin/crow` and `crow.desktop`, and the assets list still
+names `target/release/crow` from before the binary was renamed to `crow-agent`.
+Unresolved on purpose — see TODO.md item J.
 
 What it does: spawns an [ACP](https://agentclientprotocol.com/) agent as a child
 process over stdio and renders the conversation — streaming text, reasoning,

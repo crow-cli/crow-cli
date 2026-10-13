@@ -5,7 +5,7 @@
 The agent is a **server**; the clients are separate processes. Never write the
 launch as one chained command (`crow-cli acp2 --http && crow`, or `&`-backgrounding
 the agent in the same block as the client). That reads as "this one command starts
-both", and it does not — the IDE and the browser client spawn nothing at all.
+both", and it does not — the IDE spawns nothing at all.
 
 In one terminal, run a **single instance** and leave it running:
 
@@ -17,8 +17,7 @@ In another terminal, run a client:
 
 ```bash
 crow                                                   # the IDE
-cargo run -p crow-web -- --port 2770 \
-    --acp-url ws://127.0.0.1:2771/acp                  # the browser client
+crow serve-web                                         # the same IDE in a browser
 ```
 
 One instance serves every dialling client on the machine. Do not start one per
@@ -36,9 +35,6 @@ client, and do not restart it to change a client.
 | `crowAcp.protocol` | IDE extension settings | `2` | `1`, `2` or `auto` (detect) |
 | `crowAcp.cwd` | IDE extension settings | the workspace folder | agent working directory |
 | `crowAcp.mcpConfig` | IDE extension settings | `crow-cli mcp2` (YAML) | the tool supply handed over at `session/new` |
-| endpoint field | browser SPA header (`packages/chat`) | `ws://127.0.0.1:2771/acp` | persisted in `localStorage` |
-| `--acp-url` | `crow-web` | `ws://127.0.0.1:2769/acp` | upstream of its `/acp` proxy — the **v1** port; pass it explicitly to join a v2 server |
-| `--port`, `--root`, `--shell` | `crow-web` | `2770`, cwd, `$SHELL` | listener, owned workspace, pty shell |
 | `--agent`, `--agent-arg` | `crow-agent` | `crow-cli acp2` or `$CROW_AGENT` | the stdio agent it spawns itself |
 | `-w/--workspace`, `--session-id`, `--model`, `--theme` | `crow-agent` | cwd, —, `$CROW_MODEL`, persisted | client-side session choices |
 | `mcpServers` | `~/.agents/crow/config.yaml` | written by `crow-cli init` | the supply `crow-cli run` passes at `session/new` |
@@ -47,7 +43,7 @@ client, and do not restart it to change a client.
 ## Which client starts the agent
 
 - **Spawns its own over stdio:** `crow-cli run` (top `agent_servers` entry), `crow-agent` (`--agent`).
-- **Dials a running server:** the IDE chat panel, the browser SPA, and `crow-web`'s `/acp` proxy.
+- **Dials a running server:** the IDE chat panel — the desktop app and `crow serve-web` alike.
 - **Third-party clients** (Zed, …) spawn the command you declare, and forward their
   `context_servers` as the tool supply.
 

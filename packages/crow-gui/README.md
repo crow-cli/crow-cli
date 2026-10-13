@@ -295,6 +295,8 @@ which `apply_patch` substitutes from `crow.env` at apply time.
 
 ## Naming
 
-`packages/crow-gui` (this directory) is the **IDE build pipeline**.
-`crates/crow-gui` is the unrelated **ratatui-over-wgpu renderer** used by
-`crow-web`. They share a name and nothing else.
+`packages/crow-gui` (this directory) is the **IDE build pipeline**, and the only
+`crow-gui` left. A `crates/crow-gui` (ratatui-over-wgpu renderer) and a
+`crates/crow-web` (the browser client's state server) used to share the name;
+both are deleted. `/usr/bin/crow-web` from the .deb is neither — that is the
+IDE's own `reh-web` server, the one `crow serve-web` starts.

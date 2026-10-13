@@ -82,7 +82,7 @@ Worktree: `~/.agents/crow/src/worktrees/crow-cli-cleanup` (branch
       sprint has no Rust gate: Phase 4 has to prove `gui__tests.rs` is gone and
       the rest still pass.
 
-- [ ] **G. Docs and manifests**: root `Cargo.toml` members, root
+- [x] **G. Docs and manifests**: root `Cargo.toml` members, root
       `package.json` (description + the `web:*` scripts), `README.md`
       (the `crow-web` rows/sections, the repo map, the cargo `-p` note),
       `AGENTS.md` (the `cargo run -p crow-web` launch recipe and the arg table
@@ -94,6 +94,20 @@ Worktree: `~/.agents/crow/src/worktrees/crow-cli-cleanup` (branch
       `~/src/crow-gui/vscode`, which has the pinned `08d4889` / 1.135.0), the
       bun build of `packages/vscode-acp` **with chat as its webview root**, the
       bundled built-ins, `cargo build --release --bin crow-agent`, `dpkg -i`.
+
+- [ ] **J. Found, NOT done — needs a decision, so it is written down instead of
+      patched.** `crates/crow-client/Cargo.toml`'s `[package.metadata.deb]` is
+      orphaned twice over: its first asset is
+      `["../../target/release/crow", "/usr/bin/crow", "755"]`, but `bc03c5c7`
+      renamed that binary to `crow-agent`, so `cargo deb -p crow-client` cannot
+      have worked since; and `/usr/bin/crow` + `crow.desktop` are now owned by
+      the **IDE's** deb from `crow-cli install crow`, whose `crow` is the
+      three-door shim. So the TUI's own deb route either wants
+      `/usr/bin/crow-agent` + `crow-agent.desktop`, or it wants deleting
+      outright as a route the IDE install replaced. `crates/crow-client/README.md`
+      says so at the `cargo deb` section. Not touched in this sprint: picking
+      between those two is a product call, and `install crow` does not use
+      `cargo deb`.
 
 ## Explicitly NOT in scope
 

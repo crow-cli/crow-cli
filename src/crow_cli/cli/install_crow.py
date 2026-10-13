@@ -62,9 +62,8 @@ def run(argv: list[str], cwd: Path) -> None:
     console.print(f"[dim]$ {' '.join(argv)}[/dim]")
     subprocess.run(argv, cwd=cwd, check=True)
 
-# Everything crow installs lives under ~/.local/share/crow, beside the
-# crow-web tier's own state; the build tree in packages/crow-gui/vscodium is
-# scratch and can be deleted after installing.
+# Everything crow installs lives under ~/.local/share/crow; the build tree in
+# packages/crow-gui/vscodium is scratch and can be deleted after installing.
 SHARE_DIR = ".local/share/crow"
 IDE_SUBDIR = "ide"
 WEB_SUBDIR = "web"
