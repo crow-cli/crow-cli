@@ -1,34 +1,111 @@
-# TODO — Web build, editor themes, and the Electron GUI
+# TODO — chat is the extension's webview; delete the orphaned front ends
 
 ## **DO NOT ASK USER FOR FEEDBACK — THIS IS THE USER FEEDBACK.**
 ## **DO NOT ASK USER FOR NEXT STEPS — THESE ARE THE NEXT STEPS.**
 
-Sprint: turn the embedded `crow-web` binary into a clean desktop GUI and give the
-editor real themes (not just dark vs light). Repo root = MAIN
-(`~/.agents/crow/src/crow-cli`).
+Sprint: the product is the **vscode extension** (`packages/vscode-acp`) plus
+**`crow serve-web`** (the IDE's own browser server). `packages/chat` now exists
+*solely* as the extension's webview source. Remove the editor pane, the bottom
+terminal and everything else the extension cannot reach; delete the orphaned
+crates and shells that only the old "web IDE in a Rust server" route needed.
+**Leave the Python alone** except for orphaned test/script files whose subject
+is deleted. The workflow that must still work, from this worktree, is
+**`crow-cli install crow`**.
+
+Worktree: `~/.agents/crow/src/worktrees/crow-cli-cleanup` (branch
+`crow-cli-cleanup`, off `main` @ 94510f6b). Ordered execution: `PLAN.md`.
 
 ## Items (unordered)
 
-- [x] Push main (the ACP v2 execute fix) — `a92fc4a3` → origin/main.
-- [x] Confirm `crow-cli install web` is already wired
-      (`src/crow_cli/cli/install_web.py`): `bun install` → `bun run web:build`
-      → `cargo build --release -p crow-web` → `~/.local/bin/crow-web` + systemd
-      user unit. Verify with `crow-cli install web --help`.
-- [x] Editor theming: CodeMirror editor follows the app theme (latte/mocha/
-      macchiato) by building its highlight style from the `--code-*` token
-      variables instead of hardcoded `oneDark`/`defaultHighlightStyle`.
-      Verify: `bun run web:typecheck` + `bun run web:build` exit 0; live browser
-      shows editor token colours change with the theme dropdown.
-- [x] Electron shell: `packages/electron` (standalone, NOT a workspace member)
-      whose main process spawns the `crow-web` binary (embedded SPA) and loads
-      its loopback URL in a BrowserWindow. Pure spawn/parse logic in
-      `launcher.cjs`, unit-tested with `bun test`.
-      Verify: `bun test` green, `node --check main.cjs` clean.
-- [x] `crow-cli install gui`: build SPA + crow-web (reuse the web build), install
-      the Electron app + a `~/.local/bin/crow-gui` launcher + a `.desktop` entry.
-      Verify: `crow-cli install gui --help` lists it; `--dry-run` reaches the
-      copy/launcher steps without downloading electron.
-- [x] Remove the `install desktop` / `install check` cruft that downloads
-      `odellus/sidex` (a different repo) — the real GUI install replaces it.
+- [ ] **A. The empty-editor watermark is the wrong SVG.** *(separate item —
+      written down before any deletion, and executed as its own phase)*
+      What renders when an editor group has nothing to display is still
+      VSCodium's codium glyph, not crow's:
+      `packages/crow-gui/vscodium/src/stable/src/vs/workbench/browser/parts/editor/media/letterpress-{dark,light,hcDark,hcLight}.svg`.
+      Those four files are the `background-image` of `.letterpress` in the
+      editor-group watermark — upstream `src/vs/workbench/browser/parts/editor/media/editorgroupview.css:129-150`
+      (one url per theme, `background-size: contain`, `aspect-ratio: 1/1`,
+      `max-width: 256px`), element created at `editorGroupWatermark.ts:105`.
+      Replace the glyph with crow's mark, keeping each file's theme colour and
+      its `<g id="codium_grey_*_letterpress">` wrapper. Mechanism: extend
+      `packages/crow-gui/make_icons.py` (it already generates
+      `src/stable/src/vs/workbench/browser/media/code-icon.svg` into the same
+      tree) with a `write_letterpress()`, run it, commit art + generated files —
+      `build.sh` does `cp -rp src/stable/* vscode/` on **every** run, so the swap
+      lands in the desktop app and in `serve-web` alike.
+      Facts already established: `art/crow-logo.svg` is one `<path>` in a
+      `0 0 1024 1024` viewBox, glyph alpha bbox `(166,152,856,853)` — centred,
+      ~67% of the box, **no transform needed**. The path carries
+      `style="fill:#ffffff;fill-opacity:1"`, which **overrides** its
+      `fill="none" stroke="#000000" stroke-width="1"` attributes (inline style
+      beats presentation attributes). That is why `make_icons.py`'s comment
+      calls the art "a stroke-only outline that vanishes" and embeds a raster
+      instead. The generated letterpress must therefore set `fill` as an
+      attribute and **drop the `style`**, or the watermark renders solid white.
+      Colours to preserve per variant: dark `#B2B2B2` @ `fill-opacity="0.3"`,
+      light `#B2B2B2` @ `0.1`, hcDark `#3C3C3C` (no opacity), hcLight `#B2B2B2`
+      (no opacity). Source of the art: the tracked, metadata-stripped
+      `packages/crow-gui/art/crow-logo.svg` (same path data as
+      `~/src/crow-gui/crow-logo.svg` minus the Inkscape/Sodipodi cruft).
 
-**Floor gates (every item):** `bun run web:typecheck` + `bun run web:build` PASS.
+- [ ] **B. Refactor `packages/chat` down to what the extension imports.**
+      Delete the 35 files unreachable from `src/vscode.tsx` (SPA entry, work
+      pane, explorer, bottom terminal, their stores and clients, the SPA-only
+      ui primitives), prune the 7 dependencies nothing left imports, and drop
+      the SPA build scaffolding. Keep every reachable file **byte-identical** —
+      this is a subtraction, not a redesign.
+
+- [ ] **C. Delete `packages/editor`** (`@crow/editor`). One consumer ever:
+      `chat/src/components/work/work-pane.tsx`. Orphaned by B.
+
+- [ ] **D. Delete `crates/crow-web`** — the Rust state server (fs buffers, ptys,
+      `/acp` proxy) that embedded `packages/chat/dist` via `rust-embed`. Nothing
+      else reads that dist.
+
+- [ ] **E. Delete `packages/electron`** — an Electron shell whose whole job is
+      spawning the `crow-web` binary (`main.cjs:startServer`). Orphaned by D.
+
+- [ ] **F. Delete `crates/crow-gui`** — the ratatui-over-wgpu/wasm UI service —
+      and everything that hangs off it: crow-client's `gui` feature + optional
+      dep, `src/gui/`, the `--gui` flag, `tests/unit/gui__tests.rs`, the `--gui`
+      assertions in `main__cli_args_tests.rs`, `packaging/crow-gui.desktop` (the
+      deb asset switches to `packaging/crow.desktop`), `scripts/build-web.sh`,
+      `scripts/test-web.sh`, `web/index.html`, and
+      `tests/e2e/test_web_paint_live.py`.
+
+- [ ] **G. Docs and manifests**: root `Cargo.toml` members, root
+      `package.json` (description + the `web:*` scripts), `README.md`
+      (the `crow-web` rows/sections, the repo map, the cargo `-p` note),
+      `AGENTS.md` (the `cargo run -p crow-web` launch recipe and the arg table
+      rows), `crates/crow-client/README.md` (the `crow-gui.desktop` /
+      `Exec=crow --gui` paragraph).
+
+- [ ] **H. Reproduce `crow-cli install crow` from this worktree.** The gate that
+      matters: `./build.sh --arch x64 --deb` (seeds the VS Code checkout from
+      `~/src/crow-gui/vscode`, which has the pinned `08d4889` / 1.135.0), the
+      bun build of `packages/vscode-acp` **with chat as its webview root**, the
+      bundled built-ins, `cargo build --release --bin crow-agent`, `dpkg -i`.
+
+## Explicitly NOT in scope
+
+- `packages/crow-gui` (the IDE build pipeline) — that IS the product. Only its
+  `make_icons.py` + the four generated letterpress SVGs change (item A).
+- `packages/aui/*` — chat imports `@assistant-ui/{acp,core,react,react-markdown}`.
+- `crates/crow-client` itself (the TUI) — minus the `--gui` runtime (item F).
+- `src/crow_cli/**` — the Python stays as-is. `install.py`'s docstring keeps its
+  historical "the old `install web` / `install gui` are gone" sentence, which is
+  still true and now doubly so.
+- The name collision is real and stays: `/usr/bin/crow-web` shipped by the .deb
+  is the **IDE's reh-web server**, unrelated to `crates/crow-web`. So are the
+  `"crow-web"` MCP slice label in `tests/e2e/test_mcp_multi_server.py:94` and the
+  docstring example in `src/crow_cli/mcp/server/main.py:14`.
+
+## Floor gates (every item)
+
+- `bun install` at the worktree root, then `bun run --cwd packages/chat typecheck`
+  and `bun run --cwd packages/chat test` — PASS
+- `bun run --cwd packages/vscode-acp build` and `... typecheck` — PASS (this is
+  the extension the IDE bundles; it compiles chat as its webview)
+- `cargo build --release --bin crow-agent` and `cargo test -p crow-client` — PASS
+- `uv --project . run pytest tests/unit tests/integration -q` — no new failures
+- `git grep -n` for the deleted names returns only intentional history/prose
