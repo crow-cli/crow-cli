@@ -119,7 +119,7 @@ Subtraction only. Every file the extension reaches stays **byte-identical**.
    returns only `PLAN.md`/`TODO.md`/journal prose.
 3. Commit: `chore: delete @crow/editor, orphaned by the chat subtraction`.
 
-## Phase 3 — delete `crates/crow-web` and `packages/electron` (TODO D, E)
+## Phase 3 — delete `crates/crow-web` and `packages/electron` (TODO D, E) ✅ done
 
 1. `git rm -r crates/crow-web packages/electron`.
 2. Root `Cargo.toml`: members → `["crates/crow-client", "crates/crow-gui"]`
@@ -266,6 +266,11 @@ The gate that matters. Long (~40 min the first time) and needs network for
   typecheck 0, chat test 35/0, extension build 0 with `chat.js` still
   **1,510.98 kB** (byte-size unchanged — the deleted code was never in the
   bundle), extension typecheck 0. bun.lock −7 packages.
+- **Phase 3** ✅ `crates/crow-web` (10 files) and `packages/electron` (4 files)
+  gone; root members → `[crow-client, crow-gui]`; Cargo.lock −508 lines.
+  `cargo build --release --bin crow-agent` 0, `cargo test -p crow-client` still
+  **982/0**. Remaining `crow-web` hits are the docs (Phase 5), crow-gui's own
+  wasm bin (Phase 4), and the IDE's unrelated `/usr/bin/crow-web`.
 - **Phase 2** ✅ `packages/editor` gone, workspace entry gone, bun.lock −120
   lines (every `@codemirror/*` and `@lezer/highlight` with it). chat typecheck 0,
   chat test 35/0, extension build 0 (`chat.js` still 1,510.98 kB), extension

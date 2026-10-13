@@ -58,11 +58,11 @@ Worktree: `~/.agents/crow/src/worktrees/crow-cli-cleanup` (branch
 - [x] **C. Delete `packages/editor`** (`@crow/editor`). One consumer ever:
       `chat/src/components/work/work-pane.tsx`. Orphaned by B.
 
-- [ ] **D. Delete `crates/crow-web`** — the Rust state server (fs buffers, ptys,
+- [x] **D. Delete `crates/crow-web`** — the Rust state server (fs buffers, ptys,
       `/acp` proxy) that embedded `packages/chat/dist` via `rust-embed`. Nothing
       else reads that dist.
 
-- [ ] **E. Delete `packages/electron`** — an Electron shell whose whole job is
+- [x] **E. Delete `packages/electron`** — an Electron shell whose whole job is
       spawning the `crow-web` binary (`main.cjs:startServer`). Orphaned by D.
 
 - [ ] **F. Delete `crates/crow-gui`** — the ratatui-over-wgpu/wasm UI service —
