@@ -10,6 +10,7 @@ commit both art/ and the generated files.
 
 import base64
 import io
+import re
 import sys
 from pathlib import Path
 
@@ -19,6 +20,19 @@ ROOT = Path(__file__).resolve().parent
 ART = ROOT / "art"
 RES = ROOT / "vscodium" / "src" / "stable" / "resources"
 BG = "#6553ff"  # the brand disc colour, matching art/crow-logo.png
+
+# The empty-editor-group watermark. Upstream ships four theme variants of its own
+# glyph as the CSS `background-image` of `.letterpress`
+# (src/vs/workbench/browser/parts/editor/media/editorgroupview.css), so the
+# colour has to be baked in per variant — it is not a mask. Group ids and the
+# `path6008` id are what the shipped files already carry; keep them.
+LETTERPRESS = ROOT / "vscodium/src/stable/src/vs/workbench/browser/parts/editor/media"
+WATERMARKS = {
+    "dark": ("crow_grey_dark_letterpress", "#B2B2B2", "0.3"),
+    "light": ("crow_grey_light_letterpress", "#B2B2B2", "0.1"),
+    "hcDark": ("crow_grey_hc_dark_letterpress", "#3C3C3C", None),
+    "hcLight": ("crow_grey_hc_light_letterpress", "#B2B2B2", None),
+}
 
 
 def tile() -> Image.Image:
@@ -94,6 +108,47 @@ def write_xpm(dest: Path, size: int = 64) -> None:
     print(f"  {dest.relative_to(ROOT)}  {size}x{size}, {len(colors)} colors + transparent")
 
 
+def crow_glyph() -> str:
+    """The crow silhouette's path data, out of art/crow-logo.svg."""
+    src = (ART / "crow-logo.svg").read_text()
+    match = re.search(r'<path\b[^>]*?\sd="([^"]+)"', src, re.S)
+    assert match, "unexpected art/crow-logo.svg shape"
+    d = match.group(1)
+    assert not (set(d) & set('"&<>')), "path data would need XML escaping"
+    return d
+
+
+def write_letterpress() -> None:
+    # What an empty editor group shows. Upstream's four variants are its own
+    # glyph; these are crow's, at the same opacities, so the watermark sits at
+    # the same visual weight in every theme.
+    #
+    # Only `d` is carried over from the art. art/crow-logo.svg paints that path
+    # with `style="fill:#ffffff;fill-opacity:1"`, and an inline style beats the
+    # fill/stroke presentation attributes — which is why the attributes read as
+    # "stroke-only outline" (see write_embedded_svg) while the file actually
+    # renders as a white silhouette. Copying the element wholesale would paint
+    # the watermark solid white in every theme; the fill below is the one that
+    # renders.
+    d = crow_glyph()
+    for name, (gid, fill, opacity) in WATERMARKS.items():
+        op = f' fill-opacity="{opacity}"' if opacity else ""
+        dest = LETTERPRESS / f"letterpress-{name}.svg"
+        dest.write_text(
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" '
+            '"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n'
+            '<svg version="1.1" xmlns="http://www.w3.org/2000/svg" '
+            'xmlns:xlink="http://www.w3.org/1999/xlink" x="0" y="0" '
+            'width="1024" height="1024" viewBox="0 0 1024 1024">\n'
+            f'  <g id="{gid}">\n'
+            f'    <path d="{d}" fill="{fill}"{op} id="path6008"/>\n'
+            "  </g>\n"
+            "</svg>\n")
+        weight = f"{fill} @ {opacity}" if opacity else fill
+        print(f"  {dest.relative_to(ROOT)}  {weight}")
+
+
 def main() -> int:
     if not (ART / "crow-logo.png").exists():
         print(f"missing {ART / 'crow-logo.png'}", file=sys.stderr)
@@ -110,6 +165,7 @@ def main() -> int:
     write_png(192, RES / "server/code-192.png")
     write_png(512, RES / "server/code-512.png")
     write_favicon(RES / "server/favicon.ico")
+    write_letterpress()
     return 0
 
 

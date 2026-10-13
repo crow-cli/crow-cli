@@ -192,14 +192,15 @@ becomes the `Terminal=true` one.
    test gate beyond the floor gates still passing.
 6. Commit: `docs: the front doors are the extension and crow serve-web`.
 
-## Phase 6 — the empty-editor watermark (TODO A) — separate, self-contained
+## Phase 6 — the empty-editor watermark (TODO A) — separate, self-contained ✅ done
 
 1. `packages/crow-gui/make_icons.py`: add `write_letterpress()` and call it from
    `main()`. It reads the single `<path … d="…">` out of `art/crow-logo.svg`
    (assert exactly one, assert the `d` is non-empty) and writes the four files
    under `vscodium/src/stable/src/vs/workbench/browser/parts/editor/media/`,
    each as `40x40`-style header + `viewBox="0 0 1024 1024"` +
-   `<g id="codium_grey_<variant>_letterpress">` + one `<path d=… fill=COLOUR
+   `<g id="crow_grey_<variant>_letterpress">` (renamed from upstream's
+   `codium_grey_*` — inert, see log) + one `<path d=… fill=COLOUR
    [fill-opacity=OP] id="path6008"/>`. Variant table:
    `dark → (#B2B2B2, 0.3)`, `light → (#B2B2B2, 0.1)`, `hcDark → (#3C3C3C, None)`,
    `hcLight → (#B2B2B2, None)`.
@@ -311,6 +312,32 @@ The gate that matters. Long (~40 min the first time) and needs network for
   chat test 35/0, extension build 0 (`chat.js` still 1,510.98 kB), extension
   typecheck 0. `git grep @crow/editor` → only README's repo map (Phase 5) and
   plan prose.
+
+- **Phase 6** ✅ `make_icons.py` grew `LETTERPRESS` + `WATERMARKS` +
+  `crow_glyph()` + `write_letterpress()`, called at the end of `main()`.
+  `crow_glyph()` regex-extracts the single `d` out of `art/crow-logo.svg`
+  (asserts exactly one match, asserts the `d` contains no XML-escaping chars)
+  and the writer emits `fill` / `fill-opacity` as **presentation attributes
+  only** — the art's `style="fill:#ffffff;fill-opacity:1"` is deliberately not
+  carried over, because inline style beats presentation attributes and would
+  paint the watermark solid white (commented in the code as the trap).
+  **Deviation from the plan text:** the wrapper group ids are
+  `crow_grey_<variant>_letterpress`, not upstream's `codium_grey_*`. The id is
+  inert — nothing anywhere references it by fragment (`grep -rn letterpress`
+  over the VS Code clone's `src/` + `build/` finds only the CSS
+  `background-image` urls, `editorGroupWatermark.ts:105` and
+  `build/next/resources.ts:27`'s `letterpress*.svg` glob, which keys on
+  *filename*), and this removes the last "codium" from crow's generated assets.
+  **Measured:** run via `runpy` in-kernel (PIL 12.3.0), exit 0; `git status`
+  shows **only the 4 letterpress files** — every icon output byte-identical, so
+  the generator is deterministic. Each file parses as XML, carries the right
+  `<g id>`, the right `fill`/`fill-opacity` from the table, **no `style=`
+  attribute**, `d` = 9941 chars, `viewBox="0 0 1024 1024"`, `id="path6008"`.
+  Inkscape raster at 256px: alpha bbox `(41,38,214,213)` for **all four** —
+  exactly ¼ of the art's `(166,152,856,853)`, so no transform was needed.
+  Max alpha / colour: dark `76` @ `(178,178,178)` (= 0.3 × 255), light `25`
+  (≈ 0.1), hcDark `255` @ `(60,60,60)`, hcLight `255` @ `(178,178,178)`.
+  Not white in any variant. End-to-end proof is Phase 7's installed IDE.
 
 ## Done when
 

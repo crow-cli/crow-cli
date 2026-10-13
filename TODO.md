@@ -17,7 +17,7 @@ Worktree: `~/.agents/crow/src/worktrees/crow-cli-cleanup` (branch
 
 ## Items (unordered)
 
-- [ ] **A. The empty-editor watermark is the wrong SVG.** *(separate item —
+- [x] **A. The empty-editor watermark is the wrong SVG.** *(separate item —
       written down before any deletion, and executed as its own phase)*
       What renders when an editor group has nothing to display is still
       VSCodium's codium glyph, not crow's:
