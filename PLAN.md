@@ -135,7 +135,7 @@ Subtraction only. Every file the extension reaches stays **byte-identical**.
    Check each hit before accepting it.
 5. Commit: `chore: delete crates/crow-web and its Electron shell`.
 
-## Phase 4 — delete `crates/crow-gui` and the `--gui` runtime (TODO F)
+## Phase 4 — delete `crates/crow-gui` and the `--gui` runtime (TODO F) ✅ done
 
 Forced consequence, stated plainly: without `crates/crow-gui` there is no
 ratatui-over-wgpu window, so `crow --gui` goes away and the deb's launcher entry
@@ -266,6 +266,21 @@ The gate that matters. Long (~40 min the first time) and needs network for
   typecheck 0, chat test 35/0, extension build 0 with `chat.js` still
   **1,510.98 kB** (byte-size unchanged — the deleted code was never in the
   bundle), extension typecheck 0. bun.lock −7 packages.
+- **Phase 4** ✅ `crates/crow-gui` (9 files, fonts included) gone, and with it
+  crow-client's `gui` feature + optional dep, `src/gui/{mod,app}.rs`, the `--gui`
+  flag (help line, field, parse arm, both cfg branches, the pet-pixels comment
+  that explained the window's override), `tests/unit/gui__tests.rs`, the four
+  `--gui` cases in `main__cli_args_tests.rs`, `packaging/crow-gui.desktop` (the
+  deb asset is now `packaging/crow.desktop`), `scripts/{build-web,test-web}.sh`,
+  `web/index.html` and `tests/e2e/test_web_paint_live.py`. Root members →
+  `[crow-client]`. **Measured:** `cargo build --release --bin crow-agent` 0 (one
+  pre-existing warning); `cargo test -p crow-client` **978 passed / 0 failed**
+  (960+3+1+13+1 — exactly the four removed cli-args cases; `gui__tests.rs` was
+  behind `feature = "gui"` so it never ran in a default build);
+  `cargo build --release --features gui` → rc 101 `error: the package
+  'crow-client' does not contain this feature: gui`; `crow-agent --help` has no
+  `--gui`; `pytest tests/e2e --collect-only` → 26 tests, `test_web_paint_live`
+  gone.
 - **Phase 3** ✅ `crates/crow-web` (10 files) and `packages/electron` (4 files)
   gone; root members → `[crow-client, crow-gui]`; Cargo.lock −508 lines.
   `cargo build --release --bin crow-agent` 0, `cargo test -p crow-client` still

@@ -65,7 +65,7 @@ Worktree: `~/.agents/crow/src/worktrees/crow-cli-cleanup` (branch
 - [x] **E. Delete `packages/electron`** — an Electron shell whose whole job is
       spawning the `crow-web` binary (`main.cjs:startServer`). Orphaned by D.
 
-- [ ] **F. Delete `crates/crow-gui`** — the ratatui-over-wgpu/wasm UI service —
+- [x] **F. Delete `crates/crow-gui`** — the ratatui-over-wgpu/wasm UI service —
       and everything that hangs off it: crow-client's `gui` feature + optional
       dep, `src/gui/`, the `--gui` flag, `tests/unit/gui__tests.rs`, the `--gui`
       assertions in `main__cli_args_tests.rs`, `packaging/crow-gui.desktop` (the

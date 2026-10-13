@@ -1,8 +1,8 @@
-# Workspace root: the TUI/ACP client and the runtime-agnostic UI service.
-# Mirrors fresh's layout (crates/<name>); the root manifest is virtual so
-# `cargo build` at the repo root builds exactly the default members.
+# Workspace root: the TUI/ACP client. Mirrors fresh's layout (crates/<name>);
+# the root manifest is virtual, so `cargo build` at the repo root builds exactly
+# the default members.
 [workspace]
-members = ["crates/crow-client", "crates/crow-gui"]
+members = ["crates/crow-client"]
 default-members = ["crates/crow-client"]
 resolver = "2"
 

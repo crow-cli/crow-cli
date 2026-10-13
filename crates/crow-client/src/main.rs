@@ -15,8 +15,6 @@ mod elicitation;
 mod events;
 mod ext;
 mod file_ref;
-#[cfg(feature = "gui")]
-mod gui;
 mod input;
 mod locale;
 mod logo;
@@ -72,7 +70,6 @@ OPTIONS:
       --agent <cmd>         ACP agent command (default: crow-cli acp2 or $CROW_AGENT)
       --agent-arg <arg>     extra argument for --agent (repeatable)
       --theme <dark|light>  colour palette (default: persisted, then dark)
-      --gui                 native GPU window (ratatui over wgpu), not the terminal
       --demo                scripted turns, no agent needed
       --attach-fds          speak ACP over inherited fds 3/4 (host attach)
       --attach-tcp <addr>   authenticated loopback TCP (Windows)
@@ -104,8 +101,6 @@ struct Args {
     attach_tcp: Option<String>,
     check_runtime: bool,
     dump_frame: Option<(u16, u16)>,
-    /// Run in a native window (ratatui painted over wgpu) instead of the terminal.
-    gui: bool,
 }
 
 fn parse_args() -> Result<Args> {
@@ -126,7 +121,6 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<Args> {
         attach_tcp: None,
         check_runtime: false,
         dump_frame: None,
-        gui: false,
     };
     let mut it = args.into_iter().peekable();
     while let Some(arg) = it.next() {
@@ -141,7 +135,6 @@ fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<Args> {
             "--agent" => args_out.agent = Some(take("--agent")?),
             "--agent-arg" => args_out.agent_args.push(take("--agent-arg")?),
             "--theme" => args_out.theme = Some(take("--theme")?),
-            "--gui" => args_out.gui = true,
             "--demo" => args_out.demo = true,
             "--attach-fds" => args_out.attach_fds = true,
             "--attach-tcp" => args_out.attach_tcp = Some(take("--attach-tcp")?),
@@ -324,9 +317,8 @@ fn collect_event_batch(first: AppEvent, rx: &mpsc::Receiver<AppEvent>) -> (Vec<A
     (batch, immediate)
 }
 
-/// Everything both runtimes need before they diverge: config, session id, the
-/// event bus, the controller thread and the `App`. The TTY loop and the `--gui`
-/// window differ only in what they do with these (Phase 3.3).
+/// Everything the runtime needs before it starts: config, session id, the event
+/// bus, the controller thread and the `App`.
 pub(crate) struct Startup {
     pub(crate) app: App,
     pub(crate) controller: Controller,
@@ -408,8 +400,7 @@ fn startup(args: &Args) -> Result<Startup> {
     // startup session once it binds, the same wire path the ctrl+p picker uses.
     app.startup_model = startup_model(args);
     // The composer pet: real pixels (kitty graphics) where the terminal can,
-    // half-block art (drawn by ui) where it can't. The GUI window overrides
-    // this back to false: it has no kitty channel.
+    // half-block art (drawn by ui) where it can't.
     app.pet_pixels = pet::kitty_supported();
     // ":branch" after the project path in the composer cap. Seeded here;
     // `App::tick` re-checks on a throttle and `!` shell commands refresh
@@ -443,14 +434,6 @@ fn main() -> Result<()> {
         bail!("--attach-fds and --attach-tcp are mutually exclusive");
     }
 
-    // `--gui` needs the `gui` cargo feature (crow-gui: winit + ratatui-wgpu).
-    // Without it, fail loudly instead of silently falling through to the TUI,
-    // which reads as "the flag was ignored". With it, the window is the whole
-    // program: no terminal to enter, no crossterm input thread, no alt screen.
-    #[cfg(not(feature = "gui"))]
-    if args.gui {
-        bail!("--gui needs a GUI-enabled build: rebuild with `cargo build --release --features gui`");
-    }
     if args.check_runtime {
         return check_runtime(&args);
     }
@@ -459,21 +442,6 @@ fn main() -> Result<()> {
     }
 
     let start = startup(&args)?;
-
-    // The window is the whole program: no terminal to enter, no crossterm
-    // input thread, no alt screen to leave.
-    #[cfg(feature = "gui")]
-    if args.gui {
-        let session_id = start.app.session_id.clone();
-        let demo = start.app.demo;
-        gui::run_crow_app(start)?;
-        // Same out-of-band handoff as the TTY tail below: the caller grabs the
-        // live session id for `--session-id` resume. stderr, never stdout.
-        if !demo {
-            eprintln!("session {}", session_id);
-        }
-        return Ok(());
-    }
     let Startup { mut app, controller, bus_tx, bus_rx } = start;
 
     let mut pet = pet::Pet::new(app.pet_pixels);
@@ -891,6 +859,3 @@ mod event_batch_tests;
 #[path = "../tests/unit/main__tty_mode_tests.rs"]
 mod tty_mode_tests;
 
-#[cfg(all(test, feature = "gui"))]
-#[path = "../tests/unit/gui__tests.rs"]
-mod gui_tests;
