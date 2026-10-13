@@ -12,7 +12,7 @@ fn attach_tcp_connects_to_loopback_and_authenticates_first() {
         .expect("nonblocking listener");
     let address = listener.local_addr().expect("listener address");
     let token = "test-one-time-token";
-    let mut child = Command::new(env!("CARGO_BIN_EXE_crow"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_crow-agent"))
         .args(["--attach-tcp", &address.to_string()])
         .env("CROW_ATTACH_TOKEN", token)
         .stdin(Stdio::null())

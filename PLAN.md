@@ -31,7 +31,19 @@ Never push.
 2. `bun install` at `<W>`; `bun install` at `<W>/packages/vscode-acp`.
 3. Record the baseline: run every floor gate once, plus
    `uv --project . run pytest tests/unit tests/integration -q`. Write the pass/fail
-   counts into this file so later phases compare against a number, not a memory.
+   counts into `TODO.md`'s "Floor gates" so later phases compare against a
+   number, not a memory. **Measured:** chat typecheck 0; chat test 35/0;
+   vscode-acp build 0 (+`dist/webview/{chat.js,chat.css,assets}`) and typecheck 0;
+   `cargo build --release --bin crow-agent` 0 in 90s; `cargo test -p crow-client`
+   982/0 **after step 3b**; pytest 1089 passed / 6 failed (the known
+   environmental set — browser + child-agent spawns).
+3b. **Item I — un-orphan the Rust integration tests.** `cargo test -p
+   crow-client` is red on `main` (rc 101, 5 compile errors): `cli_help.rs` (3
+   sites), `tcp_attach.rs`, `sigterm_cleanup.rs`, `startup_session_e2e.rs` all
+   `env!("CARGO_BIN_EXE_crow")`, but `bc03c5c7` renamed the bin to `crow-agent`.
+   Rename all six to `CARGO_BIN_EXE_crow-agent`.
+   **Verify:** `cargo test -p crow-client --no-run` rc 0, then the full run is
+   982 passed / 0 failed. Commit this on its own — it is a fix, not a deletion.
 4. Confirm the extension build's coupling before touching anything:
    `packages/vscode-acp/vite.config.ts` has `root: ../chat` and
    `input: chat/src/vscode.tsx`; its `build` script invokes

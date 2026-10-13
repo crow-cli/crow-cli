@@ -306,7 +306,7 @@ fn spawn_pane(
     let master = unsafe { File::from_raw_fd(master_fd) };
     let slave = unsafe { File::from_raw_fd(slave_fd) };
     let stderr = File::create(home.join("stderr.txt")).expect("capture stderr");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_crow"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_crow-agent"));
     // No `--agent` at all when the recipe comes from settings.json: passing one
     // would win over `harness::selected()` and the test would prove nothing.
     if stub.is_some() {

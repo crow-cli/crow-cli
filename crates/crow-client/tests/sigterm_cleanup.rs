@@ -27,7 +27,7 @@ mod unix {
 
         let mut master = unsafe { File::from_raw_fd(master) };
         let slave = unsafe { File::from_raw_fd(slave) };
-        let mut child = Command::new(env!("CARGO_BIN_EXE_crow"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_crow-agent"))
             .arg("--demo")
             .env("TERM", "xterm-256color")
             .env_remove("TERM_PROGRAM")

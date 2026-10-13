@@ -73,6 +73,15 @@ Worktree: `~/.agents/crow/src/worktrees/crow-cli-cleanup` (branch
       `scripts/test-web.sh`, `web/index.html`, and
       `tests/e2e/test_web_paint_live.py`.
 
+- [ ] **I. Un-orphan `crates/crow-client`'s integration tests.** Five test files
+      (`cli_help.rs`, `tcp_attach.rs`, `sigterm_cleanup.rs`,
+      `startup_session_e2e.rs`) still say `env!("CARGO_BIN_EXE_crow")`, but
+      `bc03c5c7` renamed the bin to `crow-agent`, so `cargo test -p crow-client`
+      has been **red on main ever since** — 5 compile errors, no test results at
+      all. Rename the six sites to `CARGO_BIN_EXE_crow-agent`. Without this the
+      sprint has no Rust gate: Phase 4 has to prove `gui__tests.rs` is gone and
+      the rest still pass.
+
 - [ ] **G. Docs and manifests**: root `Cargo.toml` members, root
       `package.json` (description + the `web:*` scripts), `README.md`
       (the `crow-web` rows/sections, the repo map, the cargo `-p` note),
@@ -100,12 +109,26 @@ Worktree: `~/.agents/crow/src/worktrees/crow-cli-cleanup` (branch
   `"crow-web"` MCP slice label in `tests/e2e/test_mcp_multi_server.py:94` and the
   docstring example in `src/crow_cli/mcp/server/main.py:14`.
 
-## Floor gates (every item)
+## Floor gates (every item) — Phase 0 baselines, measured in this worktree
 
-- `bun install` at the worktree root, then `bun run --cwd packages/chat typecheck`
-  and `bun run --cwd packages/chat test` — PASS
-- `bun run --cwd packages/vscode-acp build` and `... typecheck` — PASS (this is
-  the extension the IDE bundles; it compiles chat as its webview)
-- `cargo build --release --bin crow-agent` and `cargo test -p crow-client` — PASS
-- `uv --project . run pytest tests/unit tests/integration -q` — no new failures
+- `bun install` at the worktree root — exit 0 (773 packages)
+- `bun run --cwd packages/chat typecheck` — exit 0
+- `bun run --cwd packages/chat test` — **35 pass, 0 fail, 3 files**
+- `bun run --cwd packages/vscode-acp build` — exit 0, writes `dist/extension.cjs`
+  and `dist/webview/{chat.js,chat.css,assets/}` (this is the extension the IDE
+  bundles; it compiles chat as its webview)
+- `bun run --cwd packages/vscode-acp typecheck` — exit 0
+- `cargo build --release --bin crow-agent` — exit 0, 90s (one pre-existing
+  warning: `ui_preset` is never read)
+- `cargo test -p crow-client` — **982 pass, 0 fail** (964 unit + 3 + 1 + 13 + 1),
+  but only after item I: on `main` this is 5 compile errors, rc 101
+- `uv --project . run pytest tests/unit tests/integration -q` — **1089 passed,
+  6 failed** in 331s. The 6 are the known environmental set and are the
+  baseline, not a regression: `test_run_screenshot_rides_the_row` (needs a real
+  browser), `test_the_v2_prompt_lifecycle_lands_on_the_wire_in_order`,
+  `test_a_child_that_dies_mid_turn_marks_the_task_failed`,
+  `test_a_poke_for_a_foreign_session_is_dropped_without_disturbing_ours`,
+  `test_a_child_that_dies_mid_turn_raises_instead_of_hanging`,
+  `test_a_delegate_that_dies_is_reported_and_not_hung` (all four spawn a child
+  agent process and die on `ConnectionError: Connection closed` / timeout).
 - `git grep -n` for the deleted names returns only intentional history/prose

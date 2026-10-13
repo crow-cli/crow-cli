@@ -2,7 +2,7 @@ use std::process::Command;
 
 #[test]
 fn help_names_the_current_expand_shortcut() {
-    let output = Command::new(env!("CARGO_BIN_EXE_crow"))
+    let output = Command::new(env!("CARGO_BIN_EXE_crow-agent"))
         .arg("--help")
         .output()
         .expect("run crow --help");
@@ -21,7 +21,7 @@ fn help_names_the_current_expand_shortcut() {
 
 #[test]
 fn help_offers_no_provider_route_and_no_credentials() {
-    let output = Command::new(env!("CARGO_BIN_EXE_crow"))
+    let output = Command::new(env!("CARGO_BIN_EXE_crow-agent"))
         .arg("--help")
         .output()
         .expect("run crow --help");
@@ -48,7 +48,7 @@ fn help_offers_no_provider_route_and_no_credentials() {
 
 #[test]
 fn help_omits_the_removed_demo_skin_flag() {
-    let output = Command::new(env!("CARGO_BIN_EXE_crow"))
+    let output = Command::new(env!("CARGO_BIN_EXE_crow-agent"))
         .arg("--help")
         .output()
         .expect("run crow --help");
