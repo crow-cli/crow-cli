@@ -211,6 +211,7 @@ import {
 | `configOptions` + `config_option_update`   | `useAcpConfigOptions`                                    |
 | `session/set_config_option`                | `useAcpSetConfigOption`                                  |
 | `usage_update`                             | `useAcpUsage`                                            |
+| `compaction_update` / `compaction_summary_chunk` | `data` content part named `ACP_COMPACTION_PART`    |
 | `initialize` → `agentInfo`/`agentCapabilities` | `useAcpAgentInfo` / `useAcpAgentCapabilities`        |
 
 `session/new` and `session/load` report the session's initial `modes` and
@@ -225,6 +226,41 @@ three are accumulated across a call's updates: a frame that omits `name` cannot
 downgrade the key to the title it happens to carry. All three stay readable on
 the part as `providerMetadata.acp` (`{ name?, kind?, title? }`), so a renderer
 can still show the label.
+
+**Context compaction becomes a named `data` part.** `compaction_update` upserts
+the entity a `compactionId` names and `compaction_summary_chunk` appends one
+content block to its retained summary while the pass is open. The reducer keeps
+that entity on the assistant message as a `data` part named `ACP_COMPACTION_PART`
+whose part id is the compaction id, so the first update fixes the compaction's
+place in the thread and every later one patches it in place instead of scattering
+a token per part. `summary` and `error` carry patch semantics: an absent `summary`
+keeps what streamed, while `null` and `[]` are the explicit clear. A pass still
+open when the turn ends is settled there — `cancelled` for a cancelled turn,
+otherwise `failed` with `"turn ended"` — because an agent or connection that dies
+mid-compaction owes no terminal update, and a card left spinning is a compaction
+the user cannot tell from a live one.
+
+Nothing draws the part until the host registers a renderer for that name:
+
+```tsx
+import { ACP_COMPACTION_PART, type AcpCompaction } from "@assistant-ui/acp";
+import {
+  useAssistantDataUI,
+  type DataMessagePartProps,
+} from "@assistant-ui/react";
+
+const Compaction = ({ data }: DataMessagePartProps<AcpCompaction>) => …;
+
+// Module level: the hook re-registers whenever `render`'s identity moves.
+const COMPACTION_UI = { name: ACP_COMPACTION_PART, render: Compaction };
+
+useAssistantDataUI(COMPACTION_UI);
+```
+
+`@crow/chat` ships that renderer (`components/compaction-card.tsx`), mirroring
+crow-client's `CellKind::Compaction` transcript cell: one receipt line — spinning
+while the pass runs, then its outcome, duration and the lines it kept — with the
+retained summary behind it, open while it streams and closed once it settles.
 
 Browser clients advertise **no** filesystem or terminal capabilities, so a
 conforming ACP agent will never send `fs/*` or `terminal/*` requests; any such

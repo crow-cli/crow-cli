@@ -1,8 +1,9 @@
 import { useMemo, useState, type ComponentType, type ReactNode } from "react";
 import { useAcpRuntime, useAcpSessionId, type AcpMcpServer, type UseAcpRuntimeOptions } from "@assistant-ui/acp";
-import { AssistantRuntimeProvider } from "@assistant-ui/react";
+import { AssistantRuntimeProvider, useAssistantDataUI } from "@assistant-ui/react";
 import { Thread, type ThreadComponents } from "@/components/assistant-ui/elements/thread.aui";
 import { CollapseAwareReasoningGroup } from "@/components/collapse-aware-reasoning";
+import { COMPACTION_DATA_UI } from "@/components/compaction-card";
 import { AcpToolCard } from "@/components/tools/acp-tool-card";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useCollapseAllKey } from "@/lib/collapse-all";
@@ -15,6 +16,9 @@ const THREAD_COMPONENTS = {
 
 export function ChatThread({ composerStatus }: { composerStatus?: ComponentType | undefined }) {
   const sessionId = useAcpSessionId();
+  // Compaction rides the thread as a named `data` part, which assistant-ui only
+  // draws once a renderer is registered for that name.
+  useAssistantDataUI(COMPACTION_DATA_UI);
   const components = useMemo<ThreadComponents>(
     () => (composerStatus ? { ...THREAD_COMPONENTS, ComposerStatus: composerStatus } : THREAD_COMPONENTS),
     [composerStatus],

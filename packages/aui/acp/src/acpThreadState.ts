@@ -28,6 +28,14 @@ import {
   resolveToolCallApproval,
   userPartsFromBlock,
 } from "./conversions";
+import {
+  applyCompactionPatch,
+  appendCompactionSummary,
+  compactionSummaryText,
+  newCompactionPart,
+  settleOpenCompactions,
+  type AcpCompactionPatch,
+} from "./compaction";
 
 type AssistantPart = ThreadAssistantMessage["content"][number];
 
@@ -101,6 +109,14 @@ export type AcpThreadState = {
   readonly configOptions: readonly AcpSessionConfigOption[] | undefined;
   readonly usage: AcpUsage | undefined;
   readonly toolCallStatuses: Readonly<Record<string, AcpToolCallStatus>>;
+  /**
+   * `compactionId` -> the message whose content carries its `data` part. Unlike
+   * `toolCallStatuses` this survives the turn that produced it: the schema lets
+   * a terminal update arrive after the chunks, and a late patch that cannot find
+   * its entity leaves a card spinning on a finished turn. Cleared with the
+   * transcript, which is the only thing that invalidates a message id.
+   */
+  readonly compactionMessages: Readonly<Record<string, string>>;
 };
 
 export type AcpThreadEvent =
@@ -168,6 +184,7 @@ export const EMPTY_ACP_THREAD_STATE: AcpThreadState = {
   configOptions: undefined,
   usage: undefined,
   toolCallStatuses: {},
+  compactionMessages: {},
 };
 
 export const createAcpThreadState = (): AcpThreadState =>
@@ -381,6 +398,127 @@ const applyUserBlocks = (
   return next;
 };
 
+/**
+ * Patch the entity `id` names wherever its part lives, or open it in the
+ * message an incoming update belongs to. The first sight of an id fixes the
+ * compaction's position in the timeline — the part is appended where the update
+ * arrived, between the tool calls and text around it — and every later update
+ * patches that same part in place, which is what keeps a streamed summary in
+ * one card instead of scattering a token per part.
+ *
+ * An update that arrives with no run in flight and no replay open is dropped,
+ * by the same rule every other session update here follows: agent2 only ever
+ * compacts inside a turn, so there is always a running assistant to write into.
+ */
+const upsertCompaction = (
+  state: AcpThreadState,
+  id: string,
+  patch: AcpCompactionPatch,
+): AcpThreadState => {
+  const now = Date.now();
+  const knownId = state.compactionMessages[id];
+  const known = knownId === undefined ? undefined : state.messagesById[knownId];
+  if (known?.role === "assistant") {
+    const content = applyCompactionPatch(known.content, id, patch, now);
+    if (content === undefined) return state;
+    return {
+      ...state,
+      messagesById: {
+        ...state.messagesById,
+        [known.id]: { ...known, content },
+      },
+    };
+  }
+  const base = ensureReplayAssistant(state);
+  const message = activeAssistant(base);
+  if (!message) return state;
+  const content =
+    applyCompactionPatch(message.content, id, patch, now) ?? [
+      ...message.content,
+      newCompactionPart(id, patch, now),
+    ];
+  return {
+    ...base,
+    messagesById: {
+      ...base.messagesById,
+      [message.id]: { ...message, content },
+    },
+    compactionMessages: { ...base.compactionMessages, [id]: message.id },
+  };
+};
+
+/**
+ * One streamed summary chunk. A chunk whose id was never opened is out of spec
+ * — the agent owes an `in_progress` update first — but dropping the summary on
+ * the floor is worse than opening the entity late, so it upserts instead.
+ */
+const appendCompactionChunk = (
+  state: AcpThreadState,
+  id: string,
+  text: string,
+): AcpThreadState => {
+  const knownId = state.compactionMessages[id];
+  const known = knownId === undefined ? undefined : state.messagesById[knownId];
+  if (known?.role === "assistant") {
+    const content = appendCompactionSummary(known.content, id, text);
+    if (content === undefined) return state;
+    return {
+      ...state,
+      messagesById: {
+        ...state.messagesById,
+        [known.id]: { ...known, content },
+      },
+    };
+  }
+  return upsertCompaction(state, id, {
+    status: "in_progress",
+    summary: text,
+  });
+};
+
+/**
+ * Settle compactions still open when the turn ends.
+ *
+ * agent2 always reports its own terminal status — `cancelled` is a separate
+ * branch in its `compaction.run()` precisely because `asyncio.CancelledError`
+ * is a `BaseException` and `except Exception` sails past it — so this only
+ * fires when the agent or the connection died mid-pass. It is not cosmetic:
+ * a card left spinning is a compaction the user cannot tell from a live one.
+ */
+const settleCompactions = (
+  state: AcpThreadState,
+  status: MessageStatus,
+): AcpThreadState => {
+  const ids = Object.keys(state.compactionMessages);
+  if (ids.length === 0) return state;
+  const cancelled =
+    status.type === "incomplete" && status.reason === "cancelled";
+  const now = Date.now();
+  let next = state;
+  let settled = false;
+  for (const id of ids) {
+    const messageId = next.compactionMessages[id]!;
+    const message = next.messagesById[messageId];
+    if (message?.role !== "assistant") continue;
+    const content = settleOpenCompactions(
+      message.content,
+      cancelled ? "cancelled" : "failed",
+      cancelled ? null : "turn ended",
+      now,
+    );
+    if (content === undefined) continue;
+    next = {
+      ...next,
+      messagesById: {
+        ...next.messagesById,
+        [messageId]: { ...message, content },
+      },
+    };
+    settled = true;
+  }
+  return settled ? next : state;
+};
+
 const reduceSessionUpdate = (
   state: AcpThreadState,
   update: AcpSessionUpdate,
@@ -416,6 +554,31 @@ const reduceSessionUpdate = (
         cost: update.cost ?? null,
       };
       return { ...state, usage };
+    }
+    // Context compaction. v2 has no capability handshake for it — agent2 emits
+    // these unconditionally — so these two arms are the whole of the client's
+    // side. Without them the updates fall to the default arm below, which reads
+    // them as tool calls, changes nothing, and leaves a compaction invisible:
+    // the context meter just drops with nothing to say why.
+    case "compaction_update": {
+      const id = update.compactionId;
+      if (typeof id !== "string" || id === "") return state;
+      return upsertCompaction(state, id, {
+        status: update.status,
+        // Absent stays absent, which keeps what the chunks accumulated; `null`
+        // and `[]` both flatten to "" and read as the explicit clear they are.
+        ...(update.summary !== undefined && {
+          summary: compactionSummaryText(update.summary),
+        }),
+        ...(update.error !== undefined && { error: update.error }),
+      });
+    }
+    case "compaction_summary_chunk": {
+      const id = update.compactionId;
+      if (typeof id !== "string" || id === "" || !update.content) return state;
+      const text = compactionSummaryText([update.content]);
+      if (text === "") return state;
+      return appendCompactionChunk(state, id, text);
     }
     case "user_message_chunk": {
       // Live, the user's turn is already on screen — the controller appended it
@@ -575,6 +738,7 @@ export const reduceAcpThreadState = (
         replay: { type: "idle" },
         permissions: {},
         toolCallStatuses: {},
+        compactionMessages: {},
       };
     }
 
@@ -674,20 +838,23 @@ export const reduceAcpThreadState = (
         configOptions: undefined,
         usage: undefined,
         toolCallStatuses: {},
+        compactionMessages: {},
       };
 
     case "run-end": {
       const next = cancelPermissions(state);
       const assistant = runningAssistant(next);
-      if (!assistant) return { ...next, run: { type: "idle" } };
-      return {
-        ...next,
-        messagesById: {
-          ...next.messagesById,
-          [assistant.id]: { ...assistant, status: event.status },
-        },
-        run: { type: "idle" },
-      };
+      const idle = !assistant
+        ? { ...next, run: { type: "idle" as const } }
+        : {
+            ...next,
+            messagesById: {
+              ...next.messagesById,
+              [assistant.id]: { ...assistant, status: event.status },
+            },
+            run: { type: "idle" as const },
+          };
+      return settleCompactions(idle, event.status);
     }
 
     case "run-handoff": {
@@ -703,12 +870,15 @@ export const reduceAcpThreadState = (
             [previous.id]: { ...previous, status: event.status },
           }
         : settled.messagesById;
-      return {
+      const handedOff = {
         ...withMessage({ ...settled, messagesById }, event.message),
-        run: { type: "running", assistantId: event.message.id },
-        replay: { type: "idle" },
+        run: { type: "running" as const, assistantId: event.message.id },
+        replay: { type: "idle" as const },
         toolCallStatuses: {},
       };
+      // The turn being handed off is over, so a compaction it left open is
+      // never getting its terminal update.
+      return settleCompactions(handedOff, event.status);
     }
 
     default:

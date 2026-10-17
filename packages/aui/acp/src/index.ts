@@ -62,6 +62,20 @@ export {
   toThreadMessage,
   toThreadMessageLike,
 } from "./acpMessageProjection";
+
+// Context compaction: the entity the reducer retains and the `data` part name
+// a host registers a renderer under to draw it.
+export {
+  ACP_COMPACTION_PART,
+  appendCompactionSummary,
+  applyCompactionPatch,
+  compactionSummaryText,
+  isCompactionOpen,
+  isCompactionPart,
+  newCompactionPart,
+  settleOpenCompactions,
+} from "./compaction";
+export type { AcpCompactionPart, AcpCompactionPatch } from "./compaction";
 export { useAcpControllerState } from "./useAcpControllerState";
 
 // Protocol types
@@ -73,6 +87,8 @@ export type {
   AcpAvailableCommand,
   AcpBlobResourceContents,
   AcpClientCapabilities,
+  AcpCompaction,
+  AcpCompactionStatus,
   AcpConnectionState,
   AcpContentBlock,
   AcpCost,

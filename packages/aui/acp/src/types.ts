@@ -201,6 +201,42 @@ export type AcpUsage = {
   readonly cost?: AcpCost | null;
 };
 
+/**
+ * Lifecycle state of a context compaction. The schema types it as an open
+ * string: `in_progress` is the only non-terminal value, and an unrecognized
+ * one is a future ACP status rather than an error, so it is spelled
+ * `(string & {})` to keep the literals discoverable without rejecting them.
+ */
+export type AcpCompactionStatus =
+  | "in_progress"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | (string & {});
+
+/**
+ * One compaction, as the client retains it: the entity a `compactionId`
+ * upserts into. crow-client keeps the same shape as a transcript cell
+ * (`CellKind::Compaction`) — a status, the retained summary, why it failed,
+ * and the two timestamps the header's duration comes from.
+ */
+export type AcpCompaction = {
+  readonly id: string;
+  readonly status: AcpCompactionStatus;
+  /**
+   * The retained summary. `compaction_summary_chunk` APPENDS to it while the
+   * compaction is open; a terminal `summary` patch REPLACES it; an absent one
+   * leaves whatever streamed alone.
+   */
+  readonly summary: string;
+  /** Why it failed. Only ever meaningful alongside `failed`. */
+  readonly error?: string | null;
+  /** ms epoch, first sight of the id. */
+  readonly startedAt: number;
+  /** ms epoch once settled. Absent while open, so the header can tick. */
+  readonly endedAt?: number | null;
+};
+
 export type AcpSessionModeId = string;
 
 export type AcpSessionMode = {
@@ -256,7 +292,9 @@ export type AcpSessionUpdate =
   | ({ readonly sessionUpdate: "usage_update" } & AcpUsage)
   | AcpV2StateUpdate
   | AcpV2MessageUpsert
-  | AcpV2ToolCallContentChunkUpdate;
+  | AcpV2ToolCallContentChunkUpdate
+  | AcpV2CompactionUpdate
+  | AcpV2CompactionSummaryChunk;
 
 /**
  * ACP v2 additions. v1's tags above are unchanged; v2 speaks these on the
@@ -283,6 +321,37 @@ export type AcpV2ToolCallContentChunkUpdate = {
   readonly sessionUpdate: "tool_call_content_chunk";
   readonly toolCallId: string;
   readonly content: AcpToolCallContent;
+};
+
+/**
+ * A context compaction upsert: the agent traded conversation history for a
+ * summary. The first update for an id fixes the compaction's position in the
+ * timeline and later ones patch that entity in place.
+ *
+ * `summary` and `error` carry patch semantics — omission leaves the retained
+ * value alone, `null` clears it, a value replaces it, and `summary: []` is the
+ * explicit clear. agent2 omits `summary` on the terminal update whenever
+ * anything streamed, precisely so the model's prose is not overwritten by the
+ * whole handoff, so "absent" is the common case and must not read as "empty".
+ */
+export type AcpV2CompactionUpdate = {
+  readonly sessionUpdate: "compaction_update";
+  readonly compactionId: string;
+  readonly status: AcpCompactionStatus;
+  readonly summary?: readonly AcpContentBlock[] | null;
+  readonly error?: string | null;
+};
+
+/**
+ * One content block APPENDED to the retained summary of an in-progress
+ * compaction. The spec only allows these between the `in_progress` update and
+ * the terminal one for the same id — a real pass writes the summary token by
+ * token, which is the stream this carries.
+ */
+export type AcpV2CompactionSummaryChunk = {
+  readonly sessionUpdate: "compaction_summary_chunk";
+  readonly compactionId: string;
+  readonly content: AcpContentBlock;
 };
 
 export type AcpPermissionOptionKind =
