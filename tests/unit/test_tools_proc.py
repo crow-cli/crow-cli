@@ -108,7 +108,7 @@ async def test_run_captures_stdout_stderr_and_code():
     assert r.ok is True
     assert r.timed_out is False and r.truncated is False
     assert r.ms >= 0
-    assert r.result_kind == "text"
+    assert r.result_kind == "proc"
     assert r.acp_payload()["content"] == "text"
 
 

@@ -520,6 +520,8 @@ KIND_BY_RESULT: dict[str, str] = {
     # the name matching, and the next rule added to that function could
     # quietly reclassify it.
     "goal": "other",
+    # a terminal run; the drain's proc branch emits nothing, see drain_subtool_calls
+    "proc": "execute",
 }
 """ACP kind follows the ARTIFACT, not the tool name: a multi-mode tool
 (``fs``) is one name doing read/glob/search, and ``tool_kind("fs")`` is
@@ -671,6 +673,9 @@ async def drain_subtool_calls(ctx: TurnCtx, parent_acp_id: str) -> list[dict]:
     llm_blocks: list[dict] = []
     store = None  # resolved lazily — only image rows touch the store
     for row in rows:
+        if row.result_kind == "proc":
+            # execute's terminal already shows the command and its output
+            continue
         payload = row.acp_payload or {}
         kind = KIND_BY_RESULT.get(row.result_kind) or tool_kind(row.mode or row.tool)
         title = f"{row.tool}/{row.mode}" if row.mode else row.tool

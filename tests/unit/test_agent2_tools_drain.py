@@ -12,10 +12,11 @@ import logging
 
 import pytest
 from acp.experimental.v2 import schema as vs
+from sqlalchemy import select
 
 from crow_cli.agent2.ctx import TurnCtx
 from crow_cli.agent2.emitter import Emitter
-from crow_cli.agent2.tools import drain_subtool_calls
+from crow_cli.agent2.tools import KIND_BY_RESULT, drain_subtool_calls
 from crow_cli.config import Config
 from crow_cli.memory.db import get_engine
 from crow_cli.memory.image_store import resolve_image_store
@@ -134,6 +135,33 @@ class _Session:
         self.agent_id = agent_id
         self.cwd = cwd
         self.rlm_depth = 0
+
+
+async def test_proc_rows_are_claimed_but_not_emitted(drained):
+    ctx, conn, _ = drained
+    before = len(conn.wire)
+    engine = get_engine(ctx.config.db_uri)
+    with engine.begin() as db:
+        db.execute(SubtoolCall.__table__.insert().values(
+            session_id=SESSION_ID, agent_id=AGENT_ID,
+            parent_tool_call_id=PARENT, tool="proc", mode="run",
+            args={"mode": "run", "cmd": "git --no-pager status --short"},
+            status="completed", result_kind="proc",
+            acp_payload={"content": "text", "text": " M x.py"}, llm_images=[], emitted=0,
+        ))
+    engine.dispose()
+
+    assert await drain_subtool_calls(ctx, PARENT) == []
+    assert len(conn.wire) == before          # nothing on the wire for proc
+    assert KIND_BY_RESULT["proc"] == "execute"
+
+    engine = get_engine(ctx.config.db_uri)
+    with engine.begin() as db:
+        row = db.execute(
+            select(SubtoolCall).where(SubtoolCall.tool == "proc")
+        ).one()
+    engine.dispose()
+    assert row.emitted == 1                  # claimed, so it never re-queues
 
 
 def test_one_upsert_per_row(drained):

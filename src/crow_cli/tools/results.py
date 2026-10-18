@@ -984,7 +984,8 @@ class ProcResult(ToolResult):
     procs: list[dict[str, Any]] = field(default_factory=list)
     note: str = ""
 
-    result_kind = "text"
+    # the drain emits nothing for this kind: execute's terminal already showed it
+    result_kind = "proc"
 
     def acp_payload(self) -> dict:
         return {"content": "text", "text": self.text}
