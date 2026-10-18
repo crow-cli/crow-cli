@@ -624,14 +624,15 @@ async def test_the_v2_prompt_lifecycle_lands_on_the_wire_in_order(tmp_path):
 
     v2 inverted the prompt: the response acknowledges and the turn's outcome
     travels as notifications. So the order below is not cosmetics, it is the
-    contract a client is written against — the acknowledgement first, then the
-    user message the agent says it inserted, then running, then the reply, then
-    idle carrying the stop reason v1 used to put in the response body.
+    contract a client is written against — the acknowledgement first, then
+    running, then the reply, then idle carrying the stop reason v1 used to put
+    in the response body. The ``user_message`` echo is the one update not pinned
+    to a side of the acknowledgement, which the wire assertion below explains.
 
     The acknowledgement is not empty. It carries the ``messageId`` the prompt
-    landed under, and the ``user_message`` update that follows carries the same
-    one — which is the only reason a client can tie the two together given
-    that the spec lets either arrive first.
+    landed under, and the ``user_message`` update for it carries the same one —
+    which is the only reason a client can tie the two together given that the
+    spec lets either arrive first.
     """
     async with gate(tmp_path, [text("Hello", ", world", "!") + [usage(42)]]) as g:
         await g.new_session()
@@ -664,19 +665,31 @@ async def test_the_v2_prompt_lifecycle_lands_on_the_wire_in_order(tmp_path):
             "state_update",       # idle, end_turn
         ]
 
-        # The acknowledgement crossed the wire BEFORE any update about the
-        # turn. This is the inversion; without it the client is still waiting
-        # on the request while the agent streams.
+        # The acknowledgement crossed the wire BEFORE the agent started
+        # streaming. This is the inversion; without it the client is still
+        # waiting on the request while the turn runs.
+        #
+        # The ``user_message`` echo is deliberately not part of it. rc2's
+        # connection splits request handling into a handler task and a separate
+        # response-sending task, and ``agent.prompt`` hands the turn to the
+        # driver with a synchronous ``submit`` — so the driver wakes and echoes
+        # before the response task is ever scheduled. ``agent.prompt``'s own
+        # docstring says the spec lets that update "arrive before or after this
+        # response", which is exactly why the messageId is minted in the handler
+        # and travels on the Prompt event: the correlation below, not the order,
+        # is what makes either side safe for a client.
         tail = g.wire[prompt_response_index:]
         result_at = next(
             i for i, e in enumerate(tail)
             if e.direction is StreamDirection.INCOMING and "result" in e.message
         )
-        first_update_at = next(
-            i for i, e in enumerate(tail) if e.message.get("method") == "session/update"
+        first_chunk_at = next(
+            i for i, e in enumerate(tail)
+            if e.message.get("method") == "session/update"
+            and e.message["params"]["update"]["sessionUpdate"] == "agent_message_chunk"
         )
         assert tail[result_at].message["result"] == {"messageId": response.message_id}
-        assert result_at < first_update_at, (result_at, first_update_at)
+        assert result_at < first_chunk_at, (result_at, first_chunk_at)
 
         user = g.of_kind("user_message")[0]
         assert user["content"] == [{"text": "say hi", "type": "text"}]
