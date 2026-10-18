@@ -524,6 +524,15 @@ async def proc(
         happened, instead of hanging the kernel — the trap is defused even when
         you fall into it. That is a safety net, not a licence: use ``start``.
 
+        ``start`` returns when the child is SPAWNED, not when it is READY.
+        Observed live: a static file server came back in 0 ms, and the next
+        line — reading the portfile that server writes once its socket is
+        bound — raised FileNotFoundError; the file appeared about a second
+        later. Poll for the program's own readiness signal (a portfile, a line
+        in ``proc("log", pid=…)``, an open port) instead of assuming the next
+        statement can use it. proc deliberately does not guess one for you:
+        only the program knows what ready means.
+
         A ``run`` that times out has already killed the process group; a
         ``wait`` that times out has not touched it. ``.timed_out`` is True for
         both, so read ``.note``.
@@ -544,6 +553,8 @@ async def proc(
 
             r = await proc("start", "python -m http.server 0")
             print(r.pid, r.log)                # returned immediately
+            while not (await proc("log", pid=r.pid)).stdout.strip():
+                time.sleep(0.2)                # spawned is not ready: wait for the log line
             r = await proc("ps");      print(r.text)
             r = await proc("log", pid=r.pid);  print(r.stdout)
             r = await proc("wait", pid=..., timeout=120)

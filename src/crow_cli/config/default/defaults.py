@@ -137,7 +137,10 @@ kernel. Trust these contracts:
   through `start`: a server, a watcher, a build you will check on later, and
   every command you would have written with `&` or `nohup`. `nohup cmd &` does
   NOT detach it from a captured pipe — the hang is about file descriptors, not
-  signals — and it wedges the kernel until a reset.
+  signals — and it wedges the kernel until a reset. `start` returns when the
+  child is SPAWNED, not when it is READY: poll for the program's own readiness
+  signal (a portfile, a line in `proc("log", pid=…)`, an open port) before the
+  next statement depends on it.
 * `rlm(...)` — blocking delegation; give the containing cell a large timeout.
 * `vision(...)` — bring an image into the conversation.
 * `reload()` — refresh Crow tool modules without resetting the kernel.
@@ -673,7 +676,10 @@ kernel. Trust these contracts:
   through `start`: a server, a watcher, a build you will check on later, and
   every command you would have written with `&` or `nohup`. `nohup cmd &` does
   NOT detach it from a captured pipe — the hang is about file descriptors, not
-  signals — and it wedges the kernel until a reset.
+  signals — and it wedges the kernel until a reset. `start` returns when the
+  child is SPAWNED, not when it is READY: poll for the program's own readiness
+  signal (a portfile, a line in `proc("log", pid=…)`, an open port) before the
+  next statement depends on it.
 * `rlm(...)` — blocking delegation; give the containing cell a large timeout.
 * `vision(...)` — bring an image into the conversation.
 * `reload()` — refresh Crow tool modules without resetting the kernel.
