@@ -59,6 +59,13 @@ from crow_cli.discover import Connection, adopt_v2
 #: the tail is exactly what an error message about a dead child needs.
 STDERR_LINES = 200
 
+#: How long to wait for the event loop to collect a child's exit status once its
+#: transport has closed. The status is already on its way — the pipe closed
+#: because the process did — and the bound is there so a child that closed its
+#: stdout and somehow kept running cannot park its owner forever, which is the
+#: one failure this driver exists to prevent.
+REAP_GRACE_S = 5.0
+
 
 class ChildExited(RuntimeError):
     """The child process ended before its turn did.
@@ -471,16 +478,31 @@ class SubagentDriver:
         calling tools, or an agent that does not report idle at all. crow's own
         always does, including while a delegated task runs in the background:
         in v2 that is exactly what ``idle`` means.
+
+        Raises :class:`ChildExited` if the child dies, whether that lands during
+        the send or during the wait, and :class:`TimeoutError` if the turn does
+        not end. Both are the caller's to act on; neither leaves it parked.
         """
         # Registered BEFORE the send, not after: a turn that ends fast (a slash
         # command, an empty prompt) can reach idle before ``conn.prompt``
         # returns its empty response, and watching afterwards would wait
         # forever for a notification that already arrived.
         self.client.watch(session_id)
-        await self.conn.prompt(
-            session_id=session_id,
-            prompt=[v2.schema.TextContentBlock(text=text)],
-        )
+        try:
+            await self.conn.prompt(
+                session_id=session_id,
+                prompt=[v2.schema.TextContentBlock(text=text)],
+            )
+        except ConnectionError as exc:
+            # The child died before it acknowledged. The transport closed with
+            # the request still pending, so the send raises instead of returning
+            # — and :meth:`wait`, the only other place ChildExited is raised, is
+            # never reached. Callers distinguish the two: a dead child has
+            # nothing to cancel and nothing to retry on the same session, and
+            # the exit note carries the only stderr that will ever exist.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._exited(), timeout=REAP_GRACE_S)
+            raise ChildExited(self._exit_note()) from exc
         return await self.wait(session_id, timeout=timeout)
 
     async def wait(
