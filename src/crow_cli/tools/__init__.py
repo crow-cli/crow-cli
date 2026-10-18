@@ -40,6 +40,7 @@ _LAZY = {
     "edit": ("crow_cli.tools.edit_tool", "edit"),
     "fs": ("crow_cli.tools.fs_tool", "fs"),
     "memory": ("crow_cli.tools.memory_tool", "memory"),
+    "proc": ("crow_cli.tools.proc_tool", "proc"),
     "rlm": ("crow_cli.tools.rlm_tool", "rlm"),
     "sg": ("crow_cli.tools.sg_tool", "sg"),
     "vision": ("crow_cli.tools.vision_tool", "vision"),

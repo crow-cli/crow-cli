@@ -946,3 +946,109 @@ class GoalError(ToolError):
     """
 
 
+@dataclass
+class ProcResult(ToolResult):
+    """One process operation: ran, started, listed, tailed, killed or waited.
+
+    ``mode`` says which, and the fields that matter follow from it — a ``run``
+    carries ``returncode``/``stdout``/``stderr``, a ``start`` carries
+    ``pid``/``log`` and a ``returncode`` of None that means "still going", not
+    "unknown". ``procs`` is the ``ps`` table.
+
+    ``timed_out`` is a field, not an exception: a command that overran its
+    budget was killed and its partial output is still the most useful thing on
+    the page, so raising would throw away the one part worth reading.
+    ``returncode`` is then the signal that killed it, negative — ``-9`` for the
+    SIGKILL a timeout ends with — and ``None`` only for a process still
+    running, which is what ``start`` returns and what a ``wait`` that gave up
+    watching returns.
+
+    ``note`` carries the two things that would otherwise be silent: output that
+    hit the byte cap (``truncated`` says the same thing as a bool), and a
+    ``run`` whose command exited but whose pipe stayed open because it left a
+    background process holding it — the case that hangs ``subprocess.run``
+    forever and returns here with whatever was written.
+    """
+
+    mode: str
+    cmd: str = ""
+    returncode: int | None = None
+    stdout: str = ""
+    stderr: str = ""
+    pid: int | None = None
+    log: str | None = None
+    ms: int = 0
+    truncated: bool = False
+    timed_out: bool = False
+    detached: bool = False
+    procs: list[dict[str, Any]] = field(default_factory=list)
+    note: str = ""
+
+    result_kind = "text"
+
+    def acp_payload(self) -> dict:
+        return {"content": "text", "text": self.text}
+
+    @property
+    def ok(self) -> bool:
+        """Did it succeed? A ``start``/``ps``/``log``/``kill`` always did if it
+        returned at all; a ``run``/``wait`` did if the exit code is 0."""
+        if self.mode in ("run", "wait"):
+            return self.returncode == 0 and not self.timed_out
+        return True
+
+    @property
+    def alive(self) -> bool:
+        return self.mode in ("start", "ps", "wait") and self.returncode is None
+
+    @property
+    def text(self) -> str:
+        """What print() should show — bounded, and shaped per mode."""
+        if self.mode == "ps":
+            if not self.procs:
+                return "no processes started by proc()"
+            rows = [f"{'PID':>7}  {'STATE':<9} {'EXIT':>4}  {'CMD':<52} LOG"]
+            for p in self.procs:
+                code = "-" if p["returncode"] is None else str(p["returncode"])
+                rows.append(
+                    f"{p['pid']:>7}  {p['state']:<9} {code:>4}  "
+                    f"{p['cmd'][:52]:<52} {p['log'] or '-'}"
+                )
+            return "\n".join(rows)
+
+        head = []
+        if self.pid is not None:
+            head.append(f"pid {self.pid}")
+        if self.mode in ("run", "wait"):
+            if self.timed_out:
+                head.append(f"TIMED OUT after {self.ms} ms (process group killed)")
+            elif self.returncode is None:
+                head.append("still running")
+            else:
+                head.append(f"exit {self.returncode} in {self.ms} ms")
+        elif self.mode == "start":
+            head.append(f"detached, logging to {self.log}")
+        if self.truncated:
+            head.append("output TRUNCATED at the byte cap")
+        out = " · ".join(head) if head else self.mode
+
+        body = []
+        if self.stdout:
+            body.append(self.stdout.rstrip("\n"))
+        if self.stderr:
+            body.append("--- stderr ---\n" + self.stderr.rstrip("\n"))
+        if self.note:
+            body.append("--- note ---\n" + self.note)
+        return "\n".join([out, *body]) if body else out
+
+
+class ProcError(ToolError):
+    """A process could not be run, started, found, tailed or killed.
+
+    Bad modes and missing args land here, and so does a ``kill``/``log``/
+    ``wait`` naming a pid this session never started: a pid is a handle, and
+    accepting an arbitrary one would make ``proc`` a way to signal any process
+    on the box.
+    """
+
+
