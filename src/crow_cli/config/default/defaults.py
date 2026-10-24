@@ -129,18 +129,9 @@ kernel. Trust these contracts:
   and LIMIT in SQL. Results: `.df`, `.n_rows`, `.text`, `.truncated`.
   `help(memory)` gives the schema and retrieval examples.
 * `web(mode, ...)` — modes are `search`, `fetch`, `run`, and `close`.
-* `proc(mode, ...)` — run and launch processes. `await proc("run", cmd,
-  timeout=)` blocks and returns `.returncode`/`.stdout`/`.stderr`;
-  `await proc("start", cmd)` DETACHES — own session, stdin from DEVNULL,
-  stdout/stderr into a log file — and returns `.pid`/`.log` immediately, then
-  `ps`/`log`/`wait`/`kill` by pid. Anything that outlives the cell goes
-  through `start`: a server, a watcher, a build you will check on later, and
-  every command you would have written with `&` or `nohup`. `nohup cmd &` does
-  NOT detach it from a captured pipe — the hang is about file descriptors, not
-  signals — and it wedges the kernel until a reset. `start` returns when the
-  child is SPAWNED, not when it is READY: poll for the program's own readiness
-  signal (a portfile, a line in `proc("log", pid=…)`, an open port) before the
-  next statement depends on it.
+* `proc(mode, ...)` — modes are `run`, `start`, `ps`, `log`, `wait`, `kill`.
+  `run` blocks; `start` detaches to a log and returns `.pid`/`.log` — use it
+  for anything that outlives the cell, never `nohup cmd &`. Spawned ≠ ready.
 * `rlm(...)` — blocking delegation; give the containing cell a large timeout.
 * `vision(...)` — bring an image into the conversation.
 * `reload()` — refresh Crow tool modules without resetting the kernel.
@@ -166,16 +157,11 @@ When a call shape surprises you, print `help(tool)` before calling it.
   ast-grep via the `ast_grep_py` bindings in the `sg` subtool — returns AST nodes, not substrings.
 * `subprocess` is fine for a command the cell waits for — git, `uv --project
   <repo> run pytest`. It is the wrong instrument for searching, and the wrong
-  instrument for anything that OUTLIVES the cell: `capture_output=True` waits
-  for pipe EOF, a backgrounded child inherits the write end, so `nohup cmd &`
-  and `setsid cmd` both hang the kernel until a reset. Launch those with
-  `await proc("start", cmd)` and read them back with `proc("log", pid=…)`.
-  `proc("run", cmd, timeout=)` is the bounded form of the plain case: it waits
-  on the process rather than the pipe, so even an accidental `&` returns with
-  its partial output and a note instead of wedging the cell. You should not
-  treat the kernel as a stepping stone to do things in bash the way you've been
-  overfit to do. Treat each kernel cell like a half of a subagent run where you
-  can script tool calls and choose what to expose to you, the LLM.
+  instrument for anything that OUTLIVES the cell: that is `proc("start", cmd)`.
+  You should not treat the kernel as a stepping stone to do things in bash the
+  way you've been overfit to do. Treat each kernel cell like a half of a
+  subagent run where you can script tool calls and choose what to expose to
+  you, the LLM.
 * git: always `git --no-pager <command>` (or GIT_PAGER=cat) — a paged command
   hangs waiting for interactive input.
 </SEARCH>
@@ -668,18 +654,9 @@ kernel. Trust these contracts:
   and LIMIT in SQL. Results: `.df`, `.n_rows`, `.text`, `.truncated`.
   `help(memory)` gives the schema and retrieval examples.
 * `web(mode, ...)` — modes are `search`, `fetch`, `run`, and `close`.
-* `proc(mode, ...)` — run and launch processes. `await proc("run", cmd,
-  timeout=)` blocks and returns `.returncode`/`.stdout`/`.stderr`;
-  `await proc("start", cmd)` DETACHES — own session, stdin from DEVNULL,
-  stdout/stderr into a log file — and returns `.pid`/`.log` immediately, then
-  `ps`/`log`/`wait`/`kill` by pid. Anything that outlives the cell goes
-  through `start`: a server, a watcher, a build you will check on later, and
-  every command you would have written with `&` or `nohup`. `nohup cmd &` does
-  NOT detach it from a captured pipe — the hang is about file descriptors, not
-  signals — and it wedges the kernel until a reset. `start` returns when the
-  child is SPAWNED, not when it is READY: poll for the program's own readiness
-  signal (a portfile, a line in `proc("log", pid=…)`, an open port) before the
-  next statement depends on it.
+* `proc(mode, ...)` — modes are `run`, `start`, `ps`, `log`, `wait`, `kill`.
+  `run` blocks; `start` detaches to a log and returns `.pid`/`.log` — use it
+  for anything that outlives the cell, never `nohup cmd &`. Spawned ≠ ready.
 * `rlm(...)` — blocking delegation; give the containing cell a large timeout.
 * `vision(...)` — bring an image into the conversation.
 * `reload()` — refresh Crow tool modules without resetting the kernel.
@@ -702,13 +679,7 @@ When a call shape surprises you, print `help(tool)` before calling it.
   ast-grep via the `ast_grep_py` bindings — AST nodes, not substrings.
 * `subprocess` is fine for a command the cell waits for — git, `uv --project
   <repo> run pytest`. It is the wrong instrument for searching, and the wrong
-  instrument for anything that OUTLIVES the cell: `capture_output=True` waits
-  for pipe EOF, a backgrounded child inherits the write end, so `nohup cmd &`
-  and `setsid cmd` both hang the kernel until a reset. Launch those with
-  `await proc("start", cmd)` and read them back with `proc("log", pid=…)`.
-  `proc("run", cmd, timeout=)` is the bounded form of the plain case: it waits
-  on the process rather than the pipe, so even an accidental `&` returns with
-  its partial output and a note instead of wedging the cell.
+  instrument for anything that OUTLIVES the cell: that is `proc("start", cmd)`.
 * git: always `git --no-pager <command>` (or GIT_PAGER=cat) — a paged command
   hangs waiting for interactive input.
 </SEARCH>
