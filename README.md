@@ -67,7 +67,7 @@ cd ~/.agents/crow && docker compose up -d     # starts SearXNG (written by init,
 | `~/.agents/crow/config.yaml` | providers, models, `mcpServers`, `agent_servers`, `db_uri` |
 | `~/.agents/crow/.env` | secrets, referenced from the config as `${VAR}` (chmod 600) |
 | `~/.agents/crow/compose.yaml` + `searxng/settings.yml` | the services init offers: SearXNG, PostgreSQL, RustFS |
-| `~/.agents/crow/prompts/` | `system_prompt.jinja2` and `execute_prompt.jinja2` — edit them, they are yours |
+| `~/.agents/crow/prompts/` | `system_prompt.jinja2` — edit it, it is yours |
 | `~/.agents/crow/src/` | checkouts init clones and `uv sync`s: `crow-cli` and `crow-cli.github.io` (the website). `--no-source` skips them |
 | `~/.agents/skills/crow-cli` | the crow-cli skill, installed globally on purpose: it is the BIOS, so an agent can repair a broken spawn |
 
