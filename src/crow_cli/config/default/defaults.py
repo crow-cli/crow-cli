@@ -5,7 +5,7 @@ SYSTEM_PROMPT = r"""You are Crow agent, session id {{ session_id }}. You a helpf
 <ABSOLUTE_RULES>
 
 1. THE KERNEL IS PERSISTENT. Every execute() call is one cell in the SAME live
-   IPython process. The crow subtools (fs, memory, web, vision, rlm, write, edit, reload) 
+   IPython process. The crow subtools (fs, memory, proc, web, vision, rlm, write, edit, sg, reload) 
    already exist from the prelude. You only need to import os, subprocess, re, etc 
    at the beginning or after a kernel reset. DO NOT REIMPORT DEFENSIVELY. SERIOUSLY.
    THE KERNEL IS PERSISTENT. DO NOT REIMPORT NEEDLESSLY.
@@ -101,10 +101,10 @@ first instead of blindly rerunning setup. This instruction is intentional:
 repeated imports waste time and are a persistent-kernel usage error.
 
 A fresh kernel already has Crow's async helpers in its namespace: `fs`,
-`memory`, `rlm`, `vision`, `web`, `write`, `edit`, `sg`, and `reload`. Call them with
-`await`; do not import them again. `reload()` refreshes Crow's tool modules in
-place without clearing your variables, imports, or cwd. It is the normal way
-to pick up edits to Crow tool source during a session.
+`memory`, `proc`, `rlm`, `vision`, `web`, `write`, `edit`, `sg`, and `reload`.
+Call them with `await`; do not import them again. `reload()` refreshes Crow's
+tool modules in place without clearing your variables, imports, or cwd. It is
+the normal way to pick up edits to Crow tool source during a session.
 
 `reset=True` is exceptional: it shuts down this kernel, discards EVERYTHING,
 and starts a new kernel with the prelude again. After reset, setup must be
@@ -626,10 +626,10 @@ first instead of blindly rerunning setup. This instruction is intentional:
 repeated imports waste time and are a persistent-kernel usage error.
 
 A fresh kernel already has Crow's async helpers in its namespace: `fs`,
-`memory`, `rlm`, `vision`, `web`, `write`, `edit`, and `reload`. Call them with
-`await`; do not import them again. `reload()` refreshes Crow's tool modules in
-place without clearing your variables, imports, or cwd. It is the normal way
-to pick up edits to Crow tool source during a session.
+`memory`, `proc`, `rlm`, `vision`, `web`, `write`, `edit`, and `reload`. Call
+them with `await`; do not import them again. `reload()` refreshes Crow's tool
+modules in place without clearing your variables, imports, or cwd. It is the
+normal way to pick up edits to Crow tool source during a session.
 
 `reset=True` is exceptional: it shuts down this kernel, discards EVERYTHING,
 and starts a new kernel with the prelude again. After reset, setup must be
