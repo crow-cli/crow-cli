@@ -511,7 +511,7 @@ system_prompt_path: ~/.agents/crow/prompts/system_prompt.jinja2
 # config (system_prompt_path, mcpServers, db_uri, ...) while secrets stay
 # in ~/.agents/crow/.env. Prompt variants live in ~/.agents/crow/prompts/.
 # agent_servers:
-#   crow-execute:
+#   my-crow:
 #     type: custom
 #     command: uv
 #     args:

@@ -301,7 +301,7 @@ models:
     provider: openrouter
     model: anthropic/claude-sonnet-4
 agent_servers:
-  crow-execute:
+  my-agent:
     protocol: acp2
     command: uv
     args: ["--project", "~/.agents/crow/src/crow-cli", "run", "crow-cli", "acp2"]

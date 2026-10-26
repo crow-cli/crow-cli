@@ -4,7 +4,7 @@ Config-driven, client-side, and the reason every client can
 both launch somebody else's agent without a code change:
 
     agent_servers:
-      crow-execute:
+      crow-cli:
         command: uv
         args: ["--project", "~/.agents/crow/src/crow-cli", "run", "crow-cli", "acp"]
       something-else:
