@@ -5,16 +5,21 @@
 ### 1. GitHub Workflow: `.github/workflows/build-binaries.yml`
 
 Builds crow-cli binaries for:
-- **Linux x86_64** (ubuntu-22.04)
-- **macOS x86_64** (macos-13)
+- **Linux x86_64** (ubuntu-24.04)
+- **Linux ARM64** (ubuntu-24.04-arm)
+- **macOS x86_64** (macos-15-intel)
 - **macOS ARM64** (macos-latest - Apple Silicon)
+- **Windows x86_64** (windows-latest)
 
-**Trigger:** Push version tags (e.g., `v0.1.13`)
+**Trigger:** Push version tags (e.g., `v0.1.49`), or run the workflow by hand
+(`workflow_dispatch`) to exercise a platform build without cutting a release.
 
 **Output:** Creates GitHub release with attached archives:
 - `crow-cli-linux-x86_64.tar.gz`
+- `crow-cli-linux-aarch64.tar.gz`
 - `crow-cli-darwin-x86_64.tar.gz`
 - `crow-cli-darwin-aarch64.tar.gz`
+- `crow-cli-windows-x86_64.zip`
 
 ### 2. PyInstaller Spec File: `crow-cli.spec`
 
@@ -32,10 +37,12 @@ Added `pyinstaller>=6.0.0` to dev dependency group
 
 ```bash
 cd crow-cli
-uv --project . pip install pyinstaller
-uv --project . run pyinstaller crow-cli.spec --noconfirm
-dist/crow-cli --help
+uv run pyinstaller crow-cli.spec --noconfirm
+dist/crow-cli --version
 ```
+
+`pyinstaller` is in the dev dependency group, so `uv run` resolves it with the
+project — the same command the workflow runs.
 
 ## 🚀 Usage
 

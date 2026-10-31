@@ -49,11 +49,15 @@ client, and do not restart it to change a client.
 
 ## Two rules that are easy to get wrong
 
-**The agent has no builtin tools.** Whatever MCP servers the client passes at
-`session/new` are exactly the tools that session gets; empty means zero tools.
-`crow-cli init` writes a global `mcpServers.crow-mcp` entry, and an
-`agent_servers` entry may carry its own `mcpServers` that replaces the global
-supply for that agent only.
+**The agent owns its tools.** The `mcpServers` in `~/.agents/crow/config.yaml`
+are the base supply: every session gets them, whether or not the client sends
+anything at `session/new`. Whatever the client sends is added on top, by name,
+and a client entry that reuses a config name replaces that entry. `crow-cli init`
+writes the `crow-mcp` entry there, and an `agent_servers` entry may carry its own
+`mcpServers` that replaces the global supply for that agent only.
+
+Consequence: an empty `mcpServers` list no longer means "no tools" — it means
+"just the agent's own". There is no way to ask for zero yet.
 
 **Nothing runs from a source checkout implicitly.** `cli/source.py:spawn_argv()`
 is always the code that is actually running — a frozen build's own subcommand, or
