@@ -52,7 +52,7 @@ from crow_cli.mcp2.server import mcp
 from crow_cli.mcp_meta import meta_get, rail_unread
 from crow_cli.tools import PRELUDE_V2
 
-from .kernel import CrowKernel
+from .kernel import CrowKernel, KernelDead
 
 logger = getLogger(__name__)
 
@@ -155,6 +155,13 @@ def get_kernel(
 ) -> CrowKernel:
     """Get or lazily start the persistent kernel for a key."""
     kernel = _kernels.get(key)
+    if kernel is not None and kernel.dead:
+        # A kernel whose channels failed is not reusable, and it is not the
+        # caller's job to notice: replace it here so the next call just works.
+        logger.warning("Replacing the dead kernel for %s", key)
+        _kernels.pop(key, None)
+        kernel.shutdown()
+        kernel = None
     if kernel is None:
         logger.info("Starting new IPython kernel for %s in %s", key, cwd)
         kernel = CrowKernel(python_path=python_path or sys.executable, cwd=cwd)
@@ -259,6 +266,7 @@ async def execute(
         execute("", reset=True, python_path="/env/bin/python")
         execute("", reset=True, prelude_path="/env/prelude.py")
     """
+    key = None
     try:
         (
             key,
@@ -337,6 +345,24 @@ async def execute(
                 "output": result.text or "[no output]",
                 "timed_out": result.status == "busy",
                 "raw_bytes_b64": base64.b64encode(result.raw).decode("ascii"),
+            },
+            ensure_ascii=False,
+        )
+
+    except KernelDead as exc:
+        # The channels are gone, which is not the cell's fault and not
+        # something a retry of THIS call can fix. Drop the kernel so the next
+        # call builds a fresh one, and say so.
+        logger.error("Kernel dead: %s", exc, exc_info=True)
+        if key is not None:
+            _kernels.pop(key, None)
+        return json.dumps(
+            {
+                "exit_code": 1,
+                "output": f"Error: the kernel's channels died ({exc})."
+                " It is replaced on the next call — call execute again.",
+                "timed_out": False,
+                "raw_bytes_b64": "",
             },
             ensure_ascii=False,
         )

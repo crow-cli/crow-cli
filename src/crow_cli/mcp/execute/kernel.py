@@ -12,6 +12,7 @@ Unlike the terminal tool, there is no ``!`` shell escape: bash belongs to
 
 import queue
 import re
+import threading
 import time
 from logging import getLogger
 
@@ -22,11 +23,34 @@ logger = getLogger(__name__)
 # Strip ANSI color codes from tracebacks so the agent reads clean text.
 _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
+#: A frame jupyter_client cannot parse — a missing DELIM raises ValueError out
+#: of feed_identities. Junk bytes, healthy socket: drop the frame, read on.
+_GARBAGE = (ValueError, KeyError)
+
+#: How long to block on either channel before looking at the cancel flag.
+POLL_S = 0.05
+
+#: Returned when a cell already owns the kernel. Two readers on one ZMQ socket
+#: make libzmq abort the process ("Bad address", src/fq.cpp).
+OCCUPIED = (
+    "(kernel busy: an earlier cell is still running in this kernel. Re-call"
+    " execute with a longer timeout to collect its output, or pass reset=True"
+    " to abandon it and start a fresh kernel.)"
+)
+
+
+class KernelDead(Exception):
+    """The kernel's channels are unusable. The caller builds a new one."""
+
 
 class CrowKernel:
     """A small wrapper around jupyter_client for crow's ``execute`` tool."""
 
     def __init__(self, python_path: str | None = None, cwd: str | None = None):
+        self._lock = threading.Lock()
+        self._cancelled = threading.Event()
+        self.dead = False
+
         self.km = KernelManager()
 
         # Point the kernel at crow-cli's own interpreter so the REPL has
@@ -52,6 +76,10 @@ class CrowKernel:
         """
         try:
             self.client.wait_for_ready(timeout=15)
+        except _GARBAGE as exc:
+            # Junk frame, not a dead kernel: settle and go.
+            logger.warning("wait_for_ready read a junk frame (%s); settling", exc)
+            time.sleep(2)
         except Exception:
             logger.warning("kernel wait_for_ready timed out; sleeping to settle")
             time.sleep(2)
@@ -81,6 +109,19 @@ class CrowKernel:
         until a reset. With it, stale messages are discarded and the stream
         re-syncs on its own once the busy cell finishes.
         """
+        if self.dead:
+            raise KernelDead("the kernel's channels are gone")
+        if not self._lock.acquire(timeout=2 * POLL_S):
+            return OCCUPIED
+        try:
+            return self._execute_locked(code, timeout)
+        except KernelDead:
+            self.dead = True
+            raise
+        finally:
+            self._lock.release()
+
+    def _execute_locked(self, code: str, timeout: float | None) -> str:
         msg_id = self.client.execute(code)
 
         reply = self._await_shell_reply(msg_id, timeout)
@@ -95,10 +136,17 @@ class CrowKernel:
         # are already buffered — drain them, skipping any stale ones, and stop
         # at THIS cell's idle.
         while True:
+            if self._cancelled.is_set():
+                break
             try:
                 msg = self.client.get_iopub_msg(timeout=timeout)
             except queue.Empty:
                 break
+            except _GARBAGE as exc:
+                logger.warning("dropped an unparseable iopub frame: %s", exc)
+                continue
+            except Exception as exc:
+                raise KernelDead(f"iopub read failed: {exc}") from exc
             if msg.get("parent_header", {}).get("msg_id") != msg_id:
                 continue
 
@@ -137,6 +185,11 @@ class CrowKernel:
                 reply = self.client.get_shell_msg(timeout=remaining)
             except queue.Empty:
                 return None
+            except _GARBAGE as exc:
+                logger.warning("dropped an unparseable shell frame: %s", exc)
+                continue
+            except Exception as exc:
+                raise KernelDead(f"shell read failed: {exc}") from exc
             if reply.get("parent_header", {}).get("msg_id") == msg_id:
                 return reply
             # A previous cell's reply — discard and keep waiting for ours.
@@ -178,11 +231,31 @@ class CrowKernel:
         return "\n".join(output)
 
     def shutdown(self) -> None:
-        """Shut down the kernel subprocess and tear down the ZMQ channels."""
-        try:
-            self.client.stop_channels()
-        except Exception:
-            pass
+        """Shut the kernel down. Never blocks, and never needs a live channel.
+
+        Reset is the one thing that has to work when everything else does not,
+        so this refuses to wait on a cell: the cancelled flag ends the shell
+        and iopub waits, and the teardown runs off-thread when the lock says a
+        cell still holds the kernel. Closing sockets underneath a thread
+        blocked reading them is the libzmq abort this guards against, so
+        ``stop_channels`` only runs when no reader is inside.
+        """
+        self._cancelled.set()
+        self.dead = True
+        if self._lock.acquire(blocking=False):
+            try:
+                self._teardown(stop_channels=True)
+            finally:
+                self._lock.release()
+            return
+        threading.Thread(target=self._teardown, args=(False,), daemon=True).start()
+
+    def _teardown(self, stop_channels: bool) -> None:
+        if stop_channels:
+            try:
+                self.client.stop_channels()
+            except Exception:
+                logger.warning("stop_channels raised", exc_info=True)
         try:
             self.km.shutdown_kernel(now=True)
         except Exception:

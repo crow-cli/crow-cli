@@ -18,7 +18,7 @@ from fastmcp import Context
 from crow_cli.mcp.server.app import mcp
 from crow_cli.mcp_meta import meta_get, rail_unread
 
-from .kernel import CrowKernel
+from .kernel import CrowKernel, KernelDead
 
 logger = getLogger(__name__)
 
@@ -117,6 +117,13 @@ def get_kernel(
 ) -> CrowKernel:
     """Get or lazily start the persistent kernel for a key."""
     kernel = _kernels.get(key)
+    if kernel is not None and kernel.dead:
+        # A kernel whose channels failed is not reusable, and it is not the
+        # caller's job to notice: replace it here so the next call just works.
+        logger.warning(f"Replacing the dead kernel for {key}")
+        _kernels.pop(key, None)
+        kernel.shutdown()
+        kernel = None
     if kernel is None:
         logger.info(f"Starting new IPython kernel for {key} in {cwd}")
         kernel = CrowKernel(python_path=python_path or sys.executable, cwd=cwd)
@@ -225,6 +232,7 @@ async def execute(
         execute("", reset=True, prelude_path="/env/k.py")  # reset, custom prelude
         execute("", reset=True, python_path="/env/bin/python")  # reset, other interpreter
     """
+    key = None
     try:
         key, cwd, session_id, parent_tcid, db_uri, images_dir, rlm_depth = (
             _kernel_context(ctx)
@@ -255,6 +263,18 @@ async def execute(
             code = _prologue(session_id, parent_tcid, db_uri, images_dir, rlm_depth) + code
         output = kernel.execute(code, timeout=timeout)
         return _cap(output) if output else "[no output]"
+
+    except KernelDead as e:
+        # The channels are gone, which is not the cell's fault and not
+        # something a retry of THIS call can fix. Drop the kernel so the next
+        # call builds a fresh one, and say so.
+        logger.error(f"Kernel dead: {e}", exc_info=True)
+        if key is not None:
+            _kernels.pop(key, None)
+        return (
+            f"Error: the kernel's channels died ({e}). It is replaced on the "
+            "next call — call execute again."
+        )
 
     except Exception as e:
         logger.error(f"Execute error: {e}", exc_info=True)
