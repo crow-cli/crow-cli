@@ -1,10 +1,10 @@
 """Source helpers: `crow-cli init` clones crow; spawn strings for crow's agent.
 
 ``crow-cli init`` leaves a checkout of the repo at
-``<config_dir>/src/crow-cli`` (plus the site repo and the global skill), so a
-``git pull`` there is an upgrade. The checkout is never loaded implicitly: it
-is just a directory an ``agent_servers`` entry may point at (see
-crow_cli.agents) — one of potentially many agents, nothing special.
+``<config_dir>/src/crow-cli`` (plus the clients repo, the site repo and the
+global skill), so a ``git pull`` there is an upgrade. The checkout is never
+loaded implicitly: it is just a directory an ``agent_servers`` entry may point
+at (see crow_cli.agents) — one of potentially many agents, nothing special.
 
 :func:`spawn_argv` builds the launch argv for crow's OWN agent, and it is
 always the code that is actually running: a frozen build's ``acp``/``acp2``
@@ -26,6 +26,9 @@ from pathlib import Path
 from crow_cli.config.config import get_default_config_dir
 
 CROW_REPO = "https://github.com/crow-cli/crow-cli"
+#: crow's clients — the IDE pipeline, the chat extension and the Rust TUI. They
+#: are their own repo, so `crow-cli install crow` builds from this checkout.
+CLIENTS_REPO = "https://github.com/crow-cli/crow"
 SITE_REPO = "https://github.com/crow-cli/crow-cli.github.io"
 BRANCH = "main"
 
@@ -58,6 +61,11 @@ def skills_dir(config_dir: Path | str | None = None) -> Path:
 def global_checkout(config_dir: Path | str | None = None) -> Path:
     """``<config_dir>/src/crow-cli`` — the checkout a source-first spawn runs by default."""
     return src_dir(config_dir) / "crow-cli"
+
+
+def clients_checkout(config_dir: Path | str | None = None) -> Path:
+    """``<config_dir>/src/crow`` — the clients: IDE pipeline, extension, TUI."""
+    return src_dir(config_dir) / "crow"
 
 
 def site_checkout(config_dir: Path | str | None = None) -> Path:
@@ -219,7 +227,8 @@ def bootstrap(
 ) -> dict[str, object]:
     """The source step of ``crow-cli init``: clone, sync, install the skill.
 
-    Clones crow-cli and crow-cli.github.io into ``<config_dir>/src``, runs
+    Clones crow-cli, crow (the clients) and crow-cli.github.io into
+    ``<config_dir>/src``, runs
     ``uv sync`` in the crow-cli checkout so the first agent spawn is instant,
     and installs the map skill globally.
 
@@ -242,6 +251,7 @@ def bootstrap(
 
     for repo, dest, label in (
         (CROW_REPO, global_checkout(config_dir), "crow-cli"),
+        (CLIENTS_REPO, clients_checkout(config_dir), "crow"),
         (SITE_REPO, site_checkout(config_dir), "crow-cli.github.io"),
     ):
         try:

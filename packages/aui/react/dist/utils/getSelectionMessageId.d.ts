@@ -1,1 +1,0 @@
-export declare const getSelectionMessageId: (selection: Selection, root?: Element | null) => string | null;

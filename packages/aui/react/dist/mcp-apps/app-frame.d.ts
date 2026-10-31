@@ -1,2 +1,0 @@
-import type { McpAppFrameProps } from "./types.js";
-export declare function McpAppFrame({ app, resource, input, output, sandbox, handlers, hostInfo, hostContext, maxHeight, }: McpAppFrameProps): import("react").JSX.Element;

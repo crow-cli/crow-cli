@@ -12,7 +12,9 @@
 
 [Documentation](https://crow-ai.dev)
 
-`crow-cli` is an [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) coding agent: a streaming ReAct loop that reads and edits code, runs shells, searches the web and sees images — plus a set of first-party clients (terminal, TUI, IDE, browser) that all drive the same agent over the same wire.
+`crow-cli` is an [Agent Client Protocol (ACP)](https://agentclientprotocol.com/) coding agent: a streaming ReAct loop that reads and edits code, runs shells, searches the web and sees images.
+
+This repo is the **agent**. The first-party clients (terminal, TUI, IDE, browser) that drive it over the same wire live in their own repo, [`crow-cli/crow`](https://github.com/crow-cli/crow) — `crates/crow-client` for the `crow-agent` TUI, `packages/crow-gui` for the IDE build, `packages/vscode-acp` + `packages/chat` for the chat extension. `crow-cli init` clones it beside this one and `crow-cli install crow` builds from it.
 
 Two ideas hold the whole thing together.
 
@@ -28,10 +30,10 @@ The agent:
 - Docker, for the SearXNG service that backs web search
 - An API key for an OpenAI-compatible LLM provider (OpenRouter, OpenAI, your own endpoint, …)
 
-The clients, if you want to build them:
+The clients, if you want to build them — a clone of [`crow-cli/crow`](https://github.com/crow-cli/crow), which `crow-cli init` leaves at `~/.agents/crow/src/crow`:
 
 - Rust (`rustup` + `cargo`) for the `crow-agent` TUI
-- node matching `packages/crow-gui/vscodium/.nvmrc` (24.x), `npm`, `bun`, `jq`, `curl`, `unzip`, the libx11/libxkbfile/libsecret headers, and `fakeroot` + `dpkg-dev` for the `.deb` — all of it for the IDE build, which is a from-source VS Code
+- node matching that repo's `packages/crow-gui/vscodium/.nvmrc` (24.x), `npm`, `bun`, `jq`, `curl`, `unzip`, the libx11/libxkbfile/libsecret headers, and `fakeroot` + `dpkg-dev` for the `.deb` — all of it for the IDE build, which is a from-source VS Code
 
 | Platform | Notes |
 |----------|-------|
@@ -45,7 +47,7 @@ The clients, if you want to build them:
 uv tool install crow-cli --python 3.13     # from PyPI
 ```
 
-…or from a clone, which you want anyway if you mean to build the IDE or the Rust clients — both build from the tree they sit in:
+…or from a clone, which you want anyway if you mean to build the clients — `install crow` builds them from a checkout of their own repo:
 
 ```bash
 git clone https://github.com/crow-cli/crow-cli.git
@@ -68,7 +70,7 @@ cd ~/.agents/crow && docker compose up -d     # starts SearXNG (written by init,
 | `~/.agents/crow/.env` | secrets, referenced from the config as `${VAR}` (chmod 600) |
 | `~/.agents/crow/compose.yaml` + `searxng/settings.yml` | the services init offers: SearXNG, PostgreSQL, RustFS |
 | `~/.agents/crow/prompts/` | `system_prompt.jinja2` — edit it, it is yours |
-| `~/.agents/crow/src/` | checkouts init clones and `uv sync`s: `crow-cli` and `crow-cli.github.io` (the website). `--no-source` skips them |
+| `~/.agents/crow/src/` | checkouts init clones and `uv sync`s: `crow-cli`, `crow` (the clients) and `crow-cli.github.io` (the website). `--no-source` skips them |
 | `~/.agents/skills/crow-cli` | the crow-cli skill, installed globally on purpose: it is the BIOS, so an agent can repair a broken spawn |
 
 **Nothing runs from that checkout implicitly.** What init does with it is write one `agent_servers` entry into `config.yaml` — ordinary config, which you can read, edit or delete:
@@ -142,17 +144,18 @@ Two shapes, and only two:
 | Client | What it is | The agent | Run it |
 |--------|-----------|-----------|--------|
 | `crow-cli run` | the reference client: one-shot, REPL, JSONL, session forks | spawns its own over stdio | `crow-cli run "…"` |
-| `crow-agent` | Rust ratatui TUI (`crates/crow-client`) | spawns its own over stdio — `--agent`, default `crow-cli acp2` | `crow-agent` |
-| crow IDE | VS Code built from source by `packages/crow-gui`, with the crow chat extension bundled as a built-in — desktop app and browser server | dials `crowAcp.endpoint`, default `ws://127.0.0.1:2771/acp` | `crow` |
+| `crow-agent` | Rust ratatui TUI (`crates/crow-client` in the `crow` repo) | spawns its own over stdio — `--agent`, default `crow-cli acp2` | `crow-agent` |
+| crow IDE | VS Code built from source by the `crow` repo's `packages/crow-gui`, with the crow chat extension bundled as a built-in — desktop app and browser server | dials `crowAcp.endpoint`, default `ws://127.0.0.1:2771/acp` | `crow` |
 | any ACP client | Zed and friends, over stdio or WebSocket | the client spawns the command you give it | `crow-cli acp` / `acp2` |
 
 **The args, exactly.** `acp --http` serves protocol v1 on **2769**; `acp2 --http` serves v2 on **2771**; `--host` (default `127.0.0.1`) and `--port` move either. One v2 instance is enough for every dialler — the IDE panel's `crowAcp.endpoint` defaults to `ws://127.0.0.1:2771/acp`. A client that only speaks v1 needs `crow-cli acp --http` instead, on 2769.
 
 ### `crow-agent` — the terminal client
 
-A ratatui ACP client in `crates/crow-client`. It spawns the agent itself (`--agent`, default `crow-cli acp2`) so there is nothing to start first, and it is a real terminal citizen: markdown rendering, syntax-highlighted diffs, drag-to-select copy, tool calls that expand in place, `!` for a shell line and `/` for commands.
+A ratatui ACP client in the `crow` repo's `crates/crow-client`. It spawns the agent itself (`--agent`, default `crow-cli acp2`) so there is nothing to start first, and it is a real terminal citizen: markdown rendering, syntax-highlighted diffs, drag-to-select copy, tool calls that expand in place, `!` for a shell line and `/` for commands.
 
 ```bash
+cd ~/.agents/crow/src/crow                    # the clients repo; `crow-cli init` clones it
 cargo build --release --bin crow-agent
 crow-agent                              # in the current workspace
 crow-agent -w ~/src/project --session-id <id>   # resume a durable session
@@ -162,14 +165,14 @@ crow-agent --demo                       # scripted turns, no agent needed
 
 ### crow — the IDE
 
-`packages/crow-gui` builds crow's IDE from Microsoft's open-source VS Code using a **vendored copy of VSCodium's build pipeline**, rebranded, with crow's patches in `packages/crow-gui/vscodium/patches/user/`. Two artifacts come out and both are first-class:
+The `crow` repo's `packages/crow-gui` builds crow's IDE from Microsoft's open-source VS Code using a **vendored copy of VSCodium's build pipeline**, rebranded, with crow's patches in `packages/crow-gui/vscodium/patches/user/`. Two artifacts come out and both are first-class:
 
 | Artifact | What it is | Entry point |
 |----------|-----------|-------------|
 | `vscodium/VSCode-linux-<arch>/` | the Electron desktop app | `bin/crow` |
 | `vscodium/vscode-reh-web-linux-<arch>/` | the browser server (`reh-web`) | `bin/crow-server` |
 
-The chat panel is `packages/vscode-acp` (`crow-acp`), built with bun and copied into every packaged tree as a **built-in** extension alongside the Jupyter + Python stack pinned in `packages/crow-gui/bundled-exts.json` — so notebooks get a kernel picker with no marketplace install.
+The chat panel is that repo's `packages/vscode-acp` (`crow-acp`), built with bun and copied into every packaged tree as a **built-in** extension alongside the Jupyter + Python stack pinned in `packages/crow-gui/bundled-exts.json` — so notebooks get a kernel picker with no marketplace install.
 
 ```bash
 uv run crow-cli install crow   # from the clone: builds the .deb, installs it with dpkg, builds the TUI
@@ -195,10 +198,10 @@ The chat panel is a webview that dials the agent directly and spawns nothing: `c
 
 The install **is** the `.deb`, and that is not pedantry: `dpkg -i` is the only route that gets a root-owned `4755 chrome-sandbox`, which Chromium requires — without it the desktop app can die silently on kernels that restrict unprivileged user namespaces (Ubuntu 24.04+). So `install crow` runs the pipeline with `--deb` (it wants `fakeroot` + `dpkg-dev`, and says so *before* a 40-minute build rather than after) and then installs it.
 
-`install crow` works from anywhere: it builds from the checkout it is running in, and a packaged install (pip / uv tool) with no checkout beside it falls back to `~/.agents/crow/src/crow-cli`, cloning it first if that is missing. The whole install, by hand, is:
+`install crow` works from anywhere: it builds from the clients checkout it is running in, and a packaged install (pip / uv tool) with no checkout beside it falls back to `~/.agents/crow/src/crow`, cloning it first if that is missing. The whole install, by hand, is:
 
 ```bash
-cd ~/.agents/crow/src/crow-cli                          # if it exists; otherwise git clone https://github.com/crow-cli/crow-cli.git there
+cd ~/.agents/crow/src/crow                              # if it exists; otherwise git clone https://github.com/crow-cli/crow.git there
 cd packages/crow-gui && ./build.sh --arch x64 --deb     # IDE + web server + the .deb; ~40 min the first time
 sudo dpkg -i vscodium/assets/crow_*.deb                 # system-wide: /usr/share/crow, /usr/bin/crow, /usr/bin/crow-web
 cd ../.. && cargo build --release --bin crow-agent      # the agent TUI
@@ -336,7 +339,7 @@ uv run pytest tests/integration   # real sqlite, agent spawn
 uv run pytest tests/e2e           # live LLM calls (costs $)
 ```
 
-The Rust client builds with cargo (`cargo build --release --bin crow-agent`; `crates/crow-client` is the workspace's only member), the chat webview and the extension with bun (`bun install` at the root, then `bun run ext:build`), and the IDE with `packages/crow-gui/build.sh` (`--help` lists its flags; `--prepare-only` stops after fetch + patch + `npm ci`).
+The clients build in their own repo — `cd ~/.agents/crow/src/crow`. There: the Rust client with cargo (`cargo build --release --bin crow-agent`; `crates/crow-client` is the workspace's only member), the chat webview and the extension with bun (`bun install` at the root, then `bun run ext:build`), and the IDE with `packages/crow-gui/build.sh` (`--help` lists its flags; `--prepare-only` stops after fetch + patch + `npm ci`). Its CI is `.github/workflows/build-ide.yml` and `build-tui.yml` in that repo.
 
 ## Project layout
 
@@ -352,8 +355,13 @@ src/crow_cli/tools/       the in-kernel subtools the prelude binds
 src/crow_cli/config/      config loading, defaults, overrides (shared by every layer)
 src/crow_cli/memory/      shared SQL persistence (sqlite default, PostgreSQL supported)
 
-crates/crow-client/       crow-agent — the ratatui ACP client TUI
+tests/                    unit, integration, e2e
+```
 
+The clients are a separate repo — [`crow-cli/crow`](https://github.com/crow-cli/crow), cloned by `init` to `~/.agents/crow/src/crow`:
+
+```
+crates/crow-client/       crow-agent — the ratatui ACP client TUI
 packages/chat/            the chat webview source (@crow/chat) — the extension's UI
 packages/aui/             vendored assistant-ui, as built dist
 packages/vscode-acp/      crow-acp — the chat extension bundled into the IDE

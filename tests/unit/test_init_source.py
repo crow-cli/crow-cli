@@ -47,6 +47,12 @@ def _seed(repo: Path, name: str) -> None:
         skill = repo / "skills" / "crow-cli"
         skill.mkdir(parents=True)
         (skill / "SKILL.md").write_text("---\nname: crow-cli\ndescription: map\n---\n\nbody\n")
+    elif name == "crow":
+        # the clients repo: what `install crow` recognises as a checkout
+        (repo / "Cargo.toml").write_text("[workspace]\nmembers = [\"crates/crow-client\"]\n")
+        gui = repo / "packages" / "crow-gui"
+        gui.mkdir(parents=True)
+        (gui / "build.sh").write_text("#!/bin/sh\n")
     else:
         (repo / "sync-skills.py").write_text("# the site's skill publisher\n")
     _git(["add", "-A"], repo)
@@ -55,13 +61,14 @@ def _seed(repo: Path, name: str) -> None:
 
 @pytest.fixture
 def remotes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Path]:
-    """Two real local repos standing in for the GitHub remotes."""
+    """Three real local repos standing in for the GitHub remotes."""
     made = {}
-    for name in ("crow-cli", "crow-cli.github.io"):
+    for name in ("crow-cli", "crow", "crow-cli.github.io"):
         repo = tmp_path / "remotes" / name
         _seed(repo, name)
         made[name] = repo
     monkeypatch.setattr(source, "CROW_REPO", str(made["crow-cli"]))
+    monkeypatch.setattr(source, "CLIENTS_REPO", str(made["crow"]))
     monkeypatch.setattr(source, "SITE_REPO", str(made["crow-cli.github.io"]))
     return made
 
@@ -127,7 +134,7 @@ def test_clone_or_update_refuses_a_non_empty_non_git_dir(tmp_path: Path, remotes
 # ---------------------------------------------------------------------------
 
 
-def test_bootstrap_clones_both_repos_syncs_and_installs_the_skill(
+def test_bootstrap_clones_every_repo_syncs_and_installs_the_skill(
     tmp_path: Path, remotes: dict[str, Path]
 ):
     config_dir = tmp_path / "crow"
@@ -138,9 +145,14 @@ def test_bootstrap_clones_both_repos_syncs_and_installs_the_skill(
     assert report["errors"] == []
     assert report["checkouts"] == {
         "crow-cli": str(source.global_checkout(config_dir)),
+        "crow": str(source.clients_checkout(config_dir)),
         "crow-cli.github.io": str(source.site_checkout(config_dir)),
     }
     assert source.is_checkout(source.global_checkout(config_dir))
+    # the clients checkout is the one `install crow` builds from
+    clients = source.clients_checkout(config_dir)
+    assert (clients / "Cargo.toml").is_file()
+    assert (clients / "packages" / "crow-gui").is_dir()
     assert (source.site_checkout(config_dir) / "sync-skills.py").is_file()
 
     # the venv is pre-created so the first agent spawn is not a dep install
@@ -175,10 +187,10 @@ def test_bootstrap_reports_a_clone_failure_and_keeps_going(
 
     report = source.bootstrap(config_dir)
 
-    # crow-cli failed, the site still cloned, nothing raised
+    # crow-cli failed, the clients and the site still cloned, nothing raised
     assert len(report["errors"]) == 1
     assert "crow-cli:" in report["errors"][0]
-    assert list(report["checkouts"]) == ["crow-cli.github.io"]
+    assert list(report["checkouts"]) == ["crow", "crow-cli.github.io"]
     assert report["skill"] is None
     assert report["synced"] is False
 
@@ -210,7 +222,7 @@ def test_bootstrap_reports_missing_uv_without_raising(
     report = source.bootstrap(tmp_path / "crow")
 
     # the checkouts and the skill still landed; only the venv pre-sync did not
-    assert len(report["checkouts"]) == 2
+    assert len(report["checkouts"]) == 3
     assert report["synced"] is False
     assert report["skill"] is not None
     assert any("uv" in e for e in report["errors"])

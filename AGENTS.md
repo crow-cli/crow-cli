@@ -23,6 +23,16 @@ crow serve-web                                         # the same IDE in a brows
 One instance serves every dialling client on the machine. Do not start one per
 client, and do not restart it to change a client.
 
+## Where the clients live
+
+This repo is the **agent**. The clients — the `crow-agent` TUI, the IDE build
+pipeline, the chat extension and its webview — are their own repo,
+[`crow-cli/crow`](https://github.com/crow-cli/crow), which `crow-cli init`
+clones to `~/.agents/crow/src/crow` and `crow-cli install crow` builds from.
+Nothing under `src/` imports them: the coupling is ACP over the wire, plus
+`install crow` shelling out to that checkout's `packages/crow-gui/build.sh` and
+`cargo build --release --bin crow-agent`.
+
 ## The args, and where they live
 
 | Arg / setting | Where | Default | Meaning |
