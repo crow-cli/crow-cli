@@ -1,9 +1,9 @@
 """
 MCP client setup and tool extraction.
 
-MCP servers are passed by the ACP client in new_session/load_session calls —
-the CLIENT owns tool supply; the agent has no builtin fallback. We convert
-ACP MCP server objects to FastMCP clients (and back, for the client side).
+The agent's own ``mcpServers`` (config.yaml) are always in play; what the ACP
+client passes in ``new_session``/``load_session`` is added to them by name.
+We convert ACP MCP server objects to FastMCP clients (and back, client side).
 """
 
 from logging import Logger
@@ -74,30 +74,47 @@ def acp_to_fastmcp_config(
     return config
 
 
+def merge_mcp_servers(
+    config_servers: dict[str, Any] | None,
+    client_servers: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """config.yaml's ``mcpServers`` plus the client's, by name.
+
+    Both halves are FastMCP-format maps. A client entry reusing a config entry's
+    name replaces it; every other entry lands beside it. Entries are copied
+    because the caller stamps ``cwd`` on each one, and the config map is shared
+    by every session in the process.
+    """
+    servers = {name: dict(cfg) for name, cfg in (config_servers or {}).items()}
+    servers.update({name: dict(cfg) for name, cfg in (client_servers or {}).items()})
+    return {"mcpServers": servers}
+
+
 def create_mcp_client_from_acp(
     mcp_servers: list[HttpMcpServer | SseMcpServer | McpServerStdio] | None,
     cwd: str,
     logger: Logger,
+    config_mcp_servers: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], MCPClient | None]:
     """
-    Create an MCP client from the servers the ACP client passed in.
-
-    The agent has NO builtin fallback — tool supply is owned by the client
-    (new_session/load_session mcpServers). An empty/missing list means the
-    session runs with zero tools.
+    Create an MCP client from the agent's own servers plus the client's.
 
     Args:
         mcp_servers: MCP server configurations from the ACP client
         cwd: Working directory (passed to MCP tools)
+        config_mcp_servers: this agent's ``mcpServers`` from config.yaml
 
     Returns:
         (config dict, MCPClient | None) — client is None for zero servers.
     """
-    logger.info("create_mcp_client_from_acp: mcp_servers from client: %s", mcp_servers)
+    logger.info(
+        "create_mcp_client_from_acp: config servers: %s; client servers: %s",
+        config_mcp_servers,
+        mcp_servers,
+    )
 
-    config: dict[str, Any] = {"mcpServers": {}}
-    if mcp_servers:
-        config = acp_to_fastmcp_config(mcp_servers, logger=logger)
+    client = acp_to_fastmcp_config(mcp_servers, logger=logger) if mcp_servers else {}
+    config = merge_mcp_servers(config_mcp_servers, client.get("mcpServers"))
 
     for server_config in config["mcpServers"].values():
         server_config["cwd"] = cwd

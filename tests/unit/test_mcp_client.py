@@ -1,4 +1,4 @@
-"""MCP ownership inversion: client-side converter + zero-tool agent path."""
+"""The agent's own config servers plus whatever the client sent."""
 
 import logging
 
@@ -10,6 +10,10 @@ from crow_cli.agent.mcp_client import (
     fastmcp_config_to_acp_servers,
     get_tools,
 )
+
+_CONFIG_SERVERS = {
+    "crow-mcp": {"transport": "stdio", "command": "crow-cli", "args": ["mcp"]}
+}
 
 
 async def test_get_tools_none_client_returns_empty():
@@ -84,6 +88,51 @@ def test_stdio_defaults_transport():
     )
     assert isinstance(servers[0], McpServerStdio)
     assert servers[0].env == []
+
+
+def test_config_servers_ride_along_with_the_clients():
+    config, client = create_mcp_client_from_acp(
+        [McpServerStdio(name="remote", command="npx", args=["playwright"], env=[])],
+        cwd="/tmp",
+        logger=logging.getLogger("test"),
+        config_mcp_servers=_CONFIG_SERVERS,
+    )
+    assert client is not None
+    assert set(config["mcpServers"]) == {"crow-mcp", "remote"}
+    assert config["mcpServers"]["crow-mcp"]["cwd"] == "/tmp"
+
+
+def test_config_servers_alone_are_a_client():
+    config, client = create_mcp_client_from_acp(
+        None, cwd="/tmp", logger=logging.getLogger("test"), config_mcp_servers=_CONFIG_SERVERS
+    )
+    assert client is not None
+    assert config["mcpServers"] == {
+        "crow-mcp": {"transport": "stdio", "command": "crow-cli", "args": ["mcp"], "cwd": "/tmp"}
+    }
+
+
+def test_a_client_server_replaces_the_config_entry_of_the_same_name():
+    config, _ = create_mcp_client_from_acp(
+        [McpServerStdio(name="crow-mcp", command="/other/crow-cli", args=["mcp2"], env=[])],
+        cwd="/tmp",
+        logger=logging.getLogger("test"),
+        config_mcp_servers=_CONFIG_SERVERS,
+    )
+    assert config["mcpServers"]["crow-mcp"]["command"] == "/other/crow-cli"
+
+
+def test_the_shared_config_map_is_not_stamped_with_a_cwd():
+    """Every session stamps its own cwd on its copy; config.yaml is one object."""
+    config, _ = create_mcp_client_from_acp(
+        None, cwd="/tmp/one", logger=logging.getLogger("test"), config_mcp_servers=_CONFIG_SERVERS
+    )
+    assert config["mcpServers"]["crow-mcp"]["cwd"] == "/tmp/one"
+    assert _CONFIG_SERVERS["crow-mcp"] == {
+        "transport": "stdio",
+        "command": "crow-cli",
+        "args": ["mcp"],
+    }
 
 
 def test_roundtrip_fastmcp_acp_fastmcp():

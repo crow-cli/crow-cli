@@ -190,6 +190,63 @@ class TestForkSessionPersists:
         assert agent._sessions[resp.session_id].rlm_depth == 0
 
 
+class TestTheAgentsOwnServers:
+    """config.yaml's ``mcpServers`` reach the factory, not just the client's."""
+
+    @pytest.fixture
+    def seen(self, monkeypatch):
+        import crow_cli.agent.main as main_mod
+
+        calls = []
+
+        def fake(**kwargs):
+            calls.append(kwargs)
+            return None, None
+
+        monkeypatch.setattr(main_mod, "create_mcp_client_from_acp", fake)
+        return calls
+
+    @pytest.fixture
+    async def saved_session(self, memory_service):
+        prompt_id = await lookup_or_create_prompt("You are a test.", name="t")
+        return await AgentSession.create(
+            prompt_id=prompt_id,
+            prompt_args={"workspace": "/tmp", "display_tree": "test/"},
+            tool_definitions=[],
+            request_params={},
+            model_identifier="test-model-id",
+            cwd="/tmp",
+            agent_idx=1,
+            session_id="own-servers",
+        )
+
+    @pytest.fixture
+    def configured(self, agent):
+        agent._config.mcp_servers = {
+            "crow-mcp": {"transport": "stdio", "command": "crow-cli", "args": ["mcp"]}
+        }
+        return agent
+
+    async def test_new_session_hands_the_agents_servers_to_the_factory(
+        self, configured, seen
+    ):
+        await configured.new_session(cwd="/tmp", mcp_servers=[STDIO])
+
+        assert seen[-1]["config_mcp_servers"] == {
+            "crow-mcp": {"transport": "stdio", "command": "crow-cli", "args": ["mcp"]}
+        }
+        assert seen[-1]["mcp_servers"] == [STDIO]
+
+    async def test_load_session_hands_the_agents_servers_to_the_factory(
+        self, configured, seen, saved_session
+    ):
+        await configured.load_session(
+            cwd="/tmp", session_id=saved_session.session_id, mcp_servers=[]
+        )
+
+        assert "crow-mcp" in seen[-1]["config_mcp_servers"]
+
+
 class TestMemoryClientRealDb:
     """The wrapper itself against real sqlite, two clients = two processes."""
 

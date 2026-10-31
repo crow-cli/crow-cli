@@ -173,6 +173,33 @@ def test_an_unknown_transport_is_skipped_rather_than_guessed_at(caplog):
     assert any("carrier-pigeon" in r.getMessage() for r in caplog.records)
 
 
+def test_config_servers_are_kept_and_the_clients_added():
+    """The v2 agent's own config.yaml servers, plus the client's, by name."""
+    config, client = mcp_client_for(
+        [STDIO],
+        CWD,
+        LOG,
+        {"crow-mcp": {"transport": "stdio", "command": "crow-cli", "args": ["mcp"]}},
+    )
+    assert client is not None
+    assert set(config["mcpServers"]) == {"crow-mcp", "crow-mcp2"}
+    assert config["mcpServers"]["crow-mcp"]["cwd"] == CWD
+
+
+def test_a_client_server_replaces_the_config_entry_of_the_same_name():
+    config, _ = mcp_client_for(
+        [STDIO], CWD, LOG, {"crow-mcp2": {"transport": "stdio", "command": "other"}}
+    )
+    assert config["mcpServers"]["crow-mcp2"]["command"] == "crow-cli"
+
+
+def test_the_shared_config_map_is_not_stamped_with_a_cwd():
+    config_servers = {"crow-mcp": {"transport": "stdio", "command": "crow-cli"}}
+    config, _ = mcp_client_for([], CWD, LOG, config_servers)
+    assert config["mcpServers"]["crow-mcp"]["cwd"] == CWD
+    assert config_servers == {"crow-mcp": {"transport": "stdio", "command": "crow-cli"}}
+
+
 def test_no_servers_means_no_client_and_that_is_not_an_error():
     """Zero tools is a configuration, not a failure worth raising over.
 

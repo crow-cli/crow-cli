@@ -17,9 +17,8 @@ what lets one agent process serve a session it never created — a restart, a
 second client, a prompt with no ``session/new`` before it.
 
 **Provisioning is separate from resolution** because a hydrated session arrives
-bare: no MCP client, no tools, no logger. v1 had no builtin fallback and
-neither does this — a session that no client handed ``mcpServers`` for runs
-toolless until one does.
+bare: no MCP client, no tools, no logger. It is provisioned from this agent's
+own ``mcpServers`` (config.yaml) plus whatever the client sent.
 
 **The LLM is built per turn, not per session.** ``set_config_option`` can
 change the model between turns and the provider follows the model, so the
@@ -48,7 +47,7 @@ from fastmcp.client.transports import MCPConfigTransport
 
 from crow_cli.agent.llm import configure_llm
 from crow_cli.agent.logger import setup_logger
-from crow_cli.agent.mcp_client import get_tools
+from crow_cli.agent.mcp_client import get_tools, merge_mcp_servers
 from crow_cli.agent.prompt import SystemPromptFactory, default_system_prompt
 from crow_cli.agent.session import AgentSession, get_coolname, make_agent_session
 from crow_cli.config import Config
@@ -83,13 +82,16 @@ def mcp_servers_to_wire(mcp_servers: Optional[list]) -> list[dict]:
 
 
 def mcp_client_for(
-    mcp_servers: Optional[list], cwd: str, log: Logger
+    mcp_servers: Optional[list],
+    cwd: str,
+    log: Logger,
+    config_mcp_servers: Optional[dict[str, Any]] = None,
 ) -> tuple[dict[str, Any], Optional[MCPClient]]:
     """Wire MCP server objects -> a FastMCP client, or None for zero servers.
 
-    The client owns tool supply; there is no builtin fallback. An empty or
-    missing list means the session runs with zero tools, which is a legitimate
-    configuration and not an error worth raising over.
+    The agent's own ``mcpServers`` from config.yaml are always in play, and the
+    client's are added to them by name. Zero servers therefore only happens
+    when config.yaml lists none and the client sent none either.
 
     Dispatched on the ``type`` discriminator rather than by isinstance: v2 has
     both ``StdioMcpServer`` (what a client sends) and ``McpServerStdio`` (what
@@ -121,6 +123,8 @@ def mcp_client_for(
             log.warning("MCP-over-ACP server %r is not supported yet — skipped", name)
         else:
             log.warning("unknown MCP server type %r for %r — skipped", kind, name)
+
+    config = merge_mcp_servers(config_mcp_servers, config["mcpServers"])
 
     for server_config in config["mcpServers"].values():
         server_config["cwd"] = cwd
@@ -444,7 +448,9 @@ class SessionRegistry:
         # failure between the two still leaves the stack in ``_stacks``, so
         # process teardown closes it rather than leaking the subprocess.
         session_id = get_coolname()
-        _, mcp_client = mcp_client_for(mcp_servers, cwd, logger)
+        _, mcp_client = mcp_client_for(
+            mcp_servers, cwd, logger, self.config.mcp_servers
+        )
         if mcp_client is not None:
             mcp_client = await self._stack_for(session_id).enter_async_context(mcp_client)
         tools = await get_tools(mcp_client)
@@ -485,7 +491,9 @@ class SessionRegistry:
         session_id = wire_session_id(session.agent_id)
         if session_id in self.tools:
             return
-        _, mcp_client = mcp_client_for(mcp_servers, session.cwd, logger)
+        _, mcp_client = mcp_client_for(
+            mcp_servers, session.cwd, logger, self.config.mcp_servers
+        )
         if mcp_client is not None:
             mcp_client = await self._stack_for(session_id).enter_async_context(mcp_client)
         tools = await get_tools(mcp_client)

@@ -320,12 +320,12 @@ class AcpAgent(Agent):
         session_id = wire_session_id(session.agent_id)
         if session_id in self._tools:
             return
-        # No builtin MCP fallback: a hydrated session that no client handed
-        # mcp_servers for runs toolless until a load/new_session provides them.
+        # The agent's own config servers, plus whatever the client supplied.
         config, mcp_client = create_mcp_client_from_acp(
             mcp_servers=None,
             cwd=session.cwd,
             logger=self._logger,
+            config_mcp_servers=self._config.mcp_servers,
         )
         if mcp_client is not None:
             mcp_client = await self._exit_stack.enter_async_context(mcp_client)
@@ -501,11 +501,12 @@ class AcpAgent(Agent):
 
         self._logger.info("new_session mcp_servers from ACP: %s", mcp_servers)
 
-        # Client owns tool supply: use exactly what it passed (empty = zero tools)
+        # config.yaml's servers, plus the ones this client sent.
         config, mcp_client = create_mcp_client_from_acp(
             mcp_servers=mcp_servers,
             cwd=cwd,
             logger=self._logger,
+            config_mcp_servers=self._config.mcp_servers,
         )
         self._logger.info("new_session merged config from create_mcp_client_from_acp: %s", config)
         # CRITICAL: Use AsyncExitStack for lifecycle management
@@ -619,12 +620,13 @@ class AcpAgent(Agent):
             )
             self._logger.info("LOAD_SESSION: Step 1 complete: Agent loaded from DB")
 
-            # Setup MCP client (same as new_session): client owns tool supply
+            # Setup MCP client (same as new_session): config servers + client's
             self._logger.info("LOAD_SESSION: mcp_servers from ACP: %s", mcp_servers)
             config, mcp_client = create_mcp_client_from_acp(
                 mcp_servers=mcp_servers,
                 cwd=cwd,
                 logger=self._logger,
+                config_mcp_servers=self._config.mcp_servers,
             )
             self._logger.info("LOAD_SESSION merged config: %s", config)
 
@@ -793,11 +795,12 @@ class AcpAgent(Agent):
 
         wire_id = session.agent_id  # forks are addressed by their agent_id
 
-        # Provision exactly like load_session: client owns tool supply.
+        # Provision exactly like load_session: config servers + the client's.
         config, mcp_client = create_mcp_client_from_acp(
             mcp_servers=mcp_servers,
             cwd=cwd,
             logger=self._logger,
+            config_mcp_servers=self._config.mcp_servers,
         )
         if mcp_client is not None:
             mcp_client = await self._exit_stack.enter_async_context(mcp_client)
