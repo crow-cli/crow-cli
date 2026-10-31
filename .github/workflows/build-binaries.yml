@@ -50,10 +50,9 @@ jobs:
         with:
           python-version-file: "pyproject.toml"
 
-      - name: Install dependencies
-        run: |
-          uv pip install --system pyinstaller
-
+      # pyinstaller is in the dev group, so `uv run` resolves it along with the
+      # project. The old `uv pip install --system pyinstaller` installed into
+      # setup-python's interpreter, which is not the one the build uses.
       - name: Build with PyInstaller
         run: |
           uv run pyinstaller crow-cli.spec --noconfirm
