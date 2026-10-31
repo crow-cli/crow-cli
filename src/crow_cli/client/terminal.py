@@ -15,17 +15,17 @@ for prompt-surface-area work:
   through an alacritty grid; here we use a small regex strip, which is enough
   for this microscope client (we are not trying to wow anyone here).
 
-Stdlib only (``pty`` + ``os``); no terminal-emulator library, no new deps.
+The pty itself is ``pty_spawn``'s problem: stdlib ``pty`` on POSIX, ConPTY
+through pywinpty on Windows. Nothing here branches on platform.
 """
 
 import asyncio
 import os
-import pty
 import re
-import signal
-import subprocess
 import threading
 import uuid
+
+from crow_cli.client.pty_spawn import PtyChild, spawn
 
 # Match zed (terminal.rs): ask the child to emit color so tty-sensitive
 # behavior matches the real client terminals. We strip it back out for the
@@ -78,62 +78,36 @@ class ClientTerminal:
         self.signal_name: str | None = None
 
         self._exit_event = threading.Event()
-        self._master_fd: int | None = None
-        self._proc: subprocess.Popen | None = None
+        self._child: PtyChild | None = None
         self._reader: threading.Thread | None = None
         self._lock = threading.Lock()
 
     def start(self) -> None:
-        """Spawn the command in a PTY via subprocess and start the reader.
+        """Spawn the command in a pty and start the reader.
 
-        ``pty.openpty()`` only creates a pty fd pair (no fork); ``Popen`` does
-        the fork+exec in C, which is safe in this multi-threaded process and
-        avoids the ``forkpty()`` DeprecationWarning / deadlock hazard. The slave
-        pty is the child's stdio, so programs see a real tty (isatty() is True)
-        and behave as they would under the IDE's client terminals.
+        The child's stdio is the pty's slave side, so programs see a real tty
+        (isatty() is True) and behave as they would under the IDE's client
+        terminals.
         """
-        master, slave = pty.openpty()
-        try:
-            self._proc = subprocess.Popen(
-                ["bash", "-c", self.command],
-                stdin=slave,
-                stdout=slave,
-                stderr=slave,
-                cwd=self.cwd,
-                env=self.env,
-                start_new_session=True,
-            )
-        finally:
-            # The child keeps its own reference to the slave; the parent only
-            # needs the master side to read output.
-            os.close(slave)
-        self._master_fd = master
+        self._child = spawn(self.command, self.cwd, self.env)
         self._reader = threading.Thread(
             target=self._read_loop,
-            name=f"client-term-{self._proc.pid}",
+            name=f"client-term-{self._child.pid}",
             daemon=True,
         )
         self._reader.start()
 
     def _read_loop(self) -> None:
-        """Drain the PTY until EOF, then reap the child and signal exit."""
+        """Drain the pty until EOF, then reap the child and signal exit."""
         try:
             while True:
-                try:
-                    chunk = os.read(self._master_fd, 65536)
-                except OSError:
-                    break  # EIO: child closed the tty
+                chunk = self._child.read(65536)
                 if not chunk:
                     break
                 self._append(chunk)
         finally:
             self._reap()
-            if self._master_fd is not None:
-                try:
-                    os.close(self._master_fd)
-                except OSError:
-                    pass
-                self._master_fd = None
+            self._child.close()
             self._exit_event.set()
 
     def _append(self, chunk: bytes) -> None:
@@ -146,17 +120,7 @@ class ClientTerminal:
 
     def _reap(self) -> None:
         """Wait for the child and record its real exit code / signal."""
-        if self._proc is None:
-            return
-        rc = self._proc.wait()  # negative => terminated by signal (-rc)
-        if rc < 0:
-            try:
-                self.signal_name = signal.Signals(-rc).name
-            except ValueError:
-                self.signal_name = str(-rc)
-            self.exit_code = None
-        else:
-            self.exit_code = rc
+        self.exit_code, self.signal_name = self._child.status()
 
     async def wait_exit(self) -> tuple[int | None, str | None]:
         """Await the child's exit without blocking the event loop."""
@@ -174,20 +138,13 @@ class ClientTerminal:
         return strip_ansi(raw), self.truncated
 
     def kill(self) -> None:
-        if self._proc is not None:
-            try:
-                self._proc.kill()  # SIGKILL
-            except ProcessLookupError:
-                pass
+        if self._child is not None:
+            self._child.kill()
 
     def release(self) -> None:
         """Drop resources. The reader thread is a daemon and self-terminates."""
-        if self._master_fd is not None:
-            try:
-                os.close(self._master_fd)
-            except OSError:
-                pass
-            self._master_fd = None
+        if self._child is not None:
+            self._child.close()
 
 
 class TerminalManager:

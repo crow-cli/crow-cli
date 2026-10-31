@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - "v*" # Trigger on version tags like v0.1.13
+  # Build without cutting a release: the release job below only runs for tags,
+  # so this is how a platform build gets exercised before a version exists.
+  workflow_dispatch:
 
 jobs:
   build:

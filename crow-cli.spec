@@ -1,5 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import sys
+
 from PyInstaller.utils.hooks import copy_metadata
 
 block_cipher = None
@@ -37,6 +39,10 @@ a = Analysis(
         'crow_cli.config',
         'crow_cli.client',
         'crow_cli.client.main',
+        'crow_cli.client.pty_spawn',
+        # ConPTY, reached only from pty_spawn's Windows branch — and only on
+        # Windows, where pywinpty is installed (a platform-marked dependency).
+        *(['winpty'] if sys.platform == 'win32' else []),
         'crow_cli.agent_runner',
         # Lazy (PEP 562) facades resolve through importlib at runtime —
         # invisible to static analysis, so pin them here.

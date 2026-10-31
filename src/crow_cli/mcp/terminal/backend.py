@@ -1,8 +1,12 @@
-"""PTY-based terminal backend implementation."""
+"""PTY-based terminal backend implementation.
 
-import fcntl
+POSIX only: an interactive bash with a PS1 metadata protocol, driven through a
+master fd with fcntl and select. Windows has no pty and no fcntl, so the
+imports below are guarded and ``initialize()`` says so plainly rather than the
+whole MCP server failing to start.
+"""
+
 import os
-import pty
 import select
 import shutil
 import signal
@@ -12,6 +16,12 @@ import time
 from collections import deque
 from logging import getLogger
 from typing import Any
+
+try:
+    import fcntl
+    import pty
+except ImportError:  # Windows has neither; initialize() is where it matters
+    fcntl = pty = None
 
 from .constants import (
     CMD_OUTPUT_PS1_BEGIN,
@@ -65,6 +75,11 @@ class SubprocessTerminal:
         """Initialize the PTY terminal session."""
         if self._initialized:
             return
+        if pty is None:
+            raise RuntimeError(
+                "The terminal tool drives an interactive bash through a POSIX "
+                "pty and fcntl, neither of which exists on Windows."
+            )
 
         # Resolve shell path
         resolved_shell_path: str | None
