@@ -13,14 +13,14 @@ jobs:
       matrix:
         os:
           [
-            ubuntu-22.04,
+            ubuntu-24.04,
             macos-15-intel,
             macos-latest,
             windows-latest,
             ubuntu-24.04-arm,
           ]
         include:
-          - os: ubuntu-22.04
+          - os: ubuntu-24.04
             target: linux-x86_64
             archive_name: crow-cli-linux-x86_64.tar.gz
           - os: macos-15-intel
@@ -58,6 +58,13 @@ jobs:
         run: |
           uv run pyinstaller crow-cli.spec --noconfirm
 
+      - name: Smoke-test the binary
+        shell: bash
+        run: |
+          BIN=dist/crow-cli
+          if [ "${{ runner.os }}" == "Windows" ]; then BIN=dist/crow-cli.exe; fi
+          "$BIN" --version
+
       - name: Create archive
         shell: bash
         run: |
@@ -72,7 +79,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: crow-cli-${{ matrix.target }}
-          path: ${{ matrix.archive_name }}
+          # `Create archive` cds into dist/, so the archive is dist/<name>. This
+          # was <name> at the workspace root for ten releases: upload-artifact's
+          # default if-no-files-found is `warn`, so every build job passed with an
+          # empty artifact, download-artifact merged nothing, and the release glob
+          # matched nothing — a release with zero assets, all six jobs green.
+          path: dist/${{ matrix.archive_name }}
+          if-no-files-found: error
           retention-days: 30
 
   release:
@@ -96,6 +109,9 @@ jobs:
           files: |
             crow-cli-*.tar.gz
             crow-cli-*.zip
+          # Without this an unmatched glob publishes an assetless release and
+          # exits 0 — which is what happened from v0.1.35 to v0.1.48.
+          fail_on_unmatched_files: true
           draft: false
           prerelease: false
           generate_release_notes: true
