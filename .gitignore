@@ -34,3 +34,14 @@ node_modules/
 
 # playwright-cli scratch state
 .playwright-cli/
+
+# Orphans of the split-clients merge: crates/ and packages/ moved to
+# github.com/crow-cli/crow, and git deleted every TRACKED file under them, but
+# the build output they left on disk is not git's to remove — 58G of cargo
+# target/ and 13G of packages/ (vendored-VSCodium sysroot caches, downloaded
+# .vsix files, the packaged VSCode-* trees, node_modules, bun dists). Ignored
+# so `git status` stays readable and a `git add -A` cannot swallow 71G.
+# Deleting them is safe and reclaims the space; nothing here is a source of
+# truth any more.
+/target/
+/packages/
