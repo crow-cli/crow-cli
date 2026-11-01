@@ -1,2 +1,0 @@
-import type { ExternalStoreSharedOptions } from "../../runtimes/external-store/external-store-shared-options.js";
-export declare const useExternalStoreSharedOptions: (options: ExternalStoreSharedOptions) => ExternalStoreSharedOptions;

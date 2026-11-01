@@ -1,1 +1,0 @@
-export declare const useRenderMemo: <T>(callback: () => T, deps: unknown[], disableMemo: boolean) => T;

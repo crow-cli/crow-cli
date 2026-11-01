@@ -1,1 +1,0 @@
-export declare function useRefreshScope<T>(token: unknown, fn: () => T): T;

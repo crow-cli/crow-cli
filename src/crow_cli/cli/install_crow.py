@@ -1,9 +1,13 @@
 """`crow-cli install crow` — build and install crow's IDE.
 
-crow's IDE is VS Code, built by `packages/crow-gui` (a vendored VSCodium
-pipeline) into two artifacts: the Electron desktop app and the `reh-web`
-browser server. This command INSTALLS them, and on Linux the install is the
-`.deb`: `./build.sh --deb` plus `sudo dpkg -i`, which is the only route that
+crow's clients live in their own repo — `crow-cli/crow`, cloned beside this one
+at `~/.agents/crow/src/crow`. crow-cli is the agent; this command builds and
+installs the clients from that checkout.
+
+crow's IDE is VS Code, built by the crow repo's `packages/crow-gui` (a vendored
+VSCodium pipeline) into two artifacts: the Electron desktop app and the
+`reh-web` browser server. This command INSTALLS them, and on Linux the install
+is the `.deb`: `./build.sh --deb` plus `sudo dpkg -i`, which is the only route that
 gets a root-owned 4755 `chrome-sandbox` (Chromium refuses to launch without it
 on kernels that restrict unprivileged user namespaces — Ubuntu 24.04+) and the
 one that puts `crow.desktop`, `/usr/bin/crow` and `/usr/share/crow/web` where
@@ -18,8 +22,8 @@ Either way a single `crow` binary lands on PATH:
     crow agent       the crow agent TUI (crates/crow-client's `crow-agent`)
     crow tunnel …    the built-in tunnel/remote CLI
 
-The TUI is a Rust binary built from this repo's `crates/crow-client`, and this
-command builds it (`cargo build --release --bin crow-agent`) and installs it
+The TUI is a Rust binary built from the crow repo's `crates/crow-client`, and
+this command builds it (`cargo build --release --bin crow-agent`) and installs it
 beside the launcher — `crow agent` is only as good as the binary it execs. Two
 front doors agree on that binary: the shim below (fast path, no Electron/node
 hop) and the IDE's own Rust CLI, where
@@ -46,14 +50,17 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from crow_cli.cli.source import CLIENTS_REPO, clients_checkout
+
 console = Console()
 
 
-#: where `crow-cli init` clones the source checkout — the fallback when this
-#: command is not running from one (a pip / uv-tool install has nothing but its
-#: own site-packages beside it, and `install crow` builds from source).
-DEFAULT_CHECKOUT = Path.home() / ".agents" / "crow" / "src" / "crow-cli"
-REPO_URL = "https://github.com/crow-cli/crow-cli.git"
+#: where the clients' checkout lives — the fallback when this command is not
+#: running from one (a pip / uv-tool install has nothing but its own
+#: site-packages beside it, and `install crow` builds from source). `init`
+#: clones it there; see crow_cli.cli.source.
+DEFAULT_CHECKOUT = clients_checkout()
+REPO_URL = f"{CLIENTS_REPO}.git"
 
 
 def _is_checkout(path: Path) -> bool:
@@ -61,12 +68,12 @@ def _is_checkout(path: Path) -> bool:
 
 
 def repo_root() -> Path:
-    """The checkout that owns the rust crates and the crow-gui pipeline.
+    """The clients' checkout: the one that owns the crates and crow-gui.
 
-    Works from anywhere: the checkout this command runs from wins, then the
-    default source checkout, then a fresh clone of it. A packaged install has
-    no repo of its own, and telling the user to cd somewhere before running an
-    installer is making them do the installer's job.
+    Works from anywhere: a checkout this command runs from wins, then the
+    default one, then a fresh clone of it. A packaged install has no repo of
+    its own, and telling the user to cd somewhere before running an installer
+    is making them do the installer's job.
     """
     here = Path(__file__).resolve()
     for parent in here.parents:
@@ -76,10 +83,10 @@ def repo_root() -> Path:
         console.print(f"[dim]building from {short(DEFAULT_CHECKOUT)}[/dim]")
         return DEFAULT_CHECKOUT
     if shutil.which("git") is None:
-        console.print(f"[red]no crow-cli checkout and no git to clone one — "
+        console.print(f"[red]no crow checkout and no git to clone one — "
                       f"git clone {REPO_URL} {short(DEFAULT_CHECKOUT)}[/red]")
         raise typer.Exit(1)
-    console.print(f"[bold]no crow-cli checkout — cloning {REPO_URL} into {short(DEFAULT_CHECKOUT)}[/bold]")
+    console.print(f"[bold]no crow checkout — cloning {REPO_URL} into {short(DEFAULT_CHECKOUT)}[/bold]")
     DEFAULT_CHECKOUT.parent.mkdir(parents=True, exist_ok=True)
     proc = subprocess.run(["git", "clone", REPO_URL, str(DEFAULT_CHECKOUT)])
     if proc.returncode != 0:

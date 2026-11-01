@@ -1,2 +1,0 @@
-import type { ExtractResourceReturnType, ResourceElement } from "../core/types.js";
-export declare function useResources<E extends ResourceElement<any>>(elements: readonly E[]): ExtractResourceReturnType<E>[];

@@ -19,6 +19,7 @@ from rich.console import Console
 from typer.testing import CliRunner
 
 from crow_cli.cli import install_crow as ic
+from crow_cli.cli import source
 
 runner = CliRunner()
 
@@ -32,8 +33,8 @@ def wide_console(monkeypatch):
 
 @pytest.fixture
 def pipeline(tmp_path: Path) -> Path:
-    """A fake checkout: repo_root() and pipeline_dir() both satisfied."""
-    root = tmp_path / "crow-cli"
+    """A fake clients checkout: repo_root() and pipeline_dir() both satisfied."""
+    root = tmp_path / "crow"
     (root / "packages" / "crow-gui" / "vscodium" / "assets").mkdir(parents=True)
     (root / "Cargo.toml").write_text("[workspace]\n")
     (root / "packages" / "crow-gui" / "build.sh").write_text("#!/bin/sh\n")
@@ -55,6 +56,13 @@ def make_deb(pipeline: Path, name: str, mtime: float) -> Path:
 # ---- where the build happens ----------------------------------------------
 
 
+def test_the_clients_live_in_their_own_repo():
+    """`install crow` builds from the checkout `init` clones — one definition."""
+    assert ic.DEFAULT_CHECKOUT == source.clients_checkout()
+    assert ic.DEFAULT_CHECKOUT.name == "crow"
+    assert ic.REPO_URL == f"{source.CLIENTS_REPO}.git"
+
+
 def fake_checkout(root: Path) -> Path:
     (root / "packages" / "crow-gui").mkdir(parents=True)
     (root / "Cargo.toml").write_text("[workspace]\n")
@@ -68,14 +76,14 @@ def test_repo_root_prefers_the_checkout_the_command_runs_from(monkeypatch, tmp_p
 
 
 def test_repo_root_falls_back_to_the_default_checkout(monkeypatch, tmp_path):
-    root = fake_checkout(tmp_path / "crow-cli")
+    root = fake_checkout(tmp_path / "crow")
     monkeypatch.setattr(ic, "__file__", str(tmp_path / "elsewhere" / "site-packages" / "install_crow.py"))
     monkeypatch.setattr(ic, "DEFAULT_CHECKOUT", root)
     assert ic.repo_root() == root
 
 
 def test_repo_root_clones_when_there_is_no_checkout_at_all(monkeypatch, tmp_path):
-    root = tmp_path / "crow-cli"
+    root = tmp_path / "crow"
     monkeypatch.setattr(ic, "__file__", str(tmp_path / "elsewhere" / "install_crow.py"))
     monkeypatch.setattr(ic, "DEFAULT_CHECKOUT", root)
     calls = []
@@ -92,7 +100,7 @@ def test_repo_root_clones_when_there_is_no_checkout_at_all(monkeypatch, tmp_path
 
 def test_repo_root_says_how_to_clone_when_the_clone_fails(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(ic, "__file__", str(tmp_path / "elsewhere" / "install_crow.py"))
-    monkeypatch.setattr(ic, "DEFAULT_CHECKOUT", tmp_path / "crow-cli")
+    monkeypatch.setattr(ic, "DEFAULT_CHECKOUT", tmp_path / "crow")
     monkeypatch.setattr(ic.subprocess, "run", lambda argv, **kw: subprocess.CompletedProcess(argv, 128))
     with pytest.raises(typer.Exit):
         ic.repo_root()

@@ -38,6 +38,7 @@ def config_dir(tmp_path: Path) -> Path:
 def test_everything_hangs_off_the_config_dir(config_dir: Path):
     assert source.src_dir(config_dir) == config_dir / "src"
     assert source.global_checkout(config_dir) == config_dir / "src" / "crow-cli"
+    assert source.clients_checkout(config_dir) == config_dir / "src" / "crow"
     assert source.site_checkout(config_dir) == config_dir / "src" / "crow-cli.github.io"
     # skills are a SIBLING of the config dir under ~/.agents, never inside it
     assert source.skills_dir(config_dir) == config_dir.parent / "skills"

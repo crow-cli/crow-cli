@@ -1,1 +1,0 @@
-export declare const useMemo: <T>(fn: () => T, deps: readonly unknown[]) => T;

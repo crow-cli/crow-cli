@@ -1,1 +1,0 @@
-export declare const throwAggregated: (errors: unknown[], message: string) => void;
