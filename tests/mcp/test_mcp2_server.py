@@ -33,6 +33,11 @@ from crow_cli.mcp2.server import mcp
 
 ALL = set(tool_names())
 
+#: The logger ``serve()`` attaches the file handler to. It has to be the
+#: PACKAGE name — every tool module logs as ``crow_cli.mcp2.<module>`` and only
+#: an ancestor's handlers receive a propagated record.
+LOGGER_NAME = "crow_cli.mcp2"
+
 
 @pytest.fixture(autouse=True)
 def _reap_kernels():
@@ -275,9 +280,9 @@ class TestServe:
         # attaches when the named logger has none, so a handler left over from
         # an earlier test would keep writing to that test's tmp_path.
         monkeypatch.setattr(runner, "LOG_PATH", tmp_path / "crow-mcp2.log")
-        logging.getLogger("crow_cli.mcp2_logger").handlers.clear()
+        logging.getLogger(LOGGER_NAME).handlers.clear()
         yield
-        logging.getLogger("crow_cli.mcp2_logger").handlers.clear()
+        logging.getLogger(LOGGER_NAME).handlers.clear()
 
     @pytest.fixture
     def runs(self, monkeypatch, server):
@@ -339,6 +344,26 @@ class TestServe:
         # Both servers are meant to run at once — agent1 is frozen and still
         # talks to crow-mcp — so they cannot share a port.
         assert runner.DEFAULT_PORT != v1_DEFAULT_PORT
+
+    def test_a_tool_modules_error_reaches_the_log_file(self, runs, server, tmp_path):
+        """The server's own evidence has to survive the incident.
+
+        The handler used to go on ``crow_cli.mcp2_logger`` — a SIBLING of the
+        name every tool module logs under, not an ancestor, so nothing they said
+        propagated to it. The file held this module's two info lines and nothing
+        else. That is why a server that died mid-cell left no trace on its own
+        side and the only record of the failure was the client's bare ``Error:
+        Connection closed``: a symptom with no cause attached, and a cause
+        (libzmq aborting the process over two readers on one socket) that had to
+        be reconstructed from a rotated agent log instead.
+        """
+        runner.serve("stdio", "127.0.0.1", 2770)
+        logging.getLogger("crow_cli.mcp2.execute.main").error("kernel went away")
+
+        text = (tmp_path / "crow-mcp2.log").read_text()
+        assert "crow-mcp2 serving 1 tool(s): execute" in text
+        assert "crow_cli.mcp2.execute.main" in text
+        assert "kernel went away" in text
 
 
 if __name__ == "__main__":

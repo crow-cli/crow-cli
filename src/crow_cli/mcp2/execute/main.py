@@ -42,6 +42,7 @@ import concurrent.futures
 import json
 import os
 import sys
+from collections.abc import Callable
 from logging import getLogger
 from pathlib import Path
 from typing import Optional
@@ -120,6 +121,26 @@ def _progress_token(ctx: Context) -> Optional[object]:
     """
     meta = ctx.request_context.meta if ctx.request_context else None
     return meta_get(meta, "progressToken") if meta is not None else None
+
+
+def _meta_reset(ctx: Context) -> bool:
+    """True when the CALLER — not the model — asked for the kernel to be reset.
+
+    ``reset`` is a model-facing argument, so the model is the only one who can
+    pull it, and pulling it costs a tool call it has to decide to make. That is
+    the wrong shape for the two callers who actually know a reset is needed: a
+    client reacting to a wedged session, and the agent recovering a connection
+    it just had to rebuild. Neither should have to speak through the model, and
+    neither can — a turn in flight is exactly when the model is unavailable.
+
+    So this rides ``_meta``, the same channel as ``session_id`` and ``cwd``:
+    injected by the agent, filtered out of the LLM-facing schema, and therefore
+    neither visible to nor forgeable by the model. It resets the KERNEL and
+    nothing else — the MCP client, the session, the tool surface all stay up,
+    which is the entire point of having a signal for it.
+    """
+    meta = ctx.request_context.meta if ctx.request_context else None
+    return bool(meta_get(meta, "reset_kernel"))
 
 
 def _prologue(
@@ -279,6 +300,16 @@ async def execute(
             rlm_depth,
         ) = _kernel_context(ctx)
 
+        # The caller's signal joins the model's argument here, before anything
+        # branches on reset: from this line down they are the same request, and
+        # a _meta reset honours prelude_path/python_path exactly as reset=True
+        # does. Logged separately because the two have different authors and
+        # "who asked for this kernel to die" is the first question an incident
+        # asks.
+        if not reset and _meta_reset(ctx):
+            reset = True
+            logger.info("Kernel reset requested via _meta for %s", key)
+
         if (prelude_path or python_path) and not reset:
             return json.dumps(
                 {
@@ -384,6 +415,35 @@ async def execute(
         )
 
 
+async def _run_cell(
+    kernel: CrowKernel,
+    code: str,
+    timeout: Optional[float],
+    on_output: Optional[Callable[[bytes], None]] = None,
+):
+    """``kernel.execute`` off-loop — and interrupted if the caller goes away.
+
+    ``to_thread`` cannot cancel its thread. A cancelled call raises here and
+    leaves the worker polling to its deadline with the kernel's lock held, so
+    every call in between answers ``(kernel busy)``. With ``timeout=None`` —
+    the documented way to block on a long cell — that is forever.
+
+    Abandoning the cell is the difference: the worker interrupts it, the cell
+    ends, the lock is free in about a second instead of at the deadline. A flag
+    on the kernel rather than a call into it, because this is the ``except
+    CancelledError`` path — the surrounding cancel scope re-delivers
+    cancellation to anything that checkpoints, so an ``await`` here would raise
+    before doing the work, and the thread that owns the socket is the only one
+    that knows whether a cell has started yet.
+    """
+    try:
+        return await asyncio.to_thread(kernel.execute, code, timeout, on_output)
+    except asyncio.CancelledError:
+        logger.info("execute cancelled mid-cell — abandoning it")
+        kernel.abandon()
+        raise
+
+
 async def _execute_streaming(
     ctx: Context, kernel: CrowKernel, code: str, timeout: Optional[float]
 ):
@@ -397,7 +457,7 @@ async def _execute_streaming(
     """
     token = _progress_token(ctx)
     if token is None:
-        return await asyncio.to_thread(kernel.execute, code, timeout)
+        return await _run_cell(kernel, code, timeout)
 
     loop = asyncio.get_running_loop()
     sent: list[concurrent.futures.Future] = []
@@ -417,7 +477,7 @@ async def _execute_streaming(
         )
 
     try:
-        return await asyncio.to_thread(kernel.execute, code, timeout, on_output)
+        return await _run_cell(kernel, code, timeout, on_output)
     finally:
         if sent:
             # run_coroutine_threadsafe hands back a *concurrent* Future;

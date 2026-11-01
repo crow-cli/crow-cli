@@ -40,6 +40,7 @@ from .llm import StreamState, build_tool_calls, send_request, stream
 #: a cancel lands between batches.
 from .tools import (
     TOOL_CALL_CANCELLED_MESSAGE,
+    Reconnect,
     cancelled_tool_results,
     execute_tool_calls,
 )
@@ -106,6 +107,9 @@ class Deps:
     compact_system_prompt: Any = None
     on_compact: Any = None
     chunk_log_dir: Optional[str] = None
+    #: Rebuild the session's MCP client if its server died mid-call. See
+    #: :data:`.tools.Reconnect`; None means a dead server stays dead.
+    reconnect: Optional[Reconnect] = None
 
 
 @dataclass
@@ -289,6 +293,7 @@ async def _run_tools(
             mcp_clients=deps.mcp_clients,
             tool_call_inputs=completion.tool_calls,
             tool_results=tool_results,
+            reconnect=deps.reconnect,
         )
     except asyncio.CancelledError:
         # execute_tool_calls already filled "cancelled" placeholders for every

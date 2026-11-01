@@ -72,6 +72,7 @@ from .events import Cancel, Event, Prompt, new_inbox
 from .goal import continuation_text, eligible
 from .llm import StreamState, normalize_prompt
 from .react import Deps, Done, react
+from .tools import Reconnect
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,11 @@ class DriverDeps:
     compactor: Any = None
     compact_system_prompt: Any = None
     chunk_log_dir: Optional[str] = None
+    #: Rebuild this session's MCP client when its server dies mid-call. The
+    #: registry's job — it owns the exit stack the client is entered on — but
+    #: the loop is where the failure surfaces, so it travels with the deps.
+    #: None means no recovery: a dead server stays dead for this session.
+    reconnect: Optional[Reconnect] = None
     max_turns: int = 50000
 
 
@@ -340,6 +346,7 @@ class SessionDriver:
             compact_system_prompt=self.deps.compact_system_prompt,
             on_compact=self._on_compact,
             chunk_log_dir=self.deps.chunk_log_dir,
+            reconnect=self.deps.reconnect,
         )
         self._turn = asyncio.create_task(
             react(ctx, deps), name=f"crow-turn-{self.session_id}-{turn_id[:8]}"

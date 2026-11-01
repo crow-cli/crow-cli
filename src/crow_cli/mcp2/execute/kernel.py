@@ -74,6 +74,15 @@ OutputSink = Callable[[bytes], None]
 #: kernel: dropping the frame and reading on is the whole recovery.
 _GARBAGE = (ValueError, KeyError)
 
+#: How long an abandoned cell gets to die in, and how often SIGINT is re-sent
+#: while it does not. Re-sent rather than sent once because a signal that lands
+#: before the kernel picks the cell up is swallowed by an idle kernel, and the
+#: thread doing the abandoning cannot tell that apart from "still working".
+#: Ten seconds is far past a KeyboardInterrupt and far short of the deadline it
+#: replaces, which for a ``timeout=None`` cell does not exist.
+ABANDON_S = 10.0
+ABANDON_RETRY_S = 0.5
+
 #: What the caller is told when it asks a kernel to run a cell while another
 #: cell still holds it. Two threads on one ZMQ socket is what killed the
 #: server (libzmq aborts with "Bad address"); a refusal is the fix.
@@ -170,6 +179,11 @@ class CrowKernel:
         #: Set by :meth:`shutdown`; the poll loop returns at the next tick
         #: instead of waiting for a cell that is never coming back.
         self._cancelled = threading.Event()
+        #: Set by :meth:`abandon`; the poll loop interrupts the cell it is
+        #: draining and stops waiting for it. Distinct from ``_cancelled``
+        #: because it means something different: shutdown is the kernel going
+        #: away, abandon is one cell being given up on.
+        self._abandon = threading.Event()
         self._inflight: Optional[_Inflight] = None
         #: Set when a channel raised something that is not a parse failure.
         self.dead = False
@@ -246,6 +260,12 @@ class CrowKernel:
     ) -> CellResult:
         cell = self._inflight
         if cell is None:
+            # A late :meth:`abandon` was for the cell that just finished, not
+            # for this one. Cleared here rather than there because only starting
+            # a cell makes "nothing is running" true again — and an attach to an
+            # existing ``_inflight`` must NOT clear it, or collecting an
+            # abandoned cell's output would un-abandon it.
+            self._abandon.clear()
             cell = self._inflight = _Inflight(msg_id=self.client.execute(code))
         elif code.strip():
             # A real cell is still running; there is nowhere to put another.
@@ -266,6 +286,12 @@ class CrowKernel:
         this kernel is abandoned. Returns the result and whether it is final."""
         deadline = None if timeout is None else time.monotonic() + timeout
         streamed = False
+        #: Latched from ``_abandon`` on first sight, and from then on it is the
+        #: reason to stop waiting rather than ``deadline`` — which for a
+        #: ``timeout=None`` cell does not exist, and that is the case a cancel
+        #: has to rescue.
+        give_up_at: Optional[float] = None
+        next_signal = 0.0
 
         def take(chunk: bytes) -> None:
             nonlocal streamed
@@ -277,7 +303,33 @@ class CrowKernel:
         while True:
             if self._cancelled.is_set():
                 return self._snapshot(cell, streamed, timeout), False
-            if deadline is not None and time.monotonic() >= deadline:
+
+            if self._abandon.is_set():
+                # Cleared on sight so a later attach to this same ``_inflight``
+                # (``execute("")``, the documented way to collect an abandoned
+                # cell) drains it instead of interrupting it all over again.
+                self._abandon.clear()
+                give_up_at = time.monotonic() + ABANDON_S
+                next_signal = 0.0
+                logger.info("cell abandoned by its caller — interrupting the kernel")
+
+            now = time.monotonic()
+            if give_up_at is not None:
+                if now >= give_up_at:
+                    logger.warning(
+                        "an interrupted cell did not end within %.0fs — giving up "
+                        "on it; the kernel stays busy until it does",
+                        ABANDON_S,
+                    )
+                    return self._snapshot(cell, streamed, timeout), False
+                if now >= next_signal:
+                    if not self.interrupt():
+                        # Nothing to signal with. Waiting out the window would
+                        # change nothing, so stop now and let the caller see the
+                        # cell is still running.
+                        give_up_at = now
+                    next_signal = now + ABANDON_RETRY_S
+            elif deadline is not None and now >= deadline:
                 return self._snapshot(cell, streamed, timeout), False
 
             remaining = None if deadline is None else deadline - time.monotonic()
@@ -376,6 +428,61 @@ class CrowKernel:
             busy_notice=notice,
             streamed=on_output is not None and bool(partial),
         )
+
+    def abandon(self) -> None:
+        """Give up on the running cell and get the kernel back. Non-blocking.
+
+        What a cancel means, as against a timeout. On timeout the caller still
+        wants the cell: it keeps running, ``_inflight`` keeps its output, and a
+        later ``execute("")`` collects it. On cancel the caller is gone and the
+        cell is worth nothing — but the KERNEL is not, and the kernel is behind
+        ``_lock``, which the abandoned thread holds until its deadline. With
+        ``timeout=None``, the documented way to block on a long cell, that
+        deadline does not exist, so every later call answers :data:`OCCUPIED`
+        forever. That is the incident this exists for: a cancel on a cell
+        started with ``timeout=1700`` wedged the session for 28 minutes, and
+        then — via the two readers the wedge provoked — killed the server.
+
+        A flag rather than a direct :meth:`interrupt`, for two reasons. The
+        caller is on an ``except CancelledError`` path, where the surrounding
+        cancel scope re-delivers cancellation to anything that checkpoints, so
+        it cannot await; and only the thread already inside :meth:`_drain` knows
+        whether there is a cell to interrupt yet — a SIGINT that lands before
+        the kernel picks the cell up is swallowed by an idle kernel. Setting an
+        event is neither problem, and the thread that owns the socket does the
+        signalling, which keeps the one-reader-per-socket invariant the lock
+        exists to protect.
+
+        Safe with nothing running: the flag is cleared when the next cell
+        starts, so a cancel that arrives late cannot kill a cell nobody
+        abandoned.
+        """
+        self._abandon.set()
+
+    def interrupt(self) -> bool:
+        """SIGINT the kernel process. Best effort: never raises, returns success.
+
+        IPython turns it into a ``KeyboardInterrupt`` in the running cell, the
+        cell ends, the shell reply and idle status arrive, ``_drain`` returns
+        and the lock is free — about a second instead of the cell's deadline.
+        Called by :meth:`_drain` on behalf of :meth:`abandon`, which re-sends it
+        while the cell does not end; public because a caller that knows a cell
+        is running should not have to go through the flag to say so.
+
+        ``km`` is read through ``getattr`` because tests build a kernel around
+        a fake client with no manager, and an interrupt that cannot be sent is
+        a no-op, not an AttributeError.
+        """
+        km = getattr(self, "km", None)
+        if km is None:
+            return False
+        try:
+            km.interrupt_kernel()
+        except Exception:
+            logger.warning("kernel interrupt failed", exc_info=True)
+            return False
+        logger.info("interrupted the kernel")
+        return True
 
     def shutdown(self) -> None:
         """Shut the kernel down. Never blocks, and never needs a live channel.

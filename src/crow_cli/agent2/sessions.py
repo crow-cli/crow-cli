@@ -167,6 +167,13 @@ class SessionRegistry:
         #: a single session's MCP client. A process-wide stack could only be
         #: closed wholesale, which is exactly what closing one session is not.
         self._stacks: dict[str, AsyncExitStack] = {}
+        #: The resolved MCP config each session's client was built from, kept so
+        #: :meth:`reconnect_mcp` can build another one. Not re-derivable from
+        #: the arguments a later call has to hand: ``provision`` is reached with
+        #: ``mcp_servers=None`` for a hydrated session, so a reconnect that
+        #: re-ran ``mcp_client_for`` would silently drop the client-defined
+        #: servers the original client was built with.
+        self._mcp_configs: dict[str, dict[str, Any]] = {}
 
         self.engine = get_engine(config.db_uri) if config.db_uri else None
         self.sessions: dict[str, AgentSession] = {}
@@ -448,9 +455,10 @@ class SessionRegistry:
         # failure between the two still leaves the stack in ``_stacks``, so
         # process teardown closes it rather than leaking the subprocess.
         session_id = get_coolname()
-        _, mcp_client = mcp_client_for(
+        mcp_config, mcp_client = mcp_client_for(
             mcp_servers, cwd, logger, self.config.mcp_servers
         )
+        self._mcp_configs[session_id] = mcp_config
         if mcp_client is not None:
             mcp_client = await self._stack_for(session_id).enter_async_context(mcp_client)
         tools = await get_tools(mcp_client)
@@ -491,9 +499,10 @@ class SessionRegistry:
         session_id = wire_session_id(session.agent_id)
         if session_id in self.tools:
             return
-        _, mcp_client = mcp_client_for(
+        mcp_config, mcp_client = mcp_client_for(
             mcp_servers, session.cwd, logger, self.config.mcp_servers
         )
+        self._mcp_configs[session_id] = mcp_config
         if mcp_client is not None:
             mcp_client = await self._stack_for(session_id).enter_async_context(mcp_client)
         tools = await get_tools(mcp_client)
@@ -565,6 +574,109 @@ class SessionRegistry:
         self.adopt_model_option(session, session_id)
         self.logger_for(session_id)
 
+    # -- recovery ----------------------------------------------------------
+
+    async def reconnect_mcp(self, session_id: str) -> Optional[MCPClient]:
+        """Rebuild ONE session's MCP client after its server died.
+
+        The only recovery that exists. A client's JSON-RPC dispatcher is
+        single-shot: its read loop ends on EOF or on a cancel and it stays
+        closed, so once the server process is gone every call on that client
+        raises ``Connection closed`` forever — including ``execute(reset=True)``,
+        which is the lever the model would reach for and the one thing that
+        cannot help, because reset is a message to a server nobody is listening
+        to any more. Rebuilding the client respawns the server, and the fresh
+        kernel that implies is the price.
+
+        The old stack is closed rather than dropped: it owns the subprocess and
+        its pipes, and a server that died on its own still leaves both to reap.
+        Closing it can raise — that is what a dead transport does — so the
+        failure is logged and the rebuild proceeds either way.
+
+        ``mcp_clients`` is the SAME dict the live driver holds a reference to,
+        so assigning into it is what makes the retry see the new client; there
+        is no re-plumbing. ``tools`` is replaced for the same reason, though a
+        driver already running keeps the list it was built with — the same
+        config yields the same schemas, so the staleness is inert.
+
+        Returns None when there is nothing to rebuild from, which the caller
+        turns into an error the model can act on rather than a silent no-op.
+        """
+        config = self._mcp_configs.get(session_id)
+        if config is None:
+            logger.warning(
+                "cannot reconnect session %s — no MCP config was recorded for it",
+                session_id,
+            )
+            return None
+
+        old_stack = self._stacks.pop(session_id, None)
+        if old_stack is not None:
+            try:
+                await old_stack.aclose()
+            except Exception:
+                logger.warning(
+                    "closing the dead MCP stack for session %s raised",
+                    session_id, exc_info=True,
+                )
+
+        stack = self._stack_for(session_id)
+        client = MCPClient(MCPConfigTransport(config, name_as_prefix=False))
+        client = await stack.enter_async_context(client)
+        tools = await get_tools(client)
+        self.mcp_clients[session_id] = client
+        self.tools[session_id] = tools
+        logger.info(
+            "reconnected the MCP client for session %s — %d tool(s)",
+            session_id, len(tools),
+        )
+        return client
+
+    async def reset_kernel(self, session_id: str) -> dict[str, bool]:
+        """Reset ONE session's kernel, leaving its MCP client alone.
+
+        The other half of the recovery story, and the cheaper half: when the
+        server is alive and only the KERNEL is wedged — a cell that will not
+        end, a REPL in a state the model cannot reason about any more — there is
+        no reason to tear down the client, respawn the subprocess and re-list
+        the tools to get a fresh interpreter. ``_meta.reset_kernel`` asks the
+        server for exactly that and nothing more.
+
+        Falls back to :meth:`reconnect_mcp` when the call cannot be delivered,
+        because "the server did not answer" and "the server is gone" are not
+        distinguishable from here, and a reset that silently did nothing is
+        worse than a reset that cost a subprocess.
+        """
+        client = self.mcp_clients.get(session_id)
+        if client is None:
+            logger.warning("kernel reset for unknown session %s", session_id)
+            return {"reset": False, "reconnected": False}
+
+        session = next(
+            (s for a, s in self.sessions.items() if wire_session_id(a) == session_id),
+            None,
+        )
+        meta: dict[str, Any] = {
+            "session_id": session_id,
+            "reset_kernel": True,
+        }
+        if session is not None:
+            meta["cwd"] = session.cwd
+        try:
+            await client.call_tool_mcp("execute", {"code": ""}, meta=meta)
+        except Exception:
+            logger.warning(
+                "kernel reset for session %s could not be delivered — "
+                "reconnecting the client instead",
+                session_id, exc_info=True,
+            )
+            return {
+                "reset": await self.reconnect_mcp(session_id) is not None,
+                "reconnected": True,
+            }
+        logger.info("reset the kernel for session %s", session_id)
+        return {"reset": True, "reconnected": False}
+
     # -- drivers -----------------------------------------------------------
 
     def emitter_for(self, session_id: str) -> Emitter:
@@ -612,6 +724,10 @@ class SessionRegistry:
                 tools=self.tools[session_id],
                 state=self.stream_states[session_id],
                 make_llm=self.make_llm,
+                # Bound method, not a lambda: the driver outlives this call and
+                # has to reach the registry that is still live when the server
+                # dies, which may be many turns from now.
+                reconnect=self.reconnect_mcp,
                 hooks=self.hooks,
                 compactor=self.compactor,
                 compact_system_prompt=self.compact_system_prompt,
@@ -657,7 +773,7 @@ class SessionRegistry:
         held = driver is not None or stack is not None
         for table in (
             self.mcp_clients, self.tools, self.emitters, self.loggers,
-            self.config_values, self.stream_states,
+            self.config_values, self.stream_states, self._mcp_configs,
         ):
             table.pop(session_id, None)
         for agent_id, session in list(self.sessions.items()):

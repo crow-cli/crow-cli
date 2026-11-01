@@ -38,6 +38,7 @@ import difflib
 import json
 import logging
 import os
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, Optional
 
@@ -66,6 +67,76 @@ def cancelled_tool_results(tool_calls: list[dict]) -> list[dict]:
         {"role": "tool", "tool_call_id": tc["id"], "content": TOOL_CALL_CANCELLED_MESSAGE}
         for tc in tool_calls
     ]
+
+
+# ---------------------------------------------------------------------------
+# A server that died, and the one recovery that works
+# ---------------------------------------------------------------------------
+
+#: JSON-RPC's "the peer's read stream ended". The code is stable at -32000
+#: across every mcp version crow runs against; what moved is where it lives
+#: (``mcp.types`` in 1.x, ``mcp_types.jsonrpc`` in 2.x) and what carries it
+#: (``McpError(error)`` in 1.x, ``MCPError`` with ``.code``/``.message``/
+#: ``.error`` in 2.x). Hence read off the exception, never imported.
+CONNECTION_CLOSED = -32000
+
+#: Prepended to the model's ``execute`` result when the call had to be retried
+#: on a rebuilt client. Honest about what the retry cost: on the stdio
+#: transport the server is a child process, so a closed connection means the
+#: process is gone and every kernel it hosted went with it. The retry therefore
+#: ran in a FRESH interpreter, and the setup the model accumulated over earlier
+#: cells — imports, helpers, variables, cwd — is not there. Saying so is the
+#: difference between a baffling NameError and a re-run of the setup.
+KERNEL_LOST_NOTICE = (
+    "[crow: the tool server hosting your kernel died during this call. It was "
+    "restarted and the call retried, which means this ran in a NEW kernel — "
+    "every variable, import, helper and the working directory you set up in "
+    "earlier cells is GONE. Re-run your setup before building on it.]"
+)
+
+#: Rebuild ONE session's MCP client after its server died: ``session_id`` ->
+#: the new client, or None when it could not be rebuilt. Implemented by
+#: :meth:`~crow_cli.agent2.sessions.SessionRegistry.reconnect_mcp`, which owns
+#: the exit stack the client is entered on, and reaches the loop through
+#: :class:`~crow_cli.agent2.react.Deps` — session-scoped and replaced in place,
+#: so not on the frozen :class:`~crow_cli.agent2.ctx.TurnCtx`.
+Reconnect = Callable[[str], Awaitable[Any]]
+
+
+def connection_gone(exc: BaseException) -> bool:
+    """True when ``exc`` means "the MCP server is gone", not "the tool failed".
+
+    Telling those apart is the whole recovery. A tool that raised is the
+    model's problem and its error text is the answer. A server that died is
+    infrastructure: the same call on a rebuilt client just works, and without
+    that rebuild nothing ever works again, because the client's JSON-RPC
+    dispatcher is single-shot — its read loop ends on EOF or on a cancel and it
+    stays closed, so every later call raises this same error forever,
+    ``execute(reset=True)`` included. The model cannot fix it and has no way to
+    learn that; it just sees ``Error: Connection closed`` repeated until the
+    agent process is restarted. Only a NEW client can talk to a new server.
+
+    Matched on the wire code first, the message second: the code is the
+    contract, the text is the fallback for a transport that rewrapped it.
+    """
+    code = getattr(exc, "code", None)
+    if code is None:
+        code = getattr(getattr(exc, "error", None), "code", None)
+    if code == CONNECTION_CLOSED:
+        return True
+    return "connection closed" in str(exc).lower()
+
+
+def _with_kernel_lost_notice(content: Any) -> Any:
+    """The retry's result, with :data:`KERNEL_LOST_NOTICE` in front of it.
+
+    ``execute`` returns either plain text or a list of content blocks (image
+    blocks from the subtool drain, then the text), so both shapes are handled —
+    the notice has to survive whichever one the cell produced.
+    """
+    if isinstance(content, list):
+        return [{"type": "text", "text": KERNEL_LOST_NOTICE}, *content]
+    return f"{KERNEL_LOST_NOTICE}\n\n{content}"
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +333,7 @@ async def execute_tool_calls(
     mcp_clients: dict[str, Any],
     tool_call_inputs: list[dict],
     tool_results: Optional[list[dict]] = None,
+    reconnect: Optional[Reconnect] = None,
 ) -> list[dict]:
     """Run a batch of tool calls, filling ``tool_results`` in place.
 
@@ -269,11 +341,17 @@ async def execute_tool_calls(
     cancelled mid-flight — and on cancel every call with no result gets a
     placeholder, because the persisted assistant message carries the
     tool_calls and the API requires a response for each one.
+
+    ``reconnect`` is the session's escape hatch from a dead MCP server; see
+    :data:`Reconnect`. Optional so the batch still runs — just unrecoverably —
+    for a caller with no registry behind it.
     """
     if tool_results is None:
         tool_results = []
     try:
-        return await _execute_inner(ctx, mcp_clients, tool_call_inputs, tool_results)
+        return await _execute_inner(
+            ctx, mcp_clients, tool_call_inputs, tool_results, reconnect
+        )
     except asyncio.CancelledError:
         responded = {r["tool_call_id"] for r in tool_results}
         for tool_call in tool_call_inputs:
@@ -293,6 +371,7 @@ async def _execute_inner(
     mcp_clients: dict[str, Any],
     tool_call_inputs: list[dict],
     tool_results: list[dict],
+    reconnect: Optional[Reconnect] = None,
 ) -> list[dict]:
     log = ctx.logger or logger
     for tool_call in tool_call_inputs:
@@ -321,11 +400,9 @@ async def _execute_inner(
                 )
                 continue
 
-            # THE dispatch. execute is a terminal; everything else is a call.
-            if name == "execute":
-                content = await _run_execute(ctx, mcp_clients, acp_id, args)
-            else:
-                content = await _run_mcp_tool(ctx, mcp_clients, acp_id, name, args)
+            content = await _dispatch(
+                ctx, mcp_clients, acp_id, name, args, reconnect, log
+            )
             tool_results.append({"role": "tool", "tool_call_id": llm_id, "content": content})
         except asyncio.CancelledError:
             raise
@@ -343,6 +420,68 @@ def _client_for(ctx: TurnCtx, mcp_clients: dict[str, Any]) -> Any:
     if not client:
         raise RuntimeError(f"No MCP client for session {ctx.session_id}")
     return client
+
+
+async def _dispatch(
+    ctx: TurnCtx,
+    mcp_clients: dict[str, Any],
+    acp_id: str,
+    name: str,
+    args: dict,
+    reconnect: Optional[Reconnect],
+    log: logging.Logger,
+) -> Any:
+    """One tool call, retried once on a rebuilt client if the server died.
+
+    THE dispatch lives in ``once``: ``execute`` is a terminal, everything else
+    is a plain call. It is a closure rather than an if/else at the top so the
+    retry re-runs the SAME path — including the emitter beats, which are an
+    upsert keyed on ``toolCallId``, so a client that watched the first attempt
+    fail sees the second one progress the same call rather than a duplicate.
+
+    Retried once, not in a loop: a server that dies twice in a row is not
+    having a bad moment, and an unbounded retry here would burn the turn
+    instead of telling the model what happened.
+    """
+
+    async def once() -> Any:
+        if name == "execute":
+            return await _run_execute(ctx, mcp_clients, acp_id, args)
+        return await _run_mcp_tool(ctx, mcp_clients, acp_id, name, args)
+
+    try:
+        return await once()
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        if reconnect is None or not connection_gone(exc):
+            raise
+        log.error(
+            "MCP server for session %s is gone (%s) — rebuilding the client",
+            ctx.session_id, exc,
+        )
+        client = await reconnect(ctx.session_id)
+        if client is None:
+            # Not the bare "Connection closed" that started this. The model
+            # gets told what actually broke and that no call of its own —
+            # reset=True included — can fix it, so it stops retrying and says
+            # so instead of looping.
+            raise RuntimeError(
+                f"the MCP server hosting this session's tools died ({exc}) and "
+                "could not be restarted. Every tool call will keep failing, "
+                "including execute(reset=True); the agent process has to be "
+                "restarted. Report this to the user rather than retrying."
+            ) from exc
+        log.info(
+            "Rebuilt the MCP client for session %s — retrying %s",
+            ctx.session_id, name,
+        )
+        content = await once()
+        # Only execute has a kernel to lose. Another tool's server may well be
+        # a different process that never died, and warning the model its REPL
+        # state is gone when it is not would send it re-running setup for
+        # nothing.
+        return _with_kernel_lost_notice(content) if name == "execute" else content
 
 
 async def _run_mcp_tool(

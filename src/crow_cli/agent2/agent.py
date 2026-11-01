@@ -89,6 +89,27 @@ logger = logging.getLogger(__name__)
 #: client paginating against one agent sees the same pages against the other.
 PAGE_SIZE = 50
 
+#: The agent's one extension method, spelled exactly as it arrives on the
+#: wire. Params: ``sessionId``. Reply: ``{sessionId, reset, reconnected}``.
+#:
+#: The leading underscore is part of the name, not decoration to strip: v2's
+#: ``MethodRouter._handle_extension`` routes on ``method.startswith("_")`` and
+#: then hands the handler the method VERBATIM, so this is what
+#: :meth:`CrowAgentV2.handle_extension_request` compares against. (v1's
+#: ``MessageRouter`` is the other contract — it strips the underscore and looks
+#: for ``ext_method``/``ext_notification`` instead, which is why
+#: ``agent/main.py`` spells its hooks differently and why copying one agent's
+#: extension surface onto the other silently installs dead code.)
+#:
+#: It exists because ``execute(reset=True)`` is the MODEL's lever and this is
+#: not a model problem. A client watching a session wedge — a cell that will
+#: not end, a kernel that stopped answering — has no way to say "start over"
+#: except through a turn it cannot get, since the turn is what is wedged. So
+#: the reset goes around the model: straight to the registry, which sets
+#: ``_meta.reset_kernel`` on a bare execute call and leaves the MCP client, the
+#: session and the tool surface exactly as they were.
+KERNEL_RESET_METHOD = "_crow/kernel/reset"
+
 
 def encode_cursor(offset: Optional[int]) -> Optional[str]:
     """A page offset as an opaque token, or None for the last page."""
@@ -669,21 +690,36 @@ class CrowAgentV2:
 
     # -- extensions --------------------------------------------------------
     #
-    # There is deliberately NO ``handle_extension_request``. crow has no
-    # ``_``-prefixed surface of its own, and ``MethodRouter._handle_extension``
-    # raises ``method_not_found`` when the handler attribute is missing — the
-    # identical reply an explicit stub would give, which is the same reason
-    # ``client2`` deleted v1's ``method_not_found`` stubs rather than porting
-    # them. What sat here instead returned ``{}``: a client that asked for
-    # ``_vendor/anything`` got a JSON-RPC SUCCESS back and had no way to learn
-    # the agent had done nothing. Every unimplemented protocol method answers
-    # ``-32601``; an extension is a method too.
+    # Both hooks are named for what v2's ``MethodRouter._handle_extension``
+    # looks up on the agent object, and both receive the method VERBATIM —
+    # underscore included. The names are the whole contract: a handler
+    # installed under any other name is dead code however correct its body,
+    # and the router then behaves as if crow had no extension surface at all.
+    # That is silent for notifications and -32601 for requests, so the failure
+    # mode of a wrong name is "the feature does not exist", not an error.
     #
-    # The notification hook stays because absence is NOT equivalent there. A
-    # notification has no reply, so the router swallows an unhandled one
-    # silently and this log line is the only trace an unexpected one leaves.
+    # An unknown extension answers ``-32601`` rather than ``{}``. A client that
+    # asks for ``_vendor/anything`` and gets a JSON-RPC SUCCESS back has no way
+    # to learn the agent did nothing; every unimplemented protocol method
+    # answers method_not_found, and an extension is a method too.
+
+    async def handle_extension_request(
+        self, method: str, params: Any
+    ) -> dict[str, Any]:
+        if method == KERNEL_RESET_METHOD:
+            payload = params if isinstance(params, dict) else {}
+            session_id = payload.get("sessionId") or payload.get("session_id")
+            if not session_id:
+                raise RequestError.invalid_params({"error": "sessionId is required"})
+            self.log.info("extension: kernel reset for session %s", session_id)
+            result = await self.sessions.reset_kernel(session_id)
+            return {"sessionId": session_id, **result}
+        raise RequestError.method_not_found(method)
 
     async def handle_extension_notification(self, method: str, params: Any) -> None:
+        # Absence is NOT equivalent here the way it is for requests: a
+        # notification has no reply, so the router swallows an unhandled one
+        # silently and this line is the only trace an unexpected one leaves.
         self.log.info("extension notification: %s %s", method, params)
 
     # -- teardown ----------------------------------------------------------

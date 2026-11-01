@@ -1091,6 +1091,90 @@ async def test_a_live_execute_call_is_a_terminal_and_not_a_tool_result(tmp_path)
         assert g.idles()[1]["stopReason"] == "end_turn"
 
 
+async def test_a_client_can_reset_the_kernel_without_a_turn(tmp_path):
+    """``_crow/kernel/reset``: the client's lever, and the only one it has.
+
+    ``execute(reset=True)`` is a tool argument, so pulling it needs a turn —
+    and a wedged kernel is exactly what takes the turn away. The cell will not
+    end, the model is not being asked anything, and a client watching the
+    session hang has no channel left to say "start over" through. So the reset
+    goes around the model: an extension request, straight to the registry,
+    which sets ``_meta.reset_kernel`` on a bare execute call. It costs a kernel
+    and not a subprocess — the MCP client, the session and the tool surface all
+    stay exactly as they were, which is the whole reason the signal exists
+    separately from the reconnect path.
+
+    Scripted model, real crow-mcp2, real kernels. The proof is behavioural
+    rather than a return code: a "reset" that quietly built a SECOND kernel
+    under a different key would answer the same ``True``, so what is asserted
+    is that the next cell cannot see the one before it.
+    """
+    scripts = [
+        call(0, "call_set", "execute",
+             json.dumps({"code": "SENTINEL = 'still here'"})) + [usage(10)],
+        text("set it") + [usage(11)],
+        call(0, "call_read", "execute", json.dumps({"code": "print(SENTINEL)"}))
+        + [usage(10)],
+        text("read it") + [usage(11)],
+    ]
+    async with gate(tmp_path, scripts) as g:
+        await g.new_session(mcp_servers=[crow_mcp2_server()])
+        await g.wait_for_idle(1)
+
+        await g.prompt(v2.schema.TextContentBlock(text="set it"))
+        await g.wait_for_idle(2, timeout=120)
+
+        reply = await g.conn.send_extension_request(
+            "_crow/kernel/reset", {"sessionId": g.session_id}
+        )
+        assert reply == {
+            "sessionId": g.session_id,
+            "reset": True,
+            "reconnected": False,
+        }
+
+        await g.prompt(v2.schema.TextContentBlock(text="read it"))
+        await g.wait_for_idle(3, timeout=120)
+
+        outputs = [
+            c["rawOutput"]["output"]
+            for c in g.of_kind("tool_call_update")
+            if "rawOutput" in c
+        ]
+        assert len(outputs) == 2, outputs
+        assert "still here" not in outputs[1]
+        assert "NameError" in outputs[1]
+
+
+async def test_a_kernel_reset_names_what_it_could_not_do(tmp_path):
+    """The reset's two refusals, both honest.
+
+    No ``sessionId`` is -32602 rather than a guess: the agent serves many
+    sessions over one connection, so "the current one" does not exist, and
+    resetting a session the client did not name would be the worst possible
+    answer to a malformed request. An unknown session is a SUCCESS carrying
+    ``reset: false`` rather than an error, because a client holding a stale id
+    — closed, or belonging to another agent process — has nothing to retry and
+    needs the fact, not an exception.
+    """
+    async with gate(tmp_path, [text("ok") + [usage(3)]]) as g:
+        await g.new_session()
+        await g.wait_for_idle(1)
+
+        with pytest.raises(RequestError) as excinfo:
+            await g.conn.send_extension_request("_crow/kernel/reset", {})
+        assert excinfo.value.code == -32602
+
+        reply = await g.conn.send_extension_request(
+            "_crow/kernel/reset", {"sessionId": "no-such-session"}
+        )
+        assert reply == {
+            "sessionId": "no-such-session",
+            "reset": False,
+            "reconnected": False,
+        }
+
+
 async def test_cancel_mid_stream_is_confirmed_by_an_idle(tmp_path):
     """``session/cancel`` ends the turn; the idle is the confirmation.
 

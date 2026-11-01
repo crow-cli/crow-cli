@@ -94,7 +94,16 @@ def serve(transport: str, host: str, port: int) -> None:
     served = register_tools()
     # A rotating file, never stdout: on the stdio transport stdout IS the
     # JSON-RPC stream and one stray line is a protocol violation.
-    logger = setup_logger(LOG_PATH, name="crow_cli.mcp2_logger")
+    #
+    # The PACKAGE logger, not a private name: every module under crow_cli.mcp2
+    # logs as ``crow_cli.mcp2.<module>``, and a handler on a sibling name like
+    # ``crow_cli.mcp2_logger`` is not their ancestor, so nothing they say
+    # propagates to it. That is not a cosmetic loss — it is why a server-side
+    # failure was once invisible: the tool handler's own ``logger.error`` went
+    # to a logger with no handlers while the file recorded only this module's
+    # two info lines, and the only evidence of what broke was the client's
+    # "Connection closed".
+    logger = setup_logger(LOG_PATH, name="crow_cli.mcp2")
     logger.info("crow-mcp2 serving %d tool(s): %s", len(served), ", ".join(served))
 
     transport = "streamable-http" if transport == "http" else transport
