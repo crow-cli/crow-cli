@@ -1,7 +1,0 @@
-task: "Create a Python module called `calculator.py` that implements basic arithmetic operations (add, subtract, multiply, divide) with proper error handling for division by zero."
-criteria:
-  - "All four operations are implemented as functions"
-  - "Division by zero raises ValueError with a clear message"
-  - "Functions are type-hinted and have docstrings"
-  - "A `__main__` block provides a simple CLI demo"
-max_iterations: 3
