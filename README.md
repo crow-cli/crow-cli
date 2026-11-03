@@ -148,7 +148,7 @@ Two shapes, and only two:
 | crow IDE | VS Code built from source by the `crow` repo's `packages/crow-gui`, with the crow chat extension bundled as a built-in — desktop app and browser server | dials `crowAcp.endpoint`, default `ws://127.0.0.1:2771/acp` | `crow` |
 | any ACP client | Zed and friends, over stdio or WebSocket | the client spawns the command you give it | `crow-cli acp` / `acp2` |
 
-**The args, exactly.** `acp --http` serves protocol v1 on **2769**; `acp2 --http` serves v2 on **2771**; `--host` (default `127.0.0.1`) and `--port` move either. One v2 instance is enough for every dialler — the IDE panel's `crowAcp.endpoint` defaults to `ws://127.0.0.1:2771/acp`. A client that only speaks v1 needs `crow-cli acp --http` instead, on 2769.
+**The args, exactly.** `acp --http` serves protocol v1 on **2769**; `acp2 --http` serves v2 on **2771**; `--host` (default `127.0.0.1`) and `--port` move either. One v2 instance is enough for every dialler — the IDE panel's `crowAcp.endpoint` defaults to `ws://127.0.0.1:2771/acp`. A client that only speaks v1 needs `crow-cli acp --http` instead, on 2769. `acp2 --no-default-tool` starts an agent with no tools of its own: config.yaml's `mcpServers` are not merged into a session, so the session's tools are exactly the ones its client sent in `session/new`. That is how a client gives an agent a single purpose — a conductor whose only arm is the three tools it was handed — by construction rather than by asking nicely in a prompt.
 
 ### `crow-agent` — the terminal client
 

@@ -489,7 +489,9 @@ async def _run_mcp_tool(
 ) -> Any:
     """The generic path: upsert pending -> in_progress -> call -> completed.
 
-    Content goes to the client; the return value is what the model reads.
+    Content goes to the client; the return value is what the model reads. A
+    result's ``_meta`` goes to the client only — it is the server's side
+    channel, and the model has no business seeing what the client is told.
     """
     emitter = ctx.emitter
     await emitter.tool_call(
@@ -501,11 +503,18 @@ async def _run_mcp_tool(
     (ctx.logger or logger).info("Executing tool via MCP: %s", name)
     result = await client.call_tool_mcp(name, args)
 
-    await emitter.tool_call(
-        acp_id,
-        status="failed" if result.isError else "completed",
-        content=mcp_to_content(result.content),
-    )
+    patch: dict[str, Any] = {
+        "status": "failed" if result.isError else "completed",
+        "content": mcp_to_content(result.content),
+    }
+    if result.meta:
+        # The server's `_meta` is the one channel a tool has for speaking to the
+        # client instead of the model — the conductor's kill-the-loop key rides
+        # it, and a client that cannot see the key cannot enforce the loop.
+        # Passed only when the server sent some: on a patch update `_meta: null`
+        # is an explicit clear, not a no-op.
+        patch["field_meta"] = result.meta
+    await emitter.tool_call(acp_id, **patch)
     return mcp_to_llm(result.content)
 
 

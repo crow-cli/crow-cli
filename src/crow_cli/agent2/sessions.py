@@ -89,9 +89,10 @@ def mcp_client_for(
 ) -> tuple[dict[str, Any], Optional[MCPClient]]:
     """Wire MCP server objects -> a FastMCP client, or None for zero servers.
 
-    The agent's own ``mcpServers`` from config.yaml are always in play, and the
-    client's are added to them by name. Zero servers therefore only happens
-    when config.yaml lists none and the client sent none either.
+    The agent's own ``mcpServers`` from config.yaml are in play unless the
+    caller withheld them (``--no-default-tool`` passes None), and the client's
+    are added to them by name. Zero servers happens when config.yaml lists none
+    or was withheld, and the client sent none either.
 
     Dispatched on the ``type`` discriminator rather than by isinstance: v2 has
     both ``StdioMcpServer`` (what a client sends) and ``McpServerStdio`` (what
@@ -210,6 +211,20 @@ class SessionRegistry:
             stack = AsyncExitStack()
             self._stacks[session_id] = stack
         return stack
+
+    @property
+    def default_mcp_servers(self) -> Optional[dict[str, Any]]:
+        """The agent's own ``mcpServers``, or None when it is meant to have none.
+
+        ``--no-default-tool`` (``Config.no_default_tool``) drops config.yaml's
+        servers from every session, so a session's tools are exactly the ones
+        its client sent in ``session/new``. Read through this property at the
+        wiring sites rather than reaching for ``config.mcp_servers``, because
+        the two sites that build a client have to agree: one honoring the flag
+        and the other not would hand a session tools on reconnect that it
+        lacked at creation.
+        """
+        return None if self.config.no_default_tool else self.config.mcp_servers
 
     # -- models ------------------------------------------------------------
 
@@ -456,7 +471,7 @@ class SessionRegistry:
         # process teardown closes it rather than leaking the subprocess.
         session_id = get_coolname()
         mcp_config, mcp_client = mcp_client_for(
-            mcp_servers, cwd, logger, self.config.mcp_servers
+            mcp_servers, cwd, logger, self.default_mcp_servers
         )
         self._mcp_configs[session_id] = mcp_config
         if mcp_client is not None:
@@ -500,7 +515,7 @@ class SessionRegistry:
         if session_id in self.tools:
             return
         mcp_config, mcp_client = mcp_client_for(
-            mcp_servers, session.cwd, logger, self.config.mcp_servers
+            mcp_servers, session.cwd, logger, self.default_mcp_servers
         )
         self._mcp_configs[session_id] = mcp_config
         if mcp_client is not None:

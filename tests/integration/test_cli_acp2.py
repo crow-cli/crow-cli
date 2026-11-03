@@ -66,7 +66,7 @@ class _Client:
         await self.updates.put((session_id, update))
 
 
-def config_root(tmp_path: Path) -> Path:
+def config_root(tmp_path: Path, mcp_servers: dict | None = None) -> Path:
     """A hermetic ``--config-dir``: one provider, two models, no ``db_uri``.
 
     ``db_uri`` is left out on purpose. ``Config.load`` would default it to
@@ -75,27 +75,30 @@ def config_root(tmp_path: Path) -> Path:
     one is what proves ``apply_config_overrides`` ran.
 
     Model order is load-bearing, hence ``sort_keys=False``: see FIRST.
+
+    ``mcp_servers`` is the agent's own tool supply, and only the test that
+    withholds it asks for one: a config with no ``mcpServers`` cannot tell the
+    difference between a flag that dropped them and a config that never had
+    any.
     """
     root = tmp_path / "crow"
     root.mkdir(parents=True)
     (root / ".env").write_text("API_KEY=not-a-real-key\n")
-    (root / "config.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "providers": {
-                    PROVIDER: {
-                        "api_key": "${API_KEY}",
-                        "base_url": "https://acp2.invalid/v1",
-                    }
-                },
-                "models": {
-                    FIRST: {"provider": PROVIDER, "model": FIRST_ID},
-                    MODEL: {"provider": PROVIDER, "model": MODEL_ID},
-                },
-            },
-            sort_keys=False,
-        )
-    )
+    config: dict = {
+        "providers": {
+            PROVIDER: {
+                "api_key": "${API_KEY}",
+                "base_url": "https://acp2.invalid/v1",
+            }
+        },
+        "models": {
+            FIRST: {"provider": PROVIDER, "model": FIRST_ID},
+            MODEL: {"provider": PROVIDER, "model": MODEL_ID},
+        },
+    }
+    if mcp_servers is not None:
+        config["mcpServers"] = mcp_servers
+    (root / "config.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
     return root
 
 
@@ -187,9 +190,11 @@ async def handshake(conn) -> v2.schema.InitializeResponse:
     )
 
 
-async def new_session(conn, cwd: Path) -> v2.schema.NewSessionResponse:
+async def new_session(
+    conn, cwd: Path, mcp_servers: list | None = None
+) -> v2.schema.NewSessionResponse:
     return await asyncio.wait_for(
-        conn.new_session(cwd=str(cwd), mcp_servers=[]),
+        conn.new_session(cwd=str(cwd), mcp_servers=mcp_servers or []),
         TIMEOUT,
     )
 
@@ -318,3 +323,97 @@ async def test_debug_is_what_opens_the_chunk_log_directory(tmp_path):
     quiet, logged = sids
     assert not (root / "logs" / quiet).exists()
     assert (root / "logs" / logged).is_dir()
+
+
+#: The smallest MCP stdio server that proves a point: one tool, named by
+#: ``argv[1]``, so one file stands in both for config.yaml's ``crow-mcp`` (as
+#: ``execute`` — the tool a conductor must not have) and for the server a client
+#: sends in ``session/new`` (as anything else). Written into ``tmp_path`` rather
+#: than shipped beside the tests: it is spawned as ``[sys.executable, <path>,
+#: <tool>]`` and nothing else in the tree needs to know it exists.
+STUB_SERVER = """\
+import sys
+
+from fastmcp import FastMCP
+
+TOOL = sys.argv[1]
+mcp = FastMCP(TOOL)
+
+
+@mcp.tool(name=TOOL)
+def stub(arg: str = "") -> str:
+    return TOOL
+
+
+mcp.run(transport="stdio")
+"""
+
+
+def stub_server(tmp_path: Path) -> Path:
+    path = tmp_path / "stub_mcp.py"
+    path.write_text(STUB_SERVER)
+    return path
+
+
+def tool_names(row: Agent) -> list[str]:
+    """A session's tool list as persisted: OpenAI-shaped dicts, names only."""
+    return sorted(t["function"]["name"] for t in (row.tool_definitions or []))
+
+
+async def test_no_default_tool_leaves_a_session_only_the_tools_its_client_sent(
+    tmp_path,
+):
+    """``--no-default-tool`` withholds config.yaml's ``mcpServers``.
+
+    The flag is what makes an agent generic by construction rather than by
+    prompt: a conductor *told* not to use ``execute`` can still use it, so the
+    tool has to not be there. Both halves are asserted, in one loop over two
+    spawns, because the claim is the difference — ``execute`` in the session
+    without the flag, and the client's own tool in the session *with* it, which
+    is the half that separates "withheld the defaults" from "no tools at all".
+
+    The list is read off the agent row rather than off the wire: v2 has no
+    ``session/new`` field for it, and ``tool_definitions`` is what the react
+    loop is actually handed, so it is the list that matters.
+    """
+    stub = stub_server(tmp_path)
+    root = config_root(
+        tmp_path,
+        mcp_servers={
+            "crow-mcp": {
+                "transport": "stdio",
+                "command": sys.executable,
+                "args": [str(stub), "execute"],
+            }
+        },
+    )
+    override = db_override(tmp_path)
+    sent = [
+        v2.schema.StdioMcpServer(
+            name="conductor",
+            command=sys.executable,
+            args=[str(stub), "prompt_worker"],
+        )
+    ]
+
+    lists: list[list[str]] = []
+    for extra in ([], ["--no-default-tool"]):
+        async with acp2(
+            tmp_path,
+            "--config-dir",
+            str(root),
+            "--config-file",
+            str(override),
+            *extra,
+        ) as (conn, _wire, stderr, process):
+            await handshake(conn)
+            new = await new_session(conn, tmp_path, mcp_servers=sent)
+        assert process.returncode == 0, "".join(stderr)
+
+        rows = [a for a in agents(tmp_path) if a.session_id == new.session_id]
+        assert len(rows) == 1, rows
+        lists.append(tool_names(rows[0]))
+
+    defaulted, withheld = lists
+    assert defaulted == ["execute", "prompt_worker"]
+    assert withheld == ["prompt_worker"]

@@ -70,6 +70,26 @@ if __name__ == "__main__":
     mcp.run(transport="stdio")
 '''
 
+#: A tool that answers through ``_meta`` — the one channel a tool has for
+#: speaking to the client instead of the model, and the one the conductor's
+#: kill-the-loop key rides. ``ToolResult`` rather than a plain return, because a
+#: plain return's ``_meta`` is FastMCP's own envelope and not the tool's word.
+META_MCP_SERVER = '''from fastmcp import FastMCP
+from fastmcp.tools import ToolResult
+
+mcp = FastMCP("meta-tools")
+
+
+@mcp.tool
+def prompt_worker(text: str) -> ToolResult:
+    """Queue a prompt for the worker."""
+    return ToolResult(content=f"queued: {text}", meta={"end_turn": True})
+
+
+if __name__ == "__main__":
+    mcp.run(transport="stdio")
+'''
+
 #: The same server on a real TCP port, because ``initialize`` advertises
 #: ``session.mcp.http`` as well as ``stdio`` and an advertisement nobody acts
 #: on is the shape of hole this file exists to close.
@@ -546,6 +566,14 @@ def stdio_server(tmp_path: Path):
     )
 
 
+def meta_server(tmp_path: Path):
+    script = tmp_path / "meta_mcp_server.py"
+    script.write_text(META_MCP_SERVER)
+    return v2.schema.StdioMcpServer(
+        name="meta", command=sys.executable, args=[str(script)], env=[]
+    )
+
+
 def crow_mcp2_server():
     """The real crow-mcp2, on this interpreter.
 
@@ -942,6 +970,42 @@ async def test_a_tool_call_becomes_one_upsert_sequence_on_the_wire(tmp_path):
                 assert msg["tool_call_id"] in pending
                 pending.remove(msg["tool_call_id"])
         assert not pending
+
+
+async def test_a_tool_result_meta_reaches_the_client_and_not_the_model(tmp_path):
+    """A result's ``_meta`` rides the completed update, and only that.
+
+    The client is the only audience that can act on it. The conductor's
+    kill-the-loop key is a ``_meta`` its server adds and the model cannot
+    withhold, and a client that never sees the key cannot enforce the loop — so
+    the key has to cross, on the beat that says the call finished. It stays out
+    of the tool message: what the server told the client is not what the model
+    reads.
+    """
+    scripts = [
+        call(0, "call_meta", "prompt_worker", '{"text": "start with the engine"}')
+        + [usage(10)],
+        text("done") + [usage(20)],
+    ]
+    async with gate(tmp_path, scripts) as g:
+        await g.new_session(mcp_servers=[meta_server(tmp_path)])
+        await g.wait_for_idle(1)
+
+        await g.prompt(v2.schema.TextContentBlock(text="prompt the worker"))
+        await g.wait_for_idle(2)
+
+        updates = g.of_kind("tool_call_update")
+        assert [u["status"] for u in updates] == ["pending", "in_progress", "completed"]
+        assert updates[-1]["_meta"] == {"end_turn": True}
+        # Nothing to say on the earlier beats, and saying it as ``null`` would
+        # be a clear rather than a no-op — so the key is absent, not empty.
+        assert all("_meta" not in u for u in updates[:-1])
+
+        second = g.llm.calls[1]["messages"]
+        assert second[-1]["role"] == "tool"
+        assert second[-1]["content"] == "queued: start with the engine"
+        assert "_meta" not in second[-1]
+        assert "end_turn" not in str(second[-1])
 
 
 async def test_an_http_mcp_server_supplies_the_tools_a_session_runs(

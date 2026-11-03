@@ -158,6 +158,12 @@ def run_agent2(
         "-m",
         help="Model to use (name from config.yaml models: section)",
     ),
+    no_default_tool: bool = typer.Option(
+        False,
+        "--no-default-tool",
+        help="Do not merge config.yaml's mcpServers into sessions: the session's "
+        "tools are exactly the ones the client sent in session/new",
+    ),
     http: bool = typer.Option(
         False,
         "--http",
@@ -185,6 +191,12 @@ def run_agent2(
     ``AgentProtocolRouter``. Each connection negotiates v2 and binds one
     ``CrowAgentV2``; sessions share the same store.
 
+    ``--no-default-tool`` leaves config.yaml's ``mcpServers`` out of every
+    session, so a session's tools are exactly the ones its client sent in
+    ``session/new``. That is what makes an agent generic by construction rather
+    than by prompt: a conductor whose only arm is the MCP server it was handed
+    cannot reach for ``execute`` and go off script.
+
     Lazy import, and startup is the reason. ``crow_cli.cli.main`` already
     costs ~1.15s to import; ``agent2.main`` pulls
     ``acp.experimental.v2.schema`` — six thousand lines of pydantic — for
@@ -204,6 +216,9 @@ def run_agent2(
 
     if debug:
         config.chunk_log = True
+
+    if no_default_tool:
+        config.no_default_tool = True
 
     agent2_main(config=config, model=model, http=http, host=host, port=port)
 

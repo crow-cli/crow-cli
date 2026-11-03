@@ -390,6 +390,13 @@ class Config:
     system_prompt: str = SYSTEM_PROMPT
     system_prompt_path: Path | None = None
     parallel_tool_calls: bool = False
+    #: Do not merge this config's ``mcpServers`` into a session, so the
+    #: session's tools are exactly the ones its client sent in ``session/new``.
+    #: ``crow-cli acp2 --no-default-tool``: a generic agent by construction
+    #: rather than by prompt — a conductor whose only arm is the MCP server its
+    #: client handed it cannot reach for ``execute`` and go off script.
+    no_default_tool: bool = False
+
     @property
     def log_path(self) -> str:
         return str(self.config_dir / "logs" / "crow-cli.log")
@@ -522,6 +529,8 @@ class Config:
                 overrides[key] = typ(parsed[key])
         if "chunk_log" in parsed:
             overrides["chunk_log"] = bool(parsed["chunk_log"])
+        if "no_default_tool" in parsed:
+            overrides["no_default_tool"] = bool(parsed["no_default_tool"])
 
         mcp_servers = parsed.get("mcpServers", {})
         _logger.info("FINAL mcp_servers stored in Config: %s", mcp_servers)
@@ -587,6 +596,8 @@ def apply_config_overrides(config: "Config", config_file: Path | None) -> "Confi
         config.MAX_TOKENS = int(overrides["MAX_TOKENS"])
     if "chunk_log" in overrides:
         config.chunk_log = bool(overrides["chunk_log"])
+    if "no_default_tool" in overrides:
+        config.no_default_tool = bool(overrides["no_default_tool"])
     if "mcpServers" in overrides:
         config.mcp_servers = overrides["mcpServers"]
     if "agent_servers" in overrides:
