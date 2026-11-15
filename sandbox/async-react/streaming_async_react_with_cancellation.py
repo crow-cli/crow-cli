@@ -1,16 +1,3 @@
-#!/usr/bin/env python3
-"""Minimal streaming react loop: MCP tools, OpenAI chat completions, cancellation.
-
-The whole agent in one file — no ACP, no database, no compaction. Stream,
-accumulate, call the tool, append, loop. Same general idea as the original
-sandbox script; the wire details are what crow-cli does today
-(``crow_cli/agent2/llm.py``, ``agent2/tools.py``, ``agent/session.py``).
-
-    uv run python sandbox/async-react/streaming_async_react_with_cancellation.py
-    ... --cancel-after 10    cancel mid-turn, inspect the history left behind
-    ... --raw                dump every request body
-"""
-
 import asyncio
 import json
 import os
@@ -26,7 +13,7 @@ from openai._exceptions import APITimeoutError
 
 API_KEY = os.getenv("ALIBABA_API_KEY")
 BASE_URL = os.getenv("ALIBABA_BASE_URL", "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1")
-MODEL = os.getenv("REACT_MODEL", "glm-5.2")
+MODEL = os.getenv("REACT_MODEL", "qwen3.8-max")
 MAX_TOKENS = 8192
 CANCELLED_MESSAGE = "Tool call cancelled by user"
 MCP_CONFIG = {
@@ -53,8 +40,6 @@ def configure_provider(raw: bool = False) -> AsyncOpenAI:
 
 
 async def get_tools(mcp_client: Client) -> list[dict]:
-    """MCP schemas -> OpenAI tool definitions. ``or ""`` because a null
-    description is rejected by some providers and many MCP tools omit it."""
     return [
         {
             "type": "function",
@@ -65,14 +50,6 @@ async def get_tools(mcp_client: Client) -> list[dict]:
 
 
 async def send_request(lm, messages, model, tools, max_retries=3):
-    """Open a streaming completion, retrying what the SDK will not.
-
-    ``include_usage`` is what makes the last chunk carry token counts — and that
-    chunk has ``choices: []``, which is why the accumulator guards the index.
-    ``parallel_tool_calls`` is not a sampling param and omitting it is NOT false,
-    so it is always sent. ``reasoning_effort`` XOR ``temperature``: reasoning
-    models reject temperature.
-    """
     for attempt in range(max_retries):
         try:
             return await lm.chat.completions.create(
@@ -93,10 +70,6 @@ async def send_request(lm, messages, model, tools, max_retries=3):
 
 @dataclass
 class StreamState:
-    """What the stream has produced so far, owned OUTSIDE the stream: a cancel
-    mid-stream still has to persist a valid assistant message, so partial
-    accumulation is not scratch state, it is the record."""
-
     thinking: list[str] = field(default_factory=list)
     content: list[str] = field(default_factory=list)
     tool_calls: dict[int, dict] = field(default_factory=dict)  # by delta index
@@ -110,12 +83,6 @@ class StreamState:
 
 
 def accumulate_chunk(chunk, state: StreamState) -> list[tuple[str, object]]:
-    """Fold one chunk into ``state``; return the new tokens by kind.
-
-    Reasoning, content and tool calls are three INDEPENDENT checks — one chunk
-    can carry reasoning AND content (the transition boundary), and an if/else
-    between them silently drops one.
-    """
     if getattr(chunk, "usage", None) is not None:
         state.usage = {
             "prompt_tokens": chunk.usage.prompt_tokens,
@@ -136,12 +103,6 @@ def accumulate_chunk(chunk, state: StreamState) -> list[tuple[str, object]]:
         tokens.append(("content", delta.content))
 
     for call in delta.tool_calls or ():
-        # ``index`` is the only reliable accumulation key: it is on every delta,
-        # while id/type/name arrive exactly once, in the first one. Keying by id
-        # breaks parallel calls, and breaks on alibaba compatible-mode, which
-        # sends id:"" and name:"" on every continuation delta — `is not None`
-        # passes, the real values are overwritten, the tool name is gone. Hence
-        # truthiness below, not identity.
         slot = state.tool_calls.setdefault(call.index, {"id": "", "function_name": "", "arguments": []})
         if call.id:
             slot["id"] = call.id
@@ -156,14 +117,6 @@ def accumulate_chunk(chunk, state: StreamState) -> list[tuple[str, object]]:
 
 
 def build_tool_calls(state: StreamState) -> list[dict]:
-    """Deltas -> OpenAI ``tool_calls``, by index, argument JSON repaired.
-
-    The id is the LLM's and stays the LLM's — the only link between the assistant
-    message and its tool results. A provider that never sent one gets "" on both
-    sides, never a generated UUID. Repair happens here, before the string enters
-    history: a model that truncates its arguments would otherwise poison every
-    later request, since the assistant message is re-sent each turn.
-    """
     calls = []
     for _, slot in sorted(state.tool_calls.items()):
         arguments = "".join(slot["arguments"])
@@ -184,11 +137,6 @@ def build_tool_calls(state: StreamState) -> list[dict]:
 
 
 def deserialize_args(data):
-    """Recursively decode JSON strings nested inside arguments — models
-    double-encode constantly, and handing a tool the string '{"a": 1}' where it
-    wanted an object is a spurious failure. Only strings starting { or [ are
-    attempted, so a bare "1" stays a string. This is the top-level parse too: a
-    well-formed call comes back a dict, anything else is malformed."""
     if isinstance(data, str):
         if data.startswith(("{", "[")):
             try:
@@ -204,10 +152,6 @@ def deserialize_args(data):
 
 
 def mcp_to_llm(mcp_content) -> object:
-    """MCP content blocks -> OpenAI tool-message content: a list only when there
-    is something a string cannot carry (an image), otherwise the plain text. The
-    obvious ``result.content[0].text`` dies on an empty result and on any
-    non-text block."""
     if not mcp_content:
         return ""
     blocks = []
@@ -222,14 +166,6 @@ def mcp_to_llm(mcp_content) -> object:
 
 
 async def execute_tool_calls(mcp_client, tool_call_inputs, tool_results: list[dict]):
-    """Run a batch, filling ``tool_results`` IN PLACE — so a cancel mid-batch
-    still shows the calls that finished, and every call with no result can get a
-    placeholder, because the assistant message about to be persisted carries the
-    tool_calls and the API requires a response for each one.
-
-    A tool that raises is a tool result, not an exception: the model gets to see
-    the error and recover, which it cannot do if the turn dies.
-    """
     try:
         for tool_call in tool_call_inputs:
             name = tool_call["function"]["name"]
@@ -241,8 +177,6 @@ async def execute_tool_calls(mcp_client, tool_call_inputs, tool_results: list[di
                            "Retry with valid JSON matching the tool schema.")
             else:
                 try:
-                    # call_tool_mcp, not call_tool: the raw protocol result, with
-                    # isError and every content block, and no raise on tool error.
                     result = await mcp_client.call_tool_mcp(name, args)
                     content = mcp_to_llm(result.content)
                     if result.isError:
@@ -262,13 +196,6 @@ async def execute_tool_calls(mcp_client, tool_call_inputs, tool_results: list[di
 
 
 def add_response_to_messages(messages, state, tool_call_inputs, tool_results):
-    """ONE assistant message, then one tool message per call, in that order.
-
-    Not a content message plus a separate tool_calls message: the tool_calls ride
-    on the assistant turn and the results must follow it immediately, each keyed
-    by an id from it. ``content`` is always present, possibly "" — an assistant
-    message with no content key is another thing providers reject.
-    """
     if not (state.content or state.thinking or tool_call_inputs):
         return messages  # an empty completion persists nothing
     thinking = "".join(state.thinking)
@@ -283,14 +210,6 @@ def add_response_to_messages(messages, state, tool_call_inputs, tool_results):
 
 
 async def react_loop(messages, mcp_client, lm, model, tools, max_turns=50000):
-    """Stream -> accumulate -> run tools -> append -> loop.
-
-    Yields ``{"type", "token"}`` for whoever is rendering and mutates ``messages``
-    in place, so a cancel leaves resumable history behind without a callback —
-    the caller already owns the list. Cancellation is a real CancelledError, not
-    a polled flag: it lands wherever the loop is actually waiting, which is the
-    only place a partial stream exists.
-    """
     state = StreamState()
     for _ in range(max_turns):
         response = await send_request(lm, messages, model, tools)
@@ -300,9 +219,6 @@ async def react_loop(messages, mcp_client, lm, model, tools, max_turns=50000):
                 for kind, token in accumulate_chunk(chunk, state):
                     yield {"type": kind, "token": token}
         except asyncio.CancelledError:
-            # Persist what arrived. Incomplete calls — no id or no name yet — are
-            # dropped: they cannot be addressed in history, and an unaddressable
-            # tool_call is a rejected request.
             calls = [c for c in build_tool_calls(state) if c["id"] and c["function"]["name"]]
             add_response_to_messages(
                 messages, state, calls,
