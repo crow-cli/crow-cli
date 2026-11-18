@@ -48,6 +48,10 @@ def configure_llm(
         base_url=base_url,
         http_client=http_client,
         default_headers={"User-Agent": f"CrowCLI/{version('crow-cli')}"},
+        # SDK defaults (connect=5s, read=600s) kill turns on slow providers:
+        # reasoning models can stream no bytes for >10min, and a flaky route
+        # to the endpoint needs more than 5s to connect.
+        timeout=httpx.Timeout(1800.0, connect=30.0),
     )
     logger.info(f"USER-AGENT: {client.user_agent}") # =
     return client
