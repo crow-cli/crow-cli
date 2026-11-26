@@ -99,6 +99,19 @@ def run(argv: list[str], cwd: Path) -> None:
     console.print(f"[dim]$ {' '.join(argv)}[/dim]")
     subprocess.run(argv, cwd=cwd, check=True)
 
+
+def cap_build_jobs() -> int:
+    """A third of the cores (floor 1) so a full IDE build neither OOMs nor
+    starves the desktop. esbuild reads GOMAXPROCS, cargo reads CARGO_BUILD_JOBS;
+    both are exported for the build subprocesses (build.sh applies the same cap
+    on its own when run standalone). CROW_BUILD_JOBS overrides; an explicit
+    GOMAXPROCS / CARGO_BUILD_JOBS already in the environment is respected."""
+    jobs = max(1, (os.cpu_count() or 4) // 3)
+    jobs = max(1, int(os.environ.get("CROW_BUILD_JOBS", jobs)))
+    os.environ.setdefault("GOMAXPROCS", str(jobs))
+    os.environ.setdefault("CARGO_BUILD_JOBS", str(jobs))
+    return jobs
+
 # Everything crow installs lives under ~/.local/share/crow; the build tree in
 # packages/crow-gui/vscodium is scratch and can be deleted after installing.
 SHARE_DIR = ".local/share/crow"
@@ -276,6 +289,8 @@ def install_crow(
     builds it and `dpkg -i` installs it system-wide. `--no-deb` copies the built
     trees under the prefix instead — no root, and no setuid chrome-sandbox.
     """
+    jobs = cap_build_jobs()
+    console.print(f"[dim]build parallelism capped to {jobs} jobs (CROW_BUILD_JOBS overrides)[/dim]")
     repo = repo_root()
     pipeline = pipeline_dir(repo)
     home = Path.home()
