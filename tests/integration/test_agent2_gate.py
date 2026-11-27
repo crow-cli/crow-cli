@@ -2672,6 +2672,26 @@ async def test_a_compactor_that_never_streams_gets_its_summary_in_the_terminal_u
         ]
 
 
+async def test_a_crashed_turn_reports_idle_error_not_a_json_rpc_error(tmp_path):
+    """The prompt was inserted, so the failure belongs to the turn: an idle
+    ``state_update`` with ``stopReason: "error"`` and the reason as a whole
+    ``agent_message``. A JSON-RPC error on ``session/prompt`` would mean the
+    message was never inserted — the opposite of what happened. The model
+    here dies on its first call (nothing scripted), which is the general
+    turn-crash path through the driver, compaction or no compaction.
+    """
+    async with gate(tmp_path, []) as g:
+        await g.new_session()
+        await g.wait_for_idle(1)
+        response = await g.prompt(v2.schema.TextContentBlock(text="doomed"))
+        assert response.message_id  # inserted: the ack carries its id
+        await g.wait_for_idle(2)
+        assert g.idles()[1]["stopReason"] == "error"
+        assert [m["content"][0]["text"] for m in g.of_kind("agent_message")] == [
+            "agent error: model called 1 time(s) but only 0 were scripted"
+        ]
+
+
 async def test_a_compaction_that_raises_reports_failed_and_not_completed(tmp_path):
     """``failed`` carries the error, and the turn ends rather than spinning.
 
