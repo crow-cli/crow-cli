@@ -504,3 +504,39 @@ class TestCompactionContract:
         assert setup_session.agent_idx == 1
         reloaded = await AgentSession.load(setup_session.agent_id)
         assert len(reloaded.messages) == 41
+
+
+@pytest.mark.asyncio
+async def test_compact_stale_generation_advances_past_db_head(
+    setup_session, mock_llm, compact_config
+):
+    """Regression: after a restart, resolve rehydrates whatever full agent_id
+    the client still names (e.g. ...-1-1) while newer generations already exist
+    in the store. Compaction must advance past the DB head, not
+    session.agent_idx + 1 -- otherwise the new agent row re-uses an existing idx
+    and the INSERT collides on agents.agent_id (sqlite3.IntegrityError). This is
+    the OOM-restart trigger: a stale generation loaded fresh."""
+
+    async def no_ids(ctx):
+        return CompactResponse(
+            system_template="Successor.", system_args={}, prompt="carry on"
+        )
+
+    # Build generations 2, 3, 4 from the original (idx 1).
+    gen = setup_session
+    for _ in range(3):
+        gen = await compact(
+            gen, mock_llm, compact_config, logger=MagicMock(), compactor=no_ids
+        )
+    assert gen.agent_idx == 4
+
+    # A restart re-resolves the ORIGINAL generation the client still names.
+    stale = await AgentSession.load(build_agent_id(setup_session.session_id, 1, 1))
+    assert stale.agent_idx == 1
+
+    result = await compact(
+        stale, mock_llm, compact_config, logger=MagicMock(), compactor=no_ids
+    )
+    # Past the head (4), not stale.agent_idx + 1 == 2 (which already exists).
+    assert result.agent_idx == 5
+    assert result.agent_id == build_agent_id(setup_session.session_id, 5, 1)

@@ -367,8 +367,16 @@ async def compact(
     )
     result = await (compactor or default_compactor)(ctx)
 
-    # Same session_id AND fork, next agent_idx.
-    new_agent_idx = session.agent_idx + 1
+    # Same session_id AND fork, next agent_idx. The in-memory session can be a
+    # stale generation: after a restart, ``resolve`` rehydrates whatever full
+    # agent_id the client still names (e.g. ``...-1-1``) while newer generations
+    # already exist in the store. Advancing past only ``session.agent_idx`` then
+    # re-uses an existing idx and the INSERT collides on agents.agent_id. Take
+    # the DB head for this session+fork so the new generation is always fresh.
+    head_idx = await AgentSession.get_max_agent_idx(
+        session.session_id, memory_path=session.memory_path, fork_idx=session.fork_idx
+    )
+    new_agent_idx = max(session.agent_idx, head_idx) + 1
     new_agent_id = build_agent_id(session.session_id, new_agent_idx, session.fork_idx)
     new_session = await make_agent_session(
         config,
