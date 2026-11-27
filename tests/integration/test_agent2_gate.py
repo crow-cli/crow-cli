@@ -39,6 +39,7 @@ from acp.exceptions import RequestError
 from acp.experimental import v2
 
 from crow_cli.agent.compact import CompactResponse
+from crow_cli.agent.slash import _SLASH_COMMANDS
 from crow_cli.agent.session import AgentSession
 from crow_cli.agent2.agent import CrowAgentV2
 from crow_cli.agent2.driver import PARK_BACKSTOP_S
@@ -769,6 +770,33 @@ async def test_the_v2_prompt_lifecycle_lands_on_the_wire_in_order(tmp_path):
         assert history[-2]["role"] == "user"
         assert history[-1]["role"] == "assistant"
         assert history[-1]["content"] == "Hello, world!"
+
+
+async def test_setup_responses_carry_the_command_palette(tmp_path):
+    """availableCommands rides the setup response itself (alpha.6), not only
+    the notification that follows it. A client rendering the palette from the
+    response has it before the first update arrives; the notification stays
+    for clients that only watch the update stream. All three setup paths —
+    new, resume, fork — carry the same palette.
+    """
+    async with gate(tmp_path, [text("one") + [usage(2)]]) as g:
+        await g.new_session()
+        await g.wait_for_idle(1)
+        new_raw = g.last_result()
+        names = [c["name"] for c in new_raw["availableCommands"]]
+        assert names == [c["name"] for c in _SLASH_COMMANDS]
+        assert all("input" in c for c in new_raw["availableCommands"])
+
+        await g.prompt(v2.schema.TextContentBlock(text="first"))
+        await g.wait_for_idle(2)
+
+        await g.resume_session()
+        resumed_raw = g.last_result()
+        assert [c["name"] for c in resumed_raw["availableCommands"]] == names
+
+        await g.fork_session(g.session_id)
+        fork_raw = g.last_result()
+        assert [c["name"] for c in fork_raw["availableCommands"]] == names
 
 
 async def test_reasoning_is_its_own_message(tmp_path):
