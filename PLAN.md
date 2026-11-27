@@ -32,18 +32,26 @@ Unit 940/940; agent2 gate + client2 subagent 74/74; acp2 http/cli gate 45/45.
 
 ## Phase 2 — crow Rust crate 5.6.1 migration (worktree crow-v2-preview)
 
-- [ ] 2.1 Cargo.toml: agent-client-protocol 5.6.1, features stdio, process, unstable_protocol_v2, unstable_end_turn_token_usage (+ unstable_session_fork if fork is called); drop unstable_session_compaction. cargo check.
-- [ ] 2.2 Import migration schema::v1 -> v1::schema, schema::v2 -> v2::schema (8 files); ProtocolVersion + Error paths/conversions.
-- [ ] 2.3 ConnectTo::into_channel_and_future -> (Channel, Option<ConnectionDriver>) in acp.rs runners; AcpAgent config non-exhaustive; raw response type if touched.
+- [x] 2.1 DONE crow 4d96115: crate 5.6.1, features stdio/process/unstable_protocol_v2/unstable_end_turn_token_usage; dropped unstable_session_compaction (fork not called via typed Rust SDK).
+- [x] 2.2 DONE crow 4d96115: v1::schema/v2::schema; root ErrorCode struct + consts; From<v1::Error>.
+- [x] 2.3 DONE crow 4d96115: (Channel, Option<ConnectionDriver>); non_exhaustive configs; RawJsonRpcId/RawJsonRpcResponse; raw Builder::new guard-free entry.
   Verify (2.1-2.3 together): cargo test green incl. fixtures/layout; commit. No UX change.
+  DONE crow 4d96115 (2026-11-27): cargo test -p crow-client -j 2 -> 960 passed,
+  0 failed. profile.dev split-debuginfo=unpacked added: beta.4 schema grew test
+  DWARF past the 4GiB 32-bit relocation limit (link overflow); split DWARF links
+  cleanly, no codegen/runtime change. Build with -j 2 to bound core usage.
 
 ## Phase 3 — crow Rust beta.4 adoption + alpha.7 tolerance
 
-- [ ] 3.1 AvailableCommand union parsing + flat-command tolerance (missing type -> command). Characterization test: alpha.7 flat commands populate the palette.
-- [ ] 3.2 replay_complete closes ReplayWindow; resume-response fallback kept for alpha.7 agents. Test both paths.
-- [ ] 3.3 error stopReason (string "error" or {error:{...}} object) -> TurnOutcome error surfaced in transcript; unknown state tolerated. Tests.
-- [ ] 3.4 availableCommands from setup responses; compaction status patch (omitted unchanged, null -> in_progress); paused status + background lists tolerated without crash. Tests.
+- [x] 3.1 DONE crow c60e32b: palette reads name/description raw, so beta.4 typed command + alpha.7 flat both populate; characterization test.
+- [x] 3.2 DONE crow c60e32b: is_replay_complete closes window; resume-response fallback kept; test.
+- [x] 3.3 DONE crow c60e32b (Error arm in 4d96115): bare word + object -> error notice; unknown/future states never idle; tests.
+- [x] 3.4 DONE crow c60e32b: apply_setup reads availableCommands; compaction patch semantics; paused/background tolerated; tests.
   Verify: cargo test green; commit per item.
+  DONE crow c60e32b (2026-11-27): cargo test -p crow-client -j 2 -> 966 passed
+  (+6 characterization), 0 failed. Structured ErrorStopReason object rendering
+  and background-work methods remain Deferred (python-sdk still alpha.7); the
+  client tolerates/parses them without crashing.
 
 ## Phase 4 — crow TS types beta.4
 
