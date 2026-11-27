@@ -17,14 +17,18 @@ adoption, then the interop gate. Keep v1 paths untouched.
 
 ## Phase 1 — crow-cli SDK 1.1.0 (worktree crow-cli-v2-preview)
 
-- [ ] 1.1 Bump pyproject to agent-client-protocol[http]>=1.1.0, uv sync, run unit + acp2 integration gates; fix fallout (validation now raises; module loggers; removed NES/PlanUpdateFile/connect_mcp — none used, verified).
+- [x] 1.1 Bump pyproject to agent-client-protocol[http]>=1.1.0, uv sync, run unit + acp2 integration gates; fix fallout (validation now raises; module loggers; removed NES/PlanUpdateFile/connect_mcp — none used, verified).
   Verify: gates green; commit.
-- [ ] 1.2 availableCommands in new_session/resume_session/fork responses alongside the existing notification.
+- [x] 1.2 availableCommands in new_session/resume_session/fork responses alongside the existing notification.
   Verify: new assertion in integration test; gates green; commit.
-- [ ] 1.3 Turn failure after insertion -> idle(stop_reason="error") from the driver failure path (pre-insertion failures stay JSON-RPC errors).
+- [x] 1.3 Turn failure after insertion -> idle(stop_reason="error") from the driver failure path (pre-insertion failures stay JSON-RPC errors).
   Verify: new test drives a failing turn and observes idle error; gates green; commit.
-- [ ] 1.4 Audit silent-drop reliance + stale docstrings (emitter.usage_model), note findings in TODO.
+- [x] 1.4 Audit silent-drop reliance + stale docstrings (emitter.usage_model), note findings in TODO.
   Verify: grep audit + gates green; commit if edits.
+
+Phase 1 evidence (2026-11-27): commits 09cf9611 (SDK bump), cb4cc229
+(palette responses), 528620a5 (crash-path gate), ce2d26d0 (audit note).
+Unit 940/940; agent2 gate + client2 subagent 74/74; acp2 http/cli gate 45/45.
 
 ## Phase 2 — crow Rust crate 5.6.1 migration (worktree crow-v2-preview)
 
@@ -43,10 +47,10 @@ adoption, then the interop gate. Keep v1 paths untouched.
 
 ## Phase 4 — crow TS types beta.4
 
-- [ ] 4.1 Vendor types.gen.ts from @agentclientprotocol/sdk v2.12.0 into packages/aui/acp/src/v2/; update index.ts header; fix compile fallout behavior-preserving.
-  Verify: bun typecheck (aui/acp + chat + vscode-acp) green; existing acp unit tests green; commit.
-- [ ] 4.2 acpThreadState/conversions: error stopReason -> message status error carrying the error text; tolerate replay_complete/unknown/new updates.
-  Verify: new/existing unit tests green; commit.
+- [x] 4.1 Vendor types.gen.ts from @agentclientprotocol/sdk v2.12.0 into packages/aui/acp/src/v2/; update index.ts header; fix compile fallout behavior-preserving.
+  Verify: bun typecheck (aui/acp + chat + vscode-acp) green; existing acp unit tests green; commit. DONE ba3d8f8 (crow): stable schema only, ClientOptions artifact stripped, session.fork read via tolerance cast (beta.4 moved fork to unstable; alpha.7 agents still send it). chat typecheck clean.
+- [x] 4.2 acpThreadState/conversions: error stopReason -> message status error carrying the error text; tolerate replay_complete/unknown/new updates.
+  Verify: new/existing unit tests green; commit. DONE ba3d8f8 (crow): AcpStopReason+"error"; settleErrorStatus lifts trailing 'agent error: …' into status.error on idle/run-end/run-handoff; unknown updates already fall through the default arm. 8 new tests, 110/110 chat tests.
 
 ## Phase 5 — vscode-acp entry + error bubble
 

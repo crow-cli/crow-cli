@@ -13,13 +13,13 @@ a red bubble with copy-click top right.
 
 ## Scope
 
-- [ ] crow-cli: SDK 1.0.0rc3 -> 1.1.0 (v1 schema 1.35.0, v2 exp alpha.7). Gate: unit + acp2 integration suites green.
-- [ ] crow-cli: availableCommands in new/resume/fork responses (keep the notification too). Gate: assertion test + suites green.
-- [ ] crow-cli: failure after prompt insertion ends as idle(stopReason="error") (alpha.7 open string allows it). Gate: new test + live smoke.
-- [ ] crow-cli: audit reliance on silent validation drops (SDK now raises); fix stale usage_model docstring. Gate: audit note + suites green.
+- [x] crow-cli: SDK 1.0.0rc3 -> 1.1.0 (v1 schema 1.35.0, v2 exp alpha.7). Gate: unit + acp2 integration suites green.
+- [x] crow-cli: availableCommands in new/resume/fork responses (keep the notification too). Gate: assertion test + suites green.
+- [x] crow-cli: failure after prompt insertion ends as idle(stopReason="error") (alpha.7 open string allows it). Gate: new test + live smoke.
+- [x] crow-cli: audit reliance on silent validation drops (SDK now raises); fix stale usage_model docstring. Gate: audit note + suites green.
 - [ ] crow Rust: crate 2.2.0 -> 5.6.1 behavior-preserving migration (features stdio/process, v1::schema/v2::schema paths, Option<ConnectionDriver>, Error conversions, drop unstable_session_compaction). Gate: cargo test green, no UX change.
 - [ ] crow Rust: beta.4 adoption + alpha.7 tolerance: flat AvailableCommand shim, replay_complete closes ReplayWindow (response fallback kept), error stopReason string|object -> transcript, unknown state, availableCommands from setup responses, compaction status patch, paused/background tolerated. Gate: characterization tests incl. flat-command palette.
-- [ ] crow TS: vendored v2 types alpha.2 -> beta.4 from @agentclientprotocol/sdk 2.12.0; typecheck green; acpThreadState handles error stopReason + tolerates new updates. Gate: bun typecheck + existing acp tests.
+- [x] crow TS: vendored v2 types alpha.2 -> beta.4 from @agentclientprotocol/sdk 2.12.0; typecheck green; acpThreadState handles error stopReason + tolerates new updates. Gate: bun typecheck + existing acp tests. DONE crow ba3d8f8: stable beta.4 types (fork tolerance cast for alpha.7 peers), error stopReason -> incomplete/error with crash text lifted into status.error; chat typecheck clean, 110/110 (8 new).
 - [ ] vscode-acp: crowAcp.server paste-able JSON entry (spawn|external), existing settings remain fallback; backend keeps owning state + spawning. Gate: unit tests for parse/merge; build+typecheck green.
 - [ ] chat webview: red error bubble, copy button top right copies error text; fed by v2 error idle + JSON-RPC errors. Gate: component/unit test + eyeball.
 - [ ] Interop gate: worktree crow TUI <-> worktree crow-cli acp2 live (new/resume+replay/prompt/cancel/permission/compaction/error); webview via extension vs worktree daemon. Gate: observed transcripts/logs, not claims.
