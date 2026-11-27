@@ -54,10 +54,10 @@ Unit 940/940; agent2 gate + client2 subagent 74/74; acp2 http/cli gate 45/45.
 
 ## Phase 5 — vscode-acp entry + error bubble
 
-- [ ] 5.1 crowAcp.server paste-able JSON setting (spawn: {command,args,model,port,cwd,mcpServers} | external: {endpoint}); existing per-field settings remain fallback; backend.ts architecture unchanged.
-  Verify: new unit tests (parse/merge/fallback); build+typecheck+unit green; commit.
-- [ ] 5.2 Red error bubble in chat webview with copy button top right (copies error text), fed by turn errors (v2 error idle + JSON-RPC errors).
-  Verify: unit/component test + eyeball via integration or e2e; commit.
+- [x] 5.1 crowAcp.server paste-able JSON setting (spawn: {command,args,model,port,cwd,mcpServers} | external: {endpoint}); existing per-field settings remain fallback; backend.ts architecture unchanged.
+  Verify: new unit tests (parse/merge/fallback); build+typecheck+unit green; commit. DONE fb23db0 (crow): resolveServerEntry (backend.ts, pure) + configError start seam; 6 new tests, unit 70/70, build+typecheck green.
+- [x] 5.2 Red error bubble in chat webview with copy button top right (copies error text), fed by turn errors (v2 error idle + JSON-RPC errors).
+  Verify: unit/component test + eyeball via integration or e2e; commit. DONE c4b8646 (crow): message-error.aui.tsx, copy top right, full text; 3 component tests, chat 113/113. Eyeball at Phase 6.
 
 ## Phase 6 — interop gate (both worktrees together)
 
