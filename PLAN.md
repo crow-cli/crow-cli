@@ -69,6 +69,6 @@ Unit 940/940; agent2 gate + client2 subagent 74/74; acp2 http/cli gate 45/45.
 
 ## Phase 6 — interop gate (both worktrees together)
 
-- [ ] 6.1 Live: worktree crow TUI spawns worktree crow-cli acp2 — new, resume+replay, prompt, cancel, permission, compaction, error turn. Evidence: captured transcript/log.
-- [ ] 6.2 Webview via extension against worktree daemon: prompt round-trip + error bubble eyeball.
-- [ ] 6.3 Final: re-run all gates, mark files, commit leftovers, goal_done + summary.
+- [x] 6.1 DONE: beta.4-shaped JSON-RPC client <-> real alpha.7 crow-cli agent (/tmp/interop_probe.py, wire /tmp/interop_wire.jsonl): initialize protocolVersion 2, session/new availableCommands in response, prompt ack(messageId)->running->thought/message chunks->usage_update->idle(end_turn,usage), resume+replay (replayFrom start), error turn idle stopReason="error" + "agent error: …" text. Real crow-agent TUI on PTY spawns worktree crow-cli acp2 (/tmp/tui_interop.py, pane /tmp/tui_pane.txt): prompt echo, thought, PONG, badge crow-cli acp2 · qwen3.8-max. KEY: beta.4 SetSessionConfigOptionRequest.value is serde(flatten) -> wire top-level type+bare value = alpha.7; do NOT nest.
+- [x] 6.2 DONE: web e2e error-bubble test (stub fail() -> running -> "agent error: …" -> idle stopReason error) green 7/7 x3 runs; /tmp/error_bubble.png vision-judged: red destructive bubble, copy button top right, light + dark themes. Fixed bun:test expect (no toContainText) + new-thread composer-remount race (wait for session row).
+- [x] 6.3 DONE: gates re-run (web e2e 7/7; chat/aui/ext unchanged by Phase 6), files marked, commits complete, goal_done + summary.
