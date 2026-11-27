@@ -65,7 +65,9 @@ def usage_model(raw: Any) -> Optional[v2.Usage]:
     between us and silent data loss: ``IdleStateUpdate`` carries a
     ``use_default_on_error_validator`` over ``stop_reason`` and ``usage``, so
     a dict whose keys do not match validates to ``None`` — no exception, no
-    log, just a wire update with the usage missing. Providers report
+    log, just a wire update with the usage missing. Still true on SDK 1.1.0
+    (probed): its "raise on invalid local models" change does not remove the
+    schema's default-on-error coercion for dicts. Providers report
     prompt/completion/total; v2 wants input/output/total, with reasoning and
     cached tokens broken out.
     """
