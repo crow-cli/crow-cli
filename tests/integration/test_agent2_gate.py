@@ -39,6 +39,7 @@ from acp.exceptions import RequestError
 from acp.experimental import v2
 
 from crow_cli.agent.compact import CompactResponse
+from crow_cli.agent.slash import _SLASH_COMMANDS
 from crow_cli.agent.session import AgentSession
 from crow_cli.agent2.agent import CrowAgentV2
 from crow_cli.agent2.driver import PARK_BACKSTOP_S
@@ -769,6 +770,33 @@ async def test_the_v2_prompt_lifecycle_lands_on_the_wire_in_order(tmp_path):
         assert history[-2]["role"] == "user"
         assert history[-1]["role"] == "assistant"
         assert history[-1]["content"] == "Hello, world!"
+
+
+async def test_setup_responses_carry_the_command_palette(tmp_path):
+    """availableCommands rides the setup response itself (alpha.6), not only
+    the notification that follows it. A client rendering the palette from the
+    response has it before the first update arrives; the notification stays
+    for clients that only watch the update stream. All three setup paths —
+    new, resume, fork — carry the same palette.
+    """
+    async with gate(tmp_path, [text("one") + [usage(2)]]) as g:
+        await g.new_session()
+        await g.wait_for_idle(1)
+        new_raw = g.last_result()
+        names = [c["name"] for c in new_raw["availableCommands"]]
+        assert names == [c["name"] for c in _SLASH_COMMANDS]
+        assert all("input" in c for c in new_raw["availableCommands"])
+
+        await g.prompt(v2.schema.TextContentBlock(text="first"))
+        await g.wait_for_idle(2)
+
+        await g.resume_session()
+        resumed_raw = g.last_result()
+        assert [c["name"] for c in resumed_raw["availableCommands"]] == names
+
+        await g.fork_session(g.session_id)
+        fork_raw = g.last_result()
+        assert [c["name"] for c in fork_raw["availableCommands"]] == names
 
 
 async def test_reasoning_is_its_own_message(tmp_path):
@@ -2641,6 +2669,26 @@ async def test_a_compactor_that_never_streams_gets_its_summary_in_the_terminal_u
         assert [u["status"] for u in updates] == ["in_progress", "completed"]
         assert updates[-1]["summary"] == [
             {"text": "PROJECT HANDOFF, no model asked", "type": "text"}
+        ]
+
+
+async def test_a_crashed_turn_reports_idle_error_not_a_json_rpc_error(tmp_path):
+    """The prompt was inserted, so the failure belongs to the turn: an idle
+    ``state_update`` with ``stopReason: "error"`` and the reason as a whole
+    ``agent_message``. A JSON-RPC error on ``session/prompt`` would mean the
+    message was never inserted — the opposite of what happened. The model
+    here dies on its first call (nothing scripted), which is the general
+    turn-crash path through the driver, compaction or no compaction.
+    """
+    async with gate(tmp_path, []) as g:
+        await g.new_session()
+        await g.wait_for_idle(1)
+        response = await g.prompt(v2.schema.TextContentBlock(text="doomed"))
+        assert response.message_id  # inserted: the ack carries its id
+        await g.wait_for_idle(2)
+        assert g.idles()[1]["stopReason"] == "error"
+        assert [m["content"][0]["text"] for m in g.of_kind("agent_message")] == [
+            "agent error: model called 1 time(s) but only 0 were scripted"
         ]
 
 

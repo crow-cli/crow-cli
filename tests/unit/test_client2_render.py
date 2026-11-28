@@ -743,10 +743,20 @@ def _discriminators() -> set[str]:
     return out
 
 
-#: crow's agent emits neither, so this client has nothing to render for them.
-#: A NEW protocol variant that lands here unrendered is the point: it fails
-#: this test instead of failing silently in a terminal.
-UNRENDERED = {"plan_update", "plan_removed"}
+#: crow's agent emits none of these, so this client has nothing to render for
+#: them. A NEW protocol variant that lands here unrendered is the point: it
+#: fails this test instead of failing silently in a terminal.
+#: plan_*: no plan emission. subagent_update / session_message*: v2 baseline
+#: since alpha.6, but agent2's delegation still rides forks + _crow extensions;
+#: native subagent emission is deferred until the SDK ships beta.4 bindings.
+#: Until then `render` prints the kind name, which is the honest display.
+UNRENDERED = {
+    "plan_update",
+    "plan_removed",
+    "subagent_update",
+    "session_message",
+    "session_message_chunk",
+}
 
 
 def test_every_protocol_update_kind_is_rendered_or_deliberately_not():

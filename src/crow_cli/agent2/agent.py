@@ -323,20 +323,23 @@ class CrowAgentV2:
         return v2.NewSessionResponse(
             session_id=session_id,
             config_options=self.sessions.config_options(session_id),
+            available_commands=self._command_models(),
         )
+
+    @staticmethod
+    def _command_models() -> list[v2.AvailableCommand]:
+        return [
+            v2.AvailableCommand(
+                name=cmd["name"],
+                description=cmd["description"],
+                input=v2.TextAvailableCommandInput(hint="[args]"),
+            )
+            for cmd in _SLASH_COMMANDS
+        ]
 
     async def _advertise_commands(self, session_id: str) -> None:
         emitter = self.sessions.emitter_for(session_id)
-        await emitter.available_commands(
-            [
-                v2.AvailableCommand(
-                    name=cmd["name"],
-                    description=cmd["description"],
-                    input=v2.TextAvailableCommandInput(hint="[args]"),
-                )
-                for cmd in _SLASH_COMMANDS
-            ]
-        )
+        await emitter.available_commands(self._command_models())
 
     def _warn_additional(self, session_id: str, directories: Optional[list]) -> None:
         """crow has no additional-root model, and does not advertise one.
@@ -441,7 +444,8 @@ class CrowAgentV2:
             )
         await self.sessions.driver_for(session, slash=self._slash)
         return v2.ResumeSessionResponse(
-            config_options=self.sessions.config_options(session_id)
+            config_options=self.sessions.config_options(session_id),
+            available_commands=self._command_models(),
         )
 
     async def close_session(
@@ -529,6 +533,7 @@ class CrowAgentV2:
         return v2.ForkSessionResponse(
             session_id=fork_id,
             config_options=self.sessions.config_options(fork_id),
+            available_commands=self._command_models(),
         )
 
     # -- config options ----------------------------------------------------

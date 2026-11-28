@@ -4,15 +4,15 @@ requires-python = ">=3.13"
 
 [[package]]
 name = "agent-client-protocol"
-version = "1.0.0rc3"
+version = "1.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic" },
     { name = "pydantic-core" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/66/ad/2c00ce0a2d1381cec36f2841c74ab67a4436d490d7c432b36b76b901f49c/agent_client_protocol-1.0.0rc3.tar.gz", hash = "sha256:a5bdaab0a0bc7e5a0a660c82f5acf7804d60aa8c65a373acc743dd88c7a72cf5", size = 182759, upload-time = "2026-10-12T09:38:46.409Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1b/36/d3b373c96fbfe5dd76ad70b25826b2017cf5ffe61df2a19d85e5947c0d0c/agent_client_protocol-1.1.0.tar.gz", hash = "sha256:1ef6932a0d95aed6bed4fc9680ce78f3d552780b7fe4704722a177a1ea445040", size = 204148, upload-time = "2026-11-26T00:49:55.969Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9c/40/f1f64b3a439ac8fe0e66208d3d5cd8c87db3c8ceac8d06864143fb2414c9/agent_client_protocol-1.0.0rc3-py3-none-any.whl", hash = "sha256:003c087eae1b03f2410f2e06bcfbaaa26ae99abbdd011c7a2183e5a699a3426f", size = 127192, upload-time = "2026-10-12T09:38:45.252Z" },
+    { url = "https://files.pythonhosted.org/packages/a9/d1/2566083a7bd351a19a68c767974167271c4cdb754443c3137fe14653deb2/agent_client_protocol-1.1.0-py3-none-any.whl", hash = "sha256:41c0860f28eee5dcc32c1e22d451008eb8280872dad5f938360a252021e52fd1", size = 134977, upload-time = "2026-11-26T00:49:54.504Z" },
 ]
 
 [package.optional-dependencies]
@@ -542,7 +542,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agent-client-protocol", extras = ["http"], specifier = ">=1.0.0rc3" },
+    { name = "agent-client-protocol", extras = ["http"], specifier = ">=1.1.0" },
     { name = "aiosqlite", specifier = ">=0.22.1" },
     { name = "ast-grep-py", specifier = ">=0.45.3" },
     { name = "boto3", specifier = ">=1.40.0" },
